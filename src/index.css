@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: #f0f4f8;
+}
+
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+input:focus, select:focus {
+  border-color: #0D6CB0 !important;
+  box-shadow: 0 0 0 3px rgba(13, 108, 176, 0.12);
+}
+
+input:disabled, select:disabled {
+  background: #f7fafc;
+  color: #7d8fa0;
+}
