@@ -42,10 +42,27 @@ export function AuthProvider({ children }) {
     const { data } = await supabase
       .schema('produccion')
       .from('usuario_finca')
-      .select('rol, finca:finca_id (id, codigo, nombre, activa)')
+      .select('rol, finca_id, finca:finca_id (id, codigo, nombre, activa)')
 
     const filas = data || []
-    setEsJefe(filas.some(f => f.rol === 'jefe'))
+    const jefe = filas.some(f => f.rol === 'jefe')
+    setEsJefe(jefe)
+
+    // El jefe se registra con una sola fila de finca_id nulo, que
+    // significa "todas". Sus fincas se leen del catalogo, asi una finca
+    // nueva le aparece sola sin tener que darle permiso otra vez.
+    if (jefe) {
+      const { data: todas } = await supabase
+        .schema('produccion')
+        .from('finca')
+        .select('id, codigo, nombre, activa')
+        .eq('activa', true)
+        .order('nombre')
+      setFincas((todas || []).map(f => ({ ...f, rol: 'jefe' })))
+      setCargando(false)
+      return
+    }
+
     setFincas(
       filas
         .filter(f => f.finca && f.finca.activa)
