@@ -14,30 +14,45 @@ const LIBRAS_POR_SACO = 55
 const AZUL = '#0D6CB0'
 const NAVY = '#022847'
 const BORDE = '#d4e0eb'
+const GRIS = '#7d8fa0'
 
-const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado']
-const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-               'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+const DIAS = ['DOMINGO', 'LUNES', 'MARTES', 'MIERCOLES', 'JUEVES', 'VIERNES', 'SABADO']
+const MESES = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+               'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE']
 
 function hoyISO() {
   const d = new Date()
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
 }
 
+const aFecha = iso => new Date(iso + 'T12:00:00')
+const aISO = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+
 function esDiaDeMuestreo(iso) {
-  const dia = new Date(iso + 'T12:00:00').getDay()
+  const dia = aFecha(iso).getDay()
   return dia === 0 || dia === 3
 }
 
 function titulo(iso) {
-  const d = new Date(iso + 'T12:00:00')
-  return `${DIAS[d.getDay()]} ${d.getDate()} de ${MESES[d.getMonth()]}`
+  const d = aFecha(iso)
+  return `${DIAS[d.getDay()]} ${d.getDate()} DE ${MESES[d.getMonth()]}`
 }
 
+// Semana de lunes a domingo, como en el Excel.
+function semanaDe(iso) {
+  const d = aFecha(iso)
+  const lunes = new Date(d)
+  lunes.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+  const domingo = new Date(lunes)
+  domingo.setDate(lunes.getDate() + 6)
+  return { lunes, domingo }
+}
+
+const corta = d =>
+  `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`
+
 function diasCultivo(fechaSiembra, iso) {
-  const a = new Date(fechaSiembra + 'T12:00:00')
-  const b = new Date(iso + 'T12:00:00')
-  return Math.floor((b - a) / 86400000) + 1
+  return Math.floor((aFecha(iso) - aFecha(fechaSiembra)) / 86400000) + 1
 }
 
 function num(v) {
@@ -46,9 +61,7 @@ function num(v) {
   return Number.isFinite(n) ? n : null
 }
 
-function miles(n) {
-  return n === null || n === undefined ? '' : n.toLocaleString('es-EC')
-}
+const miles = n => (n === null || n === undefined) ? '' : Math.round(n).toLocaleString('es-EC')
 
 export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = false }) {
   const [fecha, setFecha] = useState(hoyISO())
@@ -57,6 +70,7 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
   const [frecuentes, setFrecuentes] = useState([])
   const [filas, setFilas] = useState({})
   const [ayer, setAyer] = useState({})
+  const [acumulado, setAcumulado] = useState({})
   const [cerrado, setCerrado] = useState(false)
   const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [cargando, setCargando] = useState(true)
@@ -66,6 +80,7 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
 
   const muestreo = esDiaDeMuestreo(fecha)
   const bloqueado = soloLectura || semanaCerrada || cerrado
+  const { lunes, domingo } = semanaDe(fecha)
 
   useEffect(() => { cargar() }, [fincaId, fecha])
 
@@ -90,7 +105,7 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
           piscinaId: c.piscina.id,
           codigo: c.piscina.codigo,
           nombre: c.piscina.nombre,
-          hectareas: c.piscina.hectareas,
+          hectareas: Number(c.piscina.hectareas),
           tipo: c.piscina.tipo,
           fechaSiembra: c.fecha_siembra,
         }))
@@ -106,7 +121,7 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
       setProductos(prods || [])
 
       const ids = lista.map(p => p.piscinaId)
-      if (ids.length === 0) { setFilas({}); setAyer({}); return }
+      if (ids.length === 0) { setFilas({}); setAyer({}); setAcumulado({}); return }
 
       const { data: hoyData } = await supabase
         .schema('produccion')
@@ -132,19 +147,24 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
         .in('piscina_id', ids)
         .eq('fecha', isoAyer)
 
-      // Los productos que esta finca uso la ultima semana van primero.
-      const desde = new Date(fecha + 'T12:00:00')
-      desde.setDate(desde.getDate() - 7)
-      const { data: recientes } = await supabase
+      // Todo lo comido por estos ciclos hasta hoy: sirve para el acumulado
+      // y para saber que productos usa mas esta finca.
+      const { data: historia } = await supabase
         .schema('produccion')
         .from('alimentacion')
-        .select('producto_id')
-        .in('piscina_id', ids)
-        .gte('fecha', desde.toISOString().slice(0, 10))
-        .lt('fecha', fecha)
+        .select('ciclo_id, libras, producto_id, fecha')
+        .in('ciclo_id', lista.map(p => p.cicloId))
+        .lte('fecha', fecha)
 
+      const acum = {}
+      ;(historia || []).forEach(r => { acum[r.ciclo_id] = (acum[r.ciclo_id] || 0) + Number(r.libras) })
+      setAcumulado(acum)
+
+      const corte = aISO(new Date(aFecha(fecha).getTime() - 7 * 86400000))
       const cuenta = {}
-      ;(recientes || []).forEach(r => { cuenta[r.producto_id] = (cuenta[r.producto_id] || 0) + 1 })
+      ;(historia || []).filter(r => r.fecha >= corte).forEach(r => {
+        cuenta[r.producto_id] = (cuenta[r.producto_id] || 0) + 1
+      })
       setFrecuentes(Object.entries(cuenta).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([id]) => id))
 
       const mapaAyer = {}
@@ -196,11 +216,11 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
   }
 
   const totalLibras = useMemo(
-    () => Object.values(filas).reduce((s, f) => s + (num(f.libras) || 0), 0),
-    [filas]
-  )
-  const totalSacos = totalLibras / LIBRAS_POR_SACO
-
+    () => Object.values(filas).reduce((s, f) => s + (num(f.libras) || 0), 0), [filas])
+  const totalHectareas = useMemo(
+    () => piscinas.reduce((s, p) => s + p.hectareas, 0), [piscinas])
+  const totalAcumulado = useMemo(
+    () => piscinas.reduce((s, p) => s + (acumulado[p.cicloId] || 0), 0), [piscinas, acumulado])
   const pendientes = piscinas.filter(p => !num(filas[p.piscinaId]?.libras)).length
 
   // Aviso, no bloqueo: una carga muy distinta a la de ayer casi siempre
@@ -305,26 +325,34 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
     if (siguiente) siguiente.focus()
   }
 
+  const COLS = muestreo
+    ? '154px 94px 54px minmax(0,1fr) 104px 104px 84px'
+    : '154px 94px 54px minmax(0,1fr) 104px 104px'
+
   const inputBase = {
     width: '100%', textAlign: 'right', padding: '8px 10px', fontSize: '15px',
     border: '0.5px solid ' + BORDE, borderRadius: '8px', outline: 'none',
-    fontFamily: 'inherit', background: 'white',
+    fontFamily: 'inherit', background: 'white', boxSizing: 'border-box',
   }
+  const etiqueta = { fontSize: '10px', letterSpacing: '0.07em', color: GRIS, textTransform: 'uppercase' }
 
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, maxWidth: '1100px', margin: '0 auto', padding: '1.5rem 1rem 3rem' }}>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.5rem 1.25rem 3rem' }}>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '1.25rem' }}>
         <div>
-          <div style={{ fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: AZUL, marginBottom: '4px' }}>
-            {fincaNombre}
+          <div style={{ fontSize: '11px', letterSpacing: '0.12em', color: AZUL, marginBottom: '4px' }}>
+            {String(fincaNombre).toUpperCase()}
           </div>
-          <h1 style={{ fontSize: '22px', fontWeight: 500, margin: 0, textTransform: 'capitalize' }}>{titulo(fecha)}</h1>
+          <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>{titulo(fecha)}</h1>
+          <div style={{ fontSize: '12px', color: GRIS, letterSpacing: '0.05em' }}>
+            SEMANA DEL {corta(lunes)} AL {corta(domingo)}
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {muestreo && (
-            <span style={{ fontSize: '12px', fontWeight: 500, color: '#534AB7', background: '#EEEDFE', padding: '6px 12px', borderRadius: '20px' }}>
-              Dia de muestreo
+            <span style={{ fontSize: '11px', fontWeight: 500, letterSpacing: '0.07em', color: '#534AB7', background: '#EEEDFE', padding: '6px 12px', borderRadius: '20px' }}>
+              DIA DE MUESTREO
             </span>
           )}
           <input
@@ -339,64 +367,64 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
 
       {aviso && (
         <div style={{
-          padding: '10px 14px', borderRadius: '8px', marginBottom: '1rem', fontSize: '14px',
+          padding: '10px 14px', borderRadius: '8px', marginBottom: '1rem', fontSize: '13px', letterSpacing: '0.03em',
           background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
           color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11',
         }}>{aviso.texto}</div>
       )}
 
       {semanaCerrada && (
-        <div style={{ padding: '10px 14px', borderRadius: '8px', marginBottom: '1rem', fontSize: '14px', background: '#FAEEDA', color: '#854F0B' }}>
-          Esta semana ya esta cerrada. Para corregir algo, pide a tu jefe que la abra.
+        <div style={{ padding: '10px 14px', borderRadius: '8px', marginBottom: '1rem', fontSize: '13px', letterSpacing: '0.03em', background: '#FAEEDA', color: '#854F0B' }}>
+          ESTA SEMANA YA ESTA CERRADA. PARA CORREGIR ALGO, PIDE A TU JEFE QUE LA ABRA.
         </div>
       )}
 
       {cargando ? (
-        <div style={{ padding: '3rem 0', textAlign: 'center', color: '#7d8fa0', fontSize: '15px' }}>Cargando piscinas...</div>
+        <div style={{ padding: '3rem 0', textAlign: 'center', color: GRIS, fontSize: '14px', letterSpacing: '0.05em' }}>CARGANDO PISCINAS...</div>
       ) : piscinas.length === 0 ? (
         <div style={{ padding: '3rem 1rem', textAlign: 'center', border: '0.5px dashed ' + BORDE, borderRadius: '12px' }}>
-          <div style={{ fontSize: '16px', marginBottom: '6px' }}>No hay piscinas sembradas</div>
-          <div style={{ fontSize: '14px', color: '#7d8fa0' }}>
-            Cuando siembres una piscina va a aparecer aqui para que registres su comida.
-          </div>
+          <div style={{ fontSize: '15px', marginBottom: '6px', letterSpacing: '0.05em' }}>NO HAY PISCINAS SEMBRADAS</div>
+          <div style={{ fontSize: '13px', color: GRIS }}>CUANDO SIEMBRES UNA PISCINA VA A APARECER AQUI.</div>
         </div>
       ) : (
         <>
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: muestreo ? '150px 1fr 130px 110px' : '150px 1fr 130px',
-            gap: '10px', padding: '0 12px 8px', fontSize: '12px', color: '#7d8fa0',
-          }}>
-            <div>Piscina</div>
-            <div>Balanceado</div>
-            <div style={{ textAlign: 'right' }}>Libras</div>
-            {muestreo && <div style={{ textAlign: 'right' }}>Gramos</div>}
+          <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: '10px', padding: '0 12px 8px' }}>
+            <div style={etiqueta}>Piscina</div>
+            <div style={etiqueta}>Siembra</div>
+            <div style={{ ...etiqueta, textAlign: 'right' }}>Dias</div>
+            <div style={etiqueta}>Balanceado</div>
+            <div style={{ ...etiqueta, textAlign: 'right' }}>Libras</div>
+            <div style={{ ...etiqueta, textAlign: 'right' }}>Acumulado</div>
+            {muestreo && <div style={{ ...etiqueta, textAlign: 'right' }}>Gramos</div>}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             {piscinas.map((p, i) => {
               const f = filas[p.piscinaId] || {}
               const alerta = fueraDeRango(p)
+              const acum = acumulado[p.cicloId] || 0
               return (
                 <div key={p.piscinaId}>
                   <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: muestreo ? '150px 1fr 130px 110px' : '150px 1fr 130px',
-                    gap: '10px', alignItems: 'center',
+                    display: 'grid', gridTemplateColumns: COLS, gap: '10px', alignItems: 'center',
                     background: bloqueado ? '#f7fafc' : 'white',
                     border: '0.5px solid ' + (alerta ? '#EF9F27' : BORDE),
                     borderRadius: '10px', padding: '10px 12px',
                   }}>
                     <div>
-                      <div style={{ fontSize: '15px', fontWeight: 500 }}>
-                        {p.nombre}
+                      <div style={{ fontSize: '14px', fontWeight: 500, letterSpacing: '0.02em' }}>
+                        {String(p.nombre).toUpperCase()}
                         {p.tipo === 'precria' && (
-                          <span style={{ fontSize: '10px', marginLeft: '6px', color: AZUL, background: '#E6F1FB', padding: '2px 6px', borderRadius: '10px' }}>precria</span>
+                          <span style={{ fontSize: '9px', marginLeft: '6px', color: AZUL, background: '#E6F1FB', padding: '2px 6px', borderRadius: '10px' }}>PRECRIA</span>
                         )}
                       </div>
-                      <div style={{ fontSize: '11px', color: '#7d8fa0' }}>
-                        {p.hectareas} ha · dia {diasCultivo(p.fechaSiembra, fecha)}
-                      </div>
+                      <div style={{ fontSize: '11px', color: GRIS }}>{p.hectareas.toFixed(2)} HA</div>
+                    </div>
+
+                    <div style={{ fontSize: '13px', color: GRIS }}>{corta(aFecha(p.fechaSiembra))}</div>
+
+                    <div style={{ fontSize: '14px', fontWeight: 500, textAlign: 'right' }}>
+                      {diasCultivo(p.fechaSiembra, fecha)}
                     </div>
 
                     <select
@@ -405,19 +433,19 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
                       ref={el => { celdas.current[`${i}-prod`] = el }}
                       onKeyDown={e => alTeclear(e, i, 'prod')}
                       onChange={e => set(p.piscinaId, 'productoId', e.target.value)}
-                      style={{ padding: '8px 10px', fontSize: '14px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: 'white', fontFamily: 'inherit', maxWidth: '340px' }}
+                      style={{ padding: '8px 10px', fontSize: '13px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: 'white', fontFamily: 'inherit', width: '100%', boxSizing: 'border-box' }}
                     >
-                      <option value="">Elegir balanceado</option>
+                      <option value="">ELEGIR BALANCEADO</option>
                       {frecuentes.length > 0 && (
-                        <optgroup label="Los que mas usas">
+                        <optgroup label="LOS QUE MAS USAS">
                           {frecuentes.map(id => {
                             const pr = productos.find(x => x.id === id)
-                            return pr ? <option key={'f' + id} value={id}>{pr.nombre}</option> : null
+                            return pr ? <option key={'f' + id} value={id}>{pr.nombre.toUpperCase()}</option> : null
                           })}
                         </optgroup>
                       )}
-                      <optgroup label="Todos">
-                        {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
+                      <optgroup label="TODOS">
+                        {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre.toUpperCase()}</option>)}
                       </optgroup>
                     </select>
 
@@ -431,6 +459,8 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
                       onChange={e => set(p.piscinaId, 'libras', e.target.value)}
                       style={inputBase}
                     />
+
+                    <div style={{ fontSize: '14px', textAlign: 'right', color: GRIS }}>{miles(acum)}</div>
 
                     {muestreo && (
                       <input
@@ -447,7 +477,7 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
                   </div>
 
                   {alerta && (
-                    <div style={{ margin: '4px 0 2px', padding: '8px 14px', background: '#FAEEDA', color: '#854F0B', borderRadius: '8px', fontSize: '13px' }}>
+                    <div style={{ margin: '4px 0 2px', padding: '8px 14px', background: '#FAEEDA', color: '#854F0B', borderRadius: '8px', fontSize: '12px', letterSpacing: '0.03em' }}>
                       {alerta}
                     </div>
                   )}
@@ -456,27 +486,22 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
             })}
           </div>
 
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            flexWrap: 'wrap', gap: '16px',
-            borderTop: '0.5px solid ' + BORDE, marginTop: '16px', paddingTop: '16px',
-          }}>
-            <div style={{ display: 'flex', gap: '28px' }}>
-              <div>
-                <div style={{ fontSize: '12px', color: '#7d8fa0' }}>Total del dia</div>
-                <div style={{ fontSize: '20px', fontWeight: 500 }}>{miles(totalLibras)} lb</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '12px', color: '#7d8fa0' }}>Sacos</div>
-                <div style={{ fontSize: '20px', fontWeight: 500 }}>{totalSacos.toFixed(1)}</div>
-              </div>
+          <div style={{ display: 'grid', gridTemplateColumns: COLS, gap: '10px', alignItems: 'center', marginTop: '10px', paddingTop: '14px', paddingLeft: '12px', paddingRight: '12px', borderTop: '0.5px solid ' + BORDE }}>
+            <div style={{ fontSize: '12px', fontWeight: 500, letterSpacing: '0.07em' }}>TOTAL</div>
+            <div style={{ fontSize: '11px', color: GRIS }}>{piscinas.length} PISCINAS</div>
+            <div />
+            <div style={{ fontSize: '11px', color: GRIS }}>{totalHectareas.toFixed(2)} HA SEMBRADAS</div>
+            <div style={{ fontSize: '17px', fontWeight: 500, textAlign: 'right' }}>{miles(totalLibras)}</div>
+            <div style={{ fontSize: '14px', textAlign: 'right', color: GRIS }}>{miles(totalAcumulado)}</div>
+            {muestreo && <div />}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', padding: '16px 12px 0' }}>
+            <div style={{ display: 'flex', gap: '30px' }}>
+              <Dato titulo="Sacos del dia" valor={(totalLibras / LIBRAS_POR_SACO).toFixed(1)} />
+              <Dato titulo="Libras por hectarea" valor={totalHectareas ? (totalLibras / totalHectareas).toFixed(1) : '0'} />
               {!bloqueado && pendientes > 0 && (
-                <div>
-                  <div style={{ fontSize: '12px', color: '#7d8fa0' }}>Falta llenar</div>
-                  <div style={{ fontSize: '20px', fontWeight: 500, color: '#BA7517' }}>
-                    {pendientes} {pendientes === 1 ? 'piscina' : 'piscinas'}
-                  </div>
-                </div>
+                <Dato titulo="Falta llenar" valor={pendientes + (pendientes === 1 ? ' PISCINA' : ' PISCINAS')} color="#BA7517" />
               )}
             </div>
 
@@ -484,34 +509,43 @@ export default function RegistroDiario({ fincaId, fincaNombre, soloLectura = fal
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {cerrado ? (
                   <>
-                    <span style={{ fontSize: '13px', color: '#7d8fa0' }}>Dia guardado</span>
+                    <span style={{ fontSize: '12px', color: GRIS, letterSpacing: '0.05em' }}>DIA GUARDADO</span>
                     <button
                       onClick={reabrir}
                       disabled={semanaCerrada}
                       style={{
-                        padding: '10px 18px', fontSize: '14px', fontFamily: 'inherit',
+                        padding: '10px 18px', fontSize: '13px', fontFamily: 'inherit', letterSpacing: '0.05em',
                         background: 'white', color: NAVY, border: '0.5px solid ' + BORDE,
                         borderRadius: '8px', cursor: semanaCerrada ? 'default' : 'pointer',
                         opacity: semanaCerrada ? 0.5 : 1,
                       }}
-                    >Editar</button>
+                    >EDITAR</button>
                   </>
                 ) : (
                   <button
                     onClick={guardar}
                     disabled={guardando}
                     style={{
-                      padding: '10px 24px', fontSize: '14px', fontWeight: 500, fontFamily: 'inherit',
+                      padding: '10px 26px', fontSize: '13px', fontWeight: 500, fontFamily: 'inherit', letterSpacing: '0.07em',
                       background: AZUL, color: 'white', border: 'none', borderRadius: '8px',
                       cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1,
                     }}
-                  >{guardando ? 'Guardando...' : 'Guardar el dia'}</button>
+                  >{guardando ? 'GUARDANDO...' : 'GUARDAR EL DIA'}</button>
                 )}
               </div>
             )}
           </div>
         </>
       )}
+    </div>
+  )
+}
+
+function Dato({ titulo, valor, color }) {
+  return (
+    <div>
+      <div style={{ fontSize: '10px', letterSpacing: '0.07em', color: GRIS, textTransform: 'uppercase' }}>{titulo}</div>
+      <div style={{ fontSize: '18px', fontWeight: 500, color: color || NAVY }}>{valor}</div>
     </div>
   )
 }
