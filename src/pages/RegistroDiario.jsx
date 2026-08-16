@@ -264,7 +264,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS = `170px 56px repeat(7, minmax(112px, 1fr)) 104px`
+  const COLS = `170px 96px 56px repeat(7, minmax(112px, 1fr)) 104px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -351,6 +351,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                               borderBottom: '0.5px solid ' + BORDE }}>
                   <Th pegado>Piscina</Th>
+                  <Th>Siembra</Th>
                   <Th>Días</Th>
                   {fechas.map(f => {
                     const s = situacionDia(f, hoy)
@@ -383,6 +384,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                         {p.tipo === 'precria' && ' · precría'}
                       </div>
                     </Td>
+                    <Td><span style={{ color: GRIS, fontSize: '12px' }}>{corta(p.fechaSiembra)}</span></Td>
                     <Td><span style={{ fontWeight: 500 }}>{diasCultivo(p.fechaSiembra, fechas[6])}</span></Td>
                     {fechas.map((f, j) => (
                       <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB
@@ -411,6 +413,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                     <div style={{ fontSize: '11px', color: GRIS }}>{hectareas.toFixed(2)} ha</div>
                   </Td>
                   <Td fondo="#fafcfd" />
+                  <Td fondo="#fafcfd"><span style={{ fontSize: '11px', color: GRIS }}>{piscinas.length} piscinas</span></Td>
                   {fechas.map(f => (
                     <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
                         borde={situacionDia(f, hoy) === 'hoy'}>
