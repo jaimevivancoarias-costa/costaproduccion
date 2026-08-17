@@ -62,7 +62,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
 
       const { data: ciclos } = await supabase
         .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, cantidad_larva, piscina_origen_id')
+        .select('id, fecha_siembra, cantidad_larva, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
         .eq('finca_id', finca.id).eq('estado', 'abierto').lte('fecha_siembra', domingo)
 
       const porPiscina = {}
@@ -74,6 +74,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
           cicloId: c?.id || null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
           hectareas: Number(p.hectareas), tipo: p.tipo,
           fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
+          laboratorio: c?.laboratorio?.nombre || null,
         }
       }).sort(ordenar)
       setPiscinas(lista)
@@ -318,7 +319,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS = `170px 96px 56px 136px repeat(7, minmax(112px, 1fr)) 104px`
+  const COLS = `170px 96px 56px 124px 136px repeat(7, minmax(112px, 1fr)) 104px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -407,6 +408,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                   <Th pegado>Piscina</Th>
                   <Th>Siembra</Th>
                   <Th>Días</Th>
+                  <Th>Laboratorio</Th>
                   <Th>Estado</Th>
                   {fechas.map(f => {
                     const s = situacionDia(f, hoy)
@@ -445,6 +447,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                     <Td><span style={{ fontWeight: 500 }}>
                       {p.fechaSiembra ? diasCultivo(p.fechaSiembra, fechas[6]) : ''}
                     </span></Td>
+                    <Td><span style={{ color: GRIS, fontSize: '12px' }}>
+                      {p.laboratorio || (p.cicloId ? '—' : '')}
+                    </span></Td>
                     <Td>
                       <Estado
                         fila={p} evento={eventos[p.piscinaId]}
@@ -480,6 +485,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                   </Td>
                   <Td fondo="#fafcfd" />
                   <Td fondo="#fafcfd"><span style={{ fontSize: '11px', color: GRIS }}>{piscinas.length} piscinas</span></Td>
+                  <Td fondo="#fafcfd" />
                   <Td fondo="#fafcfd" />
                   {fechas.map(f => (
                     <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
