@@ -708,17 +708,16 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
                  textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
                  fontVariantNumeric: 'tabular-nums' }}
       />
-      <button
-        onClick={() => {
-          if (num(c?.libras) && !window.confirm('Vas a borrar las libras y declarar que esta piscina no comió ese día. ¿Seguro?')) return
-          onSin()
-        }}
-        title="Declarar que esta piscina no comió ese día"
-        style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
-                 fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '4px 6px',
-                 borderRadius: '6px', width: '100%' }}>
-        No comió
-      </button>
+      {!num(c?.libras) && (
+        <button
+          onClick={onSin}
+          title="Declarar que esta piscina no comió ese día"
+          style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
+                   fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '4px 6px',
+                   borderRadius: '6px', width: '100%' }}>
+          No comió
+        </button>
+      )}
     </div>
   )
 }
