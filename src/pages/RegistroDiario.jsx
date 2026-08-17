@@ -40,6 +40,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
   const [eventos, setEventos] = useState({})     // clave piscinaId -> evento de la semana
   const [laboratorios, setLaboratorios] = useState([])
   const [dialogo, setDialogo] = useState(null)   // { tipo, fila }
+  const [verIndicadores, setVerIndicadores] = useState(false)
+  const [acumulado, setAcumulado] = useState({})   // cicloId -> libras desde la siembra
+  const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
+  const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
   const refs = useRef({})
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
@@ -62,7 +66,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
 
       const { data: ciclos } = await supabase
         .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, cantidad_larva, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
+        .select('id, fecha_siembra, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
         .eq('finca_id', finca.id).eq('estado', 'abierto').lte('fecha_siembra', domingo)
 
       const porPiscina = {}
@@ -75,6 +79,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
           hectareas: Number(p.hectareas), tipo: p.tipo,
           fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
           laboratorio: c?.laboratorio?.nombre || null,
+          gramajePrecria: c?.gramaje_precria ?? null,
         }
       }).sort(ordenar)
       setPiscinas(lista)
@@ -102,6 +107,32 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
         ;(e || []).forEach(x => { evs[x.piscina_origen_id] = x })
       }
       setEventos(evs)
+
+      // Indicadores: acumulado del ciclo, raleos y pesos de la semana.
+      const ciclosIds = lista.filter(x => x.cicloId).map(x => x.cicloId)
+      const acum = {}, ral = {}, pes = {}
+      if (ciclosIds.length) {
+        const { data: hist } = await supabase
+          .schema('produccion').from('alimentacion')
+          .select('ciclo_id, libras').in('ciclo_id', ciclosIds).lte('fecha', domingo)
+        ;(hist || []).forEach(r => { acum[r.ciclo_id] = (acum[r.ciclo_id] || 0) + Number(r.libras) })
+
+        const { data: rals } = await supabase
+          .schema('produccion').from('evento')
+          .select('ciclo_id, libras').in('ciclo_id', ciclosIds).eq('tipo', 'raleo')
+        ;(rals || []).forEach(r => { ral[r.ciclo_id] = (ral[r.ciclo_id] || 0) + Number(r.libras || 0) })
+
+        const { data: ms } = await supabase
+          .schema('produccion').from('muestreo')
+          .select('piscina_id, fecha, peso_gramos').in('piscina_id', ids)
+          .gte('fecha', lunes).lte('fecha', domingo)
+        ;(ms || []).forEach(m => {
+          const d = new Date(m.fecha + 'T12:00:00').getDay()
+          pes[m.piscina_id] = { ...(pes[m.piscina_id] || {}),
+                                [d === 3 ? 'mie' : 'dom']: Number(m.peso_gramos) }
+        })
+      }
+      setAcumulado(acum); setRaleado(ral); setPesos(pes)
 
       const mapa = {}
       if (ids.length) {
@@ -319,7 +350,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS = `170px 96px 56px 124px 136px repeat(7, minmax(132px, 1fr)) 104px`
+  const COLS_BASE = '170px 96px 56px 124px 136px'
+  const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
+  const COLS_IND = verIndicadores ? ' 104px 96px 104px 96px 92px 92px 92px 116px 104px' : ''
+  const COLS = `${COLS_BASE} ${COLS_DIAS}${COLS_IND}`
+  const ANCHO = verIndicadores ? '2160px' : '1260px'
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -359,6 +394,23 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
             />
           </div>
         </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+        <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
+        <span style={{ ...chip, background: '#E6F1FB', borderColor: '#9cc4e8', color: AZUL, fontWeight: 500 }}>
+          Alimentación
+        </span>
+        <button onClick={() => setVerIndicadores(v => !v)} style={{
+          ...chip, cursor: 'pointer', fontFamily: 'inherit',
+          background: verIndicadores ? '#E6F1FB' : 'white',
+          borderColor: verIndicadores ? '#9cc4e8' : BORDE,
+          color: verIndicadores ? AZUL : GRIS,
+          fontWeight: verIndicadores ? 500 : 400,
+        }}>Indicadores</button>
+        <span style={{ ...chip, color: '#bccbd8', borderStyle: 'dashed' }} title="En construcción">
+          Costos y sacos
+        </span>
       </div>
 
       {aviso && (
@@ -410,7 +462,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
         <>
           <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
             <div style={{ overflowX: 'auto' }}>
-              <div style={{ minWidth: '1260px' }}>
+              <div style={{ minWidth: ANCHO }}>
 
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                               borderBottom: '0.5px solid ' + BORDE }}>
@@ -438,6 +490,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                     )
                   })}
                   <Th>Total semana</Th>
+                  {verIndicadores && (
+                    <>
+                      <Th>A la fecha</Th>
+                      <Th>Libras raleadas</Th>
+                      <Th>Consumo prom. semanal</Th>
+                      <Th>Libras por ha día</Th>
+                      <Th>Gramaje precría</Th>
+                      <Th>Peso miércoles</Th>
+                      <Th>Peso domingo</Th>
+                      <Th>Larva sembrada</Th>
+                      <Th>Densidad por ha</Th>
+                    </>
+                  )}
                 </div>
 
                 {visibles.map((p, i) => (
@@ -483,6 +548,25 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                       </Td>
                     ))}
                     <Td><span style={{ fontWeight: 500 }}>{miles(totalPiscina(p)) || ''}</span></Td>
+                    {verIndicadores && (() => {
+                      const t = totalPiscina(p)
+                      const g = pesos[p.piscinaId] || {}
+                      return (
+                        <>
+                          <Td><span style={{ color: GRIS }}>{p.cicloId ? miles(acumulado[p.cicloId] || 0) : ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{raleado[p.cicloId] ? miles(raleado[p.cicloId]) : ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{t ? miles(t / 7) : ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{t && p.hectareas ? (t / p.hectareas / 7).toFixed(1) : ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{p.gramajePrecria ?? ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{g.mie ?? ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{g.dom ?? ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{p.larva ? miles(p.larva) : ''}</span></Td>
+                          <Td><span style={{ color: GRIS }}>
+                            {p.larva && p.hectareas ? miles(p.larva / p.hectareas) : ''}
+                          </span></Td>
+                        </>
+                      )
+                    })()}
                   </div>
                 ))}
 
@@ -505,6 +589,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                     </Td>
                   ))}
                   <Td fondo="#fafcfd"><span style={{ fontWeight: 500, fontSize: '16px' }}>{miles(totalSemana)}</span></Td>
+                  {verIndicadores && Array.from({ length: 9 }, (_, k) => <Td key={k} fondo="#fafcfd" />)}
                 </div>
               </div>
             </div>
@@ -731,6 +816,8 @@ function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada }) {
 // ---------------------------------------------------------------------
 // Piezas sueltas
 // ---------------------------------------------------------------------
+const chip = { border: '0.5px solid ' + BORDE, borderRadius: '20px', padding: '7px 14px',
+               fontSize: '13px', background: 'white' }
 const cajaVacia = { border: '1px dashed #c9d8e5', borderRadius: '7px', padding: '9px 6px',
                     color: '#adbccb', fontSize: '12px' }
 const cajaSuave = { border: '1px dashed #e3ebf2', borderRadius: '7px', padding: '9px 6px',
