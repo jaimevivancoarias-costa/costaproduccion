@@ -4,6 +4,7 @@ import { hoyISO, lunesDe } from './lib/fechas'
 import RegistroDiario from './pages/RegistroDiario'
 import Gramaje from './pages/Gramaje'
 import Costos from './pages/Costos'
+import Resumen from './pages/Resumen'
 import EnConstruccion from './pages/EnConstruccion'
 
 // Navegacion de dos niveles (regla 9): la finca vive arriba como
@@ -132,7 +133,14 @@ export default function App() {
         </nav>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {modulo === 'registro' ? (
+          {modulo === 'resumen' ? (
+            <Resumen
+              fincas={fincas}
+              lunes={lunes}
+              setLunes={setLunes}
+              onIrAFinca={id => { setFincaId(id); setModulo('registro') }}
+            />
+          ) : modulo === 'registro' ? (
             <RegistroDiario
               key={finca.id}
               finca={finca}
