@@ -28,6 +28,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
   const [sacos, setSacos] = useState({})           // productoId -> consumo en sacos
   const [sacosPre, setSacosPre] = useState({})     // productoId -> consumo de precrias
   const [inv, setInv] = useState({})               // productoId -> fila de inventario
+  const [arrastre, setArrastre] = useState(null)   // productoId -> saldo final de la semana anterior
   const [guardandoInv, setGuardandoInv] = useState(false)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
@@ -102,6 +103,32 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
       ;(invRows || []).forEach(r => { mi[r.producto_id] = r })
       setInv(mi)
 
+      // El saldo inicial no se teclea: es el saldo final de la semana
+      // anterior. Si al contar no cuadra, la diferencia va como ajuste.
+      const lunesPrevio = sumarDias(lunes, -7)
+      const { anio: anP, semana: seP } = semanaISO(lunesPrevio)
+      const { data: invPrev } = await supabase
+        .schema('produccion').from('inventario_saco')
+        .select('*').eq('finca_id', finca.id).eq('anio', anP).eq('semana', seP)
+
+      if (!invPrev || !invPrev.length) {
+        setArrastre(null)     // primera semana: hay que contar la bodega
+      } else {
+        const { data: consPrev } = await supabase
+          .schema('produccion').from('vw_alimentacion_costeada')
+          .select('producto_id, sacos').in('piscina_id', ids)
+          .gte('fecha', lunesPrevio).lte('fecha', sumarDias(lunesPrevio, 6))
+        const cp = {}
+        ;(consPrev || []).forEach(r => { cp[r.producto_id] = (cp[r.producto_id] || 0) + Number(r.sacos) })
+
+        const arr = {}
+        invPrev.forEach(r => {
+          arr[r.producto_id] = Number(r.saldo_inicial || 0) + Number(r.entradas_recibidas || 0)
+                             + Number(r.ajustes || 0) - (cp[r.producto_id] || 0)
+        })
+        setArrastre(arr)
+      }
+
       // Precios vigentes de esta finca, para el panel de abajo.
       const { data: pr } = await supabase
         .schema('produccion').from('precio_producto')
@@ -164,11 +191,13 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
     setInv(x => ({ ...x, [productoId]: { ...(x[productoId] || {}), [campo]: valor } }))
   }
 
-  const saldoFinal = pid => {
-    const r = inv[pid] || {}
-    return (num(r.saldo_inicial) || 0) + (num(r.entradas_recibidas) || 0)
-         + (num(r.ajustes) || 0) - (sacos[pid] || 0)
-  }
+  // Si hay semana anterior, el saldo inicial viene de ella y no se toca.
+  const saldoInicial = pid =>
+    arrastre ? (arrastre[pid] || 0) : (num(inv[pid]?.saldo_inicial) || 0)
+
+  const saldoFinal = pid =>
+    saldoInicial(pid) + (num(inv[pid]?.entradas_recibidas) || 0)
+    + (num(inv[pid]?.ajustes) || 0) - (sacos[pid] || 0)
 
   async function guardarInventario() {
     setGuardandoInv(true); setAviso(null)
@@ -178,7 +207,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
         const r = inv[p.id] || {}
         return {
           finca_id: finca.id, producto_id: p.id, anio, semana,
-          saldo_inicial: num(r.saldo_inicial) || 0,
+          saldo_inicial: saldoInicial(p.id),
           entradas_recibidas: num(r.entradas_recibidas) || 0,
           ajustes: num(r.ajustes) || 0,
           motivo_ajuste: r.motivo_ajuste || null,
@@ -333,7 +362,8 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
             <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Control de sacos</h3>
             <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
               Saldo final = saldo inicial + pedido semanal + ajustes − consumo.
-              Todo en sacos de {LIBRAS_POR_SACO} libras.
+              El saldo inicial es el saldo final de la semana anterior: no se teclea.
+              Si al contar la bodega no cuadra, la diferencia va como ajuste.
             </p>
           </div>
 
@@ -346,9 +376,16 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                 <Th>Total</Th>
               </div>
 
-              <FilaSacos etiqueta="Saldo inicial" productos={productos} editable={esJefe}
-                valor={p => inv[p.id]?.saldo_inicial ?? ''}
-                onChange={(p, v) => setInvCampo(p.id, 'saldo_inicial', v)} />
+              {arrastre ? (
+                <FilaSacos etiqueta="Saldo inicial" productos={productos}
+                  nota="viene de la semana anterior"
+                  calculado={p => saldoInicial(p.id)} />
+              ) : (
+                <FilaSacos etiqueta="Saldo inicial" productos={productos} editable={esJefe}
+                  nota="primera semana: cuenta la bodega"
+                  valor={p => inv[p.id]?.saldo_inicial ?? ''}
+                  onChange={(p, v) => setInvCampo(p.id, 'saldo_inicial', v)} />
+              )}
 
               <FilaSacos etiqueta="Pedido semanal" productos={productos} editable={esJefe}
                 valor={p => inv[p.id]?.entradas_recibidas ?? ''}
@@ -490,7 +527,7 @@ function FormaPrecio({ actual, onGuardar }) {
   )
 }
 
-function FilaSacos({ etiqueta, productos, editable, valor, onChange, calculado, resaltado }) {
+function FilaSacos({ etiqueta, productos, editable, valor, onChange, calculado, resaltado, nota }) {
   const COLS = `210px ${productos.map(() => '132px').join(' ')} 116px`
   const total = calculado
     ? productos.reduce((s, p) => s + (calculado(p) || 0), 0)
@@ -501,6 +538,7 @@ function FilaSacos({ etiqueta, productos, editable, valor, onChange, calculado, 
                   borderBottom: '0.5px solid #f1f6f9', background: fondo }}>
       <Td pegado alineado="left" fondo={fondo}>
         <span style={{ fontSize: '13px', fontWeight: resaltado ? 500 : 400 }}>{etiqueta}</span>
+        {nota && <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>{nota}</div>}
       </Td>
       {productos.map(p => (
         <Td key={p.id} fondo={fondo}>
