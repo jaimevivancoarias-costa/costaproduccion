@@ -20,6 +20,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
   const [productos, setProductos] = useState([])
   const [acumulado, setAcumulado] = useState({})
   const [anual, setAnual] = useState(0)
+  const [sacosAnual, setSacosAnual] = useState(0)
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [precios, setPrecios] = useState([])
@@ -112,9 +113,10 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
 
       const { data: anio } = await supabase
         .schema('produccion').from('vw_alimentacion_costeada')
-        .select('costo').in('piscina_id', ids)
+        .select('costo, sacos').in('piscina_id', ids)
         .gte('fecha', lunes.slice(0, 4) + '-01-01').lte('fecha', domingo)
       setAnual((anio || []).reduce((s, r) => s + Number(r.costo), 0))
+      setSacosAnual((anio || []).reduce((s, r) => s + Number(r.sacos), 0))
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -180,7 +182,6 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
           entradas_recibidas: num(r.entradas_recibidas) || 0,
           ajustes: num(r.ajustes) || 0,
           motivo_ajuste: r.motivo_ajuste || null,
-          pedido_realizado: num(r.pedido_realizado) || 0,
         }
       })
       const { error } = await supabase.schema('produccion').from('inventario_saco')
@@ -195,7 +196,10 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
     }
   }
 
-  const COLS = `170px ${productos.map(() => '132px').join(' ')} 116px 104px 124px`
+  const precioDe = {}
+  precios.forEach(x => { precioDe[x.producto.id] = Number(x.precio_saco) })
+
+  const COLS = `170px ${productos.map(() => '132px').join(' ')} 116px 124px`
   const COLS_SACOS = `210px ${productos.map(() => '132px').join(' ')} 116px`
 
   return (
@@ -231,7 +235,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
         <Kpi k="Costo de la semana" v={dinero(totalCosto)} />
         <Kpi k="Costo por libra aplicada" v={totalLibras ? dinero(totalCosto / totalLibras) : '—'} />
         <Kpi k="Sacos de la semana" v={miles(totalSacos)} s={`${miles(totalLibras)} lb`} />
-        <Kpi k="Acumulado del año" v={dinero(anual)} />
+        <Kpi k="Acumulado del año" v={dinero(anual)} s={`${miles(sacosAnual)} sacos`} />
       </div>
 
       {cargando ? (
@@ -246,9 +250,20 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
               <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                             borderBottom: '0.5px solid ' + BORDE }}>
                 <Th pegado>Piscina</Th>
-                {productos.map(p => <Th key={p.id} titulo={p.nombre}>{p.nombre}</Th>)}
+                {productos.map(p => (
+                  <Th key={p.id} titulo={p.nombre}>
+                    {p.nombre}
+                    {precioDe[p.id] && (
+                      <div style={{ marginTop: '4px', color: AZUL, fontWeight: 500 }}>
+                        {dinero(precioDe[p.id])} saco
+                        <div style={{ color: GRIS, fontWeight: 400 }}>
+                          {dinero(precioDe[p.id] / LIBRAS_POR_SACO)} libra
+                        </div>
+                      </div>
+                    )}
+                  </Th>
+                ))}
                 <Th>Costo semana</Th>
-                <Th>Costo por libra</Th>
                 <Th>Acumulado del ciclo</Th>
               </div>
 
@@ -269,7 +284,6 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                     </Td>
                   ))}
                   <Td><span style={{ fontWeight: 500 }}>{dinero(f.costo)}</span></Td>
-                  <Td><span style={{ color: GRIS }}>{f.libras ? dinero(f.costo / f.libras) : ''}</span></Td>
                   <Td><span style={{ color: GRIS }}>{dinero(acumulado[f.id] || 0)}</span></Td>
                 </div>
               ))}
@@ -286,9 +300,6 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                   </Td>
                 ))}
                 <Td fondo="#fafcfd"><span style={{ fontWeight: 500, fontSize: '15px' }}>{dinero(totalCosto)}</span></Td>
-                <Td fondo="#fafcfd"><span style={{ color: GRIS }}>
-                  {totalLibras ? dinero(totalCosto / totalLibras) : ''}
-                </span></Td>
                 <Td fondo="#fafcfd" />
               </div>
             </div>
@@ -314,8 +325,8 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
           <div style={{ padding: '16px 18px 12px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Control de sacos</h3>
             <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
-              Saldo final = saldo inicial + entradas recibidas + ajustes − consumo.
-              El pedido no suma al saldo: solo cuenta lo que entró a bodega.
+              Saldo final = saldo inicial + pedido semanal + ajustes − consumo.
+              Todo en sacos de {LIBRAS_POR_SACO} libras.
             </p>
           </div>
 
@@ -332,7 +343,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                 valor={p => inv[p.id]?.saldo_inicial ?? ''}
                 onChange={(p, v) => setInvCampo(p.id, 'saldo_inicial', v)} />
 
-              <FilaSacos etiqueta="Entradas recibidas" productos={productos} editable={esJefe}
+              <FilaSacos etiqueta="Pedido semanal" productos={productos} editable={esJefe}
                 valor={p => inv[p.id]?.entradas_recibidas ?? ''}
                 onChange={(p, v) => setInvCampo(p.id, 'entradas_recibidas', v)} />
 
@@ -349,9 +360,6 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
               <FilaSacos etiqueta="Saldo final" resaltado productos={productos}
                 calculado={p => saldoFinal(p.id)} />
 
-              <FilaSacos etiqueta="Pedido de la semana" productos={productos} editable={esJefe}
-                valor={p => inv[p.id]?.pedido_realizado ?? ''}
-                onChange={(p, v) => setInvCampo(p.id, 'pedido_realizado', v)} />
             </div>
           </div>
 
@@ -376,30 +384,38 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
             : ' Solo un jefe puede cambiarlos.'}
         </p>
 
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,1fr) 100px 96px 132px 130px',
+                      gap: '12px', padding: '0 0 8px', fontSize: '11px', color: GRIS }}>
+          <div>Producto</div>
+          <div style={{ textAlign: 'right' }}>Por saco</div>
+          <div style={{ textAlign: 'right' }}>Por libra</div>
+          <div>Vigente desde</div>
+          <div />
+        </div>
+
         {precios.map(p => (
-          <div key={p.id} style={{ borderBottom: '0.5px solid #f1f6f9', padding: '10px 0' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 500, minWidth: '200px', fontSize: '14px' }}>
-                {p.producto.nombre}
-              </span>
-              <span style={{ fontSize: '17px', fontWeight: 500, minWidth: '90px' }}>
+          <div key={p.id} style={{ borderBottom: '0.5px solid #f1f6f9', padding: '9px 0' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,1fr) 100px 96px 132px 130px',
+                          gap: '12px', alignItems: 'center' }}>
+              <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.producto.nombre}</span>
+              <span style={{ fontSize: '16px', fontWeight: 500, textAlign: 'right',
+                             fontVariantNumeric: 'tabular-nums' }}>
                 {dinero(p.precio_saco)}
               </span>
-              <span style={{ fontSize: '12px', color: GRIS, minWidth: '190px' }}>
-                por saco · {dinero(p.precio_saco / LIBRAS_POR_SACO)} por libra
+              <span style={{ fontSize: '13px', color: GRIS, textAlign: 'right',
+                             fontVariantNumeric: 'tabular-nums' }}>
+                {dinero(p.precio_saco / LIBRAS_POR_SACO)}
               </span>
-              <span style={{ fontSize: '12px', color: GRIS }}>
-                desde el {corta(p.vigente_desde)}
-              </span>
-              {esJefe && (
+              <span style={{ fontSize: '13px', color: GRIS }}>{corta(p.vigente_desde)}</span>
+              {esJefe ? (
                 <button
                   onClick={() => setEditando(editando?.id === p.id ? null : p)}
-                  style={{ marginLeft: 'auto', background: 'white', border: '0.5px solid ' + BORDE,
+                  style={{ background: 'white', border: '0.5px solid ' + BORDE,
                            borderRadius: '9px', padding: '7px 13px', fontFamily: 'inherit',
                            fontSize: '13px', color: NAVY, cursor: 'pointer' }}>
                   {editando?.id === p.id ? 'Cancelar' : 'Cambiar precio'}
                 </button>
-              )}
+              ) : <span />}
             </div>
             {editando?.id === p.id && (
               <FormaPrecio actual={p} onGuardar={guardarPrecio} />
