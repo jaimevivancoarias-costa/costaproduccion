@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import DialogoEvento, { TIPOS, guardarEvento } from './DialogoEvento'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, miles,
@@ -36,6 +37,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
   const [validaciones, setValidaciones] = useState(null)
+  const [eventos, setEventos] = useState({})     // clave piscinaId -> evento de la semana
+  const [laboratorios, setLaboratorios] = useState([])
+  const [dialogo, setDialogo] = useState(null)   // { tipo, fila }
   const refs = useRef({})
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
@@ -47,18 +51,37 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     try {
       const domingo = fechas[6]
 
-      const { data: ciclos, error } = await supabase
-        .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
-        .eq('finca_id', finca.id).eq('estado', 'abierto').lte('fecha_siembra', domingo)
+      // Todas las piscinas de la finca, tengan o no ciclo. En el Excel
+      // aparecen todas cada semana; una piscina vacia hay que poder verla
+      // para poder sembrarla.
+      const { data: todas, error } = await supabase
+        .schema('produccion').from('piscina')
+        .select('id, codigo, nombre, hectareas, tipo')
+        .eq('finca_id', finca.id).eq('activa', true)
       if (error) throw error
 
-      const lista = (ciclos || []).filter(c => c.piscina).map(c => ({
-        cicloId: c.id, piscinaId: c.piscina.id, codigo: c.piscina.codigo,
-        nombre: c.piscina.nombre, hectareas: Number(c.piscina.hectareas),
-        tipo: c.piscina.tipo, fechaSiembra: c.fecha_siembra,
-      })).sort(ordenar)
+      const { data: ciclos } = await supabase
+        .schema('produccion').from('ciclo')
+        .select('id, fecha_siembra, cantidad_larva, piscina_origen_id')
+        .eq('finca_id', finca.id).eq('estado', 'abierto').lte('fecha_siembra', domingo)
+
+      const porPiscina = {}
+      ;(ciclos || []).forEach(c => { porPiscina[c.piscina_origen_id] = c })
+
+      const lista = (todas || []).map(p => {
+        const c = porPiscina[p.id]
+        return {
+          cicloId: c?.id || null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
+          hectareas: Number(p.hectareas), tipo: p.tipo,
+          fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
+        }
+      }).sort(ordenar)
       setPiscinas(lista)
+
+      const { data: labs } = await supabase
+        .schema('produccion').from('laboratorio')
+        .select('id, nombre').eq('activo', true).order('nombre')
+      setLaboratorios(labs || [])
 
       const { data: prods } = await supabase
         .schema('produccion').from('producto')
@@ -66,6 +89,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
       setProductos(prods || [])
 
       const ids = lista.map(p => p.piscinaId)
+
+      // Eventos ocurridos en esta semana, para mostrarlos en la columna
+      // de estado igual que la columna ESTADO PISCINA del Excel.
+      const evs = {}
+      if (ids.length) {
+        const { data: e } = await supabase
+          .schema('produccion').from('evento')
+          .select('id, tipo, fecha, libras, piscina_origen_id')
+          .in('piscina_origen_id', ids).gte('fecha', lunes).lte('fecha', domingo)
+        ;(e || []).forEach(x => { evs[x.piscina_origen_id] = x })
+      }
+      setEventos(evs)
+
       const mapa = {}
       if (ids.length) {
         const { data: alim } = await supabase
@@ -118,6 +154,20 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     return fecha === hoy
   }
 
+  async function registrarEvento(datos) {
+    try {
+      await guardarEvento({
+        tipo: dialogo.tipo, fincaId: finca.id,
+        ciclo: dialogo.fila, piscina: dialogo.fila, datos,
+      })
+      setDialogo(null)
+      setAviso({ tipo: 'ok', texto: TIPOS[dialogo.tipo].nombre + ' registrada' })
+      await cargar()
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+    }
+  }
+
   const clave = (p, f) => `${p.piscinaId}|${f}`
   const cel = (p, f) => celdas[clave(p, f)]
 
@@ -164,6 +214,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
 
   // Regla 2.4: solo cuenta lo pendiente de hoy y lo atrasado de dias pasados.
   const pendientesHoy = piscinas.filter(p => {
+    if (!p.cicloId) return false
     if (p.tipo === 'precria') return false
     const c = cel(p, hoy)
     return !c || (!c.sinAlimentacion && !num(c.libras))
@@ -172,6 +223,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
   fechas.forEach(f => {
     if (situacionDia(f, hoy) !== 'pasado') return
     piscinas.forEach(p => {
+      if (!p.cicloId || p.tipo === 'precria') return
+      if (p.fechaSiembra && f < p.fechaSiembra) return
       const c = cel(p, f)
       if (!c || (!c.sinAlimentacion && !num(c.libras))) atrasadas.push({ p, f })
     })
@@ -183,6 +236,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
       const filas = []
       const borrar = []
       for (const p of piscinas) {
+        if (!p.cicloId) continue
         for (const f of fechas) {
           if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
           const c = cel(p, f)
@@ -264,7 +318,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS = `170px 96px 56px repeat(7, minmax(112px, 1fr)) 104px`
+  const COLS = `170px 96px 56px 136px repeat(7, minmax(112px, 1fr)) 104px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -353,6 +407,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                   <Th pegado>Piscina</Th>
                   <Th>Siembra</Th>
                   <Th>Días</Th>
+                  <Th>Estado</Th>
                   {fechas.map(f => {
                     const s = situacionDia(f, hoy)
                     const est = dias[f]
@@ -384,8 +439,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                         {p.tipo === 'precria' && ' · precría'}
                       </div>
                     </Td>
-                    <Td><span style={{ color: GRIS, fontSize: '12px' }}>{corta(p.fechaSiembra)}</span></Td>
-                    <Td><span style={{ fontWeight: 500 }}>{diasCultivo(p.fechaSiembra, fechas[6])}</span></Td>
+                    <Td><span style={{ color: GRIS, fontSize: '12px' }}>
+                      {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
+                    </span></Td>
+                    <Td><span style={{ fontWeight: 500 }}>
+                      {p.fechaSiembra ? diasCultivo(p.fechaSiembra, fechas[6]) : ''}
+                    </span></Td>
+                    <Td>
+                      <Estado
+                        fila={p} evento={eventos[p.piscinaId]}
+                        puede={!soloLectura && modo === 'registrar'}
+                        onElegir={tipo => setDialogo({ tipo, fila: p })}
+                      />
+                    </Td>
                     {fechas.map((f, j) => (
                       <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB
                                         : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : undefined}
@@ -414,6 +480,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                   </Td>
                   <Td fondo="#fafcfd" />
                   <Td fondo="#fafcfd"><span style={{ fontSize: '11px', color: GRIS }}>{piscinas.length} piscinas</span></Td>
+                  <Td fondo="#fafcfd" />
                   {fechas.map(f => (
                     <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
                         borde={situacionDia(f, hoy) === 'hoy'}>
@@ -458,6 +525,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
             </div>
           </div>
 
+          {dialogo && (
+            <DialogoEvento
+              tipo={dialogo.tipo}
+              ciclo={dialogo.fila}
+              piscina={dialogo.fila}
+              laboratorios={laboratorios}
+              destinosPosibles={piscinas.filter(x => !x.cicloId)}
+              minima={dialogo.tipo === 'siembra' ? undefined : dialogo.fila.fechaSiembra}
+              onCancelar={() => setDialogo(null)}
+              onGuardar={registrarEvento}
+            />
+          )}
+
           <Cierre
             validaciones={validaciones}
             onRevisar={revisarSemana}
@@ -475,8 +555,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
 // Celda: las tres situaciones de la regla 2.3
 // ---------------------------------------------------------------------
 function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, onSin, onLimpiar, inputRef, onKeyDown }) {
-  if (p.tipo === 'precria' && !c) {
-    return <div style={cajaSuave}>sin ciclo</div>
+  if (!p.cicloId) {
+    return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
   if (f < p.fechaSiembra) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
@@ -534,6 +614,52 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
         </button>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Columna de estado: es la columna ESTADO PISCINA del Excel.
+// Si la piscina no tiene ciclo, lo unico posible es sembrarla.
+// ---------------------------------------------------------------------
+function Estado({ fila, evento, puede, onElegir }) {
+  if (evento) {
+    const t = TIPOS[evento.tipo] || TIPOS.siembra
+    return (
+      <div>
+        <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 9px', borderRadius: '20px',
+                       background: t.fondo, color: t.color }}>{t.nombre}</span>
+        <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
+          {corta(evento.fecha)}{evento.libras ? ` · ${miles(evento.libras)} lb` : ''}
+        </div>
+      </div>
+    )
+  }
+
+  if (!puede) return <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
+
+  if (!fila.cicloId) {
+    return (
+      <button onClick={() => onElegir('siembra')}
+        style={{ padding: '6px 13px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
+                 cursor: 'pointer', border: '0.5px solid #9fe1cb', background: '#E1F5EE',
+                 color: '#0F6E56', fontWeight: 500 }}>
+        Sembrar
+      </button>
+    )
+  }
+
+  return (
+    <select
+      value=""
+      onChange={e => { if (e.target.value) onElegir(e.target.value) }}
+      style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
+               border: '0.5px solid ' + BORDE, borderRadius: '7px', background: 'white', color: GRIS }}
+    >
+      <option value="">Sin novedad</option>
+      <option value="raleo">Raleo</option>
+      <option value="transferencia">Transferencia</option>
+      <option value="cosecha">Cosecha</option>
+    </select>
   )
 }
 
