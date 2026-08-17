@@ -23,8 +23,7 @@ const GRIS = '#7d8fa0'
 const HOYB = '#E6F1FB'
 const HOYL = '#85B7EB'
 
-export default function RegistroDiario({ finca, esJefe, soloLectura }) {
-  const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
+export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [piscinas, setPiscinas] = useState([])
   const [productos, setProductos] = useState([])
   const [celdas, setCeldas] = useState({})       // clave `${piscinaId}|${fecha}`
@@ -428,9 +427,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
           color: verIndicadores ? AZUL : GRIS,
           fontWeight: verIndicadores ? 500 : 400,
         }}>Indicadores</button>
-        <span style={{ ...chip, color: '#bccbd8', borderStyle: 'dashed' }} title="En construcción">
-          Costos y sacos
-        </span>
       </div>
 
       {aviso && (
