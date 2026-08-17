@@ -296,14 +296,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
         if (error) throw error
       }
 
-      const estado = cerrarDia ? 'cerrado' : 'borrador'
-      const { error: e2 } = await supabase.schema('produccion').from('dia_registro')
-        .upsert({ finca_id: finca.id, fecha: hoy, estado,
-                  ...(cerrarDia ? { cerrado_en: new Date().toISOString() } : {}) },
-                { onConflict: 'finca_id,fecha' })
-      if (e2) throw e2
+      // Solo se toca el estado del dia cuando se esta en la semana en curso.
+      // Corregir una semana pasada no debe reabrir ni cerrar nada.
+      if (semanaDeHoy) {
+        const estado = cerrarDia ? 'cerrado' : 'borrador'
+        const { error: e2 } = await supabase.schema('produccion').from('dia_registro')
+          .upsert({ finca_id: finca.id, fecha: hoy, estado,
+                    ...(cerrarDia ? { cerrado_en: new Date().toISOString() } : {}) },
+                  { onConflict: 'finca_id,fecha' })
+        if (e2) throw e2
+      }
 
-      setAviso({ tipo: 'ok', texto: cerrarDia ? 'Día cerrado' : 'Borrador guardado' })
+      setAviso({ tipo: 'ok',
+        texto: !semanaDeHoy ? 'Cambios guardados' : (cerrarDia ? 'Día cerrado' : 'Borrador guardado') })
       await cargar()
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -426,11 +431,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
         </div>
       )}
 
-      {modo === 'registrar' && !soloLectura && !semanaCerrada && semanaDeHoy && (
+      {modo === 'registrar' && !soloLectura && !semanaCerrada && (semanaDeHoy || esJefe) && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
                       background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                       padding: '11px 14px', marginBottom: '10px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13px', color: GRIS }}>
+          {semanaDeHoy && <div style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13px', color: GRIS }}>
             <span>
               <b style={{ fontWeight: 500, color: NAVY }}>
                 {piscinas.filter(p => p.tipo !== 'precria').length - pendientesHoy.length} de {piscinas.filter(p => p.tipo !== 'precria').length}
@@ -440,14 +445,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
               <i style={{ display: 'block', height: '100%', background: '#1D9E75',
                 width: (piscinas.length ? ((piscinas.filter(p => p.tipo !== 'precria').length - pendientesHoy.length) / Math.max(1, piscinas.filter(p => p.tipo !== 'precria').length)) * 100 : 0) + '%' }} />
             </span>
-          </div>
-          <Sep />
+          </div>}
+          {semanaDeHoy && <><Sep />
           <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', cursor: 'pointer' }}>
             <input type="checkbox" checked={soloPendientes} onChange={e => setSoloPendientes(e.target.checked)} />
             Solo pendientes
           </label>
           <Sep />
-          <Btn fantasma onClick={() => copiarDiaAnterior(hoy)}>Copiar día anterior</Btn>
+          <Btn fantasma onClick={() => copiarDiaAnterior(hoy)}>Copiar día anterior</Btn></>}
+          {!semanaDeHoy && (
+            <span style={{ fontSize: '13px', color: '#854F0B' }}>
+              Estás editando una semana anterior. Los cambios quedan en la bitácora.
+            </span>
+          )}
           <span style={{ marginLeft: 'auto', fontSize: '12px', color: sucio ? '#BA7517' : GRIS }}>
             {sucio ? 'Hay cambios sin guardar' : 'Sin cambios sin guardar'}
           </span>
@@ -614,12 +624,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
                 <Dato k="Sacos de la semana" v={(totalSemana / LIBRAS_POR_SACO).toFixed(1)} />
                 <Dato k="Total de la semana" v={miles(totalSemana)} />
               </div>
-              {!soloLectura && modo === 'registrar' && !semanaCerrada && semanaDeHoy && (
+              {!soloLectura && modo === 'registrar' && !semanaCerrada && (semanaDeHoy || esJefe) && (
                 <div style={{ display: 'flex', gap: '9px' }}>
                   <Btn onClick={() => guardar(false)} disabled={guardando}>
-                    {guardando ? 'Guardando...' : 'Guardar borrador'}
+                    {guardando ? 'Guardando...' : (semanaDeHoy ? 'Guardar borrador' : 'Guardar cambios')}
                   </Btn>
-                  <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
+                  {semanaDeHoy && (
+                    <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
+                  )}
                 </div>
               )}
             </div>
