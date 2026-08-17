@@ -86,7 +86,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           cicloId: c?.id || null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
           hectareas: Number(p.hectareas), tipo: p.tipo,
           fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
-          fechaCierre: c?.fecha_cierre || null, cicloCerrado: c?.estado === 'cerrado',
+          fechaCierre: c?.fecha_cierre || null,
+          // Un ciclo esta cerrado PARA ESTA SEMANA solo si termino antes
+          // del lunes. Mirar estado seria mirar la foto de hoy: la P2
+          // cosecho el 18 de junio, y en la semana del 15 al 21 todavia
+          // estaba viva y hay que poder registrarle esa cosecha.
+          cicloCerrado: !!(c?.fecha_cierre && c.fecha_cierre < lunes),
           laboratorio: c?.laboratorio?.nombre || null,
           gramajePrecria: c?.gramaje_precria ?? null,
         }
