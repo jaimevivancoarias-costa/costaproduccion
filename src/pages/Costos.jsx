@@ -252,15 +252,22 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                 <Th pegado>Piscina</Th>
                 {productos.map(p => (
                   <Th key={p.id} titulo={p.nombre}>
-                    {p.nombre}
-                    {precioDe[p.id] && (
-                      <div style={{ marginTop: '4px', color: AZUL, fontWeight: 500 }}>
-                        {dinero(precioDe[p.id])} saco
-                        <div style={{ color: GRIS, fontWeight: 400 }}>
-                          {dinero(precioDe[p.id] / LIBRAS_POR_SACO)} libra
-                        </div>
-                      </div>
-                    )}
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end',
+                                  justifyContent: 'center', paddingBottom: '6px' }}>
+                      {p.nombre}
+                    </div>
+                    <div style={{ borderTop: '0.5px solid #e8eef4', paddingTop: '5px' }}>
+                      {precioDe[p.id] ? (
+                        <>
+                          <div style={{ color: AZUL, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                            {dinero(precioDe[p.id])}
+                          </div>
+                          <div style={{ color: GRIS, fontWeight: 400, fontVariantNumeric: 'tabular-nums' }}>
+                            {dinero(precioDe[p.id] / LIBRAS_POR_SACO)} lb
+                          </div>
+                        </>
+                      ) : <div style={{ color: '#c3d0db' }}>sin precio</div>}
+                    </div>
                   </Th>
                 ))}
                 <Th>Costo semana</Th>
@@ -537,6 +544,7 @@ function Th({ children, pegado, titulo }) {
     <div title={titulo} style={{
       padding: '10px 9px', fontSize: '11px', color: GRIS, fontWeight: 500, textAlign: 'center',
       background: '#fafcfd', lineHeight: 1.3,
+      display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
       ...(pegado ? { position: 'sticky', left: 0, zIndex: 3, textAlign: 'left',
                      paddingLeft: '16px', borderRight: '0.5px solid ' + BORDE } : {}),
     }}>{children}</div>
