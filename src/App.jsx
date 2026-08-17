@@ -138,7 +138,7 @@ export default function App() {
           ) : modulo === 'gramaje' ? (
             <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} />
           ) : modulo === 'costos' ? (
-            <Costos key={finca.id} finca={finca} />
+            <Costos key={finca.id} finca={finca} esJefe={esJefe} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === modulo)} />
           )}
