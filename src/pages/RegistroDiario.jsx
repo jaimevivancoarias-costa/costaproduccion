@@ -637,28 +637,24 @@ function Estado({ fila, evento, puede, onElegir }) {
 
   if (!puede) return <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
 
-  if (!fila.cicloId) {
-    return (
-      <button onClick={() => onElegir('siembra')}
-        style={{ padding: '6px 13px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
-                 cursor: 'pointer', border: '0.5px solid #9fe1cb', background: '#E1F5EE',
-                 color: '#0F6E56', fontWeight: 500 }}>
-        Sembrar
-      </button>
-    )
-  }
+  // Mismo control en todas las filas. Lo que cambia son las opciones:
+  // una piscina vacia solo se puede sembrar, una sembrada no.
+  const opciones = fila.cicloId
+    ? [['raleo', 'Raleo'], ['transferencia', 'Transferencia'], ['cosecha', 'Cosecha']]
+    : [['siembra', 'Sembrar']]
 
   return (
     <select
       value=""
       onChange={e => { if (e.target.value) onElegir(e.target.value) }}
       style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
-               border: '0.5px solid ' + BORDE, borderRadius: '7px', background: 'white', color: GRIS }}
+               borderRadius: '7px', background: fila.cicloId ? 'white' : '#E1F5EE',
+               border: '0.5px solid ' + (fila.cicloId ? BORDE : '#9fe1cb'),
+               color: fila.cicloId ? GRIS : '#0F6E56',
+               fontWeight: fila.cicloId ? 400 : 500 }}
     >
-      <option value="">Sin novedad</option>
-      <option value="raleo">Raleo</option>
-      <option value="transferencia">Transferencia</option>
-      <option value="cosecha">Cosecha</option>
+      <option value="">{fila.cicloId ? 'Sin novedad' : 'Vacía'}</option>
+      {opciones.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
     </select>
   )
 }
