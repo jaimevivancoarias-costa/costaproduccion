@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from './context/AuthContext'
 import RegistroDiario from './pages/RegistroDiario'
-import Eventos from './pages/Eventos'
 import EnConstruccion from './pages/EnConstruccion'
 
 // Navegacion de dos niveles (regla 9): la finca vive arriba como
@@ -17,7 +16,6 @@ const GRIS = '#7d8fa0'
 const MODULOS = [
   { id: 'resumen',    nombre: 'Resumen',        icono: 'grid' },
   { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
-  { id: 'eventos',    nombre: 'Ciclos y eventos', icono: 'ciclo' },
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
   { id: 'costos',     nombre: 'Costos',         icono: 'moneda' },
@@ -29,7 +27,6 @@ function Icono({ tipo }) {
               stroke: 'currentColor', strokeWidth: 1.5 }
   if (tipo === 'grid') return <svg {...p}><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
   if (tipo === 'calendario') return <svg {...p}><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>
-  if (tipo === 'ciclo') return <svg {...p}><path d="M13.5 8a5.5 5.5 0 1 1-1.8-4.1"/><path d="M13.8 1.5v3h-3"/></svg>
   if (tipo === 'barras') return <svg {...p}><path d="M3 13V7M8 13V3M13 13v-4"/></svg>
   if (tipo === 'caja') return <svg {...p}><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3 6-3M8 8v6"/></svg>
   if (tipo === 'moneda') return <svg {...p}><circle cx="8" cy="8" r="6"/><path d="M8 4.5v7M6 6.5h3M6 9.5h3"/></svg>
@@ -131,13 +128,6 @@ export default function App() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {modulo === 'registro' ? (
             <RegistroDiario
-              key={finca.id}
-              finca={finca}
-              esJefe={esJefe}
-              soloLectura={soloLectura}
-            />
-          ) : modulo === 'eventos' ? (
-            <Eventos
               key={finca.id}
               finca={finca}
               esJefe={esJefe}
