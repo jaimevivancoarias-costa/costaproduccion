@@ -57,12 +57,22 @@ export default function Resumen({ fincas, lunes, setLunes, onIrAFinca }) {
         nPisc[p.finca_id] = (nPisc[p.finca_id] || 0) + 1
       })
 
-      const sembradas = {}, hasSembradas = {}
+      // Se cuentan PISCINAS distintas, no ciclos: una piscina que se
+      // cosecho y se resembro en la misma semana tiene dos ciclos, pero
+      // sigue siendo una sola piscina.
       const areaPiscina = {}
       ;(pisc.data || []).forEach(p => { areaPiscina[p.id] = Number(p.hectareas) })
+
+      const piscinasSembradas = {}
       ;(ciclos.data || []).forEach(c => {
-        sembradas[c.finca_id] = (sembradas[c.finca_id] || 0) + 1
-        hasSembradas[c.finca_id] = (hasSembradas[c.finca_id] || 0) + (areaPiscina[c.piscina_origen_id] || 0)
+        if (!piscinasSembradas[c.finca_id]) piscinasSembradas[c.finca_id] = new Set()
+        piscinasSembradas[c.finca_id].add(c.piscina_origen_id)
+      })
+
+      const sembradas = {}, hasSembradas = {}
+      Object.entries(piscinasSembradas).forEach(([fincaId, set]) => {
+        sembradas[fincaId] = set.size
+        hasSembradas[fincaId] = [...set].reduce((s, id) => s + (areaPiscina[id] || 0), 0)
       })
 
       const cerrados = {}
