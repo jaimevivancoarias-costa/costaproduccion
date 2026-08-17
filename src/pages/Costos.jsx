@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
-  LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, num, miles, dinero,
+  LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, semanaISO, corta, num, miles, dinero,
 } from '../lib/fechas'
 
 // Costos · banda 3 del Excel
@@ -15,8 +15,7 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 
-export default function Costos({ finca, esJefe }) {
-  const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
+export default function Costos({ finca, esJefe, lunes, setLunes }) {
   const [filas, setFilas] = useState([])
   const [productos, setProductos] = useState([])
   const [acumulado, setAcumulado] = useState({})
@@ -25,6 +24,10 @@ export default function Costos({ finca, esJefe }) {
   const [aviso, setAviso] = useState(null)
   const [precios, setPrecios] = useState([])
   const [editando, setEditando] = useState(null)   // { producto, precioActual }
+  const [sacos, setSacos] = useState({})           // productoId -> consumo en sacos
+  const [sacosPre, setSacosPre] = useState({})     // productoId -> consumo de precrias
+  const [inv, setInv] = useState({})               // productoId -> fila de inventario
+  const [guardandoInv, setGuardandoInv] = useState(false)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -57,6 +60,15 @@ export default function Costos({ finca, esJefe }) {
       const usados = new Set((sem || []).map(r => r.producto_id))
       setProductos((prods || []).filter(p => usados.has(p.id)))
 
+      const esPrecria = {}
+      ;(piscinas || []).forEach(p => { esPrecria[p.id] = p.tipo === 'precria' })
+      const sc = {}, scp = {}
+      ;(sem || []).forEach(r => {
+        sc[r.producto_id] = (sc[r.producto_id] || 0) + Number(r.sacos)
+        if (esPrecria[r.piscina_id]) scp[r.producto_id] = (scp[r.producto_id] || 0) + Number(r.sacos)
+      })
+      setSacos(sc); setSacosPre(scp)
+
       const porPiscina = {}
       ;(sem || []).forEach(r => {
         const f = porPiscina[r.piscina_id] || (porPiscina[r.piscina_id] = { libras: 0, costo: 0, sacos: 0, prod: {} })
@@ -80,6 +92,14 @@ export default function Costos({ finca, esJefe }) {
         ;(hist || []).forEach(r => { acum[r.piscina_id] = (acum[r.piscina_id] || 0) + Number(r.costo) })
       }
       setAcumulado(acum)
+
+      const { anio: an, semana: se } = semanaISO(lunes)
+      const { data: invRows } = await supabase
+        .schema('produccion').from('inventario_saco')
+        .select('*').eq('finca_id', finca.id).eq('anio', an).eq('semana', se)
+      const mi = {}
+      ;(invRows || []).forEach(r => { mi[r.producto_id] = r })
+      setInv(mi)
 
       // Precios vigentes de esta finca, para el panel de abajo.
       const { data: pr } = await supabase
@@ -138,7 +158,45 @@ export default function Costos({ finca, esJefe }) {
     }
   }
 
-  const COLS = `170px ${productos.map(() => '112px').join(' ')} 116px 104px 124px`
+  function setInvCampo(productoId, campo, valor) {
+    setInv(x => ({ ...x, [productoId]: { ...(x[productoId] || {}), [campo]: valor } }))
+  }
+
+  const saldoFinal = pid => {
+    const r = inv[pid] || {}
+    return (num(r.saldo_inicial) || 0) + (num(r.entradas_recibidas) || 0)
+         + (num(r.ajustes) || 0) - (sacos[pid] || 0)
+  }
+
+  async function guardarInventario() {
+    setGuardandoInv(true); setAviso(null)
+    try {
+      const { anio, semana } = semanaISO(lunes)
+      const filasInv = productos.map(p => {
+        const r = inv[p.id] || {}
+        return {
+          finca_id: finca.id, producto_id: p.id, anio, semana,
+          saldo_inicial: num(r.saldo_inicial) || 0,
+          entradas_recibidas: num(r.entradas_recibidas) || 0,
+          ajustes: num(r.ajustes) || 0,
+          motivo_ajuste: r.motivo_ajuste || null,
+          pedido_realizado: num(r.pedido_realizado) || 0,
+        }
+      })
+      const { error } = await supabase.schema('produccion').from('inventario_saco')
+        .upsert(filasInv, { onConflict: 'finca_id,producto_id,anio,semana' })
+      if (error) throw error
+      setAviso({ tipo: 'ok', texto: 'Inventario guardado' })
+      await cargar()
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar el inventario. ' + (err.message || '') })
+    } finally {
+      setGuardandoInv(false)
+    }
+  }
+
+  const COLS = `170px ${productos.map(() => '132px').join(' ')} 116px 104px 124px`
+  const COLS_SACOS = `210px ${productos.map(() => '132px').join(' ')} 116px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -188,7 +246,7 @@ export default function Costos({ finca, esJefe }) {
               <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                             borderBottom: '0.5px solid ' + BORDE }}>
                 <Th pegado>Piscina</Th>
-                {productos.map(p => <Th key={p.id}>{p.nombre_corto}</Th>)}
+                {productos.map(p => <Th key={p.id} titulo={p.nombre}>{p.nombre}</Th>)}
                 <Th>Costo semana</Th>
                 <Th>Costo por libra</Th>
                 <Th>Acumulado del ciclo</Th>
@@ -247,6 +305,64 @@ export default function Costos({ finca, esJefe }) {
                 </b>, con {Math.round(masUsado[1] / totalCosto * 100)}% del costo.</>
             )}
           </div>
+        </div>
+      )}
+
+      {!!productos.length && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                      marginTop: '12px', overflow: 'hidden' }}>
+          <div style={{ padding: '16px 18px 12px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Control de sacos</h3>
+            <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
+              Saldo final = saldo inicial + entradas recibidas + ajustes − consumo.
+              El pedido no suma al saldo: solo cuenta lo que entró a bodega.
+            </p>
+          </div>
+
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: 210 + productos.length * 132 + 116 + 'px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: COLS_SACOS, background: '#fafcfd',
+                            borderBottom: '0.5px solid ' + BORDE }}>
+                <Th pegado>Concepto</Th>
+                {productos.map(p => <Th key={p.id} titulo={p.nombre}>{p.nombre}</Th>)}
+                <Th>Total</Th>
+              </div>
+
+              <FilaSacos etiqueta="Saldo inicial" productos={productos} editable={esJefe}
+                valor={p => inv[p.id]?.saldo_inicial ?? ''}
+                onChange={(p, v) => setInvCampo(p.id, 'saldo_inicial', v)} />
+
+              <FilaSacos etiqueta="Entradas recibidas" productos={productos} editable={esJefe}
+                valor={p => inv[p.id]?.entradas_recibidas ?? ''}
+                onChange={(p, v) => setInvCampo(p.id, 'entradas_recibidas', v)} />
+
+              <FilaSacos etiqueta="Consumo de la semana" productos={productos}
+                calculado={p => sacos[p.id] || 0} />
+
+              <FilaSacos etiqueta="Consumo de precrías" productos={productos}
+                calculado={p => sacosPre[p.id] || 0} />
+
+              <FilaSacos etiqueta="Ajustes" productos={productos} editable={esJefe}
+                valor={p => inv[p.id]?.ajustes ?? ''}
+                onChange={(p, v) => setInvCampo(p.id, 'ajustes', v)} />
+
+              <FilaSacos etiqueta="Saldo final" resaltado productos={productos}
+                calculado={p => saldoFinal(p.id)} />
+
+              <FilaSacos etiqueta="Pedido de la semana" productos={productos} editable={esJefe}
+                valor={p => inv[p.id]?.pedido_realizado ?? ''}
+                onChange={(p, v) => setInvCampo(p.id, 'pedido_realizado', v)} />
+            </div>
+          </div>
+
+          {esJefe && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '13px 18px',
+                          borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
+              <Btn primario onClick={guardarInventario} disabled={guardandoInv}>
+                {guardandoInv ? 'Guardando...' : 'Guardar inventario'}
+              </Btn>
+            </div>
+          )}
         </div>
       )}
 
@@ -351,6 +467,45 @@ function FormaPrecio({ actual, onGuardar }) {
   )
 }
 
+function FilaSacos({ etiqueta, productos, editable, valor, onChange, calculado, resaltado }) {
+  const COLS = `210px ${productos.map(() => '132px').join(' ')} 116px`
+  const total = calculado
+    ? productos.reduce((s, p) => s + (calculado(p) || 0), 0)
+    : productos.reduce((s, p) => s + (num(valor(p)) || 0), 0)
+  const fondo = resaltado ? '#fafcfd' : 'white'
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: COLS, alignItems: 'center',
+                  borderBottom: '0.5px solid #f1f6f9', background: fondo }}>
+      <Td pegado alineado="left" fondo={fondo}>
+        <span style={{ fontSize: '13px', fontWeight: resaltado ? 500 : 400 }}>{etiqueta}</span>
+      </Td>
+      {productos.map(p => (
+        <Td key={p.id} fondo={fondo}>
+          {calculado ? (
+            <span style={{ fontWeight: resaltado ? 500 : 400,
+                           color: calculado(p) < 0 ? '#A32D2D' : (calculado(p) ? NAVY : '#c3d0db') }}>
+              {calculado(p) ? Math.round(calculado(p) * 10) / 10 : '—'}
+            </span>
+          ) : editable ? (
+            <input inputMode="decimal" value={valor(p)} placeholder="0"
+              onChange={e => onChange(p, e.target.value)}
+              style={{ width: '100%', padding: '6px', fontSize: '14px', textAlign: 'center',
+                       fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '7px',
+                       fontVariantNumeric: 'tabular-nums' }} />
+          ) : (
+            <span style={{ color: valor(p) ? NAVY : '#c3d0db' }}>{valor(p) || '—'}</span>
+          )}
+        </Td>
+      ))}
+      <Td fondo={fondo}>
+        <span style={{ fontWeight: 500, color: total < 0 ? '#A32D2D' : NAVY }}>
+          {Math.round(total * 10) / 10}
+        </span>
+      </Td>
+    </div>
+  )
+}
+
 function Kpi({ k, v, s }) {
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px' }}>
@@ -361,11 +516,11 @@ function Kpi({ k, v, s }) {
   )
 }
 
-function Th({ children, pegado }) {
+function Th({ children, pegado, titulo }) {
   return (
-    <div style={{
+    <div title={titulo} style={{
       padding: '10px 9px', fontSize: '11px', color: GRIS, fontWeight: 500, textAlign: 'center',
-      background: '#fafcfd',
+      background: '#fafcfd', lineHeight: 1.3,
       ...(pegado ? { position: 'sticky', left: 0, zIndex: 3, textAlign: 'left',
                      paddingLeft: '16px', borderRight: '0.5px solid ' + BORDE } : {}),
     }}>{children}</div>
