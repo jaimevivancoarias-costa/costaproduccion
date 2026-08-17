@@ -86,7 +86,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
 
       const { data: prods } = await supabase
         .schema('produccion').from('producto')
-        .select('id, nombre, nombre_corto').eq('activo', true).order('nombre_corto')
+        .select('id, nombre, nombre_corto').eq('activo', true).order('nombre')
       setProductos(prods || [])
 
       const ids = lista.map(p => p.piscinaId)
@@ -319,7 +319,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS = `170px 96px 56px 124px 136px repeat(7, minmax(112px, 1fr)) 104px`
+  const COLS = `170px 96px 56px 124px 136px repeat(7, minmax(132px, 1fr)) 104px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -410,7 +410,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
         <>
           <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
             <div style={{ overflowX: 'auto' }}>
-              <div style={{ minWidth: '1080px' }}>
+              <div style={{ minWidth: '1260px' }}>
 
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                               borderBottom: '0.5px solid ' + BORDE }}>
@@ -606,11 +606,12 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
       <select
         value={c?.productoId || ''}
         onChange={e => onProducto(e.target.value)}
+        title={productos.find(x => x.id === c?.productoId)?.nombre || 'Elegir balanceado'}
         style={{ fontFamily: 'inherit', fontSize: '11px', padding: '5px', width: '100%',
                  border: '0.5px solid ' + BORDE, borderRadius: '7px', background: 'white' }}
       >
-        <option value=""></option>
-        {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre_corto}</option>)}
+        <option value="">Elegir balanceado</option>
+        {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
       </select>
       <input
         inputMode="numeric" placeholder="0"
@@ -622,12 +623,17 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
                  textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
                  fontVariantNumeric: 'tabular-nums' }}
       />
-      {!num(c?.libras) && (
-        <button onClick={onSin} style={{ border: 0, background: 'none', cursor: 'pointer',
-                  fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '1px' }}>
-          sin alimentación
-        </button>
-      )}
+      <button
+        onClick={() => {
+          if (num(c?.libras) && !window.confirm('Vas a borrar las libras y declarar que esta piscina no comió ese día. ¿Seguro?')) return
+          onSin()
+        }}
+        title="Declarar que esta piscina no comió ese día"
+        style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
+                 fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '4px 6px',
+                 borderRadius: '6px', width: '100%' }}>
+        No comió
+      </button>
     </div>
   )
 }
