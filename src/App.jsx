@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from './context/AuthContext'
 import RegistroDiario from './pages/RegistroDiario'
+import Gramaje from './pages/Gramaje'
+import Costos from './pages/Costos'
 import EnConstruccion from './pages/EnConstruccion'
 
 // Navegacion de dos niveles (regla 9): la finca vive arriba como
@@ -133,6 +135,10 @@ export default function App() {
               esJefe={esJefe}
               soloLectura={soloLectura}
             />
+          ) : modulo === 'gramaje' ? (
+            <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} />
+          ) : modulo === 'costos' ? (
+            <Costos key={finca.id} finca={finca} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === modulo)} />
           )}
