@@ -284,14 +284,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
           if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
           const c = cel(p, f)
           if (!c) continue
+          // No se manda el id: el on conflict (piscina_id, fecha) resuelve
+          // si toca insertar o actualizar. Si se mezclan filas con id y sin
+          // id, PostgREST le pone null a las que no lo traen y la base lo
+          // rechaza, porque el id tiene default y no acepta nulos.
           if (c.sinAlimentacion) {
-            filas.push({ ...(c.id ? { id: c.id } : {}), ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+            filas.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
                          fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
           } else {
             const lb = num(c.libras)
             if (lb === null || lb === 0) { if (c.id) borrar.push(c.id); continue }
             if (!c.productoId) continue
-            filas.push({ ...(c.id ? { id: c.id } : {}), ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+            filas.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
                          fecha: f, producto_id: c.productoId, libras: lb, sin_alimentacion: false })
           }
         }
