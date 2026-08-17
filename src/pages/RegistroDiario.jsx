@@ -63,21 +63,31 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         .eq('finca_id', finca.id).eq('activa', true)
       if (error) throw error
 
-      // El ciclo que cubria ESA semana, no el que esta abierto hoy.
-      // Al mirar junio, el ciclo de entonces puede estar cerrado ya.
+      // Todos los ciclos de la finca, sin filtrar por fecha. Hacen falta
+      // dos cosas distintas y filtrar en la consulta solo daba una: el
+      // ciclo que cubria esta semana, y si la piscina fue sembrada
+      // DESPUES de esta semana. Sin lo segundo, al mirar junio una
+      // piscina sembrada en julio se veia vacia y ofrecia Sembrar.
       const { data: ciclos } = await supabase
         .schema('produccion').from('ciclo')
         .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
         .eq('finca_id', finca.id)
-        .lte('fecha_siembra', domingo)
-        .or(`fecha_cierre.is.null,fecha_cierre.gte.${lunes}`)
 
-      // Si una piscina tuvo dos ciclos en la misma semana, se queda el
-      // que empezo despues: es el que sigue vivo al final de la semana.
+      // El ciclo que cubria ESA semana, no el que esta abierto hoy. Si
+      // hubo dos en la misma semana se queda el que empezo despues: es
+      // el que sigue vivo al final de la semana.
       const porPiscina = {}
+      // La siembra mas cercana posterior a esta semana, si existe.
+      const posterior = {}
       ;(ciclos || []).forEach(c => {
-        const previo = porPiscina[c.piscina_origen_id]
-        if (!previo || c.fecha_siembra > previo.fecha_siembra) porPiscina[c.piscina_origen_id] = c
+        const pid = c.piscina_origen_id
+        if (c.fecha_siembra > domingo) {
+          if (!posterior[pid] || c.fecha_siembra < posterior[pid]) posterior[pid] = c.fecha_siembra
+          return
+        }
+        if (c.fecha_cierre && c.fecha_cierre < lunes) return
+        const previo = porPiscina[pid]
+        if (!previo || c.fecha_siembra > previo.fecha_siembra) porPiscina[pid] = c
       })
 
       const lista = (todas || []).map(p => {
@@ -92,6 +102,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           // cosecho el 18 de junio, y en la semana del 15 al 21 todavia
           // estaba viva y hay que poder registrarle esa cosecha.
           cicloCerrado: !!(c?.fecha_cierre && c.fecha_cierre < lunes),
+          // Vacia esta semana, pero ya sembrada mas adelante. No se puede
+          // volver a sembrar: la base solo admite un ciclo abierto por
+          // piscina, y con razon.
+          siembraPosterior: posterior[p.id] || null,
           laboratorio: c?.laboratorio?.nombre || null,
           gramajePrecria: c?.gramaje_precria ?? null,
         }
@@ -198,6 +212,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     if (situacionDia(fecha, hoy) === 'futuro') return false
     if (esJefe) return true
     return fecha === hoy
+  }
+
+  // Registrar un evento recarga la pantalla desde la base, y eso se
+  // llevaba por delante las libras que estuvieran escritas sin guardar.
+  // Ahora se guardan primero. Si el guardado falla, el dialogo no se
+  // abre: mejor no avanzar que perder lo escrito.
+  async function abrirEvento(tipo, fila) {
+    if (sucio) {
+      const ok = await guardar(false)
+      if (!ok) return
+    }
+    setDialogo({ tipo, fila })
   }
 
   async function registrarEvento(datos) {
@@ -329,8 +355,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       setAviso({ tipo: 'ok',
         texto: !semanaDeHoy ? 'Cambios guardados' : (cerrarDia ? 'Día cerrado' : 'Borrador guardado') })
       await cargar()
+      return true
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+      return false
     } finally {
       setGuardando(false)
     }
@@ -554,7 +582,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       <Estado
                         fila={p} evento={eventos[p.piscinaId]}
                         puede={!soloLectura && modo === 'registrar'}
-                        onElegir={tipo => setDialogo({ tipo, fila: p })}
+                        onElegir={tipo => abrirEvento(tipo, p)}
                       />
                     </Td>
                     {fechas.map((f, j) => (
@@ -774,6 +802,16 @@ function Estado({ fila, evento, puede, onElegir }) {
   // una piscina vacia solo se puede sembrar, una sembrada no.
   if (fila.cicloCerrado) {
     return <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
+  }
+
+  // Vacia esta semana pero sembrada mas adelante: no se puede sembrar
+  // otra vez. Antes se ofrecia Sembrar y la base lo rechazaba.
+  if (!fila.cicloId && fila.siembraPosterior) {
+    return (
+      <span style={{ color: GRIS, fontSize: '12px' }}>
+        Vacía · se siembra el {corta(fila.siembraPosterior)}
+      </span>
+    )
   }
 
   const opciones = fila.cicloId
