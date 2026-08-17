@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from './context/AuthContext'
+import { hoyISO, lunesDe } from './lib/fechas'
 import RegistroDiario from './pages/RegistroDiario'
 import Gramaje from './pages/Gramaje'
 import Costos from './pages/Costos'
@@ -39,6 +40,9 @@ export default function App() {
   const { user, nombre, fincas, esJefe, cargando, logout } = useAuth()
   const [fincaId, setFincaId] = useState(null)
   const [modulo, setModulo] = useState('registro')
+  // La semana es una sola para todo el modulo: si la cambias en una
+  // pantalla, las demas se mueven con ella.
+  const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
 
   useEffect(() => {
     if (fincas.length && !fincaId) setFincaId(fincas[0].id)
@@ -134,11 +138,13 @@ export default function App() {
               finca={finca}
               esJefe={esJefe}
               soloLectura={soloLectura}
+              lunes={lunes}
+              setLunes={setLunes}
             />
           ) : modulo === 'gramaje' ? (
-            <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} />
+            <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} />
           ) : modulo === 'costos' ? (
-            <Costos key={finca.id} finca={finca} esJefe={esJefe} />
+            <Costos key={finca.id} finca={finca} esJefe={esJefe} lunes={lunes} setLunes={setLunes} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === modulo)} />
           )}
