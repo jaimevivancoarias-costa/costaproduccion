@@ -46,19 +46,23 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   const base = { ciclo_id: cid, fecha, piscina_origen_id: idPiscina(ciclo),
                  observacion: observacion || null }
 
+  // Vacio se guarda como null, no como cero. Cero significaria que se
+  // coseho y no salio nada; null significa que el dato no ha llegado.
+  const lb = num(libras) > 0 ? num(libras) : null
+
   if (tipo === 'raleo') {
     const { error } = await supabase.schema('produccion').from('evento')
-      .insert({ ...base, tipo: 'raleo', libras })
+      .insert({ ...base, tipo: 'raleo', libras: lb })
     if (error) throw error
     return
   }
 
   if (tipo === 'cosecha') {
     const { error } = await supabase.schema('produccion').from('evento')
-      .insert({ ...base, tipo: 'cosecha', libras })
+      .insert({ ...base, tipo: 'cosecha', libras: lb })
     if (error) throw error
     const { error: e2 } = await supabase.schema('produccion').from('ciclo')
-      .update({ estado: 'cerrado', fecha_cierre: fecha, libras_cosechadas: libras })
+      .update({ estado: 'cerrado', fecha_cierre: fecha, libras_cosechadas: lb })
       .eq('id', cid)
     if (e2) throw e2
     await supabase.schema('produccion').from('ciclo_piscina')
@@ -68,7 +72,7 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
 
   // Transferencia: el ciclo se arrastra a las piscinas destino.
   const { data: ev, error } = await supabase.schema('produccion').from('evento')
-    .insert({ ...base, tipo: 'transferencia', libras: libras || null })
+    .insert({ ...base, tipo: 'transferencia', libras: lb })
     .select('id').single()
   if (error) throw error
   await supabase.schema('produccion').from('evento_destino')
@@ -92,9 +96,11 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   const [obs, setObs] = useState('')
   const [enviando, setEnviando] = useState(false)
 
-  const exigeLibras = tipo === 'raleo' || tipo === 'cosecha'
-  const listo = fecha && (!exigeLibras || num(libras) > 0) &&
-                (tipo !== 'transferencia' || destinos.length > 0)
+  // Las libras nunca bloquean el registro. El bodeguero no las sabe el
+  // dia de la cosecha, llegan despues de la empacadora. Exigirlas hace
+  // que invente un numero, y un numero inventado es peor que un vacio.
+  const pideLibras = tipo === 'raleo' || tipo === 'cosecha'
+  const listo = fecha && (tipo !== 'transferencia' || destinos.length > 0)
 
   async function enviar() {
     setEnviando(true)
@@ -149,12 +155,14 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
           </>
         )}
 
-        {exigeLibras && (
+        {pideLibras && (
           <Campo label={tipo === 'raleo' ? 'Libras raleadas' : 'Libras cosechadas'}>
-            <input inputMode="numeric" value={libras} placeholder="0"
+            <input inputMode="numeric" value={libras} placeholder="Si todavía no las sabes, déjalo vacío"
                    onChange={e => setLibras(e.target.value)} style={entrada} />
             <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
-              Obligatorio. Sin este dato no hay costo por libra del ciclo.
+              {num(libras) > 0
+                ? 'Con este dato el sistema calcula el costo por libra del ciclo.'
+                : 'Puedes registrarla ahora y cargar las libras cuando llegue el dato de la empacadora. Mientras esté vacía, el costo por libra queda pendiente.'}
             </div>
           </Campo>
         )}
