@@ -20,8 +20,7 @@ const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 const HOYB = '#E6F1FB'
 
-export default function Gramaje({ finca, esJefe, soloLectura }) {
-  const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
+export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [filas, setFilas] = useState([])
   const [valores, setValores] = useState({})     // `${piscinaId}|${fecha}` -> peso
   const [previos, setPrevios] = useState({})     // cicloId -> { fecha, peso }
