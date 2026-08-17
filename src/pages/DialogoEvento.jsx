@@ -18,25 +18,32 @@ export const TIPOS = {
   cosecha:       { nombre: 'Cosecha',       color: '#0C447C', fondo: '#E6F1FB' },
 }
 
+// La fila del registro diario trae piscinaId; una piscina suelta trae id.
+const idPiscina = p => p?.piscinaId ?? p?.id
+const idCiclo   = c => c?.cicloId ?? c?.id
+
 export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   const { fecha, laboratorioId, larva, gramaje, libras, destinos, observacion } = datos
 
   if (tipo === 'siembra') {
+    const pid = idPiscina(piscina)
+    if (!pid) throw new Error('No se identificó la piscina')
     const { data: c, error } = await supabase.schema('produccion').from('ciclo')
-      .insert({ finca_id: fincaId, piscina_origen_id: piscina.id, fecha_siembra: fecha,
+      .insert({ finca_id: fincaId, piscina_origen_id: pid, fecha_siembra: fecha,
                 laboratorio_id: laboratorioId || null, cantidad_larva: larva || null,
                 gramaje_precria: gramaje || null })
       .select('id').single()
     if (error) throw error
     await supabase.schema('produccion').from('ciclo_piscina')
-      .insert({ ciclo_id: c.id, piscina_id: piscina.id, fecha_desde: fecha })
+      .insert({ ciclo_id: c.id, piscina_id: pid, fecha_desde: fecha })
     await supabase.schema('produccion').from('evento')
-      .insert({ ciclo_id: c.id, tipo: 'siembra', fecha, piscina_origen_id: piscina.id,
+      .insert({ ciclo_id: c.id, tipo: 'siembra', fecha, piscina_origen_id: pid,
                 observacion: observacion || null })
     return
   }
 
-  const base = { ciclo_id: ciclo.cicloId, fecha, piscina_origen_id: ciclo.piscinaId,
+  const cid = idCiclo(ciclo)
+  const base = { ciclo_id: cid, fecha, piscina_origen_id: idPiscina(ciclo),
                  observacion: observacion || null }
 
   if (tipo === 'raleo') {
@@ -52,10 +59,10 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
     if (error) throw error
     const { error: e2 } = await supabase.schema('produccion').from('ciclo')
       .update({ estado: 'cerrado', fecha_cierre: fecha, libras_cosechadas: libras })
-      .eq('id', ciclo.cicloId)
+      .eq('id', cid)
     if (e2) throw e2
     await supabase.schema('produccion').from('ciclo_piscina')
-      .update({ fecha_hasta: fecha }).eq('ciclo_id', ciclo.cicloId).is('fecha_hasta', null)
+      .update({ fecha_hasta: fecha }).eq('ciclo_id', cid).is('fecha_hasta', null)
     return
   }
 
@@ -67,9 +74,9 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   await supabase.schema('produccion').from('evento_destino')
     .insert(destinos.map(id => ({ evento_id: ev.id, piscina_id: id })))
   await supabase.schema('produccion').from('ciclo_piscina')
-    .update({ fecha_hasta: fecha }).eq('ciclo_id', ciclo.cicloId).is('fecha_hasta', null)
+    .update({ fecha_hasta: fecha }).eq('ciclo_id', cid).is('fecha_hasta', null)
   await supabase.schema('produccion').from('ciclo_piscina')
-    .insert(destinos.map(id => ({ ciclo_id: ciclo.cicloId, piscina_id: id, fecha_desde: fecha })))
+    .insert(destinos.map(id => ({ ciclo_id: cid, piscina_id: id, fecha_desde: fecha })))
 }
 
 export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, destinosPosibles,
