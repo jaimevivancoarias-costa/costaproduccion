@@ -344,10 +344,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
               }}>{m === 'registrar' ? 'Registrar' : 'Revisar'}</button>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: '6px' }}>
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <Btn onClick={() => setLunes(sumarDias(lunes, -7))}>‹</Btn>
             <Btn onClick={() => setLunes(lunesDe(hoy))}>Esta semana</Btn>
             <Btn onClick={() => setLunes(sumarDias(lunes, 7))} disabled={lunes >= lunesDe(hoy)}>›</Btn>
+            <input
+              type="date"
+              value={lunes}
+              max={hoy}
+              title="Ir a la semana de esa fecha"
+              onChange={e => { if (e.target.value) setLunes(lunesDe(e.target.value)) }}
+              style={{ padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit',
+                       border: '0.5px solid ' + BORDE, borderRadius: '9px', color: NAVY }}
+            />
           </div>
         </div>
       </div>
