@@ -64,13 +64,22 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
         .eq('finca_id', finca.id).eq('activa', true)
       if (error) throw error
 
+      // El ciclo que cubria ESA semana, no el que esta abierto hoy.
+      // Al mirar junio, el ciclo de entonces puede estar cerrado ya.
       const { data: ciclos } = await supabase
         .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
-        .eq('finca_id', finca.id).eq('estado', 'abierto').lte('fecha_siembra', domingo)
+        .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
+        .eq('finca_id', finca.id)
+        .lte('fecha_siembra', domingo)
+        .or(`fecha_cierre.is.null,fecha_cierre.gte.${lunes}`)
 
+      // Si una piscina tuvo dos ciclos en la misma semana, se queda el
+      // que empezo despues: es el que sigue vivo al final de la semana.
       const porPiscina = {}
-      ;(ciclos || []).forEach(c => { porPiscina[c.piscina_origen_id] = c })
+      ;(ciclos || []).forEach(c => {
+        const previo = porPiscina[c.piscina_origen_id]
+        if (!previo || c.fecha_siembra > previo.fecha_siembra) porPiscina[c.piscina_origen_id] = c
+      })
 
       const lista = (todas || []).map(p => {
         const c = porPiscina[p.id]
@@ -78,6 +87,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
           cicloId: c?.id || null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
           hectareas: Number(p.hectareas), tipo: p.tipo,
           fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
+          fechaCierre: c?.fecha_cierre || null, cicloCerrado: c?.estado === 'cerrado',
           laboratorio: c?.laboratorio?.nombre || null,
           gramajePrecria: c?.gramaje_precria ?? null,
         }
@@ -257,6 +267,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura }) {
     piscinas.forEach(p => {
       if (!p.cicloId || p.tipo === 'precria') return
       if (p.fechaSiembra && f < p.fechaSiembra) return
+      if (p.fechaCierre && f > p.fechaCierre) return
       const c = cel(p, f)
       if (!c || (!c.sinAlimentacion && !num(c.libras))) atrasadas.push({ p, f })
     })
@@ -670,7 +681,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
   if (!p.cicloId) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
-  if (f < p.fechaSiembra) {
+  if (f < p.fechaSiembra || (p.fechaCierre && f > p.fechaCierre)) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
   if (situacion === 'futuro') {
@@ -756,6 +767,10 @@ function Estado({ fila, evento, puede, onElegir }) {
 
   // Mismo control en todas las filas. Lo que cambia son las opciones:
   // una piscina vacia solo se puede sembrar, una sembrada no.
+  if (fila.cicloCerrado) {
+    return <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
+  }
+
   const opciones = fila.cicloId
     ? [['raleo', 'Raleo'], ['transferencia', 'Transferencia'], ['cosecha', 'Cosecha']]
     : [['siembra', 'Sembrar']]
