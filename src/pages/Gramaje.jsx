@@ -31,6 +31,10 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const muestreos = useMemo(() => fechas.filter(esDiaDeMuestreo), [fechas])
   const hoy = hoyISO()
+  // Nunca se cuentan dias que no han pasado. Ver "6 días" en una
+  // piscina sembrada ayer, solo porque el domingo queda lejos, es
+  // mentira y ademas desalinea el gramaje esperado.
+  const corteDias = fechas[6] > hoy ? hoy : fechas[6]
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -212,7 +216,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>{fila.nombre}</span>
                     <div style={{ fontSize: '11px', color: GRIS }}>{fila.hectareas.toFixed(2)} ha</div>
                   </Td>
-                  <Td><span style={{ fontWeight: 500 }}>{diasCultivo(fila.fechaSiembra, fechas[6])}</span></Td>
+                  <Td><span style={{ fontWeight: 500 }}>{diasCultivo(fila.fechaSiembra, corteDias)}</span></Td>
                   <Td>
                     {previos[fila.cicloId] ? (
                       <>
