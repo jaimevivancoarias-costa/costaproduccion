@@ -84,7 +84,7 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
 }
 
 export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, destinosPosibles,
-                                        minima, onCancelar, onGuardar }) {
+                                        minima, onCancelar, onGuardar, onLaboratorioAgregado }) {
   const t = TIPOS[tipo]
   const objetivo = piscina || ciclo
   const [fecha, setFecha] = useState(hoyISO())
@@ -95,12 +95,33 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   const [destinos, setDestinos] = useState([])
   const [obs, setObs] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [errorLab, setErrorLab] = useState(null)
 
   // Las libras nunca bloquean el registro. El bodeguero no las sabe el
   // dia de la cosecha, llegan despues de la empacadora. Exigirlas hace
   // que invente un numero, y un numero inventado es peor que un vacio.
   const pideLibras = tipo === 'raleo' || tipo === 'cosecha'
   const listo = fecha && (tipo !== 'transferencia' || destinos.length > 0)
+
+  // Mismo comportamiento que en la columna del registro diario: si ya
+  // existe escrito de otra forma, se usa el que esta en vez de crear un
+  // duplicado. El catalogo lo comparten las nueve fincas.
+  async function agregarLaboratorio() {
+    const escrito = window.prompt('Nombre del laboratorio')
+    if (!escrito) return
+    const nombre = escrito.trim()
+    if (!nombre) return
+
+    const ya = laboratorios.find(l => l.nombre.toLowerCase() === nombre.toLowerCase())
+    if (ya) { setLab(ya.id); setErrorLab(`Ya existía como "${ya.nombre}". Se usó ese.`); return }
+
+    const { data, error } = await supabase.schema('produccion').from('laboratorio')
+      .insert({ nombre }).select('id, nombre').single()
+    if (error) { setErrorLab('No se pudo agregar. ' + error.message); return }
+    setErrorLab(null)
+    onLaboratorioAgregado?.(data)
+    setLab(data.id)
+  }
 
   async function enviar() {
     setEnviando(true)
@@ -134,10 +155,18 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
         {tipo === 'siembra' && (
           <>
             <Campo label="Laboratorio">
-              <select value={lab} onChange={e => setLab(e.target.value)} style={entrada}>
+              <select
+                value={lab}
+                onChange={e => e.target.value === '__nuevo' ? agregarLaboratorio() : setLab(e.target.value)}
+                style={entrada}
+              >
                 <option value="">Sin especificar</option>
                 {laboratorios.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
+                <option value="__nuevo">+ Agregar laboratorio nuevo</option>
               </select>
+              {errorLab && (
+                <div style={{ fontSize: '12px', color: '#854F0B', marginTop: '5px' }}>{errorLab}</div>
+              )}
             </Campo>
             <Campo label="Cantidad de larva">
               <input inputMode="numeric" value={larva} placeholder="Por ejemplo 2500000"
