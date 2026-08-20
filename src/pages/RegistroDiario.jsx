@@ -215,7 +215,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     if (semanaCerrada) return false
     if (situacionDia(fecha, hoy) === 'futuro') return false
     if (esJefe) return true
-    return fecha === hoy
+    // El bodeguero trabaja su semana entera, no solo el dia de hoy. Si
+    // se le paso cerrar el viernes, el lunes tiene que poder volver.
+    // Semanas anteriores siguen siendo cosa del jefe.
+    return semanaDeHoy
   }
 
   // Registrar un evento recarga la pantalla desde la base, y eso se
@@ -388,6 +391,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   // queda en la bitacora igual que cualquier otro cierre.
   async function cerrarDiasPendientes() {
     const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+                                      && f !== hoy
                                       && situacionDia(f, hoy) !== 'futuro')
     if (!faltan.length) return
     if (!window.confirm(
@@ -728,8 +732,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             onRevisar={revisarSemana}
             onCerrar={cerrarSemana}
             onCerrarDias={cerrarDiasPendientes}
+            // El dia de hoy no cuenta aqui: para eso esta "Cerrar dia".
             diasPendientes={fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+                                               && f !== hoy
                                                && situacionDia(f, hoy) !== 'futuro').length}
+            // Un bodeguero puede firmar los dias sueltos de su semana.
+            // Firmar hacia atras una semana pasada es cosa del jefe.
+            puedeFirmarDias={!soloLectura && !semanaCerrada && (esJefe || semanaDeHoy)}
             puedeCerrar={esJefe && !semanaCerrada}
             cerrada={semanaCerrada}
           />
@@ -870,7 +879,7 @@ function Estado({ fila, evento, puede, onElegir }) {
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
 function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendientes,
-                  puedeCerrar, cerrada }) {
+                  puedeFirmarDias, puedeCerrar, cerrada }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
@@ -909,7 +918,7 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
             {/* V5 pide la firma de los siete dias. En una semana pasada
                 no hay boton de "Cerrar dia", asi que el jefe los firma
                 aqui. Solo aparece cuando de verdad falta alguno. */}
-            {puedeCerrar && diasPendientes > 0 && (
+            {puedeFirmarDias && diasPendientes > 0 && (
               <>
                 <span style={{ fontSize: '12px', color: GRIS, marginRight: 'auto' }}>
                   Faltan {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'} por dar por cerrados.
