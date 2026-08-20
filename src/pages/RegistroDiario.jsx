@@ -792,6 +792,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               minima={dialogo.tipo === 'siembra' ? undefined : dialogo.fila.fechaSiembra}
               onCancelar={() => setDialogo(null)}
               onGuardar={registrarEvento}
+              onLaboratorioAgregado={l =>
+                setLaboratorios(ls => [...ls, l].sort((a, b) => a.nombre.localeCompare(b.nombre)))}
             />
           )}
 
