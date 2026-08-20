@@ -73,7 +73,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           .select('id, codigo, nombre, hectareas, tipo')
           .eq('finca_id', finca.id).eq('activa', true),
         supabase.schema('produccion').from('ciclo')
-          .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
+          .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
           .eq('finca_id', finca.id),
         supabase.schema('produccion').from('laboratorio')
           .select('id, nombre').eq('activo', true).order('nombre'),
@@ -120,6 +120,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           hectareas: Number(p.hectareas), tipo: p.tipo,
           fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
           fechaCierre: c?.fecha_cierre || null,
+          laboratorioId: c?.laboratorio_id || '',
           // Un ciclo esta cerrado PARA ESTA SEMANA solo si termino antes
           // del lunes. Mirar estado seria mirar la foto de hoy: la P2
           // cosecho el 18 de junio, y en la semana del 15 al 21 todavia
@@ -418,6 +419,27 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     await revisarSemana()
   }
 
+  // El laboratorio se puede poner o corregir despues de la siembra. En
+  // la practica el bodeguero no siempre lo sabe el dia que entra la
+  // larva, y obligarlo a elegir uno en ese momento solo garantiza que
+  // ponga cualquiera.
+  async function cambiarLaboratorio(fila, id) {
+    if (!fila.cicloId) return
+    // Se pinta antes de que responda la base: es un cambio chico y
+    // esperar medio segundo por cada uno se siente pesado.
+    const antes = piscinas
+    setPiscinas(ps => ps.map(p => p.piscinaId === fila.piscinaId
+      ? { ...p, laboratorioId: id, laboratorio: laboratorios.find(l => l.id === id)?.nombre || null }
+      : p))
+
+    const { error } = await supabase.schema('produccion').from('ciclo')
+      .update({ laboratorio_id: id || null }).eq('id', fila.cicloId)
+    if (error) {
+      setPiscinas(antes)
+      setAviso({ tipo: 'error', texto: 'No se pudo cambiar el laboratorio. ' + error.message })
+    }
+  }
+
   async function revisarSemana() {
     setValidaciones('cargando')
     const { data, error } = await supabase.schema('produccion')
@@ -620,9 +642,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <Td><span style={{ fontWeight: 500 }}>
                       {p.fechaSiembra ? diasCultivo(p.fechaSiembra, fechas[6]) : ''}
                     </span></Td>
-                    <Td><span style={{ color: GRIS, fontSize: '12px' }}>
-                      {p.laboratorio || (p.cicloId ? '—' : '')}
-                    </span></Td>
+                    <Td>
+                      <Laboratorio
+                        fila={p} laboratorios={laboratorios}
+                        puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
+                        onElegir={id => cambiarLaboratorio(p, id)}
+                      />
+                    </Td>
                     <Td>
                       <Estado
                         fila={p} evento={eventos[p.piscinaId]}
@@ -828,6 +854,32 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
         </button>
       )}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Columna de laboratorio. Se puede llenar o corregir en cualquier
+// momento del ciclo, no solo al sembrar.
+// ---------------------------------------------------------------------
+function Laboratorio({ fila, laboratorios, puede, onElegir }) {
+  if (!fila.cicloId) return <span />
+  if (!puede) {
+    return <span style={{ color: GRIS, fontSize: '12px' }}>{fila.laboratorio || '—'}</span>
+  }
+  const vacio = !fila.laboratorioId
+  return (
+    <select
+      value={fila.laboratorioId || ''}
+      onChange={e => onElegir(e.target.value)}
+      title={fila.laboratorio || 'Elegir laboratorio'}
+      style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
+               borderRadius: '7px', background: 'white',
+               border: '0.5px solid ' + (vacio ? '#e8d5b0' : BORDE),
+               color: vacio ? '#BA7517' : GRIS }}
+    >
+      <option value="">{vacio ? 'Sin laboratorio' : 'Quitar'}</option>
+      {laboratorios.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
+    </select>
   )
 }
 
