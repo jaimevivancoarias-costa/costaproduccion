@@ -33,6 +33,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [soloPendientes, setSoloPendientes] = useState(false)
   const [sucio, setSucio] = useState(false)
   const [cargando, setCargando] = useState(true)
+  const [refrescando, setRefrescando] = useState(false)
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
   const [validaciones, setValidaciones] = useState(null)
@@ -49,31 +50,52 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const hoy = hoyISO()
   const semanaDeHoy = lunesDe(hoy) === lunes
 
-  const cargar = useCallback(async () => {
-    setCargando(true); setAviso(null)
+  const cargar = useCallback(async (silencioso) => {
+    // Al recargar despues de guardar no se vacia la pantalla: la
+    // cuadricula se queda donde esta y solo aparece un indicador. Ver
+    // todo desaparecer y volver da la sensacion de que algo se perdio.
+    if (!silencioso) setCargando(true)
+    setRefrescando(true); setAviso(null)
     try {
       const domingo = fechas[6]
 
-      // Todas las piscinas de la finca, tengan o no ciclo. En el Excel
-      // aparecen todas cada semana; una piscina vacia hay que poder verla
-      // para poder sembrarla.
-      const { data: todas, error } = await supabase
-        .schema('produccion').from('piscina')
-        .select('id, codigo, nombre, hectareas, tipo')
-        .eq('finca_id', finca.id).eq('activa', true)
+      // Las consultas que no dependen unas de otras van juntas. Antes
+      // iban en fila y cada una esperaba a la anterior.
+      const [
+        { data: todas, error },
+        { data: ciclos, error: eCiclos },
+        { data: labs },
+        { data: prods },
+        { data: dr },
+        { data: sc },
+      ] = await Promise.all([
+        supabase.schema('produccion').from('piscina')
+          .select('id, codigo, nombre, hectareas, tipo')
+          .eq('finca_id', finca.id).eq('activa', true),
+        supabase.schema('produccion').from('ciclo')
+          .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
+          .eq('finca_id', finca.id),
+        supabase.schema('produccion').from('laboratorio')
+          .select('id, nombre').eq('activo', true).order('nombre'),
+        supabase.schema('produccion').from('producto')
+          .select('id, nombre, nombre_corto').eq('activo', true).order('nombre'),
+        supabase.schema('produccion').from('dia_registro')
+          .select('fecha, estado').eq('finca_id', finca.id)
+          .gte('fecha', lunes).lte('fecha', domingo),
+        supabase.schema('produccion').from('semana_cerrada')
+          .select('id').eq('finca_id', finca.id)
+          .eq('anio', semanaISO(lunes).anio).eq('semana', semanaISO(lunes).semana)
+          .maybeSingle(),
+      ])
       if (error) throw error
-
-      // Todos los ciclos de la finca, sin filtrar por fecha. Hacen falta
-      // dos cosas distintas y filtrar en la consulta solo daba una: el
-      // ciclo que cubria esta semana, y si la piscina fue sembrada
-      // DESPUES de esta semana. Sin lo segundo, al mirar junio una
-      // piscina sembrada en julio se veia vacia y ofrecia Sembrar.
-      const { data: ciclos, error: eCiclos } = await supabase
-        .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
-        .eq('finca_id', finca.id)
       if (eCiclos) throw new Error('No se pudieron leer los ciclos. ' + eCiclos.message)
 
+      // Los ciclos vienen sin filtrar por fecha porque hacen falta dos
+      // cosas distintas: el ciclo que cubria esta semana, y si la
+      // piscina fue sembrada DESPUES de esta semana. Sin lo segundo, al
+      // mirar junio una piscina sembrada en julio se veia vacia y
+      // ofrecia Sembrar.
+      //
       // El ciclo que cubria ESA semana, no el que esta abierto hoy. Si
       // hubo dos en la misma semana se queda el que empezo despues: es
       // el que sigue vivo al final de la semana.
@@ -113,96 +135,84 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       }).sort(ordenar)
       setPiscinas(lista)
 
-      const { data: labs } = await supabase
-        .schema('produccion').from('laboratorio')
-        .select('id, nombre').eq('activo', true).order('nombre')
       setLaboratorios(labs || [])
-
-      const { data: prods } = await supabase
-        .schema('produccion').from('producto')
-        .select('id, nombre, nombre_corto').eq('activo', true).order('nombre')
       setProductos(prods || [])
 
-      const ids = lista.map(p => p.piscinaId)
-
-      // Eventos ocurridos en esta semana, para mostrarlos en la columna
-      // de estado igual que la columna ESTADO PISCINA del Excel.
-      const evs = {}
-      if (ids.length) {
-        const { data: e } = await supabase
-          .schema('produccion').from('evento')
-          .select('id, tipo, fecha, libras, piscina_origen_id')
-          .in('piscina_origen_id', ids).gte('fecha', lunes).lte('fecha', domingo)
-        ;(e || []).forEach(x => { evs[x.piscina_origen_id] = x })
-      }
-      setEventos(evs)
-
-      // Indicadores: acumulado del ciclo, raleos y pesos de la semana.
-      const ciclosIds = lista.filter(x => x.cicloId).map(x => x.cicloId)
-      const acum = {}, ral = {}, pes = {}
-      if (ciclosIds.length) {
-        const { data: hist } = await supabase
-          .schema('produccion').from('alimentacion')
-          .select('ciclo_id, libras').in('ciclo_id', ciclosIds).lte('fecha', domingo)
-        ;(hist || []).forEach(r => { acum[r.ciclo_id] = (acum[r.ciclo_id] || 0) + Number(r.libras) })
-
-        const { data: rals } = await supabase
-          .schema('produccion').from('evento')
-          .select('ciclo_id, libras').in('ciclo_id', ciclosIds).eq('tipo', 'raleo')
-        ;(rals || []).forEach(r => { ral[r.ciclo_id] = (ral[r.ciclo_id] || 0) + Number(r.libras || 0) })
-
-        const { data: ms } = await supabase
-          .schema('produccion').from('muestreo')
-          .select('piscina_id, fecha, peso_gramos').in('piscina_id', ids)
-          .gte('fecha', lunes).lte('fecha', domingo)
-        ;(ms || []).forEach(m => {
-          const d = new Date(m.fecha + 'T12:00:00').getDay()
-          pes[m.piscina_id] = { ...(pes[m.piscina_id] || {}),
-                                [d === 3 ? 'mie' : 'dom']: Number(m.peso_gramos) }
-        })
-      }
-      setAcumulado(acum); setRaleado(ral); setPesos(pes)
-
-      const mapa = {}
-      if (ids.length) {
-        // Si esta consulta falla y nadie mira el error, la semana se
-        // dibuja vacia y parece que se borraron los datos. Nunca mas.
-        const { data: alim, error: eAlim } = await supabase
-          .schema('produccion').from('alimentacion')
-          .select('id, piscina_id, fecha, producto_id, libras, sin_alimentacion')
-          .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
-        if (eAlim) throw new Error('No se pudo leer la alimentación de la semana. ' + eAlim.message)
-        ;(alim || []).forEach(a => {
-          mapa[`${a.piscina_id}|${a.fecha}`] = {
-            id: a.id,
-            productoId: a.producto_id || '',
-            libras: a.sin_alimentacion ? '' : String(a.libras),
-            sinAlimentacion: a.sin_alimentacion,
-          }
-        })
-      }
-      setCeldas(mapa)
-
-      const { data: dr } = await supabase
-        .schema('produccion').from('dia_registro')
-        .select('fecha, estado').eq('finca_id', finca.id)
-        .gte('fecha', lunes).lte('fecha', domingo)
       const md = {}
       ;(dr || []).forEach(d => { md[d.fecha] = d.estado })
       setDias(md)
-
-      const { anio, semana } = semanaISO(lunes)
-      const { data: sc } = await supabase
-        .schema('produccion').from('semana_cerrada')
-        .select('id').eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).maybeSingle()
       setSemanaCerrada(!!sc)
+
+      const ids = lista.map(p => p.piscinaId)
+      const ciclosIds = lista.filter(x => x.cicloId).map(x => x.cicloId)
+
+      // Segunda tanda: todo lo que necesitaba saber las piscinas. El
+      // acumulado del ciclo se pide sumado por la base. Antes se traian
+      // todas las filas de alimentacion desde la siembra y se sumaban
+      // aqui: en un ciclo de tres meses son cientos de filas por
+      // piscina, en cada carga, solo para mostrar un total.
+      const [
+        { data: evs1 },
+        { data: acums },
+        { data: rals },
+        { data: ms },
+        { data: alim, error: eAlim },
+      ] = await Promise.all([
+        ids.length ? supabase.schema('produccion').from('evento')
+          .select('id, tipo, fecha, libras, piscina_origen_id')
+          .in('piscina_origen_id', ids).gte('fecha', lunes).lte('fecha', domingo)
+          : Promise.resolve({ data: [] }),
+        ciclosIds.length ? supabase.schema('produccion')
+          .rpc('fn_acumulado_ciclos', { p_ciclos: ciclosIds, p_hasta: domingo })
+          : Promise.resolve({ data: [] }),
+        ciclosIds.length ? supabase.schema('produccion').from('evento')
+          .select('ciclo_id, libras').in('ciclo_id', ciclosIds).eq('tipo', 'raleo')
+          : Promise.resolve({ data: [] }),
+        ids.length ? supabase.schema('produccion').from('muestreo')
+          .select('piscina_id, fecha, peso_gramos').in('piscina_id', ids)
+          .gte('fecha', lunes).lte('fecha', domingo)
+          : Promise.resolve({ data: [] }),
+        ids.length ? supabase.schema('produccion').from('alimentacion')
+          .select('id, piscina_id, fecha, producto_id, libras, sin_alimentacion')
+          .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
+          : Promise.resolve({ data: [] }),
+      ])
+
+      // Si esta consulta falla y nadie mira el error, la semana se
+      // dibuja vacia y parece que se borraron los datos. Nunca mas.
+      if (eAlim) throw new Error('No se pudo leer la alimentación de la semana. ' + eAlim.message)
+
+      const evs = {}
+      ;(evs1 || []).forEach(x => { evs[x.piscina_origen_id] = x })
+      setEventos(evs)
+
+      const acum = {}, ral = {}, pes = {}
+      ;(acums || []).forEach(r => { acum[r.ciclo_id] = Number(r.libras) })
+      ;(rals || []).forEach(r => { ral[r.ciclo_id] = (ral[r.ciclo_id] || 0) + Number(r.libras || 0) })
+      ;(ms || []).forEach(m => {
+        const d = new Date(m.fecha + 'T12:00:00').getDay()
+        pes[m.piscina_id] = { ...(pes[m.piscina_id] || {}),
+                              [d === 3 ? 'mie' : 'dom']: Number(m.peso_gramos) }
+      })
+      setAcumulado(acum); setRaleado(ral); setPesos(pes)
+
+      const mapa = {}
+      ;(alim || []).forEach(a => {
+        mapa[`${a.piscina_id}|${a.fecha}`] = {
+          id: a.id,
+          productoId: a.producto_id || '',
+          libras: a.sin_alimentacion ? '' : String(a.libras),
+          sinAlimentacion: a.sin_alimentacion,
+        }
+      })
+      setCeldas(mapa)
 
       setSucio(false)
       setValidaciones(null)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
-      setCargando(false)
+      setCargando(false); setRefrescando(false)
     }
   }, [finca.id, lunes, fechas])
 
@@ -241,7 +251,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       })
       setDialogo(null)
       setAviso({ tipo: 'ok', texto: TIPOS[dialogo.tipo].nombre + ' registrada' })
-      await cargar()
+      await cargar(true)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
     }
@@ -361,7 +371,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
       setAviso({ tipo: 'ok',
         texto: !semanaDeHoy ? 'Cambios guardados' : (cerrarDia ? 'Día cerrado' : 'Borrador guardado') })
-      await cargar()
+      await cargar(true)
       return true
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -404,7 +414,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               { onConflict: 'finca_id,fecha' })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     setAviso({ tipo: 'ok', texto: `${faltan.length} días cerrados` })
-    await cargar()
+    await cargar(true)
     await revisarSemana()
   }
 
@@ -422,7 +432,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       .insert({ finca_id: finca.id, anio, semana, validaciones })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Semana cerrada' })
-    await cargar()
+    await cargar(true)
   }
 
   function alTeclear(e, iFila, iDia) {
@@ -535,8 +545,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               Estás editando una semana anterior. Los cambios quedan en la bitácora.
             </span>
           )}
-          <span style={{ marginLeft: 'auto', fontSize: '12px', color: sucio ? '#BA7517' : GRIS }}>
-            {sucio ? 'Hay cambios sin guardar' : 'Sin cambios sin guardar'}
+          <span style={{ marginLeft: 'auto', fontSize: '12px',
+                         color: refrescando ? AZUL : sucio ? '#BA7517' : GRIS }}>
+            {refrescando ? 'Actualizando...'
+              : sucio ? 'Hay cambios sin guardar' : 'Sin cambios sin guardar'}
           </span>
         </div>
       )}
