@@ -375,6 +375,31 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     guardar(true)
   }
 
+  // V5 pide que alguien haya declarado cerrado cada uno de los siete
+  // dias. Pero "Cerrar dia" solo existe en la semana en curso, asi que
+  // una semana que se carga hacia atras nunca podia cumplirlo.
+  //
+  // Aqui el jefe cierra de una vez los dias que falten. No es un atajo:
+  // es la misma firma, hecha por quien tiene la potestad de hacerla, y
+  // queda en la bitacora igual que cualquier otro cierre.
+  async function cerrarDiasPendientes() {
+    const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+                                      && situacionDia(f, hoy) !== 'futuro')
+    if (!faltan.length) return
+    if (!window.confirm(
+      `Vas a dar por cerrados ${faltan.length} días: ${faltan.map(cortita).join(', ')}.\n\n` +
+      `Es tu firma de que ese día quedó revisado. Queda registrado en la bitácora.`)) return
+
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert(faltan.map(f => ({ finca_id: finca.id, fecha: f, estado: 'cerrado',
+                                 cerrado_en: new Date().toISOString() })),
+              { onConflict: 'finca_id,fecha' })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    setAviso({ tipo: 'ok', texto: `${faltan.length} días cerrados` })
+    await cargar()
+    await revisarSemana()
+  }
+
   async function revisarSemana() {
     setValidaciones('cargando')
     const { data, error } = await supabase.schema('produccion')
@@ -698,6 +723,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             validaciones={validaciones}
             onRevisar={revisarSemana}
             onCerrar={cerrarSemana}
+            onCerrarDias={cerrarDiasPendientes}
+            diasPendientes={fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+                                               && situacionDia(f, hoy) !== 'futuro').length}
             puedeCerrar={esJefe && !semanaCerrada}
             cerrada={semanaCerrada}
           />
@@ -837,7 +865,8 @@ function Estado({ fila, evento, puede, onElegir }) {
 // ---------------------------------------------------------------------
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada }) {
+function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendientes,
+                  puedeCerrar, cerrada }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
@@ -871,7 +900,21 @@ function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada }) {
               <span style={{ color: GRIS }}>{v.detalle}</span>
             </div>
           ))}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
+                        gap: '9px', marginTop: '14px', flexWrap: 'wrap' }}>
+            {/* V5 pide la firma de los siete dias. En una semana pasada
+                no hay boton de "Cerrar dia", asi que el jefe los firma
+                aqui. Solo aparece cuando de verdad falta alguno. */}
+            {puedeCerrar && diasPendientes > 0 && (
+              <>
+                <span style={{ fontSize: '12px', color: GRIS, marginRight: 'auto' }}>
+                  Faltan {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'} por dar por cerrados.
+                </span>
+                <Btn onClick={onCerrarDias}>
+                  Cerrar los {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'}
+                </Btn>
+              </>
+            )}
             <Btn primario disabled={!todas || !puedeCerrar} onClick={onCerrar}>
               {puedeCerrar ? 'Cerrar semana' : 'Solo un jefe puede cerrar'}
             </Btn>
