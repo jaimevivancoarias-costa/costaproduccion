@@ -440,6 +440,35 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     }
   }
 
+  // Agregar un laboratorio al catalogo. Lo puede hacer tambien el
+  // bodeguero: si llega larva de uno que no esta en la lista, no puede
+  // quedarse esperando. Renombrar y desactivar siguen siendo del jefe.
+  async function nuevoLaboratorio(fila) {
+    const escrito = window.prompt('Nombre del laboratorio')
+    if (!escrito) return
+    const nombre = escrito.trim()
+    if (!nombre) return
+
+    // Si ya existe escrito de otra forma, se usa el que ya esta en vez
+    // de crear un duplicado. Asi no terminamos con ACUATECSA, Acuatecsa
+    // y Acuatecsa S.A. siendo el mismo laboratorio.
+    const ya = laboratorios.find(l => l.nombre.toLowerCase() === nombre.toLowerCase())
+    if (ya) {
+      setAviso({ tipo: 'ok', texto: `Ya existía como "${ya.nombre}". Se usó ese.` })
+      return cambiarLaboratorio(fila, ya.id)
+    }
+
+    const { data, error } = await supabase.schema('produccion').from('laboratorio')
+      .insert({ nombre }).select('id, nombre').single()
+    if (error) {
+      setAviso({ tipo: 'error', texto: 'No se pudo agregar. ' + error.message })
+      return
+    }
+    setLaboratorios(ls => [...ls, data].sort((a, b) => a.nombre.localeCompare(b.nombre)))
+    setAviso({ tipo: 'ok', texto: `${data.nombre} agregado al catálogo` })
+    await cambiarLaboratorio(fila, data.id)
+  }
+
   async function revisarSemana() {
     setValidaciones('cargando')
     const { data, error } = await supabase.schema('produccion')
@@ -647,6 +676,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         fila={p} laboratorios={laboratorios}
                         puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
                         onElegir={id => cambiarLaboratorio(p, id)}
+                        onNuevo={() => nuevoLaboratorio(p)}
                       />
                     </Td>
                     <Td>
@@ -861,7 +891,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
 // Columna de laboratorio. Se puede llenar o corregir en cualquier
 // momento del ciclo, no solo al sembrar.
 // ---------------------------------------------------------------------
-function Laboratorio({ fila, laboratorios, puede, onElegir }) {
+function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
   if (!fila.cicloId) return <span />
   if (!puede) {
     return <span style={{ color: GRIS, fontSize: '12px' }}>{fila.laboratorio || '—'}</span>
@@ -870,7 +900,7 @@ function Laboratorio({ fila, laboratorios, puede, onElegir }) {
   return (
     <select
       value={fila.laboratorioId || ''}
-      onChange={e => onElegir(e.target.value)}
+      onChange={e => e.target.value === '__nuevo' ? onNuevo() : onElegir(e.target.value)}
       title={fila.laboratorio || 'Elegir laboratorio'}
       style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
                borderRadius: '7px', background: 'white',
@@ -879,6 +909,12 @@ function Laboratorio({ fila, laboratorios, puede, onElegir }) {
     >
       <option value="">{vacio ? 'Sin laboratorio' : 'Quitar'}</option>
       {laboratorios.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
+      {/* Agregar lo puede hacer cualquiera: si llega larva de un
+          laboratorio que no esta en la lista, el bodeguero no puede
+          quedarse esperando a que le contesten. Renombrar y desactivar
+          siguen siendo del jefe, porque el catalogo es de las nueve
+          fincas. */}
+      <option value="__nuevo">+ Agregar laboratorio nuevo</option>
     </select>
   )
 }
