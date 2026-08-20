@@ -49,6 +49,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
   const semanaDeHoy = lunesDe(hoy) === lunes
+  // Los dias de cultivo se cuentan hasta el final de la semana que se
+  // esta mirando, pero nunca mas alla de hoy: una piscina sembrada
+  // ayer no lleva seis dias porque el domingo quede lejos.
+  const corteDias = fechas[6] > hoy ? hoy : fechas[6]
 
   const cargar = useCallback(async (silencioso) => {
     // Al recargar despues de guardar no se vacia la pantalla: la
@@ -669,7 +673,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
                     </span></Td>
                     <Td><span style={{ fontWeight: 500 }}>
-                      {p.fechaSiembra ? diasCultivo(p.fechaSiembra, fechas[6]) : ''}
+                      {p.fechaSiembra ? diasCultivo(p.fechaSiembra, corteDias) : ''}
                     </span></Td>
                     <Td>
                       <Laboratorio
