@@ -68,10 +68,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       // ciclo que cubria esta semana, y si la piscina fue sembrada
       // DESPUES de esta semana. Sin lo segundo, al mirar junio una
       // piscina sembrada en julio se veia vacia y ofrecia Sembrar.
-      const { data: ciclos } = await supabase
+      const { data: ciclos, error: eCiclos } = await supabase
         .schema('produccion').from('ciclo')
         .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio:laboratorio_id (nombre)')
         .eq('finca_id', finca.id)
+      if (eCiclos) throw new Error('No se pudieron leer los ciclos. ' + eCiclos.message)
 
       // El ciclo que cubria ESA semana, no el que esta abierto hoy. Si
       // hubo dos en la misma semana se queda el que empezo despues: es
@@ -164,10 +165,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
       const mapa = {}
       if (ids.length) {
-        const { data: alim } = await supabase
+        // Si esta consulta falla y nadie mira el error, la semana se
+        // dibuja vacia y parece que se borraron los datos. Nunca mas.
+        const { data: alim, error: eAlim } = await supabase
           .schema('produccion').from('alimentacion')
           .select('id, piscina_id, fecha, producto_id, libras, sin_alimentacion')
           .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
+        if (eAlim) throw new Error('No se pudo leer la alimentación de la semana. ' + eAlim.message)
         ;(alim || []).forEach(a => {
           mapa[`${a.piscina_id}|${a.fecha}`] = {
             id: a.id,
