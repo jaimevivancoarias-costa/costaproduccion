@@ -16,6 +16,9 @@ const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 
 export default function Costos({ finca, esJefe, lunes, setLunes }) {
+  // El inventario lo lleva quien esta en la bodega. Los ajustes no:
+  // un ajuste es donde se tapa un descuadre, y esa decision es del jefe.
+  const puedeInventario = finca.rol !== 'visor'
   const [filas, setFilas] = useState([])
   const [productos, setProductos] = useState([])
   const [acumulado, setAcumulado] = useState({})
@@ -381,13 +384,13 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                   nota="viene de la semana anterior"
                   calculado={p => saldoInicial(p.id)} />
               ) : (
-                <FilaSacos etiqueta="Saldo inicial" productos={productos} editable={esJefe}
+                <FilaSacos etiqueta="Saldo inicial" productos={productos} editable={puedeInventario}
                   nota="primera semana: cuenta la bodega"
                   valor={p => inv[p.id]?.saldo_inicial ?? ''}
                   onChange={(p, v) => setInvCampo(p.id, 'saldo_inicial', v)} />
               )}
 
-              <FilaSacos etiqueta="Pedido semanal" productos={productos} editable={esJefe}
+              <FilaSacos etiqueta="Pedido semanal" productos={productos} editable={puedeInventario}
                 valor={p => inv[p.id]?.entradas_recibidas ?? ''}
                 onChange={(p, v) => setInvCampo(p.id, 'entradas_recibidas', v)} />
 
@@ -398,6 +401,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                 calculado={p => sacosPre[p.id] || 0} />
 
               <FilaSacos etiqueta="Ajustes" productos={productos} editable={esJefe}
+                nota={esJefe ? 'exige motivo' : 'solo el jefe'}
                 valor={p => inv[p.id]?.ajustes ?? ''}
                 onChange={(p, v) => setInvCampo(p.id, 'ajustes', v)} />
 
@@ -407,7 +411,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
             </div>
           </div>
 
-          {esJefe && (
+          {puedeInventario && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '13px 18px',
                           borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
               <Btn primario onClick={guardarInventario} disabled={guardandoInv}>
