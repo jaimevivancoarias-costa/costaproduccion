@@ -1,0 +1,399 @@
+import { useState, useEffect, useCallback } from 'react'
+import { supabase } from '../lib/supabase'
+import { hoyISO, corta, num, miles } from '../lib/fechas'
+
+// Ingresos y pedidos de insumos · modulo Produccion
+//
+// Ingreso: producto que entro a bodega. Suma al saldo.
+// Pedido: lo que se solicito. NO suma al saldo, solo se sigue.
+//
+// Los dos comparten la forma: una cabecera y varias lineas, porque una
+// guia o un pedido traen varios insumos.
+
+const NAVY = '#022847'
+const AZUL = '#0D6CB0'
+const BORDE = '#dce6ef'
+const GRIS = '#7d8fa0'
+const VERDE = '#0F6E56'
+const AMBAR = '#854F0B'
+
+const UNIDAD = {
+  sacos: 'sacos', litros: 'litros', gramos: 'gramos',
+  libras: 'libras', kg: 'kilos', unidad: 'unidades',
+}
+
+export default function Ingresos({ finca }) {
+  const [modo, setModo] = useState('ingresos')   // 'ingresos' | 'pedidos'
+  const [insumos, setInsumos] = useState([])
+  const [ingresos, setIngresos] = useState([])
+  const [pedidos, setPedidos] = useState([])
+  const [pendientes, setPendientes] = useState({})   // pedidoId -> lineas pendientes
+  const [cargando, setCargando] = useState(true)
+  const [aviso, setAviso] = useState(null)
+  const [nuevo, setNuevo] = useState(null)   // 'ingreso' | 'pedido' | null
+
+  const cargar = useCallback(async () => {
+    setCargando(true); setAviso(null)
+    try {
+      const [{ data: ins }, { data: g }, { data: pd }, { data: pend }] = await Promise.all([
+        supabase.schema('produccion').from('insumo')
+          .select('id, nombre, unidad').eq('activo', true).order('nombre'),
+        supabase.schema('produccion').from('ingreso_insumo')
+          .select('id, fecha, numero_guia, proveedor, observacion, ingreso_insumo_linea(insumo_id, cantidad)')
+          .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
+        supabase.schema('produccion').from('pedido_insumo')
+          .select('id, fecha, fecha_esperada, proveedor, estado, pedido_insumo_linea(insumo_id, cantidad)')
+          .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
+        supabase.schema('produccion').from('vw_pedido_pendiente')
+          .select('pedido_id, insumo_id, insumo, unidad, pedida, recibida, pendiente')
+          .eq('finca_id', finca.id),
+      ])
+      setInsumos(ins || [])
+      setIngresos(g || [])
+      setPedidos(pd || [])
+      const pp = {}
+      ;(pend || []).forEach(r => { (pp[r.pedido_id] = pp[r.pedido_id] || []).push(r) })
+      setPendientes(pp)
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
+    } finally {
+      setCargando(false)
+    }
+  }, [finca.id])
+
+  useEffect(() => { cargar() }, [cargar])
+
+  const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
+  const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
+
+  return (
+    <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
+                    marginBottom: '16px' }}>
+        <Chip on={modo === 'ingresos'} onClick={() => { setModo('ingresos'); setNuevo(null) }}>
+          Ingresos a bodega
+        </Chip>
+        <Chip on={modo === 'pedidos'} onClick={() => { setModo('pedidos'); setNuevo(null) }}>
+          Pedidos
+        </Chip>
+        <div style={{ marginLeft: 'auto' }}>
+          {!nuevo && (
+            <Btn primario onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : 'pedido')}>
+              {modo === 'ingresos' ? 'Registrar ingreso' : 'Registrar pedido'}
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      {aviso && (
+        <div style={{ borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginBottom: '12px',
+                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
+                      color: aviso.tipo === 'error' ? '#8A2F2E' : VERDE }}>{aviso.texto}</div>
+      )}
+
+      {nuevo && (
+        <Formulario
+          tipo={nuevo} finca={finca} insumos={insumos}
+          pedidosAbiertos={pedidos.filter(p => p.estado === 'abierto')}
+          pendientes={pendientes}
+          onCancelar={() => setNuevo(null)}
+          onGuardado={async () => { setNuevo(null); await cargar()
+            setAviso({ tipo: 'ok', texto: nuevo === 'ingreso' ? 'Ingreso registrado.' : 'Pedido registrado.' }) }}
+          setAviso={setAviso}
+        />
+      )}
+
+      {cargando ? (
+        <Vacio>Cargando...</Vacio>
+
+      ) : modo === 'ingresos' ? (
+        !ingresos.length ? (
+          <Vacio>Todavía no hay ingresos registrados. Cuando llegue producto a bodega, regístralo aquí con su guía.</Vacio>
+        ) : ingresos.map(g => (
+          <Tarjeta key={g.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>{corta(g.fecha)}</div>
+                <div style={{ fontSize: '12px', color: GRIS }}>
+                  {g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}
+                  {g.proveedor ? ` · ${g.proveedor}` : ''}
+                </div>
+              </div>
+            </div>
+            <Lineas>
+              {(g.ingreso_insumo_linea || []).map((l, i) => (
+                <Linea key={i} nombre={nombreInsumo(l.insumo_id)}
+                       cantidad={`+${miles(num(l.cantidad))} ${unidadInsumo(l.insumo_id)}`}
+                       color={VERDE} />
+              ))}
+            </Lineas>
+            {g.observacion && <Obs>{g.observacion}</Obs>}
+          </Tarjeta>
+        ))
+
+      ) : (
+        !pedidos.length ? (
+          <Vacio>Todavía no hay pedidos. Un pedido no suma al saldo: solo sirve para seguir lo que pediste y ver cuánto ha llegado.</Vacio>
+        ) : pedidos.map(p => {
+          const pend = pendientes[p.id] || []
+          const todoLlego = pend.every(x => Number(x.pendiente) <= 0.0001)
+          return (
+            <Tarjeta key={p.id}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontWeight: 500 }}>{corta(p.fecha)}</div>
+                  <div style={{ fontSize: '12px', color: GRIS }}>
+                    {p.proveedor || 'Sin proveedor'}
+                    {p.fecha_esperada ? ` · esperado ${corta(p.fecha_esperada)}` : ''}
+                  </div>
+                </div>
+                <Estado estado={p.estado} completo={todoLlego} />
+              </div>
+              <Lineas>
+                {(p.pedido_insumo_linea || []).map((l, i) => {
+                  const seg = pend.find(x => x.insumo_id === l.insumo_id)
+                  const falta = seg ? Number(seg.pendiente) : Number(l.cantidad)
+                  return (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto',
+                          gap: '12px', alignItems: 'center', padding: '5px 0', fontSize: '13px' }}>
+                      <span>{nombreInsumo(l.insumo_id)}</span>
+                      <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                        {miles(num(l.cantidad))} {unidadInsumo(l.insumo_id)}
+                      </span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: '120px',
+                                     textAlign: 'right', color: falta <= 0.0001 ? VERDE : AMBAR }}>
+                        {falta <= 0.0001 ? 'llegó todo' : `faltan ${miles(falta)}`}
+                      </span>
+                    </div>
+                  )
+                })}
+              </Lineas>
+              {p.estado === 'abierto' && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+                  <button onClick={() => cerrarPedido(p.id)} style={{
+                    background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: '12px', color: GRIS }}>
+                    Marcar como cerrado
+                  </button>
+                </div>
+              )}
+            </Tarjeta>
+          )
+        })
+      )}
+    </div>
+  )
+
+  async function cerrarPedido(id) {
+    if (!window.confirm('¿Dar el pedido por cerrado? Se deja de seguir aunque no haya llegado todo.')) return
+    const { error } = await supabase.schema('produccion').from('pedido_insumo')
+      .update({ estado: 'recibido' }).eq('id', id)
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    await cargar()
+  }
+}
+
+// ---------------------------------------------------------------------
+// Formulario de ingreso o de pedido: cabecera + lineas
+// ---------------------------------------------------------------------
+function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCancelar, onGuardado, setAviso }) {
+  const esIngreso = tipo === 'ingreso'
+  const [fecha, setFecha] = useState(hoyISO())
+  const [guia, setGuia] = useState('')
+  const [proveedor, setProveedor] = useState('')
+  const [esperada, setEsperada] = useState('')
+  const [pedidoId, setPedidoId] = useState('')
+  const [obs, setObs] = useState('')
+  const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '' }])
+  const [guardando, setGuardando] = useState(false)
+
+  const UNI = { sacos: 'sacos', litros: 'litros', gramos: 'gramos',
+                libras: 'libras', kg: 'kilos', unidad: 'unidades' }
+
+  function setLinea(i, campo, valor) {
+    setLineas(ls => ls.map((l, j) => j === i ? { ...l, [campo]: valor } : l))
+  }
+  const agregarLinea = () => setLineas(ls => [...ls, { insumoId: '', cantidad: '' }])
+  const quitarLinea = i => setLineas(ls => ls.filter((_, j) => j !== i))
+
+  const validas = lineas.filter(l => l.insumoId && num(l.cantidad))
+
+  async function guardar() {
+    if (!validas.length) { setAviso({ tipo: 'error', texto: 'Agrega al menos una línea.' }); return }
+    setGuardando(true)
+    try {
+      if (esIngreso) {
+        const { data: g, error } = await supabase.schema('produccion').from('ingreso_insumo')
+          .insert({ finca_id: finca.id, fecha, numero_guia: guia || null,
+                    proveedor: proveedor || null, pedido_id: pedidoId || null,
+                    observacion: obs || null })
+          .select('id').single()
+        if (error) throw error
+        const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
+          .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: num(l.cantidad) })))
+        if (e2) throw e2
+      } else {
+        const { data: p, error } = await supabase.schema('produccion').from('pedido_insumo')
+          .insert({ finca_id: finca.id, fecha, fecha_esperada: esperada || null,
+                    proveedor: proveedor || null })
+          .select('id').single()
+        if (error) throw error
+        const { error: e2 } = await supabase.schema('produccion').from('pedido_insumo_linea')
+          .insert(validas.map(l => ({ pedido_id: p.id, insumo_id: l.insumoId, cantidad: num(l.cantidad) })))
+        if (e2) throw e2
+      }
+      await onGuardado()
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + AZUL, borderRadius: '12px',
+                  padding: '18px', marginBottom: '14px' }}>
+      <h3 style={{ fontSize: '16px', fontWeight: 500, margin: '0 0 14px' }}>
+        {esIngreso ? 'Registrar ingreso a bodega' : 'Registrar pedido'}
+      </h3>
+
+      <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <Campo label="Fecha">
+          <input type="date" value={fecha} max={hoyISO()}
+                 onChange={e => setFecha(e.target.value)} style={entrada} />
+        </Campo>
+        {esIngreso ? (
+          <>
+            <Campo label="Número de guía">
+              <input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={entrada} />
+            </Campo>
+            {pedidosAbiertos.length > 0 && (
+              <Campo label="¿Es de un pedido?">
+                <select value={pedidoId} onChange={e => setPedidoId(e.target.value)} style={entrada}>
+                  <option value="">No</option>
+                  {pedidosAbiertos.map(p => (
+                    <option key={p.id} value={p.id}>{corta(p.fecha)} · {p.proveedor || 'sin proveedor'}</option>
+                  ))}
+                </select>
+              </Campo>
+            )}
+          </>
+        ) : (
+          <Campo label="Fecha esperada">
+            <input type="date" value={esperada} min={fecha}
+                   onChange={e => setEsperada(e.target.value)} style={entrada} />
+          </Campo>
+        )}
+        <Campo label="Proveedor">
+          <input value={proveedor} placeholder="Opcional"
+                 onChange={e => setProveedor(e.target.value)} style={entrada} />
+        </Campo>
+      </div>
+
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
+      {lineas.map((l, i) => {
+        const uni = insumos.find(x => x.id === l.insumoId)?.unidad
+        return (
+          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px' }}>
+            <select value={l.insumoId} onChange={e => setLinea(i, 'insumoId', e.target.value)}
+              style={{ ...entrada, flex: 1 }}>
+              <option value="">Elegir insumo</option>
+              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad] || x.unidad}</option>)}
+            </select>
+            <input inputMode="decimal" value={l.cantidad}
+              placeholder={uni ? `Cantidad en ${UNI[uni] || uni}` : 'Cantidad'}
+              onChange={e => setLinea(i, 'cantidad', e.target.value)}
+              style={{ ...entrada, width: '190px' }} />
+            {lineas.length > 1 && (
+              <button onClick={() => quitarLinea(i)} style={{ border: 'none', background: 'none',
+                cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
+            )}
+          </div>
+        )
+      })}
+      <button onClick={agregarLinea} style={{ border: 'none', background: 'none', cursor: 'pointer',
+        fontFamily: 'inherit', fontSize: '13px', color: AZUL, padding: '4px 0' }}>
+        + otra línea
+      </button>
+
+      <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px' }}>
+        <Btn onClick={onCancelar}>Cancelar</Btn>
+        <Btn primario onClick={guardar} disabled={guardando || !validas.length}>
+          {guardando ? 'Guardando...' : esIngreso ? 'Guardar ingreso' : 'Guardar pedido'}
+        </Btn>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+function Chip({ children, on, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: '8px 15px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '13px',
+      cursor: 'pointer', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
+      background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400,
+    }}>{children}</button>
+  )
+}
+
+function Estado({ estado, completo }) {
+  const m = estado === 'recibido' ? { t: 'Cerrado', c: GRIS, f: '#eef2f5' }
+          : completo ? { t: 'Llegó todo', c: VERDE, f: '#E1F5EE' }
+          : { t: 'Abierto', c: AMBAR, f: '#FAEEDA' }
+  return (
+    <span style={{ fontSize: '11px', fontWeight: 500, padding: '4px 11px', borderRadius: '20px',
+                   background: m.f, color: m.c, height: 'fit-content' }}>{m.t}</span>
+  )
+}
+
+function Tarjeta({ children }) {
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                  padding: '15px 17px', marginBottom: '10px' }}>{children}</div>
+  )
+}
+function Lineas({ children }) {
+  return <div style={{ marginTop: '11px', borderTop: '0.5px solid #f1f6f9', paddingTop: '9px' }}>{children}</div>
+}
+function Linea({ nombre, cantidad, color }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '13px' }}>
+      <span>{nombre}</span>
+      <span style={{ fontVariantNumeric: 'tabular-nums', color: color || NAVY }}>{cantidad}</span>
+    </div>
+  )
+}
+function Obs({ children }) {
+  return <div style={{ fontSize: '12px', color: GRIS, marginTop: '9px', fontStyle: 'italic' }}>{children}</div>
+}
+function Vacio({ children }) {
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                  padding: '32px 24px', textAlign: 'center', fontSize: '13px', color: GRIS,
+                  maxWidth: '520px', margin: '0 auto', lineHeight: 1.6 }}>{children}</div>
+  )
+}
+function Campo({ label, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{label}</div>
+      {children}
+    </div>
+  )
+}
+function Btn({ children, primario, ...props }) {
+  return (
+    <button {...props} style={{
+      padding: '9px 17px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+      borderRadius: '9px', cursor: props.disabled ? 'default' : 'pointer',
+      border: '0.5px solid ' + (primario ? AZUL : BORDE),
+      background: primario ? AZUL : 'white', color: primario ? 'white' : NAVY,
+      opacity: props.disabled ? 0.45 : 1,
+    }}>{children}</button>
+  )
+}
+const entrada = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
+                  border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                  boxSizing: 'border-box', background: 'white' }
