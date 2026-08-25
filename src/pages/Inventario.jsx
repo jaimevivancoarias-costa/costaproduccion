@@ -50,6 +50,13 @@ export default function Inventario({ finca, esJefe }) {
   const [contado, setContado] = useState({})
   const [guardando, setGuardando] = useState(false)
 
+  // Correccion en linea del jefe: que insumo se esta editando, el saldo
+  // nuevo y el motivo. Todo dentro de la fila, sin ventanas.
+  const [editando, setEditando] = useState(null)
+  const [nuevoSaldo, setNuevoSaldo] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [guardandoAj, setGuardandoAj] = useState(false)
+
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
@@ -106,37 +113,36 @@ export default function Inventario({ finca, esJefe }) {
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
 
-  // Corregir el saldo de un insumo suelto, sin contar toda la bodega.
-  // Solo jefes y con motivo: un ajuste es donde se tapa un descuadre.
-  async function ajustar(f) {
-    const actual = Number(f.saldo)
-    const escrito = window.prompt(
-      `${f.insumo}\n\nEl sistema dice ${limpio(actual)} ${UNIDAD[f.unidad] || f.unidad}.\n` +
-      `¿Cuánto debe decir?`, limpio(actual))
-    if (escrito === null) return
-    const nuevo = Number(String(escrito).replace(',', '.'))
+  function abrirCorregir(f) {
+    setEditando(f.insumo_id)
+    setNuevoSaldo(limpio(f.saldo))
+    setMotivo('')
+    setAviso(null)
+  }
+
+  // Corregir el saldo de un insumo suelto. Solo jefes y con motivo: un
+  // ajuste es donde se tapa un descuadre, y sin el porque no sirve.
+  async function guardarCorreccion(f) {
+    const nuevo = Number(String(nuevoSaldo).replace(',', '.'))
     if (!isFinite(nuevo)) {
-      setAviso({ tipo: 'error', texto: 'Eso no es un número.' }); return
+      setAviso({ tipo: 'error', texto: 'El saldo nuevo no es un número.' }); return
     }
-    const delta = nuevo - actual
-    if (Math.abs(delta) < 0.0001) {
-      setAviso({ tipo: 'ok', texto: 'No hay nada que cambiar.' }); return
-    }
-
-    const motivo = window.prompt(
-      `Vas a ${delta > 0 ? 'sumar' : 'restar'} ${limpio(Math.abs(delta))} ${UNIDAD[f.unidad] || f.unidad}.\n\n` +
-      `¿Por qué? El motivo queda en la bitácora con tu nombre.`)
-    if (!motivo || !motivo.trim()) {
-      setAviso({ tipo: 'error', texto: 'El ajuste necesita un motivo.' }); return
+    const delta = nuevo - Number(f.saldo)
+    if (Math.abs(delta) < 0.0001) { setEditando(null); return }
+    if (!motivo.trim()) {
+      setAviso({ tipo: 'error', texto: 'La corrección necesita un motivo.' }); return
     }
 
+    setGuardandoAj(true)
     const { error } = await supabase.schema('produccion').from('ajuste_insumo')
       .insert({ finca_id: finca.id, fecha: alDia, insumo_id: f.insumo_id,
                 cantidad: delta, motivo: motivo.trim() })
+    setGuardandoAj(false)
     if (error) {
-      setAviso({ tipo: 'error', texto: 'No se pudo ajustar. ' + error.message }); return
+      setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return
     }
-    setAviso({ tipo: 'ok', texto: `${f.insumo} ajustado a ${limpio(nuevo)}.` })
+    setEditando(null)
+    setAviso({ tipo: 'ok', texto: `${f.insumo} corregido a ${limpio(nuevo)}.` })
     await cargar()
   }
 
@@ -414,28 +420,64 @@ export default function Inventario({ finca, esJefe }) {
                        ...(esJefe ? [''] : [])]}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}
           >
-            {filas.map(f => (
-              <Fila key={f.insumo_id} anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}>
-                <Celda>{f.insumo}</Celda>
-                <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
-                <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
-                  {limpio(f.saldo)}
-                </Celda>
-                <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>
-                <Celda derecha>{dinero(Number(f.saldo) * f.precio)}</Celda>
-                {esJefe && (
-                  <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
-                                textAlign: 'right' }}>
-                    <button onClick={() => ajustar(f)} style={{
-                      background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
-                      padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
-                      color: GRIS, cursor: 'pointer' }}>
-                      Corregir
-                    </button>
+            {filas.map(f => {
+              const edit = editando === f.insumo_id
+              return (
+              <div key={f.insumo_id}>
+                <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}>
+                  <Celda>{f.insumo}</Celda>
+                  <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
+                  {edit ? (
+                    <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f6f9fb' }}>
+                      <input autoFocus inputMode="decimal" value={nuevoSaldo}
+                        onChange={e => setNuevoSaldo(e.target.value)}
+                        style={{ ...entrada, width: '100%', textAlign: 'right',
+                                 fontVariantNumeric: 'tabular-nums',
+                                 borderColor: '#9cc4e8' }} />
+                    </div>
+                  ) : (
+                    <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
+                      {limpio(f.saldo)}
+                    </Celda>
+                  )}
+                  <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>
+                  <Celda derecha>{dinero(Number(f.saldo) * f.precio)}</Celda>
+                  {esJefe && (
+                    <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
+                                  textAlign: 'right' }}>
+                      {!edit && (
+                        <button onClick={() => abrirCorregir(f)} style={{
+                          background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                          padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                          color: GRIS, cursor: 'pointer' }}>
+                          Corregir
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </Fila>
+
+                {edit && (
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center',
+                                padding: '10px 14px', background: '#f6f9fb', flexWrap: 'wrap',
+                                borderBottom: '0.5px solid #f1f6f9' }}>
+                    <span style={{ fontSize: '12px', color: GRIS }}>
+                      De {limpio(f.saldo)} a {limpio(Number(String(nuevoSaldo).replace(',', '.')) || 0)}.
+                      Motivo:
+                    </span>
+                    <input value={motivo} autoFocus={false}
+                      placeholder="Por qué se corrige — queda en la bitácora"
+                      onChange={e => setMotivo(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && guardarCorreccion(f)}
+                      style={{ ...entrada, flex: 1, minWidth: '240px' }} />
+                    <Btn onClick={() => setEditando(null)}>Cancelar</Btn>
+                    <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoAj}>
+                      {guardandoAj ? 'Guardando...' : 'Guardar corrección'}
+                    </Btn>
                   </div>
                 )}
-              </Fila>
-            ))}
+              </div>
+            )})}
             <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO} total>
               <Celda fuerte>Total</Celda>
               <Celda /><Celda /><Celda />
