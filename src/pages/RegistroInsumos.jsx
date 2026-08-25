@@ -139,7 +139,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }) }
   }
 
-  const COLS = `150px 84px repeat(7, minmax(150px, 1fr))`
+  const COLS = `150px 84px repeat(7, minmax(168px, 1fr))`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -180,7 +180,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       ) : (
         <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white' }}>
-          <div style={{ minWidth: '1240px' }}>
+          <div style={{ minWidth: '1360px' }}>
             {/* Encabezado */}
             <div style={{ display: 'grid', gridTemplateColumns: COLS, borderBottom: '0.5px solid ' + BORDE,
                           background: '#f6f9fb', position: 'sticky', top: 0 }}>
@@ -218,27 +218,26 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                                     : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : 'white',
                           borderLeft: '0.5px solid #f6f9fb' }}>
                       {ls.map(l => (
-                        <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: '5px',
-                              marginBottom: '4px' }}>
-                          <span style={{ flex: 1, fontSize: '11px', color: NAVY, overflow: 'hidden',
-                                         textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                                title={nombreInsumo(l.insumoId)}>
+                        <div key={l.id} style={{ marginBottom: '6px', paddingBottom: '5px',
+                              borderBottom: '0.5px solid #f1f6f9' }}>
+                          <div style={{ fontSize: '11px', color: NAVY, fontWeight: 500,
+                                        marginBottom: '3px', lineHeight: 1.25 }}>
                             {nombreInsumo(l.insumoId)}
-                          </span>
+                          </div>
                           {edit ? (
-                            <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                               <input inputMode="decimal" value={l.cantidad}
                                 onChange={e => cambiarCantidad(k, l.id, e.target.value)}
-                                style={{ width: '52px', fontFamily: 'inherit', fontSize: '12px',
+                                style={{ width: '60px', fontFamily: 'inherit', fontSize: '12px',
                                          padding: '3px 5px', textAlign: 'right', border: '0.5px solid ' + BORDE,
                                          borderRadius: '6px', fontVariantNumeric: 'tabular-nums' }} />
-                              <span style={{ fontSize: '10px', color: GRIS, width: '30px' }}>
+                              <span style={{ fontSize: '11px', color: GRIS, flex: 1 }}>
                                 {unidadInsumo(l.insumoId)}
                               </span>
                               <button onClick={() => quitar(k, l.id)} title="Quitar"
                                 style={{ border: 'none', background: 'none', cursor: 'pointer',
-                                         color: '#c3d0db', fontSize: '14px', lineHeight: 1, padding: 0 }}>×</button>
-                            </>
+                                         color: '#c3d0db', fontSize: '15px', lineHeight: 1, padding: 0 }}>×</button>
+                            </div>
                           ) : (
                             <span style={{ fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
                               {miles(num(l.cantidad))} {unidadInsumo(l.insumoId)}
@@ -282,16 +281,21 @@ function Agregar({ insumos, usados, onGuardar, onCerrar }) {
   const [insumoId, setInsumoId] = useState('')
   const [cant, setCant] = useState('')
   const libres = insumos.filter(i => !usados.includes(i.id))
+  const elegido = insumos.find(i => i.id === insumoId)
   return (
     <div style={{ marginTop: '4px', padding: '6px', background: '#f6f9fb', borderRadius: '7px' }}>
       <select value={insumoId} onChange={e => setInsumoId(e.target.value)}
         style={{ width: '100%', fontFamily: 'inherit', fontSize: '11px', padding: '4px',
                  border: '0.5px solid ' + BORDE, borderRadius: '6px', marginBottom: '4px' }}>
         <option value="">Elegir insumo</option>
-        {libres.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+        {libres.map(i => (
+          <option key={i.id} value={i.id}>{i.nombre} — {UNIDAD[i.unidad] || i.unidad}</option>
+        ))}
       </select>
-      <div style={{ display: 'flex', gap: '4px' }}>
-        <input inputMode="decimal" value={cant} placeholder="Cantidad" autoFocus
+      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+        <input inputMode="decimal" value={cant}
+          placeholder={elegido ? `Cantidad en ${UNIDAD[elegido.unidad] || elegido.unidad}` : 'Cantidad'}
+          autoFocus
           onChange={e => setCant(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && (onGuardar(insumoId, cant))}
           style={{ flex: 1, fontFamily: 'inherit', fontSize: '11px', padding: '4px',
