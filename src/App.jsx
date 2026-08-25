@@ -7,6 +7,7 @@ import Gramaje from './pages/Gramaje'
 import Costos from './pages/Costos'
 import Resumen from './pages/Resumen'
 import Inventario from './pages/Inventario'
+import Reportes from './pages/Reportes'
 import Historial from './pages/Historial'
 import EnConstruccion from './pages/EnConstruccion'
 
@@ -26,6 +27,7 @@ const MODULOS = [
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
   { id: 'costos',     nombre: 'Costos',         icono: 'moneda' },
+  { id: 'reportes',   nombre: 'Reportes',       icono: 'barras' },
   // El historial es la bitacora de cambios: herramienta de supervision.
   { id: 'historial',  nombre: 'Historial',      icono: 'reloj', soloJefe: true },
 ]
@@ -185,6 +187,8 @@ export default function App() {
             <Costos key={finca.id} finca={finca} esJefe={esJefe} lunes={lunes} setLunes={setLunes} />
           ) : modulo === 'inventario' ? (
             <Inventario key={finca.id} finca={finca} esJefe={esJefe} />
+          ) : modulo === 'reportes' ? (
+            <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} />
           ) : modulo === 'historial' ? (
             <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
           ) : (
