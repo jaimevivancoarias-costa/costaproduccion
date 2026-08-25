@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from './context/AuthContext'
 import { hoyISO, lunesDe } from './lib/fechas'
 import RegistroDiario from './pages/RegistroDiario'
+import RegistroInsumos from './pages/RegistroInsumos'
 import Gramaje from './pages/Gramaje'
 import Costos from './pages/Costos'
 import Resumen from './pages/Resumen'
@@ -44,6 +45,8 @@ export default function App() {
   const { user, nombre, fincas, esJefe, cargando, logout } = useAuth()
   const [fincaId, setFincaId] = useState(null)
   const [modulo, setModulo] = useState('registro')
+  // Dentro de Registro diario: balanceado o insumos. Comparten semana.
+  const [panelReg, setPanelReg] = useState('balanceado')
   // La semana es una sola para todo el modulo: si la cambias en una
   // pantalla, las demas se mueven con ella.
   const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
@@ -144,14 +147,38 @@ export default function App() {
               onIrAFinca={id => { setFincaId(id); setModulo('registro') }}
             />
           ) : modulo === 'registro' ? (
-            <RegistroDiario
-              key={finca.id}
-              finca={finca}
-              esJefe={esJefe}
-              soloLectura={soloLectura}
-              lunes={lunes}
-              setLunes={setLunes}
-            />
+            <div>
+              <div style={{ display: 'flex', gap: '4px', padding: '14px 1.4rem 0' }}>
+                {[['balanceado', 'Balanceado'], ['insumos', 'Insumos']].map(([id, txt]) => (
+                  <button key={id} onClick={() => setPanelReg(id)} style={{
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14px',
+                    fontWeight: 500, padding: '9px 18px', borderRadius: '9px 9px 0 0',
+                    background: panelReg === id ? 'white' : 'transparent',
+                    color: panelReg === id ? AZUL : GRIS,
+                    borderBottom: panelReg === id ? '2px solid ' + AZUL : '2px solid transparent',
+                  }}>{txt}</button>
+                ))}
+              </div>
+              {panelReg === 'balanceado' ? (
+                <RegistroDiario
+                  key={finca.id}
+                  finca={finca}
+                  esJefe={esJefe}
+                  soloLectura={soloLectura}
+                  lunes={lunes}
+                  setLunes={setLunes}
+                />
+              ) : (
+                <RegistroInsumos
+                  key={finca.id}
+                  finca={finca}
+                  esJefe={esJefe}
+                  soloLectura={soloLectura}
+                  lunes={lunes}
+                  setLunes={setLunes}
+                />
+              )}
+            </div>
           ) : modulo === 'gramaje' ? (
             <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} />
           ) : modulo === 'costos' ? (
