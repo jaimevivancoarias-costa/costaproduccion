@@ -5,6 +5,8 @@ import RegistroDiario from './pages/RegistroDiario'
 import Gramaje from './pages/Gramaje'
 import Costos from './pages/Costos'
 import Resumen from './pages/Resumen'
+import Inventario from './pages/Inventario'
+import Historial from './pages/Historial'
 import EnConstruccion from './pages/EnConstruccion'
 
 // Navegacion de dos niveles (regla 9): la finca vive arriba como
@@ -23,7 +25,8 @@ const MODULOS = [
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
   { id: 'costos',     nombre: 'Costos',         icono: 'moneda' },
-  { id: 'historial',  nombre: 'Historial',      icono: 'reloj' },
+  // El historial es la bitacora de cambios: herramienta de supervision.
+  { id: 'historial',  nombre: 'Historial',      icono: 'reloj', soloJefe: true },
 ]
 
 function Icono({ tipo }) {
@@ -109,7 +112,7 @@ export default function App() {
         <nav style={{ width: '178px', flexShrink: 0, background: 'white',
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
                       padding: '1.1rem 0.7rem' }}>
-          {MODULOS.map(m => {
+          {MODULOS.filter(m => !m.soloJefe || esJefe).map(m => {
             const activo = m.id === modulo
             return (
               <button
@@ -153,6 +156,10 @@ export default function App() {
             <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} />
           ) : modulo === 'costos' ? (
             <Costos key={finca.id} finca={finca} esJefe={esJefe} lunes={lunes} setLunes={setLunes} />
+          ) : modulo === 'inventario' ? (
+            <Inventario key={finca.id} finca={finca} esJefe={esJefe} />
+          ) : modulo === 'historial' ? (
+            <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === modulo)} />
           )}
