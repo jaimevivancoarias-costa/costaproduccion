@@ -96,7 +96,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
       const { anio, semana } = semanaISO(lunes)
       const { data: sc } = await supabase.schema('produccion').from('semana_cerrada')
-        .select('id').eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).maybeSingle()
+        .select('id').eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana)
+        .eq('ambito', 'insumos').maybeSingle()
       setSemanaCerrada(!!sc)
       setValidaciones(null)
     } catch (err) {
@@ -111,17 +112,31 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     const { data, error } = await supabase.schema('produccion')
       .rpc('fn_validar_semana', { p_finca: finca.id, p_lunes: lunes })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); setValidaciones(null); return }
-    setValidaciones(data || [])
+    // Aqui solo cuentan las validaciones de insumos. Las de balanceado
+    // se revisan y se cierran en su propia pestana.
+    setValidaciones((data || []).filter(v => v.codigo === 'V7' || v.codigo === 'V8'))
   }
 
   async function cerrarSemana() {
     const { anio, semana } = semanaISO(lunes)
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
-      .insert({ finca_id: finca.id, anio, semana, validaciones })
+      .insert({ finca_id: finca.id, anio, semana, ambito: 'insumos', validaciones })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Semana cerrada' })
+    setAviso({ tipo: 'ok', texto: 'Insumos de la semana cerrados' })
     await cargar()
   }
+
+  // Consumo de la semana por insumo, para la pregunta directa "cuánto
+  // se gastó de cada cosa esta semana".
+  const consumoSemana = useMemo(() => {
+    const m = {}
+    Object.values(lineas).flat().forEach(l => {
+      m[l.insumoId] = (m[l.insumoId] || 0) + num(l.cantidad)
+    })
+    return Object.entries(m)
+      .map(([id, cant]) => ({ id, cant }))
+      .sort((a, b) => b.cant - a.cant)
+  }, [lineas])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -298,6 +313,30 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
+      {!cargando && consumoSemana.length > 0 && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                      padding: '16px 18px', marginTop: '14px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 3px' }}>Consumo de la semana</h3>
+          <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 12px' }}>
+            Total de cada insumo aplicado en las piscinas del {corta(lunes)} al {corta(domingo)}.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                        gap: '9px' }}>
+            {consumoSemana.map(c => (
+              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'baseline', padding: '9px 12px', background: '#f6f9fb',
+                    borderRadius: '9px', fontSize: '13px' }}>
+                <span style={{ color: NAVY }}>{nombreInsumo(c.id)}</span>
+                <span style={{ fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                  {miles(c.cant)} <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>
+                    {unidadInsumo(c.id)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {!cargando && (
         <Cierre
           validaciones={validaciones}
@@ -322,10 +361,10 @@ function Cierre({ validaciones, cerrada, puedeCerrar, onRevisar, onCerrar }) {
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '14px', flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar la semana</h3>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar los insumos de la semana</h3>
           <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
-            {cerrada ? 'Esta semana ya está cerrada.'
-              : 'Revisa balanceado e insumos a la vez. No se puede cerrar mientras algo no cuadre.'}
+            {cerrada ? 'Los insumos de esta semana ya están cerrados.'
+              : 'Cierra solo los insumos. El balanceado se cierra aparte, en su pestaña.'}
           </p>
         </div>
         {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
