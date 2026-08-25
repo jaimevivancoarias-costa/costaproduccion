@@ -23,12 +23,26 @@ const UNIDAD = {
   libras: 'libras', kg: 'kilos', unidad: 'unidades',
 }
 
-export default function Inventario({ finca }) {
+// Primer dia del mes de una fecha, para el atajo "este mes".
+const primeroDelMes = iso => iso.slice(0, 8) + '01'
+
+const ANCHOS_SALDO      = '1fr 110px 120px 140px 150px'
+const ANCHOS_SALDO_JEFE = '1fr 110px 120px 140px 150px 110px'
+const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
+
+export default function Inventario({ finca, esJefe }) {
   const [saldos, setSaldos] = useState([])
+  const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
+
+  // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
+  const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
+  const [alDia, setAlDia] = useState(hoyISO())
+  const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
+  const [hasta, setHasta] = useState(hoyISO())
 
   const [contando, setContando] = useState(false)
   const [fecha, setFecha] = useState(hoyISO())
@@ -39,9 +53,11 @@ export default function Inventario({ finca }) {
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: eS }, { data: p }, { data: t }] = await Promise.all([
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_insumo',
-          { p_finca: finca.id, p_hasta: hoyISO() }),
+          { p_finca: finca.id, p_hasta: alDia }),
+        supabase.schema('produccion').rpc('fn_movimiento_insumo',
+          { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').from('precio_insumo')
           .select('insumo_id, finca_id, precio_unitario')
           .is('vigente_hasta', null)
@@ -59,13 +75,13 @@ export default function Inventario({ finca }) {
         pr[x.insumo_id] = Number(x.precio_unitario)
       })
 
-      setSaldos(s || []); setPrecios(pr); setConteos(t || [])
+      setSaldos(s || []); setMovs(m || []); setPrecios(pr); setConteos(t || [])
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
       setCargando(false)
     }
-  }, [finca.id])
+  }, [finca.id, alDia, desde, hasta])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -89,6 +105,40 @@ export default function Inventario({ finca }) {
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
+
+  // Corregir el saldo de un insumo suelto, sin contar toda la bodega.
+  // Solo jefes y con motivo: un ajuste es donde se tapa un descuadre.
+  async function ajustar(f) {
+    const actual = Number(f.saldo)
+    const escrito = window.prompt(
+      `${f.insumo}\n\nEl sistema dice ${limpio(actual)} ${UNIDAD[f.unidad] || f.unidad}.\n` +
+      `¿Cuánto debe decir?`, limpio(actual))
+    if (escrito === null) return
+    const nuevo = Number(String(escrito).replace(',', '.'))
+    if (!isFinite(nuevo)) {
+      setAviso({ tipo: 'error', texto: 'Eso no es un número.' }); return
+    }
+    const delta = nuevo - actual
+    if (Math.abs(delta) < 0.0001) {
+      setAviso({ tipo: 'ok', texto: 'No hay nada que cambiar.' }); return
+    }
+
+    const motivo = window.prompt(
+      `Vas a ${delta > 0 ? 'sumar' : 'restar'} ${limpio(Math.abs(delta))} ${UNIDAD[f.unidad] || f.unidad}.\n\n` +
+      `¿Por qué? El motivo queda en la bitácora con tu nombre.`)
+    if (!motivo || !motivo.trim()) {
+      setAviso({ tipo: 'error', texto: 'El ajuste necesita un motivo.' }); return
+    }
+
+    const { error } = await supabase.schema('produccion').from('ajuste_insumo')
+      .insert({ finca_id: finca.id, fecha: alDia, insumo_id: f.insumo_id,
+                cantidad: delta, motivo: motivo.trim() })
+    if (error) {
+      setAviso({ tipo: 'error', texto: 'No se pudo ajustar. ' + error.message }); return
+    }
+    setAviso({ tipo: 'ok', texto: `${f.insumo} ajustado a ${limpio(nuevo)}.` })
+    await cargar()
+  }
 
   async function guardar() {
     if (!llenadas) {
@@ -165,7 +215,47 @@ export default function Inventario({ finca }) {
         </div>
       )}
 
-      {!contando && !cargando && (
+      {!contando && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
+                      marginBottom: '14px' }}>
+          <Chip on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
+          <Chip on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+
+          {vista === 'saldo' ? (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+              <span style={{ fontSize: '13px', color: GRIS }}>al</span>
+              <input type="date" value={alDia} max={hoyISO()}
+                     onChange={e => setAlDia(e.target.value)} style={entrada} />
+              {alDia !== hoyISO() && (
+                <button onClick={() => setAlDia(hoyISO())}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                 fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>
+                  volver a hoy
+                </button>
+              )}
+            </label>
+          ) : (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+                <span style={{ fontSize: '13px', color: GRIS }}>del</span>
+                <input type="date" value={desde} max={hasta}
+                       onChange={e => setDesde(e.target.value)} style={entrada} />
+                <span style={{ fontSize: '13px', color: GRIS }}>al</span>
+                <input type="date" value={hasta} min={desde} max={hoyISO()}
+                       onChange={e => setHasta(e.target.value)} style={entrada} />
+              </label>
+              <Chip pequeno onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>
+                Este mes
+              </Chip>
+              <Chip pequeno onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>
+                Este año
+              </Chip>
+            </>
+          )}
+        </div>
+      )}
+
+      {!contando && !cargando && vista === 'saldo' && (
         <>
           {/* Resumen */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
@@ -264,15 +354,68 @@ export default function Inventario({ finca }) {
           </div>
         </Caja>
 
+      ) : vista === 'movimientos' ? (
+        <>
+          <Tabla
+            caja
+            columnas={['Insumo', 'Unidad', 'Saldo inicial', 'Ingresos', 'Consumo',
+                       'Ajustes', 'Conteo', 'Saldo final', 'Consumo $']}
+            anchos={ANCHOS_MOV}
+          >
+            {movs.map(m => (
+              <Fila key={m.insumo_id} anchos={ANCHOS_MOV}>
+                <Celda>{m.insumo}</Celda>
+                <Celda gris>{UNIDAD[m.unidad] || m.unidad}</Celda>
+                <Celda derecha gris>{limpio(m.saldo_inicial)}</Celda>
+                <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
+                  {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}
+                </Celda>
+                <Celda derecha color={Number(m.consumo) ? NAVY : '#c3d0db'}>
+                  {Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}
+                </Celda>
+                <Celda derecha color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>
+                  {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}
+                </Celda>
+                {/* Si hubo conteo en el rango, el saldo final no es la
+                    suma de los movimientos: el conteo lo fija. */}
+                <Celda derecha color={m.conteo === null ? '#c3d0db' : AZUL}>
+                  {m.conteo === null ? '—' : limpio(m.conteo)}
+                </Celda>
+                <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
+                  {limpio(m.saldo_final)}
+                </Celda>
+                <Celda derecha>{dinero(Number(m.consumo_dolares))}</Celda>
+              </Fila>
+            ))}
+            <Fila anchos={ANCHOS_MOV} total>
+              <Celda fuerte>Total</Celda>
+              <Celda /><Celda /><Celda /><Celda /><Celda /><Celda /><Celda />
+              <Celda derecha fuerte>
+                {dinero(movs.reduce((t, m) => t + Number(m.consumo_dolares || 0), 0))}
+              </Celda>
+            </Fila>
+          </Tabla>
+
+          {movs.some(m => m.conteo !== null) && (
+            <Nota color={AZUL} fondo="#E6F1FB">
+              En este rango se contó la bodega. Cuando eso pasa, el saldo final no es
+              saldo inicial más ingresos menos consumo: el conteo lo fija. Por eso la
+              columna Conteo se muestra aparte, para que la diferencia se vea en vez de
+              parecer un error de cuentas.
+            </Nota>
+          )}
+        </>
+
       ) : (
         <>
           <Tabla
             caja
-            columnas={['Insumo', 'Unidad', 'Saldo', 'Precio unitario', 'Valor en bodega']}
-            anchos="1fr 110px 120px 140px 150px"
+            columnas={['Insumo', 'Unidad', 'Saldo', 'Precio unitario', 'Valor en bodega',
+                       ...(esJefe ? [''] : [])]}
+            anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}
           >
             {filas.map(f => (
-              <Fila key={f.insumo_id} anchos="1fr 110px 120px 140px 150px">
+              <Fila key={f.insumo_id} anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}>
                 <Celda>{f.insumo}</Celda>
                 <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
                 <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
@@ -280,12 +423,24 @@ export default function Inventario({ finca }) {
                 </Celda>
                 <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>
                 <Celda derecha>{dinero(Number(f.saldo) * f.precio)}</Celda>
+                {esJefe && (
+                  <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
+                                textAlign: 'right' }}>
+                    <button onClick={() => ajustar(f)} style={{
+                      background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                      padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                      color: GRIS, cursor: 'pointer' }}>
+                      Corregir
+                    </button>
+                  </div>
+                )}
               </Fila>
             ))}
-            <Fila anchos="1fr 110px 120px 140px 150px" total>
+            <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO} total>
               <Celda fuerte>Total</Celda>
               <Celda /><Celda /><Celda />
               <Celda derecha fuerte>{dinero(valorBodega)}</Celda>
+              {esJefe && <Celda />}
             </Fila>
           </Tabla>
 
@@ -374,6 +529,18 @@ function Kpi({ titulo, valor, nota, alerta }) {
                     color: alerta ? AMBAR : NAVY }}>{valor}</div>
       {nota && <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>{nota}</div>}
     </div>
+  )
+}
+
+function Chip({ children, on, pequeno, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: pequeno ? '6px 12px' : '8px 15px', borderRadius: '20px',
+      fontFamily: 'inherit', fontSize: pequeno ? '12px' : '13px', cursor: 'pointer',
+      border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
+      background: on ? '#E6F1FB' : 'white',
+      color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400,
+    }}>{children}</button>
   )
 }
 
