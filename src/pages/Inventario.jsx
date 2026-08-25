@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero } from '../lib/fechas'
+import Ingresos from './Ingresos'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -31,6 +32,9 @@ const ANCHOS_SALDO_JEFE = '1fr 110px 120px 140px 150px 110px'
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 
 export default function Inventario({ finca, esJefe }) {
+  // Dos secciones: la bodega (saldo y conteos) y el movimiento de
+  // producto (ingresos y pedidos).
+  const [seccion, setSeccion] = useState('bodega')
   const [saldos, setSaldos] = useState([])
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
@@ -206,12 +210,25 @@ export default function Inventario({ finca, esJefe }) {
             Bodega de {String(finca.nombre).toUpperCase()}.
           </p>
         </div>
-        {!contando && !cargando && (
+        {seccion === 'bodega' && !contando && !cargando && (
           <Btn primario onClick={() => setContando(true)}>
             {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
           </Btn>
         )}
       </div>
+
+      <div style={{ display: 'flex', gap: '9px', marginBottom: '16px' }}>
+        <Chip on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</Chip>
+        <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
+          Ingresos y pedidos
+        </Chip>
+      </div>
+
+      {seccion === 'movimiento' ? (
+        <Ingresos finca={finca} />
+      ) : (
+      <>
+      {/* --- seccion bodega --- */}
 
       {aviso && (
         <div style={{ borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginBottom: '12px',
@@ -503,6 +520,8 @@ export default function Inventario({ finca, esJefe }) {
             </div>
           )}
         </>
+      )}
+      </>
       )}
     </div>
   )
