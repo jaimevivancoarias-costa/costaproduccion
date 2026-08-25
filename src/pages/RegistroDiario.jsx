@@ -89,7 +89,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         supabase.schema('produccion').from('semana_cerrada')
           .select('id').eq('finca_id', finca.id)
           .eq('anio', semanaISO(lunes).anio).eq('semana', semanaISO(lunes).semana)
-          .maybeSingle(),
+          .eq('ambito', 'balanceado').maybeSingle(),
       ])
       if (error) throw error
       if (eCiclos) throw new Error('No se pudieron leer los ciclos. ' + eCiclos.message)
@@ -478,15 +478,17 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     const { data, error } = await supabase.schema('produccion')
       .rpc('fn_validar_semana', { p_finca: finca.id, p_lunes: lunes })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); setValidaciones(null); return }
-    setValidaciones(data || [])
+    // Aqui solo las de balanceado. V7 y V8 (insumos) se revisan y se
+    // cierran en la pestana de Insumos.
+    setValidaciones((data || []).filter(v => v.codigo !== 'V7' && v.codigo !== 'V8'))
   }
 
   async function cerrarSemana() {
     const { anio, semana } = semanaISO(lunes)
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
-      .insert({ finca_id: finca.id, anio, semana, validaciones })
+      .insert({ finca_id: finca.id, anio, semana, ambito: 'balanceado', validaciones })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Semana cerrada' })
+    setAviso({ tipo: 'ok', texto: 'Balanceado de la semana cerrado' })
     await cargar(true)
   }
 
