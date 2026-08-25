@@ -39,6 +39,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [abierta, setAbierta] = useState(null)  // celda con el agregador abierto
+  const [semanaCerrada, setSemanaCerrada] = useState(false)
+  const [validaciones, setValidaciones] = useState(null)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -91,12 +93,35 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         })
       }
       setLineas(mapa)
+
+      const { anio, semana } = semanaISO(lunes)
+      const { data: sc } = await supabase.schema('produccion').from('semana_cerrada')
+        .select('id').eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).maybeSingle()
+      setSemanaCerrada(!!sc)
+      setValidaciones(null)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
       setCargando(false)
     }
   }, [finca.id, lunes, domingo])
+
+  async function revisarSemana() {
+    setValidaciones('cargando')
+    const { data, error } = await supabase.schema('produccion')
+      .rpc('fn_validar_semana', { p_finca: finca.id, p_lunes: lunes })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); setValidaciones(null); return }
+    setValidaciones(data || [])
+  }
+
+  async function cerrarSemana() {
+    const { anio, semana } = semanaISO(lunes)
+    const { error } = await supabase.schema('produccion').from('semana_cerrada')
+      .insert({ finca_id: finca.id, anio, semana, validaciones })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Semana cerrada' })
+    await cargar()
+  }
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -269,6 +294,71 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                 })}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {!cargando && (
+        <Cierre
+          validaciones={validaciones}
+          cerrada={semanaCerrada}
+          puedeCerrar={esJefe && !semanaCerrada}
+          onRevisar={revisarSemana}
+          onCerrar={cerrarSemana}
+        />
+      )}
+    </div>
+  )
+}
+
+// Mismo panel que en balanceado: cerrar la semana corre las OCHO
+// validaciones, insumos incluidos. Se puede hacer desde cualquiera de
+// las dos pestanas porque es una sola accion para la finca-semana.
+function Cierre({ validaciones, cerrada, puedeCerrar, onRevisar, onCerrar }) {
+  const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                  padding: '16px 18px', marginTop: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                    gap: '14px', flexWrap: 'wrap' }}>
+        <div>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar la semana</h3>
+          <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
+            {cerrada ? 'Esta semana ya está cerrada.'
+              : 'Revisa balanceado e insumos a la vez. No se puede cerrar mientras algo no cuadre.'}
+          </p>
+        </div>
+        {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
+      </div>
+
+      {validaciones === 'cargando' && (
+        <div style={{ fontSize: '13px', color: GRIS, marginTop: '14px' }}>Revisando...</div>
+      )}
+
+      {Array.isArray(validaciones) && (
+        <div style={{ marginTop: '14px' }}>
+          {validaciones.map(v => (
+            <div key={v.codigo} style={{ display: 'flex', alignItems: 'center', gap: '11px',
+                    padding: '9px 0', borderBottom: '0.5px solid #f1f6f9', fontSize: '13px' }}>
+              <span style={{ width: '19px', height: '19px', borderRadius: '50%', flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '11px', color: 'white', background: v.pasa ? '#1D9E75' : '#E24B4A' }}>
+                {v.pasa ? '✓' : '!'}
+              </span>
+              <span style={{ fontWeight: 500, minWidth: '200px' }}>{v.codigo} · {v.nombre}</span>
+              <span style={{ color: GRIS }}>{v.detalle}</span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+            <button onClick={onCerrar} disabled={!todas || !puedeCerrar} style={{
+              padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+              border: '0.5px solid ' + AZUL, borderRadius: '9px',
+              background: (todas && puedeCerrar) ? AZUL : 'white',
+              color: (todas && puedeCerrar) ? 'white' : GRIS,
+              cursor: (todas && puedeCerrar) ? 'pointer' : 'default',
+              opacity: (todas && puedeCerrar) ? 1 : 0.5 }}>
+              {puedeCerrar ? 'Cerrar semana' : 'Solo un jefe puede cerrar'}
+            </button>
           </div>
         </div>
       )}
