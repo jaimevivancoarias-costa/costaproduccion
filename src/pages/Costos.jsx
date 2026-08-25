@@ -59,11 +59,12 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
 
       const { data: prods } = await supabase
         .schema('produccion').from('producto')
-        .select('id, nombre, nombre_corto').order('nombre_corto')
+        .select('id, nombre, nombre_corto, activo').eq('activo', true).order('nombre_corto')
 
-      // Solo los productos que esta finca uso esta semana.
-      const usados = new Set((sem || []).map(r => r.producto_id))
-      setProductos((prods || []).filter(p => usados.has(p.id)))
+      // Todos los balanceados activos, no solo los que se usaron esta
+      // semana: en el control de sacos un producto puede tener saldo sin
+      // haber consumido, y aun asi hay que poder verlo y cuadrarlo.
+      setProductos(prods || [])
 
       const esPrecria = {}
       ;(piscinas || []).forEach(p => { esPrecria[p.id] = p.tipo === 'precria' })
