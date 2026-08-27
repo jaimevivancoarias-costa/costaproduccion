@@ -425,13 +425,25 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
 
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                     padding: '16px 18px', marginTop: '12px' }}>
-        <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Precios vigentes</h3>
-        <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 14px' }}>
-          Precio por saco de 55 libras en {String(finca.nombre).toUpperCase()}.
-          {esJefe
-            ? ' Al cambiarlo, rige desde la fecha que elijas hacia adelante: las semanas ya registradas conservan el precio con el que se guardaron.'
-            : ' Solo un jefe puede cambiarlos.'}
-        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                      gap: '12px', flexWrap: 'wrap' }}>
+          <div>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Precios vigentes</h3>
+            <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 14px', maxWidth: '560px' }}>
+              Precio por saco de 55 libras en {String(finca.nombre).toUpperCase()}.
+              {esJefe
+                ? ' Al cambiarlo, rige desde la fecha que elijas hacia adelante: las semanas ya registradas conservan el precio con el que se guardaron.'
+                : ' Solo un jefe puede cambiarlos.'}
+            </p>
+          </div>
+          <button onClick={() => exportarPrecios(precios, finca)} disabled={!precios.length}
+            style={{ padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                     border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white',
+                     color: NAVY, cursor: precios.length ? 'pointer' : 'default',
+                     opacity: precios.length ? 1 : 0.5 }}>
+            Exportar
+          </button>
+        </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,1fr) 100px 96px 132px 130px',
                       gap: '12px', padding: '0 0 8px', fontSize: '11px', color: GRIS }}>
@@ -480,6 +492,20 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
       </div>
     </div>
   )
+}
+
+function exportarPrecios(precios, finca) {
+  const cab = ['Producto', 'Precio por saco', 'Precio por libra', 'Vigente desde']
+  const rows = precios.map(p => [
+    p.producto.nombre, p.precio_saco,
+    (p.precio_saco / LIBRAS_POR_SACO).toFixed(4), p.vigente_desde,
+  ])
+  const csv = [cab, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = `precios_balanceado_${finca.codigo || finca.nombre}.csv`; a.click()
+  URL.revokeObjectURL(url)
 }
 
 function FormaPrecio({ actual, onGuardar }) {
