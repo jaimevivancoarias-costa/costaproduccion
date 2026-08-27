@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero } from '../lib/fechas'
 import Ingresos from './Ingresos'
+import PreciosInsumos from './PreciosInsumos'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -222,10 +223,15 @@ export default function Inventario({ finca, esJefe }) {
         <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
           Ingresos y pedidos
         </Chip>
+        <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>
+          Precios
+        </Chip>
       </div>
 
       {seccion === 'movimiento' ? (
         <Ingresos finca={finca} />
+      ) : seccion === 'precios' ? (
+        <PreciosInsumos esJefe={esJefe} />
       ) : (
       <>
       {/* --- seccion bodega --- */}
