@@ -364,9 +364,9 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                   })}
                 </div>
               )}
-              {destinos.some(d => destinosPosibles.find(p => p.id === d.piscinaId)?.ocupada) && (
+              {destinosPosibles.some(p => p.ocupada) && (
                 <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '7px' }}>
-                  El punto ámbar es una piscina que ya tiene camarón: se juntan los dos lotes y el costo se suma.
+                  Las piscinas con un punto ya tienen camarón.
                 </div>
               )}
             </Campo>
