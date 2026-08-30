@@ -102,6 +102,9 @@ export default function Reportes({ finca, fincas, esJefe }) {
 
   const totalCosto = grupos.reduce((t, g) => t + g.costo, 0)
   const maxCosto = Math.max(1, ...grupos.map(g => g.costo))
+  // El bodeguero no ve columnas de dolares, asi que la tabla es mas
+  // angosta: solo nombre y cantidad.
+  const grid = esJefe ? GRID : '1fr 220px'
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
@@ -176,7 +179,8 @@ export default function Reportes({ finca, fincas, esJefe }) {
       {/* Resumen */}
       {!cargando && (
         <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
-          <Kpi titulo="Gasto total del rango" valor={dinero(totalCosto)} />
+          {/* El gasto en dolares es solo del jefe. */}
+          {esJefe && <Kpi titulo="Gasto total del rango" valor={dinero(totalCosto)} />}
           <Kpi titulo={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'}
                valor={String(grupos.length)} />
           <Kpi titulo="Días" valor={String(dias(desde, hasta))} />
@@ -189,18 +193,18 @@ export default function Reportes({ finca, fincas, esJefe }) {
         <Caja><Centro>No hay consumo registrado en este rango.</Centro></Caja>
       ) : (
         <Caja>
-          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '11px 16px',
+          <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px', padding: '11px 16px',
                         fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
                         borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
             <span>{agrupar === 'item' ? 'Producto' : agrupar === 'piscina' ? 'Piscina' : 'Finca'}</span>
             <span style={{ textAlign: 'right' }}>Cantidad</span>
-            <span style={{ textAlign: 'right' }}>Costo</span>
-            <span>Peso</span>
-            {agrupar === 'piscina' && <span style={{ textAlign: 'right' }}>Costo / ha</span>}
+            {esJefe && <span style={{ textAlign: 'right' }}>Costo</span>}
+            {esJefe && <span>Peso</span>}
+            {esJefe && agrupar === 'piscina' && <span style={{ textAlign: 'right' }}>Costo / ha</span>}
           </div>
 
           {grupos.map(g => (
-            <div key={g.clave} style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px',
+            <div key={g.clave} style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
                     padding: '10px 16px', alignItems: 'center', fontSize: '13px',
                     borderBottom: '0.5px solid #f1f6f9' }}>
               <span>
@@ -215,17 +219,20 @@ export default function Reportes({ finca, fincas, esJefe }) {
               <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
                 {g.mixto ? '—' : `${miles(g.cantidad)} ${UNIDAD[g.unidad] || g.unidad || ''}`}
               </span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-                {dinero(g.costo)}
-              </span>
-              {/* Barra proporcional al costo, para leer la tabla de un vistazo */}
-              <span style={{ display: 'block', height: '8px', background: '#eef3f7', borderRadius: '20px',
-                             overflow: 'hidden' }}>
-                <i style={{ display: 'block', height: '100%', borderRadius: '20px',
-                            width: (g.costo / maxCosto * 100) + '%',
-                            background: g.tipo === 'insumo' ? '#E3B15F' : AZUL }} />
-              </span>
-              {agrupar === 'piscina' && (
+              {esJefe && (
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                  {dinero(g.costo)}
+                </span>
+              )}
+              {esJefe && (
+                <span style={{ display: 'block', height: '8px', background: '#eef3f7', borderRadius: '20px',
+                               overflow: 'hidden' }}>
+                  <i style={{ display: 'block', height: '100%', borderRadius: '20px',
+                              width: (g.costo / maxCosto * 100) + '%',
+                              background: g.tipo === 'insumo' ? '#E3B15F' : AZUL }} />
+                </span>
+              )}
+              {esJefe && agrupar === 'piscina' && (
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
                   {g.hectareas ? dinero(g.costo / g.hectareas) : '—'}
                 </span>
@@ -233,25 +240,28 @@ export default function Reportes({ finca, fincas, esJefe }) {
             </div>
           ))}
 
-          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '12px 16px',
-                        alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
-            <span>Total</span>
-            <span />
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(totalCosto)}</span>
-            <span />
-            {agrupar === 'piscina' && <span />}
-          </div>
+          {esJefe && (
+            <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px', padding: '12px 16px',
+                          alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
+              <span>Total</span>
+              <span />
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(totalCosto)}</span>
+              <span />
+              {agrupar === 'piscina' && <span />}
+            </div>
+          )}
         </Caja>
       )}
 
-      <button onClick={() => exportarCSV(grupos, agrupar)}
+      {/* La descarga incluye costos, asi que es solo del jefe. */}
+      {esJefe && <button onClick={() => exportarCSV(grupos, agrupar)}
         disabled={!grupos.length}
         style={{ marginTop: '14px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit',
                  fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px',
                  background: 'white', color: NAVY, cursor: grupos.length ? 'pointer' : 'default',
                  opacity: grupos.length ? 1 : 0.5 }}>
         Descargar en Excel
-      </button>
+      </button>}
     </div>
   )
 }
