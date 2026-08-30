@@ -77,7 +77,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           .select('id, codigo, nombre, hectareas, tipo')
           .eq('finca_id', finca.id).eq('activa', true),
         supabase.schema('produccion').from('ciclo')
-          .select('id, fecha_siembra, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
+          .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
           .eq('finca_id', finca.id),
         supabase.schema('produccion').from('laboratorio')
           .select('id, nombre').eq('activo', true).order('nombre'),
@@ -114,7 +114,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         }
         if (c.fecha_cierre && c.fecha_cierre < lunes) return
         const previo = porPiscina[pid]
-        if (!previo || c.fecha_siembra > previo.fecha_siembra) porPiscina[pid] = c
+        // Si hay dos en la semana se queda el que ocupo la piscina
+        // despues: un ciclo transferido ocupa su piscina el dia de la
+        // transferencia, aunque su fecha de siembra sea la del padre.
+        const ocupa = c.fecha_ocupacion || c.fecha_siembra
+        const ocupaPrevio = previo && (previo.fecha_ocupacion || previo.fecha_siembra)
+        if (!previo || ocupa > ocupaPrevio) porPiscina[pid] = c
       })
 
       const lista = (todas || []).map(p => {
@@ -123,6 +128,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           cicloId: c?.id || null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
           hectareas: Number(p.hectareas), tipo: p.tipo,
           fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
+          // Desde cuando come en ESTA piscina. Para un ciclo normal es la
+          // siembra; para uno transferido, el dia que llego aqui.
+          fechaOcupacion: c?.fecha_ocupacion || c?.fecha_siembra || null,
           fechaCierre: c?.fecha_cierre || null,
           laboratorioId: c?.laboratorio_id || '',
           // Un ciclo esta cerrado PARA ESTA SEMANA solo si termino antes
@@ -341,7 +349,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     if (situacionDia(f, hoy) !== 'pasado') return
     piscinas.forEach(p => {
       if (!p.cicloId || p.tipo === 'precria') return
-      if (p.fechaSiembra && f < p.fechaSiembra) return
+      if (p.fechaOcupacion && f < p.fechaOcupacion) return
       if (p.fechaCierre && f > p.fechaCierre) return
       const c = cel(p, f)
       if (!c || (!c.sinAlimentacion && !num(c.libras))) atrasadas.push({ p, f })
@@ -855,7 +863,9 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
   if (!p.cicloId) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
-  if (f < p.fechaSiembra || (p.fechaCierre && f > p.fechaCierre)) {
+  // Come desde que ocupa la piscina (siembra, o transferencia si vino de
+  // otra) hasta que el ciclo cierra.
+  if (f < (p.fechaOcupacion || p.fechaSiembra) || (p.fechaCierre && f > p.fechaCierre)) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
   if (situacion === 'futuro') {
