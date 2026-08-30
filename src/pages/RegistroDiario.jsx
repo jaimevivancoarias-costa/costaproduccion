@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import DialogoEvento, { TIPOS, guardarEvento } from './DialogoEvento'
+import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento } from './DialogoEvento'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, miles,
@@ -130,6 +130,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           // cosecho el 18 de junio, y en la semana del 15 al 21 todavia
           // estaba viva y hay que poder registrarle esa cosecha.
           cicloCerrado: !!(c?.fecha_cierre && c.fecha_cierre < lunes),
+          // Cosechada DENTRO de esta semana: el ciclo cerro entre lunes y
+          // domingo. La piscina quedo vacia y debe poder sembrarse de
+          // nuevo la misma semana.
+          cosechadaEstaSemana: !!(c?.fecha_cierre && c.fecha_cierre >= lunes && c.fecha_cierre <= domingo),
           // Vacia esta semana, pero ya sembrada mas adelante. No se puede
           // volver a sembrar: la base solo admite un ciclo abierto por
           // piscina, y con razon.
@@ -246,6 +250,20 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       if (!ok) return
     }
     setDialogo({ tipo, fila })
+  }
+
+  // Deshacer un evento ya registrado, para corregir una equivocacion.
+  async function borrarEvento(fila, evento) {
+    const nombre = TIPOS[evento.tipo]?.nombre || 'evento'
+    if (!window.confirm(`¿Deshacer ${nombre.toLowerCase()} de ${fila.nombre}? Se puede volver a registrar.`)) return
+    try {
+      if (sucio) { const ok = await guardar(false); if (!ok) return }
+      await eliminarEvento({ evento, cicloId: fila.cicloId })
+      setAviso({ tipo: 'ok', texto: `${nombre} deshecha` })
+      await cargar()
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo deshacer. ' + (err.message || '') })
+    }
   }
 
   async function registrarEvento(datos) {
@@ -690,6 +708,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         fila={p} evento={eventos[p.piscinaId]}
                         puede={!soloLectura && modo === 'registrar'}
                         onElegir={tipo => abrirEvento(tipo, p)}
+                        onDeshacer={ev => borrarEvento(p, ev)}
                       />
                     </Td>
                     {fechas.map((f, j) => (
@@ -794,7 +813,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               ciclo={dialogo.fila}
               piscina={dialogo.fila}
               laboratorios={laboratorios}
-              destinosPosibles={piscinas.filter(x => !x.cicloId)}
+              destinosPosibles={piscinas.filter(x => (!x.cicloId || x.cosechadaEstaSemana) && !x.siembraPosterior)}
               minima={dialogo.tipo === 'siembra' ? undefined : dialogo.fila.fechaSiembra}
               onCancelar={() => setDialogo(null)}
               onGuardar={registrarEvento}
@@ -931,55 +950,74 @@ function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
 // Columna de estado: es la columna ESTADO PISCINA del Excel.
 // Si la piscina no tiene ciclo, lo unico posible es sembrarla.
 // ---------------------------------------------------------------------
-function Estado({ fila, evento, puede, onElegir }) {
-  if (evento) {
+function Estado({ fila, evento, puede, onElegir, onDeshacer }) {
+  // Tras cosechar o transferir, la piscina queda vacia y puede volver a
+  // sembrarse esta misma semana.
+  const vacia = !fila.cicloId || fila.cosechadaEstaSemana
+
+  const chipEvento = evento && (() => {
     const t = TIPOS[evento.tipo] || TIPOS.siembra
     return (
-      <div>
+      <div style={{ marginBottom: vacia && puede ? '6px' : 0 }}>
         <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 9px', borderRadius: '20px',
                        background: t.fondo, color: t.color }}>{t.nombre}</span>
         <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
           {corta(evento.fecha)}{evento.libras ? ` · ${miles(evento.libras)} lb` : ''}
+          {puede && onDeshacer && (
+            <button onClick={() => onDeshacer(evento)} title="Deshacer, me equivoqué"
+              style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                       fontSize: '11px', color: '#A32D2D', padding: '0 0 0 7px' }}>
+              deshacer
+            </button>
+          )}
         </div>
       </div>
     )
-  }
+  })()
 
-  if (!puede) return <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
+  if (!puede) return chipEvento || <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
 
-  // Mismo control en todas las filas. Lo que cambia son las opciones:
-  // una piscina vacia solo se puede sembrar, una sembrada no.
   if (fila.cicloCerrado) {
-    return <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
+    return chipEvento || <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
   }
 
   // Vacia esta semana pero sembrada mas adelante: no se puede sembrar
   // otra vez. Antes se ofrecia Sembrar y la base lo rechazaba.
-  if (!fila.cicloId && fila.siembraPosterior) {
+  if (vacia && fila.siembraPosterior) {
     return (
-      <span style={{ color: GRIS, fontSize: '12px' }}>
-        Vacía · se siembra el {corta(fila.siembraPosterior)}
-      </span>
+      <div>
+        {chipEvento}
+        <span style={{ color: GRIS, fontSize: '12px' }}>
+          Vacía · se siembra el {corta(fila.siembraPosterior)}
+        </span>
+      </div>
     )
   }
 
-  const opciones = fila.cicloId
-    ? [['raleo', 'Raleo'], ['transferencia', 'Transferencia'], ['cosecha', 'Cosecha']]
-    : [['siembra', 'Sembrar']]
+  // Si ya hay un evento este semana y la piscina NO quedo vacia (raleo),
+  // no se ofrece otra accion: primero se deshace la que hay.
+  if (evento && !vacia) return chipEvento
+
+  const opciones = vacia
+    ? [['siembra', 'Sembrar']]
+    : [['raleo', 'Raleo'], ['transferencia', 'Transferencia'], ['cosecha', 'Cosecha']]
 
   return (
-    <select
-      value=""
-      onChange={e => { if (e.target.value) onElegir(e.target.value) }}
-      style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
-               borderRadius: '7px', background: fila.cicloId ? 'white' : '#E1F5EE',
-               border: '0.5px solid ' + (fila.cicloId ? BORDE : '#9fe1cb'),
-               color: fila.cicloId ? GRIS : '#0F6E56',
-               fontWeight: fila.cicloId ? 400 : 500 }}
-    >
-      <option value="">{fila.cicloId ? 'Sin novedad' : 'Vacía'}</option>
-      {opciones.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
-    </select>
+    <div>
+      {chipEvento}
+      <select
+        value=""
+        onChange={e => { if (e.target.value) onElegir(e.target.value) }}
+        style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
+                 borderRadius: '7px', background: vacia ? '#E1F5EE' : 'white',
+                 border: '0.5px solid ' + (vacia ? '#9fe1cb' : BORDE),
+                 color: vacia ? '#0F6E56' : GRIS,
+                 fontWeight: vacia ? 500 : 400 }}
+      >
+        <option value="">{vacia ? (fila.cosechadaEstaSemana ? 'Sembrar de nuevo' : 'Vacía') : 'Sin novedad'}</option>
+        {opciones.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+      </select>
+    </div>
   )
 }
 
