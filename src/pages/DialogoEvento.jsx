@@ -91,21 +91,31 @@ export async function eliminarEvento({ evento, cicloId }) {
   const tipo = evento.tipo
 
   if (tipo === 'siembra') {
-    // Solo se puede deshacer una siembra que no tenga nada colgando:
-    // si ya comio o recibio insumos, borrarla dejaria huerfanos esos
-    // registros. En ese caso hay que borrar primero el consumo.
-    const [{ count: cAlim }, { count: cIns }] = await Promise.all([
+    // Deshacer una siembra borra el ciclo entero. No se puede si tiene
+    // consumo colgando (quedarian registros huerfanos), ni si tiene otra
+    // novedad sobre el mismo ciclo: en ese caso hay que deshacer esa
+    // primero, para que quede claro que se esta borrando.
+    const [{ count: cAlim }, { count: cIns }, { count: cEv }] = await Promise.all([
       supabase.schema('produccion').from('alimentacion')
         .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId),
       supabase.schema('produccion').from('consumo_insumo')
         .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId),
+      supabase.schema('produccion').from('evento')
+        .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId).neq('id', id),
     ])
     if ((cAlim || 0) > 0 || (cIns || 0) > 0) {
       throw new Error('Esta siembra ya tiene consumo registrado. Borra primero el consumo de esos días.')
     }
+    if ((cEv || 0) > 0) {
+      throw new Error('Esta piscina tiene otra novedad (cosecha, raleo o transferencia) sobre el mismo ciclo. Deshaz esa primero.')
+    }
+    // Los muestreos de gramaje no borran en cascada: hay que quitarlos
+    // a mano antes de borrar el ciclo, o la base lo rechaza (error 409).
+    await supabase.schema('produccion').from('muestreo').delete().eq('ciclo_id', cicloId)
     await supabase.schema('produccion').from('evento').delete().eq('id', id)
     await supabase.schema('produccion').from('ciclo_piscina').delete().eq('ciclo_id', cicloId)
-    await supabase.schema('produccion').from('ciclo').delete().eq('id', cicloId)
+    const { error } = await supabase.schema('produccion').from('ciclo').delete().eq('id', cicloId)
+    if (error) throw new Error(error.message)
     return
   }
 
