@@ -85,9 +85,6 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
     .select('id').single()
   if (error) throw error
 
-  await supabase.schema('produccion').from('evento_destino')
-    .insert(destinos.map(d => ({ evento_id: ev.id, piscina_id: d.piscinaId, porcentaje: d.porcentaje })))
-
   // Cerrar el ciclo de origen: transferido, no cosechado, pero la
   // piscina queda libre igual.
   await supabase.schema('produccion').from('ciclo')
@@ -95,21 +92,34 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   await supabase.schema('produccion').from('ciclo_piscina')
     .update({ fecha_hasta: fecha }).eq('ciclo_id', cid).is('fecha_hasta', null)
 
-  // Un ciclo hijo por destino.
+  // Por cada destino: si la piscina ya tiene un lote, se juntan (usa su
+  // ciclo); si esta vacia, nace un ciclo hijo que conserva los dias del
+  // padre. El aporte de costo viaja por evento_destino en los dos casos.
   for (const d of destinos) {
-    const { data: hijo, error: eH } = await supabase.schema('produccion').from('ciclo')
-      .insert({
-        finca_id: fincaId,
-        piscina_origen_id: d.piscinaId,
-        fecha_siembra: padre.fecha_siembra,   // conserva los dias de cultivo
-        fecha_ocupacion: fecha,               // empieza a comer aqui hoy
-        laboratorio_id: padre.laboratorio_id,
-        ciclo_padre_id: cid,
-        origen_porcentaje: d.porcentaje,
-      }).select('id').single()
-    if (eH) throw eH
-    await supabase.schema('produccion').from('ciclo_piscina')
-      .insert({ ciclo_id: hijo.id, piscina_id: d.piscinaId, fecha_desde: fecha })
+    const { data: ocup } = await supabase.schema('produccion').from('ciclo_piscina')
+      .select('ciclo_id').eq('piscina_id', d.piscinaId).is('fecha_hasta', null).maybeSingle()
+
+    let cicloDestino = ocup?.ciclo_id || null
+    if (!cicloDestino) {
+      const { data: hijo, error: eH } = await supabase.schema('produccion').from('ciclo')
+        .insert({
+          finca_id: fincaId,
+          piscina_origen_id: d.piscinaId,
+          fecha_siembra: padre.fecha_siembra,   // conserva los dias de cultivo
+          fecha_ocupacion: fecha,               // empieza a comer aqui hoy
+          laboratorio_id: padre.laboratorio_id,
+          ciclo_padre_id: cid,
+          origen_porcentaje: d.porcentaje,
+        }).select('id').single()
+      if (eH) throw eH
+      cicloDestino = hijo.id
+      await supabase.schema('produccion').from('ciclo_piscina')
+        .insert({ ciclo_id: cicloDestino, piscina_id: d.piscinaId, fecha_desde: fecha })
+    }
+
+    await supabase.schema('produccion').from('evento_destino')
+      .insert({ evento_id: ev.id, piscina_id: d.piscinaId,
+                porcentaje: d.porcentaje, ciclo_destino_id: cicloDestino })
   }
 }
 
@@ -334,22 +344,29 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
           <>
             <Campo label="Transferido a">
               {!destinosPosibles?.length ? (
-                <div style={{ fontSize: '13px', color: GRIS }}>No hay piscinas vacías disponibles.</div>
+                <div style={{ fontSize: '13px', color: GRIS }}>No hay otras piscinas disponibles.</div>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                   {destinosPosibles.map(p => {
                     const on = destinos.some(d => d.piscinaId === p.id)
                     return (
                       <button key={p.id} onClick={() => toggleDestino(p.id)}
+                        title={p.ocupada ? 'Ya tiene camarón: se juntan los dos lotes' : 'Piscina vacía'}
                         style={{ padding: '7px 13px', borderRadius: '20px', fontFamily: 'inherit',
                                  fontSize: '13px', cursor: 'pointer',
                                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
                                  background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY,
                                  fontWeight: on ? 500 : 400 }}>
                         {p.nombre}
+                        {p.ocupada && <span style={{ color: '#BA7517', marginLeft: '5px' }}>•</span>}
                       </button>
                     )
                   })}
+                </div>
+              )}
+              {destinos.some(d => destinosPosibles.find(p => p.id === d.piscinaId)?.ocupada) && (
+                <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '7px' }}>
+                  El punto ámbar es una piscina que ya tiene camarón: se juntan los dos lotes y el costo se suma.
                 </div>
               )}
             </Campo>
