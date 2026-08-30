@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
+import Presupuesto from './Presupuesto'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -33,7 +34,9 @@ const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 const ANCHOS_SALDO      = '1fr 110px 120px 140px 150px'
 const ANCHOS_SALDO_JEFE = '1fr 110px 120px 140px 150px 110px'
+const ANCHOS_SALDO_BOD  = '1fr 110px 120px'   // bodeguero: sin dolares
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
+const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
 
 export default function Inventario({ finca, esJefe }) {
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
@@ -241,14 +244,22 @@ export default function Inventario({ finca, esJefe }) {
         <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
           Ingresos y pedidos
         </Chip>
-        <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>
-          Precios
+        <Chip on={seccion === 'presupuesto'} onClick={() => { setSeccion('presupuesto'); setContando(false) }}>
+          Presupuesto
         </Chip>
+        {/* Los precios son costo por material: solo el jefe. */}
+        {esJefe && (
+          <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>
+            Precios
+          </Chip>
+        )}
       </div>
 
       {seccion === 'movimiento' ? (
         <Ingresos finca={finca} />
-      ) : seccion === 'precios' ? (
+      ) : seccion === 'presupuesto' ? (
+        <Presupuesto finca={finca} esJefe={esJefe} />
+      ) : seccion === 'precios' && esJefe ? (
         <PreciosInsumos esJefe={esJefe} />
       ) : (
       <>
@@ -307,7 +318,8 @@ export default function Inventario({ finca, esJefe }) {
           {/* Resumen */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
                         gap: '11px', marginBottom: '14px' }}>
-            <Kpi titulo="Valor de la bodega" valor={dinero(valorBodega)} />
+            {/* El valor en dolares es solo para el jefe. */}
+            {esJefe && <Kpi titulo="Valor de la bodega" valor={dinero(valorBodega)} />}
             <Kpi titulo="Insumos con saldo" valor={`${conSaldo} de ${saldos.length}`} />
             <Kpi titulo="Último conteo"
                  valor={ultimo ? corta(ultimo.fecha) : 'Nunca'}
@@ -411,11 +423,11 @@ export default function Inventario({ finca, esJefe }) {
           <Tabla
             caja
             columnas={['Insumo', 'Unidad', 'Saldo inicial', 'Ingresos', 'Consumo',
-                       'Ajustes', 'Conteo', 'Saldo final', 'Consumo $']}
-            anchos={ANCHOS_MOV}
+                       'Ajustes', 'Conteo', 'Saldo final', ...(esJefe ? ['Consumo $'] : [])]}
+            anchos={esJefe ? ANCHOS_MOV : ANCHOS_MOV_BOD}
           >
             {movs.map(m => (
-              <Fila key={m.insumo_id} anchos={ANCHOS_MOV}>
+              <Fila key={m.insumo_id} anchos={esJefe ? ANCHOS_MOV : ANCHOS_MOV_BOD}>
                 <Celda>{m.insumo}</Celda>
                 <Celda gris>{UNIDAD[m.unidad] || m.unidad}</Celda>
                 <Celda derecha gris>{limpio(m.saldo_inicial)}</Celda>
@@ -436,16 +448,18 @@ export default function Inventario({ finca, esJefe }) {
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {limpio(m.saldo_final)}
                 </Celda>
-                <Celda derecha>{dinero(Number(m.consumo_dolares))}</Celda>
+                {esJefe && <Celda derecha>{dinero(Number(m.consumo_dolares))}</Celda>}
               </Fila>
             ))}
-            <Fila anchos={ANCHOS_MOV} total>
-              <Celda fuerte>Total</Celda>
-              <Celda /><Celda /><Celda /><Celda /><Celda /><Celda /><Celda />
-              <Celda derecha fuerte>
-                {dinero(movs.reduce((t, m) => t + Number(m.consumo_dolares || 0), 0))}
-              </Celda>
-            </Fila>
+            {esJefe && (
+              <Fila anchos={ANCHOS_MOV} total>
+                <Celda fuerte>Total</Celda>
+                <Celda /><Celda /><Celda /><Celda /><Celda /><Celda /><Celda />
+                <Celda derecha fuerte>
+                  {dinero(movs.reduce((t, m) => t + Number(m.consumo_dolares || 0), 0))}
+                </Celda>
+              </Fila>
+            )}
           </Tabla>
 
           {movs.some(m => m.conteo !== null) && (
@@ -462,15 +476,16 @@ export default function Inventario({ finca, esJefe }) {
         <>
           <Tabla
             caja
-            columnas={['Insumo', 'Unidad', 'Saldo', 'Precio unitario', 'Valor en bodega',
-                       ...(esJefe ? [''] : [])]}
-            anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}
+            columnas={esJefe
+              ? ['Insumo', 'Unidad', 'Saldo', 'Precio unitario', 'Valor en bodega', '']
+              : ['Insumo', 'Unidad', 'Saldo']}
+            anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
             {filas.map(f => {
               const edit = editando === f.insumo_id
               return (
               <div key={f.insumo_id}>
-                <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO}>
+                <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}>
                   <Celda>{f.insumo}</Celda>
                   <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
                   {edit ? (
@@ -486,8 +501,9 @@ export default function Inventario({ finca, esJefe }) {
                       {limpio(f.saldo)}
                     </Celda>
                   )}
-                  <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>
-                  <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>
+                  {/* Precio y valor en dolares: solo el jefe. */}
+                  {esJefe && <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>}
+                  {esJefe && <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
                                   textAlign: 'right' }}>
@@ -524,12 +540,14 @@ export default function Inventario({ finca, esJefe }) {
                 )}
               </div>
             )})}
-            <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO} total>
-              <Celda fuerte>Total</Celda>
-              <Celda /><Celda /><Celda />
-              <Celda derecha fuerte>{dinero(valorBodega)}</Celda>
-              {esJefe && <Celda />}
-            </Fila>
+            {esJefe && (
+              <Fila anchos={ANCHOS_SALDO_JEFE} total>
+                <Celda fuerte>Total</Celda>
+                <Celda /><Celda /><Celda />
+                <Celda derecha fuerte>{dinero(valorBodega)}</Celda>
+                <Celda />
+              </Fila>
+            )}
           </Tabla>
 
           {conteos.length > 0 && (
