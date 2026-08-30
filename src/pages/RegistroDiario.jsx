@@ -168,8 +168,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         { data: alim, error: eAlim },
       ] = await Promise.all([
         ids.length ? supabase.schema('produccion').from('evento')
-          .select('id, tipo, fecha, libras, piscina_origen_id')
+          .select('id, tipo, fecha, libras, piscina_origen_id, ciclo_id')
           .in('piscina_origen_id', ids).gte('fecha', lunes).lte('fecha', domingo)
+          .order('fecha')
           : Promise.resolve({ data: [] }),
         ciclosIds.length ? supabase.schema('produccion')
           .rpc('fn_acumulado_ciclos', { p_ciclos: ciclosIds, p_hasta: domingo })
@@ -191,8 +192,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       // dibuja vacia y parece que se borraron los datos. Nunca mas.
       if (eAlim) throw new Error('No se pudo leer la alimentación de la semana. ' + eAlim.message)
 
+      // Varios eventos por piscina en la semana: puede haber una cosecha
+      // y despues una siembra nueva. Se guardan todos, en orden.
       const evs = {}
-      ;(evs1 || []).forEach(x => { evs[x.piscina_origen_id] = x })
+      ;(evs1 || []).forEach(x => { (evs[x.piscina_origen_id] = evs[x.piscina_origen_id] || []).push(x) })
       setEventos(evs)
 
       const acum = {}, ral = {}, pes = {}
@@ -258,7 +261,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     if (!window.confirm(`¿Deshacer ${nombre.toLowerCase()} de ${fila.nombre}? Se puede volver a registrar.`)) return
     try {
       if (sucio) { const ok = await guardar(false); if (!ok) return }
-      await eliminarEvento({ evento, cicloId: fila.cicloId })
+      // El evento puede ser de un ciclo distinto al que la fila muestra
+      // ahora (la cosecha vieja tras resembrar), por eso su propio ciclo.
+      await eliminarEvento({ evento, cicloId: evento.ciclo_id || fila.cicloId })
       setAviso({ tipo: 'ok', texto: `${nombre} deshecha` })
       await cargar()
     } catch (err) {
@@ -705,7 +710,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     </Td>
                     <Td>
                       <Estado
-                        fila={p} evento={eventos[p.piscinaId]}
+                        fila={p} eventos={eventos[p.piscinaId] || []}
                         puede={!soloLectura && modo === 'registrar'}
                         onElegir={tipo => abrirEvento(tipo, p)}
                         onDeshacer={ev => borrarEvento(p, ev)}
@@ -950,35 +955,41 @@ function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
 // Columna de estado: es la columna ESTADO PISCINA del Excel.
 // Si la piscina no tiene ciclo, lo unico posible es sembrarla.
 // ---------------------------------------------------------------------
-function Estado({ fila, evento, puede, onElegir, onDeshacer }) {
+function Estado({ fila, eventos, puede, onElegir, onDeshacer }) {
   // Tras cosechar o transferir, la piscina queda vacia y puede volver a
   // sembrarse esta misma semana.
   const vacia = !fila.cicloId || fila.cosechadaEstaSemana
 
-  const chipEvento = evento && (() => {
-    const t = TIPOS[evento.tipo] || TIPOS.siembra
-    return (
-      <div style={{ marginBottom: vacia && puede ? '6px' : 0 }}>
-        <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 9px', borderRadius: '20px',
-                       background: t.fondo, color: t.color }}>{t.nombre}</span>
-        <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
-          {corta(evento.fecha)}{evento.libras ? ` · ${miles(evento.libras)} lb` : ''}
-          {puede && onDeshacer && (
-            <button onClick={() => onDeshacer(evento)} title="Deshacer, me equivoqué"
-              style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                       fontSize: '11px', color: '#A32D2D', padding: '0 0 0 7px' }}>
-              deshacer
-            </button>
-          )}
-        </div>
-      </div>
-    )
-  })()
+  // Todos los eventos de la piscina esta semana, cada uno con su pill y
+  // su Deshacer. Puede haber cosecha y luego siembra el mismo periodo.
+  const pills = eventos.length > 0 && (
+    <div style={{ marginBottom: puede ? '6px' : 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+      {eventos.map(ev => {
+        const t = TIPOS[ev.tipo] || TIPOS.siembra
+        return (
+          <div key={ev.id}>
+            <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 9px', borderRadius: '20px',
+                           background: t.fondo, color: t.color }}>{t.nombre}</span>
+            <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
+              {corta(ev.fecha)}{ev.libras ? ` · ${miles(ev.libras)} lb` : ''}
+              {puede && onDeshacer && (
+                <button onClick={() => onDeshacer(ev)} title="Deshacer, me equivoqué"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                           fontSize: '11px', color: '#A32D2D', padding: '0 0 0 7px' }}>
+                  Deshacer
+                </button>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
 
-  if (!puede) return chipEvento || <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
+  if (!puede) return pills || <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
 
   if (fila.cicloCerrado) {
-    return chipEvento || <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
+    return pills || <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
   }
 
   // Vacia esta semana pero sembrada mas adelante: no se puede sembrar
@@ -986,7 +997,7 @@ function Estado({ fila, evento, puede, onElegir, onDeshacer }) {
   if (vacia && fila.siembraPosterior) {
     return (
       <div>
-        {chipEvento}
+        {pills}
         <span style={{ color: GRIS, fontSize: '12px' }}>
           Vacía · se siembra el {corta(fila.siembraPosterior)}
         </span>
@@ -994,17 +1005,13 @@ function Estado({ fila, evento, puede, onElegir, onDeshacer }) {
     )
   }
 
-  // Si ya hay un evento este semana y la piscina NO quedo vacia (raleo),
-  // no se ofrece otra accion: primero se deshace la que hay.
-  if (evento && !vacia) return chipEvento
-
   const opciones = vacia
     ? [['siembra', 'Sembrar']]
     : [['raleo', 'Raleo'], ['transferencia', 'Transferencia'], ['cosecha', 'Cosecha']]
 
   return (
     <div>
-      {chipEvento}
+      {pills}
       <select
         value=""
         onChange={e => { if (e.target.value) onElegir(e.target.value) }}
