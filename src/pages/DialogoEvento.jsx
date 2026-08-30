@@ -83,6 +83,57 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
     .insert(destinos.map(id => ({ ciclo_id: cid, piscina_id: id, fecha_desde: fecha })))
 }
 
+// Deshacer un evento ya registrado. Es lo que permite corregir "me
+// confundi": se borra el evento y se revierte lo que dejo hecho.
+export async function eliminarEvento({ evento, cicloId }) {
+  const id = evento.id
+  const fecha = evento.fecha
+  const tipo = evento.tipo
+
+  if (tipo === 'siembra') {
+    // Solo se puede deshacer una siembra que no tenga nada colgando:
+    // si ya comio o recibio insumos, borrarla dejaria huerfanos esos
+    // registros. En ese caso hay que borrar primero el consumo.
+    const [{ count: cAlim }, { count: cIns }] = await Promise.all([
+      supabase.schema('produccion').from('alimentacion')
+        .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId),
+      supabase.schema('produccion').from('consumo_insumo')
+        .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId),
+    ])
+    if ((cAlim || 0) > 0 || (cIns || 0) > 0) {
+      throw new Error('Esta siembra ya tiene consumo registrado. Borra primero el consumo de esos días.')
+    }
+    await supabase.schema('produccion').from('evento').delete().eq('id', id)
+    await supabase.schema('produccion').from('ciclo_piscina').delete().eq('ciclo_id', cicloId)
+    await supabase.schema('produccion').from('ciclo').delete().eq('id', cicloId)
+    return
+  }
+
+  if (tipo === 'cosecha') {
+    // Reabrir el ciclo: vuelve a estar vivo y la piscina ocupada.
+    await supabase.schema('produccion').from('ciclo')
+      .update({ estado: 'abierto', fecha_cierre: null, libras_cosechadas: null }).eq('id', cicloId)
+    await supabase.schema('produccion').from('ciclo_piscina')
+      .update({ fecha_hasta: null }).eq('ciclo_id', cicloId).eq('fecha_hasta', fecha)
+    await supabase.schema('produccion').from('evento').delete().eq('id', id)
+    return
+  }
+
+  if (tipo === 'raleo') {
+    await supabase.schema('produccion').from('evento').delete().eq('id', id)
+    return
+  }
+
+  // Transferencia: quitar las ocupaciones que abrio en los destinos,
+  // reabrir la del origen, y borrar el evento con sus destinos.
+  await supabase.schema('produccion').from('ciclo_piscina')
+    .delete().eq('ciclo_id', cicloId).eq('fecha_desde', fecha)
+  await supabase.schema('produccion').from('ciclo_piscina')
+    .update({ fecha_hasta: null }).eq('ciclo_id', cicloId).eq('fecha_hasta', fecha)
+  await supabase.schema('produccion').from('evento_destino').delete().eq('evento_id', id)
+  await supabase.schema('produccion').from('evento').delete().eq('id', id)
+}
+
 export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, destinosPosibles,
                                         minima, onCancelar, onGuardar, onLaboratorioAgregado }) {
   const t = TIPOS[tipo]
