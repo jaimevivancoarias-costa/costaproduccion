@@ -20,9 +20,12 @@ const VERDE = '#0F6E56'
 const AMBAR = '#854F0B'
 
 // Sin abreviaturas: el bodeguero no tiene por que descifrar "lt".
+// El inventario se muestra en unidad de compra (tambores, botellas,
+// sacos), que es lo que devuelven las funciones de saldo.
 const UNIDAD = {
   sacos: 'sacos', litros: 'litros', gramos: 'gramos',
   libras: 'libras', kg: 'kilos', unidad: 'unidades',
+  tambor: 'tambores', botella: 'botellas',
 }
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
@@ -39,6 +42,7 @@ export default function Inventario({ finca, esJefe }) {
   const [saldos, setSaldos] = useState([])
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
+  const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -65,7 +69,7 @@ export default function Inventario({ finca, esJefe }) {
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }] = await Promise.all([
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_insumo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_insumo',
@@ -77,15 +81,28 @@ export default function Inventario({ finca, esJefe }) {
         supabase.schema('produccion').from('toma_inventario')
           .select('id, fecha, observacion')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
+        supabase.schema('produccion').from('insumo').select('id, factor').eq('activo', true),
+        supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
+          { p_finca: finca.id, p_hasta: alDia }),
       ])
       if (eS) throw eS
 
-      // El precio de la finca le gana al general.
+      // El factor convierte el precio (por unidad de consumo) a precio
+      // por unidad de compra, que es en la que se muestra el inventario.
+      const factor = {}
+      ;(ins || []).forEach(x => { factor[x.id] = Number(x.factor) || 1 })
+
+      // El precio de la finca le gana al general. Se guarda ya por
+      // unidad de compra: precio del catalogo por el factor.
       const pr = {}
       ;(p || []).forEach(x => {
         if (pr[x.insumo_id] && !x.finca_id) return
-        pr[x.insumo_id] = Number(x.precio_unitario)
+        pr[x.insumo_id] = Number(x.precio_unitario) * (factor[x.insumo_id] || 1)
       })
+
+      const vfMap = {}
+      ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
+      setValorFifo(vfMap)
 
       setSaldos(s || []); setMovs(m || []); setPrecios(pr); setConteos(t || [])
     } catch (err) {
@@ -100,9 +117,10 @@ export default function Inventario({ finca, esJefe }) {
   const primeraVez = conteos.length === 0
   const ultimo = conteos[0]
 
+  // El valor total viene del calculo FIFO, no de saldo x precio actual.
   const valorBodega = useMemo(
-    () => saldos.reduce((t, s) => t + Number(s.saldo) * (precios[s.insumo_id] || 0), 0),
-    [saldos, precios])
+    () => Object.values(valorFifo).reduce((t, v) => t + (Number(v) || 0), 0),
+    [valorFifo])
   const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
   const negativos = saldos.filter(s => Number(s.saldo) < 0).length
   const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
@@ -464,7 +482,7 @@ export default function Inventario({ finca, esJefe }) {
                     </Celda>
                   )}
                   <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>
-                  <Celda derecha>{dinero(Number(f.saldo) * f.precio)}</Celda>
+                  <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
                                   textAlign: 'right' }}>
