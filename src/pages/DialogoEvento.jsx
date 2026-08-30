@@ -70,17 +70,47 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
     return
   }
 
-  // Transferencia: el ciclo se arrastra a las piscinas destino.
+  // Transferencia: es TOTAL. El ciclo de origen se cierra (la piscina
+  // queda vacia) y nace un ciclo hijo en cada destino con su porcentaje.
+  // El hijo conserva la fecha de siembra del padre para que los dias de
+  // cultivo sigan corriendo: es el mismo lote de camaron.
+  //
+  // destinos aqui es [{ piscinaId, porcentaje }].
+  const { data: padre, error: eP } = await supabase.schema('produccion').from('ciclo')
+    .select('finca_id, fecha_siembra, laboratorio_id, cantidad_larva').eq('id', cid).single()
+  if (eP) throw eP
+
   const { data: ev, error } = await supabase.schema('produccion').from('evento')
     .insert({ ...base, tipo: 'transferencia', libras: lb })
     .select('id').single()
   if (error) throw error
+
   await supabase.schema('produccion').from('evento_destino')
-    .insert(destinos.map(id => ({ evento_id: ev.id, piscina_id: id })))
+    .insert(destinos.map(d => ({ evento_id: ev.id, piscina_id: d.piscinaId, porcentaje: d.porcentaje })))
+
+  // Cerrar el ciclo de origen: transferido, no cosechado, pero la
+  // piscina queda libre igual.
+  await supabase.schema('produccion').from('ciclo')
+    .update({ estado: 'cerrado', fecha_cierre: fecha }).eq('id', cid)
   await supabase.schema('produccion').from('ciclo_piscina')
     .update({ fecha_hasta: fecha }).eq('ciclo_id', cid).is('fecha_hasta', null)
-  await supabase.schema('produccion').from('ciclo_piscina')
-    .insert(destinos.map(id => ({ ciclo_id: cid, piscina_id: id, fecha_desde: fecha })))
+
+  // Un ciclo hijo por destino.
+  for (const d of destinos) {
+    const { data: hijo, error: eH } = await supabase.schema('produccion').from('ciclo')
+      .insert({
+        finca_id: fincaId,
+        piscina_origen_id: d.piscinaId,
+        fecha_siembra: padre.fecha_siembra,   // conserva los dias de cultivo
+        fecha_ocupacion: fecha,               // empieza a comer aqui hoy
+        laboratorio_id: padre.laboratorio_id,
+        ciclo_padre_id: cid,
+        origen_porcentaje: d.porcentaje,
+      }).select('id').single()
+    if (eH) throw eH
+    await supabase.schema('produccion').from('ciclo_piscina')
+      .insert({ ciclo_id: hijo.id, piscina_id: d.piscinaId, fecha_desde: fecha })
+  }
 }
 
 // Deshacer un evento ya registrado. Es lo que permite corregir "me
@@ -134,10 +164,29 @@ export async function eliminarEvento({ evento, cicloId }) {
     return
   }
 
-  // Transferencia: quitar las ocupaciones que abrio en los destinos,
-  // reabrir la del origen, y borrar el evento con sus destinos.
-  await supabase.schema('produccion').from('ciclo_piscina')
-    .delete().eq('ciclo_id', cicloId).eq('fecha_desde', fecha)
+  // Transferencia: borrar los ciclos hijos que nacieron y reabrir el
+  // padre. Solo se puede si ningun hijo tiene ya consumo colgando.
+  const { data: hijos } = await supabase.schema('produccion').from('ciclo')
+    .select('id').eq('ciclo_padre_id', cicloId).eq('fecha_ocupacion', fecha)
+  const idsHijos = (hijos || []).map(h => h.id)
+
+  if (idsHijos.length) {
+    const [{ count: cAlim }, { count: cIns }] = await Promise.all([
+      supabase.schema('produccion').from('alimentacion')
+        .select('id', { count: 'exact', head: true }).in('ciclo_id', idsHijos),
+      supabase.schema('produccion').from('consumo_insumo')
+        .select('id', { count: 'exact', head: true }).in('ciclo_id', idsHijos),
+    ])
+    if ((cAlim || 0) > 0 || (cIns || 0) > 0) {
+      throw new Error('Alguna piscina destino ya tiene consumo registrado. Borra primero ese consumo.')
+    }
+    await supabase.schema('produccion').from('ciclo_piscina').delete().in('ciclo_id', idsHijos)
+    await supabase.schema('produccion').from('ciclo').delete().in('id', idsHijos)
+  }
+
+  // Reabrir el ciclo padre y devolverle la ocupacion del origen.
+  await supabase.schema('produccion').from('ciclo')
+    .update({ estado: 'abierto', fecha_cierre: null }).eq('id', cicloId)
   await supabase.schema('produccion').from('ciclo_piscina')
     .update({ fecha_hasta: null }).eq('ciclo_id', cicloId).eq('fecha_hasta', fecha)
   await supabase.schema('produccion').from('evento_destino').delete().eq('evento_id', id)
@@ -162,7 +211,31 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   // dia de la cosecha, llegan despues de la empacadora. Exigirlas hace
   // que invente un numero, y un numero inventado es peor que un vacio.
   const pideLibras = tipo === 'raleo' || tipo === 'cosecha'
-  const listo = fecha && (tipo !== 'transferencia' || destinos.length > 0)
+
+  // Para transferencia, destinos = [{ piscinaId, porcentaje }]. Al
+  // marcar o desmarcar una piscina se reparte el 100% en partes iguales;
+  // despues se puede ajustar a mano.
+  const sumaPct = destinos.reduce((t, d) => t + (Number(d.porcentaje) || 0), 0)
+  const pctOk = destinos.length > 0 && Math.abs(sumaPct - 100) < 0.01
+
+  function toggleDestino(pid) {
+    setDestinos(ds => {
+      const existe = ds.some(d => d.piscinaId === pid)
+      const base = existe ? ds.filter(d => d.piscinaId !== pid) : [...ds, { piscinaId: pid, porcentaje: 0 }]
+      const n = base.length
+      if (!n) return base
+      // Reparto en partes iguales, ajustando el ultimo para que sume 100.
+      const cada = Math.floor((100 / n) * 100) / 100
+      return base.map((d, i) => ({
+        ...d, porcentaje: i === n - 1 ? Number((100 - cada * (n - 1)).toFixed(2)) : cada,
+      }))
+    })
+  }
+  function setPct(pid, valor) {
+    setDestinos(ds => ds.map(d => d.piscinaId === pid ? { ...d, porcentaje: valor } : d))
+  }
+
+  const listo = fecha && (tipo !== 'transferencia' || pctOk)
 
   // Mismo comportamiento que en la columna del registro diario: si ya
   // existe escrito de otra forma, se usa el que esta en vez de crear un
@@ -265,10 +338,9 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                   {destinosPosibles.map(p => {
-                    const on = destinos.includes(p.id)
+                    const on = destinos.some(d => d.piscinaId === p.id)
                     return (
-                      <button key={p.id}
-                        onClick={() => setDestinos(d => on ? d.filter(x => x !== p.id) : [...d, p.id])}
+                      <button key={p.id} onClick={() => toggleDestino(p.id)}
                         style={{ padding: '7px 13px', borderRadius: '20px', fontFamily: 'inherit',
                                  fontSize: '13px', cursor: 'pointer',
                                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
@@ -280,10 +352,35 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                   })}
                 </div>
               )}
-              <div style={{ fontSize: '12px', color: GRIS, marginTop: '7px' }}>
-                Puedes elegir varias. El ciclo se arrastra: conserva sus días de cultivo y su consumo.
-              </div>
             </Campo>
+
+            {destinos.length > 0 && (
+              <Campo label="Cuánto va a cada una">
+                {destinos.map(d => {
+                  const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
+                  return (
+                    <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px',
+                          marginBottom: '7px' }}>
+                      <span style={{ flex: 1, fontSize: '14px' }}>{nombre}</span>
+                      <input inputMode="decimal" value={d.porcentaje}
+                        onChange={e => setPct(d.piscinaId, e.target.value)}
+                        style={{ ...entrada, width: '90px', textAlign: 'right' }} />
+                      <span style={{ fontSize: '13px', color: GRIS, width: '14px' }}>%</span>
+                    </div>
+                  )
+                })}
+                <div style={{ fontSize: '12px', marginTop: '4px',
+                              color: pctOk ? '#0F6E56' : '#A32D2D' }}>
+                  {pctOk ? 'Suma 100%.'
+                    : `Suman ${sumaPct}%. Tienen que sumar exactamente 100%.`}
+                </div>
+                <div style={{ fontSize: '12px', color: GRIS, marginTop: '4px' }}>
+                  El porcentaje reparte el costo del ciclo entre los destinos. Cada piscina
+                  sigue el mismo ciclo: conserva los días de cultivo desde la siembra.
+                </div>
+              </Campo>
+            )}
+
             <Campo label="Libras transferidas">
               <input inputMode="numeric" value={libras} placeholder="Opcional"
                      onChange={e => setLibras(e.target.value)} style={entrada} />
