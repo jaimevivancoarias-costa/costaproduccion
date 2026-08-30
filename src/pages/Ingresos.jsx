@@ -20,6 +20,7 @@ const AMBAR = '#854F0B'
 const UNIDAD = {
   sacos: 'sacos', litros: 'litros', gramos: 'gramos',
   libras: 'libras', kg: 'kilos', unidad: 'unidades',
+  tambor: 'tambores', botella: 'botellas',
 }
 
 export default function Ingresos({ finca }) {
@@ -37,7 +38,7 @@ export default function Ingresos({ finca }) {
     try {
       const [{ data: ins }, { data: g }, { data: pd }, { data: pend }] = await Promise.all([
         supabase.schema('produccion').from('insumo')
-          .select('id, nombre, unidad').eq('activo', true).order('nombre'),
+          .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('ingreso_insumo')
           .select('id, fecha, numero_guia, proveedor, observacion, ingreso_insumo_linea(insumo_id, cantidad)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
@@ -64,7 +65,12 @@ export default function Ingresos({ finca }) {
   useEffect(() => { cargar() }, [cargar])
 
   const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
-  const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
+  // Los ingresos y pedidos se llevan en unidad de COMPRA (tambor,
+  // botella, saco), que es como llega el producto a bodega.
+  const unidadInsumo = id => {
+    const i = insumos.find(x => x.id === id)
+    return i ? (UNIDAD[i.unidad_compra] || i.unidad_compra) : ''
+  }
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
@@ -209,7 +215,8 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const [guardando, setGuardando] = useState(false)
 
   const UNI = { sacos: 'sacos', litros: 'litros', gramos: 'gramos',
-                libras: 'libras', kg: 'kilos', unidad: 'unidades' }
+                libras: 'libras', kg: 'kilos', unidad: 'unidades',
+                tambor: 'tambores', botella: 'botellas' }
 
   function setLinea(i, campo, valor) {
     setLineas(ls => ls.map((l, j) => j === i ? { ...l, [campo]: valor } : l))
@@ -293,13 +300,14 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
 
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
       {lineas.map((l, i) => {
-        const uni = insumos.find(x => x.id === l.insumoId)?.unidad
+        const ins = insumos.find(x => x.id === l.insumoId)
+        const uni = ins ? (UNI[ins.unidad_compra] || ins.unidad_compra) : null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px' }}>
             <select value={l.insumoId} onChange={e => setLinea(i, 'insumoId', e.target.value)}
               style={{ ...entrada, flex: 1 }}>
               <option value="">Elegir insumo</option>
-              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad] || x.unidad}</option>)}
+              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad_compra] || x.unidad_compra}</option>)}
             </select>
             <input inputMode="decimal" value={l.cantidad}
               placeholder={uni ? `Cantidad en ${UNI[uni] || uni}` : 'Cantidad'}
