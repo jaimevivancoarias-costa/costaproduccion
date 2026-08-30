@@ -826,7 +826,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               ciclo={dialogo.fila}
               piscina={dialogo.fila}
               laboratorios={laboratorios}
-              destinosPosibles={piscinas.filter(x => (!x.cicloId || x.cosechadaEstaSemana) && !x.siembraPosterior)}
+              destinosPosibles={piscinas
+                .filter(x => x.piscinaId !== dialogo.fila.piscinaId && !x.siembraPosterior)
+                .map(x => ({ id: x.piscinaId, nombre: x.nombre,
+                             ocupada: !!x.cicloId && !x.cosechadaEstaSemana }))}
               minima={dialogo.tipo === 'siembra' ? undefined : dialogo.fila.fechaSiembra}
               onCancelar={() => setDialogo(null)}
               onGuardar={registrarEvento}
