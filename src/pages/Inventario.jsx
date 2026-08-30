@@ -23,9 +23,9 @@ const AMBAR = '#854F0B'
 // El inventario se muestra en unidad de compra (tambores, botellas,
 // sacos), que es lo que devuelven las funciones de saldo.
 const UNIDAD = {
-  sacos: 'sacos', litros: 'litros', gramos: 'gramos',
-  libras: 'libras', kg: 'kilos', unidad: 'unidades',
-  tambor: 'tambores', botella: 'botellas',
+  sacos: 'Sacos', litros: 'Litros', gramos: 'Gramos',
+  libras: 'Libras', kg: 'Kilos', unidad: 'Unidades',
+  tambor: 'Tambores', botella: 'Botellas',
 }
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
@@ -359,14 +359,16 @@ export default function Inventario({ finca, esJefe }) {
           </div>
 
           <Tabla
-            columnas={['Insumo', 'Unidad', 'El sistema dice', 'Contado', 'Diferencia']}
+            columnas={primeraVez
+              ? ['Insumo', 'Unidad', '', 'Inventario inicial', '']
+              : ['Insumo', 'Unidad', 'El sistema dice', 'Contado', 'Diferencia']}
             anchos="1fr 110px 130px 130px 150px"
           >
             {filas.map(f => (
               <Fila key={f.insumo_id} anchos="1fr 110px 130px 130px 150px">
                 <Celda>{f.insumo}</Celda>
                 <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
-                <Celda derecha gris>{limpio(f.saldo)}</Celda>
+                <Celda derecha gris>{primeraVez ? '' : limpio(f.saldo)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                   <input
                     inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="—"
@@ -375,12 +377,15 @@ export default function Inventario({ finca, esJefe }) {
                              fontVariantNumeric: 'tabular-nums' }}
                   />
                 </div>
+                {/* La primera vez no hay contra que comparar: es la carga
+                    inicial. La diferencia aparece de la segunda en adelante. */}
                 <Celda derecha color={
                   f.diferencia === null ? '#c3d0db'
                   : f.diferencia < 0 ? ROJO
                   : f.diferencia > 0 ? AMBAR : VERDE
                 }>
-                  {f.diferencia === null ? '—'
+                  {primeraVez ? ''
+                    : f.diferencia === null ? '—'
                     : f.diferencia === 0 ? 'cuadra'
                     : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
                 </Celda>
