@@ -111,9 +111,6 @@ export default function App() {
           <a href={HUB_URL} style={{ display: 'flex', alignItems: 'center' }}>
             <img src="/logo.png" alt="CostaMarket" style={{ height: '30px', width: 'auto' }} />
           </a>
-          <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px', fontWeight: 500, letterSpacing: '0.08em' }}>
-            PRODUCCIÓN
-          </span>
           {fincas.length > 1 ? (
             <>
               {/* Selector de zona: divide las fincas en Jambelí y Puna.
@@ -131,7 +128,7 @@ export default function App() {
                       fontWeight: 500, letterSpacing: '0.03em', padding: '5px 12px', borderRadius: '7px',
                       background: zona === z ? 'white' : 'transparent',
                       color: zona === z ? NAVY : 'rgba(255,255,255,0.7)' }}>
-                      {z === 'jambeli' ? 'Jambelí' : 'Puna'}
+                      {z === 'jambeli' ? 'Jambelí' : 'Puná'}
                     </button>
                   ))}
                 </div>
@@ -147,7 +144,7 @@ export default function App() {
                            fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
                 >
                   {fincas.filter(f => !f.zona || f.zona === zona).map(f => (
-                    <option key={f.id} value={f.id} style={{ color: NAVY }}>{f.nombre}</option>
+                    <option key={f.id} value={f.id} style={{ color: NAVY }}>{String(f.nombre).toUpperCase()}</option>
                   ))}
                 </select>
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.6)"
