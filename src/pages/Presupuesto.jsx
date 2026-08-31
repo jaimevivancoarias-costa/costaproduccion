@@ -19,8 +19,8 @@ const VERDE = '#0F6E56'
 const AMBAR = '#BA7517'
 const ROJO = '#A32D2D'
 
-const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-               'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre']
+const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+               'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 export default function Presupuesto({ finca, esJefe }) {
   const hoy = hoyISO()
@@ -176,3 +176,4 @@ const sel = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
 const boton = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                 border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY,
                 cursor: 'pointer' }
+s
