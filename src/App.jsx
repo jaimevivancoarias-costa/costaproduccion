@@ -237,9 +237,11 @@ export default function App() {
           ) : modulo === 'resumen' ? (
             <Resumen
               fincas={fincas}
-              lunes={lunes}
-              setLunes={setLunes}
-              onIrAFinca={id => { setFincaId(id); setModulo('registro') }}
+              esJefe={esJefe}
+              onIrAFinca={id => {
+                setFincaId(id); setModulo('registro')
+                const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
+              }}
             />
           ) : modulo === 'registro' ? (
             <div>
