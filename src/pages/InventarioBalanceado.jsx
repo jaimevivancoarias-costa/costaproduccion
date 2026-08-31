@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, miles, dinero } from '../lib/fechas'
+import PreciosBalanceado from './PreciosBalanceado'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -119,6 +120,9 @@ export default function InventarioBalanceado({ finca, esJefe }) {
       <div style={{ display: 'flex', gap: '9px', marginBottom: '14px', flexWrap: 'wrap' }}>
         <Chip on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</Chip>
         <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</Chip>
+        {esJefe && (
+          <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>Precios</Chip>
+        )}
         {seccion === 'bodega' && !contando && !cargando && (
           <button onClick={() => setContando(true)} style={{ ...btn, marginLeft: 'auto',
             background: AZUL, color: 'white', borderColor: AZUL }}>
@@ -133,7 +137,9 @@ export default function InventarioBalanceado({ finca, esJefe }) {
           color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
       )}
 
-      {seccion === 'ingresos' ? (
+      {seccion === 'precios' && esJefe ? (
+        <PreciosBalanceado finca={finca} esJefe={esJefe} />
+      ) : seccion === 'ingresos' ? (
         <IngresosBalanceado finca={finca} onCambio={cargar} />
       ) : contando ? (
         <Caja>
