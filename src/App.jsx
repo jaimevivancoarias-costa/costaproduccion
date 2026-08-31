@@ -133,16 +133,8 @@ export default function App() {
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
         <nav style={{ width: navColapsado ? '58px' : '178px', flexShrink: 0, background: 'white',
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
-                      padding: '1.1rem 0.7rem', transition: 'width .12s' }}>
-          {/* Boton para colapsar el menu a solo iconos. */}
-          <button
-            onClick={alternarNav}
-            title={navColapsado ? 'Expandir menú' : 'Colapsar menú'}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: navColapsado ? 'center' : 'flex-end',
-                     width: '100%', border: 'none', background: 'transparent', cursor: 'pointer',
-                     color: GRIS, padding: '6px 10px', marginBottom: '6px', fontSize: '15px' }}>
-            {navColapsado ? '»' : '«'}
-          </button>
+                      padding: '1.1rem 0.7rem', transition: 'width .12s',
+                      display: 'flex', flexDirection: 'column' }}>
           {MODULOS.filter(m => !m.soloJefe || esJefe).map(m => {
             const activo = m.id === modulo
             return (
@@ -166,6 +158,15 @@ export default function App() {
               </button>
             )
           })}
+          {/* Colapsar el menu: al fondo. */}
+          <button
+            onClick={alternarNav}
+            title={navColapsado ? 'Expandir menú' : 'Colapsar menú'}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
+                     width: '100%', border: 'none', background: 'transparent', cursor: 'pointer',
+                     color: GRIS, padding: '10px', marginTop: 'auto', fontSize: '15px' }}>
+            {navColapsado ? '»' : '«'}
+          </button>
         </nav>
 
         <div style={{ flex: 1, minWidth: 0 }}>
