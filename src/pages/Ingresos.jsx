@@ -23,20 +23,23 @@ const UNIDAD = {
   tambor: 'tambores', botella: 'botellas',
 }
 
-export default function Ingresos({ finca }) {
+export default function Ingresos({ finca, esJefe }) {
   const [modo, setModo] = useState('ingresos')   // 'ingresos' | 'pedidos'
   const [insumos, setInsumos] = useState([])
   const [ingresos, setIngresos] = useState([])
   const [pedidos, setPedidos] = useState([])
   const [pendientes, setPendientes] = useState({})   // pedidoId -> lineas pendientes
+  const [solicitudes, setSolicitudes] = useState([]) // correcciones de ingresos
+  const [userId, setUserId] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [nuevo, setNuevo] = useState(null)   // 'ingreso' | 'pedido' | null
+  const [editando, setEditando] = useState(null)   // id del ingreso en edición/solicitud
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: ins }, { data: g }, { data: pd }, { data: pend }] = await Promise.all([
+      const [{ data: ins }, { data: g }, { data: pd }, { data: pend }, { data: sol }, { data: auth }] = await Promise.all([
         supabase.schema('produccion').from('insumo')
           .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('ingreso_insumo')
@@ -48,10 +51,17 @@ export default function Ingresos({ finca }) {
         supabase.schema('produccion').from('vw_pedido_pendiente')
           .select('pedido_id, insumo_id, insumo, unidad, pedida, recibida, pendiente')
           .eq('finca_id', finca.id),
+        supabase.schema('produccion').from('solicitud_correccion')
+          .select('id, registro_id, valor_anterior, valor_propuesto, motivo, estado, solicitado_por, solicitado_en')
+          .eq('finca_id', finca.id).eq('tabla', 'ingreso_insumo')
+          .order('solicitado_en', { ascending: false }).limit(50),
+        supabase.auth.getUser(),
       ])
       setInsumos(ins || [])
       setIngresos(g || [])
       setPedidos(pd || [])
+      setSolicitudes(sol || [])
+      setUserId(auth?.user?.id || null)
       const pp = {}
       ;(pend || []).forEach(r => { (pp[r.pedido_id] = pp[r.pedido_id] || []).push(r) })
       setPendientes(pp)
@@ -110,13 +120,22 @@ export default function Ingresos({ finca }) {
         />
       )}
 
+      {modo === 'ingresos' && !cargando && solicitudes.some(s => s.estado === 'pendiente') && (
+        <PanelSolicitudes
+          solicitudes={solicitudes.filter(s => s.estado === 'pendiente')}
+          esJefe={esJefe} nombreInsumo={nombreInsumo} unidadInsumo={unidadInsumo}
+          onResolver={resolver} />
+      )}
+
       {cargando ? (
         <Vacio>Cargando...</Vacio>
 
       ) : modo === 'ingresos' ? (
         !ingresos.length ? (
           <Vacio>Todavía no hay ingresos registrados. Cuando llegue producto a bodega, regístralo aquí con su guía.</Vacio>
-        ) : ingresos.map(g => (
+        ) : ingresos.map(g => {
+          const solPend = solicitudes.find(s => s.registro_id === g.id && s.estado === 'pendiente')
+          return (
           <Tarjeta key={g.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
               <div>
@@ -125,6 +144,21 @@ export default function Ingresos({ finca }) {
                   {g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}
                   {g.proveedor ? ` · ${g.proveedor}` : ''}
                 </div>
+              </div>
+              <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start' }}>
+                {solPend ? (
+                  <span style={{ fontSize: '11px', fontWeight: 500, padding: '4px 11px', borderRadius: '20px',
+                                 background: '#FAEEDA', color: AMBAR, height: 'fit-content' }}>
+                    Corrección pendiente
+                  </span>
+                ) : editando === g.id ? null : esJefe ? (
+                  <>
+                    <MiniBtn onClick={() => setEditando(g.id)}>Editar</MiniBtn>
+                    <MiniBtn rojo onClick={() => borrarIngresoJefe(g)}>Borrar</MiniBtn>
+                  </>
+                ) : (
+                  <MiniBtn onClick={() => setEditando(g.id)}>Solicitar corrección</MiniBtn>
+                )}
               </div>
             </div>
             <Lineas>
@@ -135,8 +169,15 @@ export default function Ingresos({ finca }) {
               ))}
             </Lineas>
             {g.observacion && <Obs>{g.observacion}</Obs>}
+            {editando === g.id && (
+              <EditorIngreso
+                g={g} insumos={insumos} esJefe={esJefe} finca={finca} userId={userId}
+                onHecho={async (msg) => { setEditando(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                onCancelar={() => setEditando(null)} setAviso={setAviso} />
+            )}
           </Tarjeta>
-        ))
+          )
+        })
 
       ) : (
         !pedidos.length ? (
@@ -190,6 +231,20 @@ export default function Ingresos({ finca }) {
       )}
     </div>
   )
+
+  async function borrarIngresoJefe(g) {
+    if (!window.confirm('¿Borrar este ingreso? Se resta de la bodega.')) return
+    const { error } = await supabase.schema('produccion').from('ingreso_insumo').delete().eq('id', g.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Ingreso borrado.' }); await cargar()
+  }
+
+  async function resolver(sol, aprobar) {
+    const { error } = await supabase.schema('produccion')
+      .rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Solicitud rechazada.' }); await cargar()
+  }
 
   async function cerrarPedido(id) {
     if (!window.confirm('¿Dar el pedido por cerrado? Se deja de seguir aunque no haya llegado todo.')) return
@@ -332,6 +387,157 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         </Btn>
       </div>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Panel de solicitudes de correccion (pendientes)
+function PanelSolicitudes({ solicitudes, esJefe, nombreInsumo, unidadInsumo, onResolver }) {
+  return (
+    <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
+                  padding: '14px 16px', marginBottom: '14px' }}>
+      <div style={{ fontWeight: 500 }}>
+        {esJefe ? 'Correcciones por autorizar' : 'Correcciones pendientes'} ({solicitudes.length})
+      </div>
+      {solicitudes.map(s => {
+        const vp = s.valor_propuesto || {}
+        return (
+          <div key={s.id} style={{ borderTop: '0.5px solid #ecd9b3', paddingTop: '10px', marginTop: '10px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 500 }}>
+              {vp.borrar ? 'Pide borrar el ingreso' : 'Propone cambios en el ingreso'}
+            </div>
+            {!vp.borrar && (
+              <div style={{ fontSize: '12px', color: GRIS, marginTop: '4px' }}>
+                {corta(vp.fecha)} · {vp.numero_guia ? ('Guía ' + vp.numero_guia) : 'Sin guía'}
+                {vp.proveedor ? (' · ' + vp.proveedor) : ''}
+                <div style={{ marginTop: '2px' }}>
+                  {(vp.lineas || []).map((l, i) => (
+                    <span key={i}>{nombreInsumo(l.insumo_id)}: {miles(l.cantidad)} {unidadInsumo(l.insumo_id)}
+                      {i < vp.lineas.length - 1 ? '  ·  ' : ''}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '4px' }}>
+              Motivo: {s.motivo || '—'}
+            </div>
+            {esJefe && (
+              <div style={{ display: 'flex', gap: '8px', marginTop: '9px' }}>
+                <MiniBtn onClick={() => onResolver(s, true)}>Aprobar</MiniBtn>
+                <MiniBtn rojo onClick={() => onResolver(s, false)}>Rechazar</MiniBtn>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Editor de un ingreso: el jefe guarda directo, el bodeguero envía solicitud.
+function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar, setAviso }) {
+  const [fecha, setFecha] = useState(g.fecha)
+  const [guia, setGuia] = useState(g.numero_guia || '')
+  const [proveedor, setProveedor] = useState(g.proveedor || '')
+  const [lineas, setLineas] = useState((g.ingreso_insumo_linea || []).map(l => ({ insumoId: l.insumo_id, cantidad: String(l.cantidad) })))
+  const [motivo, setMotivo] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const UNI = { sacos: 'sacos', litros: 'litros', gramos: 'gramos', libras: 'libras', kg: 'kilos',
+                unidad: 'unidades', tambor: 'tambores', botella: 'botellas' }
+  const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
+  const validas = lineas.filter(l => l.insumoId && num(l.cantidad))
+
+  async function guardarJefe() {
+    if (!validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
+    setEnviando(true)
+    const { error } = await supabase.schema('produccion').from('ingreso_insumo')
+      .update({ fecha, numero_guia: guia || null, proveedor: proveedor || null }).eq('id', g.id)
+    if (error) { setEnviando(false); setAviso({ tipo: 'error', texto: error.message }); return }
+    await supabase.schema('produccion').from('ingreso_insumo_linea').delete().eq('ingreso_id', g.id)
+    const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
+      .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: num(l.cantidad) })))
+    setEnviando(false)
+    if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
+    onHecho('Ingreso actualizado.')
+  }
+
+  async function enviarSolicitud(borrar) {
+    if (!motivo.trim()) { setAviso({ tipo: 'error', texto: 'Escribe el motivo de la corrección.' }); return }
+    if (!borrar && !validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
+    setEnviando(true)
+    const anterior = { fecha: g.fecha, numero_guia: g.numero_guia, proveedor: g.proveedor,
+      lineas: (g.ingreso_insumo_linea || []).map(l => ({ insumo_id: l.insumo_id, cantidad: Number(l.cantidad) })) }
+    const propuesto = borrar ? { borrar: true }
+      : { borrar: false, fecha, numero_guia: guia || null, proveedor: proveedor || null,
+          lineas: validas.map(l => ({ insumo_id: l.insumoId, cantidad: num(l.cantidad) })) }
+    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+      finca_id: finca.id, tabla: 'ingreso_insumo', registro_id: g.id,
+      valor_anterior: anterior, valor_propuesto: propuesto, motivo: motivo.trim(), solicitado_por: userId })
+    setEnviando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+    onHecho(borrar ? 'Solicitud de borrado enviada. El jefe la revisará.' : 'Solicitud enviada. El jefe la revisará.')
+  }
+
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '10px', padding: '14px', marginTop: '11px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '10px' }}>
+        {esJefe ? 'Editar ingreso' : 'Proponer corrección'}
+      </div>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <Campo label="Fecha"><input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={entrada} /></Campo>
+        <Campo label="Número de guía"><input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={entrada} /></Campo>
+        <Campo label="Proveedor"><input value={proveedor} placeholder="Opcional" onChange={e => setProveedor(e.target.value)} style={entrada} /></Campo>
+      </div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
+      {lineas.map((l, i) => {
+        const ins = insumos.find(x => x.id === l.insumoId)
+        const uni = ins ? (UNI[ins.unidad_compra] || ins.unidad_compra) : null
+        return (
+          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px' }}>
+            <select value={l.insumoId} onChange={e => setLinea(i, 'insumoId', e.target.value)} style={{ ...entrada, flex: 1 }}>
+              <option value="">Elegir insumo</option>
+              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad_compra] || x.unidad_compra}</option>)}
+            </select>
+            <input inputMode="decimal" value={l.cantidad} placeholder={uni ? `Cantidad en ${uni}` : 'Cantidad'}
+              onChange={e => setLinea(i, 'cantidad', e.target.value)} style={{ ...entrada, width: '170px' }} />
+            {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))}
+              style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>}
+          </div>
+        )
+      })}
+      <button onClick={() => setLineas(ls => [...ls, { insumoId: '', cantidad: '' }])}
+        style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL, padding: '4px 0' }}>+ otra línea</button>
+
+      {!esJefe && (
+        <div style={{ marginTop: '10px' }}>
+          <Campo label="Motivo de la corrección">
+            <input value={motivo} placeholder="Por qué se corrige — lo verá el jefe"
+              onChange={e => setMotivo(e.target.value)} style={{ ...entrada, width: '100%' }} />
+          </Campo>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px', flexWrap: 'wrap' }}>
+        <Btn onClick={onCancelar}>Cancelar</Btn>
+        {esJefe ? (
+          <Btn primario onClick={guardarJefe} disabled={enviando}>{enviando ? 'Guardando...' : 'Guardar cambios'}</Btn>
+        ) : (
+          <>
+            <MiniBtn rojo onClick={() => enviarSolicitud(true)}>Solicitar borrado</MiniBtn>
+            <Btn primario onClick={() => enviarSolicitud(false)} disabled={enviando}>{enviando ? 'Enviando...' : 'Enviar solicitud'}</Btn>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function MiniBtn({ children, rojo, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      background: 'white', border: '0.5px solid ' + (rojo ? '#e7cccb' : BORDE), borderRadius: '8px',
+      padding: '6px 11px', fontFamily: 'inherit', fontSize: '12px',
+      color: rojo ? '#8A2F2E' : NAVY, cursor: 'pointer' }}>{children}</button>
   )
 }
 
