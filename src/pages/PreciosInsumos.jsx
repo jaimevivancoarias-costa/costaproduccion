@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, dinero, miles } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, dinero, miles } from '../lib/fechas'
 
 // Precios de insumos · modulo Produccion
 //
@@ -95,13 +95,16 @@ export default function PreciosInsumos({ finca, esJefe }) {
   }
 
   async function guardarPrecio({ insumoId, nuevo, desde }) {
-    // Precio propio de ESTA finca. Cierra el que estuviera vigente para
-    // la finca y abre el nuevo. El precio general no se toca: cambiar el
-    // de una finca no cambia el de las demas.
+    // Precio propio de ESTA finca. El precio general no se toca.
+    // 1) Borra cualquier precio de esta finca que arranque en o después
+    //    de `desde` (evita el choque de rangos si ya se puso hoy).
+    await supabase.schema('produccion').from('precio_insumo')
+      .delete().eq('insumo_id', insumoId).eq('finca_id', finca.id).gte('vigente_desde', desde)
+    // 2) Cierra el que estaba vigente antes de `desde`.
     await supabase.schema('produccion').from('precio_insumo')
       .update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq('insumo_id', insumoId).eq('finca_id', finca.id).is('vigente_hasta', null)
-
+      .eq('insumo_id', insumoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', desde)
+    // 3) Abre el nuevo.
     const { error } = await supabase.schema('produccion').from('precio_insumo')
       .insert({ insumo_id: insumoId, finca_id: finca.id, precio_unitario: nuevo, vigente_desde: desde })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
@@ -215,7 +218,7 @@ function Forma({ actual, onGuardar }) {
   const [nuevo, setNuevo] = useState(actual.precio ? String(actual.precio.precio_unitario) : '')
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
-  const v = num(nuevo)
+  const v = numDec(nuevo)
   const anterior = actual.precio ? Number(actual.precio.precio_unitario) : null
   const cambio = v && v !== anterior
 
@@ -269,7 +272,7 @@ function AltaInsumo({ onCrear, onCancelar }) {
   const [factor, setFactor] = useState('')
   const [enviando, setEnviando] = useState(false)
 
-  const listo = nombre.trim() && (!compraDistinta || (unidadCompra.trim() && num(factor) > 0))
+  const listo = nombre.trim() && (!compraDistinta || (unidadCompra.trim() && numDec(factor) > 0))
 
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '15px', marginBottom: '14px' }}>
@@ -310,7 +313,7 @@ function AltaInsumo({ onCrear, onCancelar }) {
       <div style={{ display: 'flex', gap: '9px', marginTop: '15px' }}>
         <button disabled={!listo || enviando}
           onClick={async () => { setEnviando(true)
-            await onCrear({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? num(factor) : 1 })
+            await onCrear({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1 })
             setEnviando(false) }}
           style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px',
                    padding: '10px 20px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
@@ -342,7 +345,7 @@ function EditarInsumo({ actual, onGuardar, onCancelar }) {
   const [unidadCompra, setUnidadCompra] = useState(distintaInicial ? actual.unidad_compra : '')
   const [factor, setFactor] = useState(distintaInicial ? String(actual.factor) : '')
   const [enviando, setEnviando] = useState(false)
-  const listo = nombre.trim() && (!compraDistinta || (unidadCompra.trim() && num(factor) > 0))
+  const listo = nombre.trim() && (!compraDistinta || (unidadCompra.trim() && numDec(factor) > 0))
 
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
@@ -381,7 +384,7 @@ function EditarInsumo({ actual, onGuardar, onCancelar }) {
         <button disabled={!listo || enviando}
           onClick={async () => { setEnviando(true)
             await onGuardar({ id: actual.id, nombre, unidad,
-              unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? num(factor) : 1 })
+              unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1 })
             setEnviando(false) }}
           style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '10px 20px',
                    fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
