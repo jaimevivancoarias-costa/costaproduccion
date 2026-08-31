@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, dinero } from '../lib/fechas'
+import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
 
 // Precios de balanceado · modulo Produccion
 //
@@ -47,8 +47,10 @@ export default function PreciosBalanceado({ finca, esJefe }) {
 
   async function guardarPrecio({ productoId, nuevo, desde }) {
     await supabase.schema('produccion').from('precio_producto')
+      .delete().eq('producto_id', productoId).eq('finca_id', finca.id).gte('vigente_desde', desde)
+    await supabase.schema('produccion').from('precio_producto')
       .update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq('producto_id', productoId).eq('finca_id', finca.id).is('vigente_hasta', null)
+      .eq('producto_id', productoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', desde)
     const { error } = await supabase.schema('produccion').from('precio_producto')
       .insert({ producto_id: productoId, finca_id: finca.id, precio_saco: nuevo, vigente_desde: desde })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
@@ -173,7 +175,7 @@ function Forma({ actual, onGuardar }) {
   const [nuevo, setNuevo] = useState(actual.precio ? String(actual.precio.precio_saco) : '')
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
-  const v = num(nuevo)
+  const v = numDec(nuevo)
   const anterior = actual.precio ? Number(actual.precio.precio_saco) : null
   const cambio = v && v !== anterior
 
