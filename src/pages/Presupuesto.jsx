@@ -61,6 +61,16 @@ export default function Presupuesto({ finca, esJefe }) {
     await cargar()
   }
 
+  async function borrar() {
+    if (!window.confirm(`¿Borrar el presupuesto de ${MESES[mes - 1]} ${anio}?`)) return
+    const { error } = await supabase.schema('produccion').from('presupuesto_insumo')
+      .delete().eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setEditando(false); setNuevo('')
+    setAviso({ tipo: 'ok', texto: 'Presupuesto borrado.' })
+    await cargar()
+  }
+
   const pct = monto ? Math.min(100, Math.round(gasto / monto * 100)) : 0
   const queda = monto ? monto - gasto : 0
   const color = pct >= 100 ? ROJO : pct >= 85 ? AMBAR : VERDE
@@ -111,6 +121,11 @@ export default function Presupuesto({ finca, esJefe }) {
             </button>
             <button onClick={() => { setEditando(false); setNuevo(monto ? String(monto) : '') }}
               style={boton}>Cancelar</button>
+            {monto !== null && (
+              <button onClick={borrar} style={{ ...boton, color: ROJO, borderColor: '#e8c9c9' }}>
+                Borrar
+              </button>
+            )}
           </div>
         </Caja>
       ) : monto === null ? (
