@@ -128,27 +128,33 @@ export default function App() {
                       if (prim) setFincaId(prim.id)
                     }} style={{
                       border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px',
-                      fontWeight: 600, letterSpacing: '0.05em', padding: '5px 11px', borderRadius: '7px',
+                      fontWeight: 500, letterSpacing: '0.03em', padding: '5px 12px', borderRadius: '7px',
                       background: zona === z ? 'white' : 'transparent',
                       color: zona === z ? NAVY : 'rgba(255,255,255,0.7)' }}>
-                      {z === 'jambeli' ? 'JAMBELÍ' : 'PUNA'}
+                      {z === 'jambeli' ? 'Jambelí' : 'Puna'}
                     </button>
                   ))}
                 </div>
               )}
-              <select
-                value={finca.id}
-                onChange={e => setFincaId(e.target.value)}
-                style={{ background: 'rgba(255,255,255,0.1)', border: '0.5px solid rgba(255,255,255,0.18)',
-                         color: 'white', borderRadius: '9px', padding: '7px 12px', fontFamily: 'inherit',
-                         fontSize: '13px', fontWeight: 600, letterSpacing: '0.05em' }}
-              >
-                {fincas.filter(f => !f.zona || f.zona === zona).map(f => (
-                  <option key={f.id} value={f.id} style={{ color: NAVY }}>
-                    {String(f.nombre).toUpperCase()}
-                  </option>
-                ))}
-              </select>
+              {/* Finca como una pildora con flecha (opcion 1, sin pin). */}
+              <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                <select
+                  value={finca.id}
+                  onChange={e => setFincaId(e.target.value)}
+                  style={{ appearance: 'none', WebkitAppearance: 'none',
+                           background: 'rgba(255,255,255,0.12)', border: 'none',
+                           color: 'white', borderRadius: '20px', padding: '7px 34px 7px 15px',
+                           fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}
+                >
+                  {fincas.filter(f => !f.zona || f.zona === zona).map(f => (
+                    <option key={f.id} value={f.id} style={{ color: NAVY }}>{f.nombre}</option>
+                  ))}
+                </select>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="rgba(255,255,255,0.6)"
+                     strokeWidth="1.6" style={{ position: 'absolute', right: '13px', pointerEvents: 'none' }}>
+                  <path d="M4 6l4 4 4-4" />
+                </svg>
+              </div>
             </>
           ) : (
             <span style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '9px', padding: '7px 12px',
