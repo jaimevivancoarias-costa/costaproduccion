@@ -545,9 +545,17 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <div>
-          <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Registro diario</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Registro diario</h1>
+            {semanaCerrada
+              ? <span style={{ background: '#eef2f5', color: GRIS, fontSize: '11px', fontWeight: 500,
+                               padding: '3px 10px', borderRadius: '20px' }}>Semana cerrada</span>
+              : <span style={{ background: '#E1F5EE', color: '#0F6E56', fontSize: '11px', fontWeight: 500,
+                               padding: '3px 10px', borderRadius: '20px' }}>
+                  {semanaDeHoy ? 'Semana en curso' : 'Semana anterior'}</span>}
+          </div>
           <div style={{ fontSize: '13px', color: GRIS }}>
-            Semana {semanaISO(lunes).semana} · del lunes {corta(lunes)} al domingo {corta(fechas[6])}
+            Semana {semanaISO(lunes).semana} · del {corta(lunes)} al {corta(fechas[6])}
             {semanaDeHoy && ` · hoy es ${nombreDia(hoy).toLowerCase()}`}
           </div>
         </div>
@@ -579,15 +587,34 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       </div>
 
-      {/* Resumen de la semana, de un vistazo. */}
-      <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginBottom: '14px',
-                    background: '#f6f9fb', borderRadius: '12px', padding: '12px 16px' }}>
-        <Dato k="Libras de la semana" v={miles(totalSemana)} />
-        <Dato k="Sacos de la semana" v={(totalSemana / LIBRAS_POR_SACO).toFixed(1)} />
-        <Dato k="Piscinas activas" v={String(piscinas.filter(p => p.cicloId).length)} />
-        {semanaDeHoy && <Dato k="Completadas hoy"
-          v={`${piscinas.filter(p => p.tipo !== 'precria').length - pendientesHoy.length} de ${piscinas.filter(p => p.tipo !== 'precria').length}`} />}
-      </div>
+      {/* Resumen de la semana en tarjetas. */}
+      {(() => {
+        const nEng = piscinas.filter(p => p.tipo !== 'precria').length
+        const hechas = nEng - pendientesHoy.length
+        const pctHoy = nEng ? Math.round(hechas / nEng * 100) : 0
+        const diasCerrados = fechas.filter(f => dias[f] === 'cerrado' || dias[f] === 'reabierto').length
+        return (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
+                      gap: '11px', marginBottom: '14px' }}>
+          <div style={{ background: NAVY, borderRadius: '12px', padding: '14px 16px' }}>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>Libras de la semana</div>
+            <div style={{ fontSize: '22px', fontWeight: 500, color: 'white' }}>{miles(totalSemana)}</div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>{(totalSemana / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+          </div>
+          <TarjetaReg k="Piscinas activas" v={String(piscinas.filter(p => p.cicloId).length)} />
+          {semanaDeHoy && (
+            <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+              <div style={{ fontSize: '12px', color: GRIS }}>Completadas hoy</div>
+              <div style={{ fontSize: '22px', fontWeight: 500 }}>{hechas} de {nEng}</div>
+              <div style={{ height: '6px', background: '#e7eef5', borderRadius: '20px', overflow: 'hidden', marginTop: '6px' }}>
+                <i style={{ display: 'block', height: '100%', width: pctHoy + '%', background: '#1D9E75', borderRadius: '20px' }} />
+              </div>
+            </div>
+          )}
+          <TarjetaReg k="Días cerrados" v={`${diasCerrados} de 7`} />
+        </div>
+        )
+      })()}
 
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
         <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
@@ -620,18 +647,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
                       background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                       padding: '11px 14px', marginBottom: '10px' }}>
-          {semanaDeHoy && <div style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13px', color: GRIS }}>
-            <span>
-              <b style={{ fontWeight: 500, color: NAVY }}>
-                {piscinas.filter(p => p.tipo !== 'precria').length - pendientesHoy.length} de {piscinas.filter(p => p.tipo !== 'precria').length}
-              </b> piscinas completadas hoy
-            </span>
-            <span style={{ width: '90px', height: '6px', background: '#e7eef5', borderRadius: '20px', overflow: 'hidden' }}>
-              <i style={{ display: 'block', height: '100%', background: '#1D9E75',
-                width: (piscinas.length ? ((piscinas.filter(p => p.tipo !== 'precria').length - pendientesHoy.length) / Math.max(1, piscinas.filter(p => p.tipo !== 'precria').length)) * 100 : 0) + '%' }} />
-            </span>
-          </div>}
-          {semanaDeHoy && <><Sep />
+          {semanaDeHoy && <>
           <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', cursor: 'pointer' }}>
             <input type="checkbox" checked={soloPendientes} onChange={e => setSoloPendientes(e.target.checked)} />
             Solo pendientes
@@ -750,7 +766,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         />
                       </Td>
                     ))}
-                    <Td><span style={{ fontWeight: 500 }}>{miles(totalPiscina(p)) || ''}</span></Td>
+                    <Td>{totalPiscina(p) ? (
+                      <>
+                        <span style={{ fontWeight: 500 }}>{miles(totalPiscina(p))}</span>
+                        <div style={{ fontSize: '11px', color: GRIS }}>{(totalPiscina(p) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+                      </>
+                    ) : ''}</Td>
                     {verIndicadores && (() => {
                       const t = totalPiscina(p)
                       const g = pesos[p.piscinaId] || {}
@@ -786,12 +807,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                   {fechas.map(f => (
                     <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
                         borde={situacionDia(f, hoy) === 'hoy'}>
-                      <span style={{ fontWeight: 500 }}>
-                        {situacionDia(f, hoy) === 'futuro' ? <span style={{ color: GRIS }}>—</span> : miles(totalDia(f)) || '0'}
-                      </span>
+                      {situacionDia(f, hoy) === 'futuro' ? <span style={{ color: GRIS }}>—</span> : (
+                        <>
+                          <span style={{ fontWeight: 500 }}>{miles(totalDia(f)) || '0'}</span>
+                          <div style={{ fontSize: '11px', color: GRIS }}>{(totalDia(f) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+                        </>
+                      )}
                     </Td>
                   ))}
-                  <Td fondo="#fafcfd"><span style={{ fontWeight: 500, fontSize: '16px' }}>{miles(totalSemana)}</span></Td>
+                  <Td fondo="#fafcfd">
+                    <span style={{ fontWeight: 500, fontSize: '16px' }}>{miles(totalSemana)}</span>
+                    <div style={{ fontSize: '11px', color: GRIS }}>{(totalSemana / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+                  </Td>
                   {verIndicadores && Array.from({ length: 9 }, (_, k) => <Td key={k} fondo="#fafcfd" />)}
                 </div>
               </div>
@@ -1166,6 +1193,14 @@ function Btn({ children, onClick, primario, fantasma, disabled }) {
 
 const Sep = () => <span style={{ width: '1px', height: '22px', background: BORDE }} />
 
+function TarjetaReg({ k, v }) {
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '12px', color: GRIS }}>{k}</div>
+      <div style={{ fontSize: '22px', fontWeight: 500 }}>{v}</div>
+    </div>
+  )
+}
 function Dato({ k, v }) {
   return (
     <div>
