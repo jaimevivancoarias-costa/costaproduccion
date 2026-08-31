@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, dinero } from '../lib/fechas'
+import { hoyISO, corta, num, dinero, miles } from '../lib/fechas'
 
 // Precios de insumos · modulo Produccion
 //
@@ -29,6 +29,7 @@ export default function PreciosInsumos({ finca, esJefe }) {
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [editando, setEditando] = useState(null)
+  const [editandoInsumo, setEditandoInsumo] = useState(null)
   const [agregando, setAgregando] = useState(false)
 
   const cargar = useCallback(async () => {
@@ -38,7 +39,7 @@ export default function PreciosInsumos({ finca, esJefe }) {
     // como "heredado" (es el que rige hasta que se le ponga uno propio).
     const [{ data: ins }, { data: pr }] = await Promise.all([
       supabase.schema('produccion').from('insumo')
-        .select('id, nombre, unidad').eq('activo', true).order('nombre'),
+        .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('precio_insumo')
         .select('id, insumo_id, finca_id, precio_unitario, vigente_desde')
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`).is('vigente_hasta', null),
@@ -67,6 +68,21 @@ export default function PreciosInsumos({ finca, esJefe }) {
     setAviso({ tipo: 'ok', texto: 'Insumo agregado. Ponle su precio con "Cambiar".' })
     await cargar()
     return true
+  }
+
+  async function guardarInsumo({ id, nombre, unidad, unidadCompra, factor }) {
+    const { error } = await supabase.schema('produccion').from('insumo')
+      .update({ nombre: nombre.trim(), unidad,
+                unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1 })
+      .eq('id', id)
+    if (error) {
+      const dup = /duplicate|unique/i.test(error.message)
+      setAviso({ tipo: 'error', texto: dup ? 'Ya existe un insumo con ese nombre.' : 'No se pudo guardar. ' + error.message })
+      return
+    }
+    setEditandoInsumo(null)
+    setAviso({ tipo: 'ok', texto: 'Insumo actualizado. Cambia en todas las fincas.' })
+    await cargar()
   }
 
   async function quitar(f) {
@@ -137,7 +153,7 @@ export default function PreciosInsumos({ finca, esJefe }) {
                       color: aviso.tipo === 'error' ? '#8A2F2E' : '#0F6E56' }}>{aviso.texto}</div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 120px 140px 200px',
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1fr) 110px 120px 250px',
                     gap: '12px', padding: '0 0 8px', fontSize: '11px', color: GRIS }}>
         <div>Insumo</div>
         <div style={{ textAlign: 'right' }}>Precio</div>
@@ -149,11 +165,16 @@ export default function PreciosInsumos({ finca, esJefe }) {
         <div style={{ fontSize: '13px', color: GRIS, padding: '14px 0' }}>Cargando...</div>
       ) : filas.map(f => (
         <div key={f.id} style={{ borderBottom: '0.5px solid #f1f6f9', padding: '9px 0' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 120px 140px 200px',
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1fr) 110px 120px 250px',
                         gap: '12px', alignItems: 'center' }}>
             <span style={{ fontWeight: 500, fontSize: '14px' }}>
               {f.nombre}
               <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}> · por {UNIDAD[f.unidad] || f.unidad}</span>
+              {f.unidad_compra && f.unidad_compra !== f.unidad && Number(f.factor) !== 1 && (
+                <div style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>
+                  se compra por {f.unidad_compra} · {miles(f.factor)} {UNIDAD[f.unidad] || f.unidad} c/u
+                </div>
+              )}
             </span>
             <span style={{ fontSize: '16px', fontWeight: 500, textAlign: 'right',
                            fontVariantNumeric: 'tabular-nums' }}>
@@ -168,24 +189,21 @@ export default function PreciosInsumos({ finca, esJefe }) {
               {f.precio ? corta(f.precio.vigente_desde) : '—'}
             </span>
             {esJefe ? (
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button onClick={() => setEditando(editando === f.id ? null : f.id)}
-                  style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px',
-                           padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px',
-                           color: NAVY, cursor: 'pointer' }}>
-                  {editando === f.id ? 'Cancelar' : 'Cambiar'}
-                </button>
+              <div style={{ display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
+                <button onClick={() => { setEditando(editando === f.id ? null : f.id); setEditandoInsumo(null) }}
+                  style={accion}>{editando === f.id ? 'Cancelar' : 'Precio'}</button>
+                <button onClick={() => { setEditandoInsumo(editandoInsumo === f.id ? null : f.id); setEditando(null) }}
+                  style={accion}>{editandoInsumo === f.id ? 'Cancelar' : 'Editar'}</button>
                 <button onClick={() => quitar(f)}
-                  style={{ background: 'white', border: '0.5px solid #e7cccb', borderRadius: '9px',
-                           padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px',
-                           color: ROJO, cursor: 'pointer' }}>
-                  Quitar
-                </button>
+                  style={{ ...accion, borderColor: '#e7cccb', color: ROJO }}>Quitar</button>
               </div>
             ) : <span />}
           </div>
           {editando === f.id && (
             <Forma actual={f} onGuardar={guardarPrecio} />
+          )}
+          {editandoInsumo === f.id && (
+            <EditarInsumo actual={f} onGuardar={guardarInsumo} onCancelar={() => setEditandoInsumo(null)} />
           )}
         </div>
       ))}
@@ -311,6 +329,70 @@ function AltaInsumo({ onCrear, onCancelar }) {
 
 const campo = { padding: '9px 11px', fontSize: '14px', fontFamily: 'inherit',
                 border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
+const accion = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                 padding: '7px 12px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }
+
+// Editar un insumo del catalogo (nombre y unidades). Es global: el cambio
+// vale para las 11 fincas, porque el catalogo de insumos es uno solo.
+function EditarInsumo({ actual, onGuardar, onCancelar }) {
+  const [nombre, setNombre] = useState(actual.nombre)
+  const [unidad, setUnidad] = useState(actual.unidad)
+  const distintaInicial = actual.unidad_compra && actual.unidad_compra !== actual.unidad
+  const [compraDistinta, setCompraDistinta] = useState(!!distintaInicial)
+  const [unidadCompra, setUnidadCompra] = useState(distintaInicial ? actual.unidad_compra : '')
+  const [factor, setFactor] = useState(distintaInicial ? String(actual.factor) : '')
+  const [enviando, setEnviando] = useState(false)
+  const listo = nombre.trim() && (!compraDistinta || (unidadCompra.trim() && num(factor) > 0))
+
+  return (
+    <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
+        Editar insumo · el cambio vale para todas las fincas
+      </div>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Nombre</div>
+          <input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} style={{ ...campo, width: '220px' }} />
+        </div>
+        <div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Cómo se aplica</div>
+          <select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...campo, width: '150px' }}>
+            {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
+          </select>
+        </div>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '12px 0 0', fontSize: '13px', cursor: 'pointer' }}>
+        <input type="checkbox" checked={compraDistinta} onChange={e => setCompraDistinta(e.target.checked)} />
+        Se compra en otra presentación (tambor, botella, bidón…)
+      </label>
+      {compraDistinta && (
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '10px' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Se compra por</div>
+            <input value={unidadCompra} onChange={e => setUnidadCompra(e.target.value)} placeholder="ej. tambor" style={{ ...campo, width: '150px' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Cada uno trae ({UNIDAD[unidad]})</div>
+            <input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)} placeholder="ej. 25000" style={{ ...campo, width: '150px', textAlign: 'right' }} />
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '9px', marginTop: '14px' }}>
+        <button disabled={!listo || enviando}
+          onClick={async () => { setEnviando(true)
+            await onGuardar({ id: actual.id, nombre, unidad,
+              unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? num(factor) : 1 })
+            setEnviando(false) }}
+          style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '10px 20px',
+                   fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
+                   cursor: (!listo || enviando) ? 'default' : 'pointer', opacity: (!listo || enviando) ? 0.45 : 1 }}>
+          {enviando ? 'Guardando...' : 'Guardar cambios'}
+        </button>
+        <button onClick={onCancelar} style={{ ...accion, padding: '10px 18px', fontSize: '14px' }}>Cancelar</button>
+      </div>
+    </div>
+  )
+}
 
 function exportar(filas) {
   const cab = ['Insumo', 'Unidad', 'Precio', 'Vigente desde']
