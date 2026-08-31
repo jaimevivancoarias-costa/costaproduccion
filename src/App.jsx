@@ -55,6 +55,17 @@ export default function App() {
   // Cuando se entra a Reportes desde la barra de presupuesto, arranca
   // enfocado en insumos.
   const [verInsumos, setVerInsumos] = useState(false)
+  // Menu lateral colapsado a solo iconos. Se recuerda entre recargas.
+  const [navColapsado, setNavColapsado] = useState(() => {
+    try { return localStorage.getItem('nav') === 'colapsado' } catch { return false }
+  })
+  function alternarNav() {
+    setNavColapsado(v => {
+      const n = !v
+      try { localStorage.setItem('nav', n ? 'colapsado' : 'abierto') } catch (e) { /* sin storage */ }
+      return n
+    })
+  }
   // La semana es una sola para todo el modulo: si la cambias en una
   // pantalla, las demas se mueven con ella.
   const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
@@ -120,17 +131,28 @@ export default function App() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-        <nav style={{ width: '178px', flexShrink: 0, background: 'white',
+        <nav style={{ width: navColapsado ? '58px' : '178px', flexShrink: 0, background: 'white',
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
-                      padding: '1.1rem 0.7rem' }}>
+                      padding: '1.1rem 0.7rem', transition: 'width .12s' }}>
+          {/* Boton para colapsar el menu a solo iconos. */}
+          <button
+            onClick={alternarNav}
+            title={navColapsado ? 'Expandir menú' : 'Colapsar menú'}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: navColapsado ? 'center' : 'flex-end',
+                     width: '100%', border: 'none', background: 'transparent', cursor: 'pointer',
+                     color: GRIS, padding: '6px 10px', marginBottom: '6px', fontSize: '15px' }}>
+            {navColapsado ? '»' : '«'}
+          </button>
           {MODULOS.filter(m => !m.soloJefe || esJefe).map(m => {
             const activo = m.id === modulo
             return (
               <button
                 key={m.id}
                 onClick={() => { setModulo(m.id); setVerInsumos(false) }}
+                title={m.nombre}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '9px', width: '100%',
+                  justifyContent: navColapsado ? 'center' : 'flex-start',
                   border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
                   padding: '10px', borderRadius: '8px', marginBottom: '2px', textAlign: 'left',
                   background: activo ? '#E6F1FB' : 'transparent',
@@ -140,7 +162,7 @@ export default function App() {
                 }}
               >
                 <Icono tipo={m.icono} />
-                {m.nombre}
+                {!navColapsado && m.nombre}
               </button>
             )
           })}
