@@ -86,6 +86,22 @@ export const num = v => {
   return Number.isFinite(n) ? n : null
 }
 
+// Para PRECIOS (y decimales en general): aquí el punto SÍ es decimal.
+// Acepta "183.85", "181,30", y también miles como "1.234,56" o "1,234.56".
+export const numDec = v => {
+  if (v === '' || v === null || v === undefined) return null
+  let s = String(v).trim().replace(/\s/g, '')
+  if (s.includes(',') && s.includes('.')) {
+    s = s.lastIndexOf(',') > s.lastIndexOf('.')
+      ? s.replace(/\./g, '').replace(',', '.')   // 1.234,56 -> 1234.56
+      : s.replace(/,/g, '')                       // 1,234.56 -> 1234.56
+  } else {
+    s = s.replace(',', '.')
+  }
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+
 export const miles = n =>
   (n === null || n === undefined || n === '') ? '' : Math.round(n).toLocaleString('es-EC')
 
