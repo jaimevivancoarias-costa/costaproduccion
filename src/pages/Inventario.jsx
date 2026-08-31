@@ -27,6 +27,7 @@ const UNIDAD = {
   libras: 'Libras', kg: 'Kilos', unidad: 'Unidades',
   tambor: 'Tambores', botella: 'Botellas',
 }
+const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
@@ -60,6 +61,10 @@ export default function Inventario({ finca, esJefe }) {
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
   const [guardando, setGuardando] = useState(false)
+
+  // Agregar insumos que faltan, varios a la vez, sin salir del conteo.
+  const [nuevos, setNuevos] = useState([])
+  const [guardandoNuevos, setGuardandoNuevos] = useState(false)
 
   // Correccion en linea del jefe: que insumo se esta editando, el saldo
   // nuevo y el motivo. Todo dentro de la fila, sin ventanas.
@@ -168,6 +173,31 @@ export default function Inventario({ finca, esJefe }) {
     }
     setEditando(null)
     setAviso({ tipo: 'ok', texto: `${f.insumo} corregido a ${limpio(nuevo)}.` })
+    await cargar()
+  }
+
+  const filaNueva = () => ({ nombre: '', unidad: 'kg', compraDistinta: false, unidadCompra: '', factor: '' })
+  const setNuevo = (i, campo, val) => setNuevos(ns => ns.map((n, j) => j === i ? { ...n, [campo]: val } : n))
+
+  async function guardarNuevos() {
+    const validos = nuevos.filter(n => n.nombre.trim())
+    if (!validos.length) { setNuevos([]); return }
+    const rows = validos.map(n => ({
+      nombre: n.nombre.trim(),
+      unidad: n.unidad,
+      unidad_compra: (n.compraDistinta ? n.unidadCompra.trim() : n.unidad) || n.unidad,
+      factor: n.compraDistinta ? (Number(String(n.factor).replace(',', '.')) || 1) : 1,
+    }))
+    setGuardandoNuevos(true)
+    const { error } = await supabase.schema('produccion').from('insumo').insert(rows)
+    setGuardandoNuevos(false)
+    if (error) {
+      const dup = /duplicate|unique/i.test(error.message)
+      setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
+      return
+    }
+    setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'insumo agregado' : 'insumos agregados'}. Ya puedes contarlos abajo.` })
+    setNuevos([])
     await cargar()
   }
 
@@ -362,6 +392,63 @@ export default function Inventario({ finca, esJefe }) {
               <input value={obs} placeholder="Quién contó, qué se encontró"
                      onChange={e => setObs(e.target.value)} style={{ ...entrada, width: '100%' }} />
             </div>
+          </div>
+
+          {/* Agregar insumos que faltan, varios a la vez. */}
+          <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
+            {nuevos.length === 0 ? (
+              <button onClick={() => setNuevos([filaNueva()])} style={{ ...btnLink }}>
+                + ¿Falta un insumo? Agrégalo aquí
+              </button>
+            ) : (
+              <div>
+                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
+                  Insumos nuevos para esta bodega (puedes agregar varios):
+                </div>
+                {nuevos.map((n, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center',
+                                        marginBottom: '7px', flexWrap: 'wrap' }}>
+                    <input autoFocus={i === nuevos.length - 1} value={n.nombre}
+                      placeholder="Nombre del insumo"
+                      onChange={e => setNuevo(i, 'nombre', e.target.value)}
+                      style={{ ...entrada, flex: 1, minWidth: '180px' }} />
+                    <select value={n.unidad} onChange={e => setNuevo(i, 'unidad', e.target.value)}
+                      style={{ ...entrada, width: '130px' }}>
+                      {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
+                    </select>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: GRIS, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={n.compraDistinta}
+                        onChange={e => setNuevo(i, 'compraDistinta', e.target.checked)} />
+                      se compra en otra presentación
+                    </label>
+                    {n.compraDistinta && (
+                      <>
+                        <input value={n.unidadCompra} placeholder="ej. tambor"
+                          onChange={e => setNuevo(i, 'unidadCompra', e.target.value)}
+                          style={{ ...entrada, width: '110px' }} />
+                        <input inputMode="decimal" value={n.factor} placeholder={`${UNIDAD[n.unidad]} por unidad`}
+                          onChange={e => setNuevo(i, 'factor', e.target.value)}
+                          style={{ ...entrada, width: '140px' }} />
+                      </>
+                    )}
+                    <button onClick={() => setNuevos(ns => ns.filter((_, j) => j !== i))}
+                      title="Quitar" style={{ border: 'none', background: 'none', cursor: 'pointer',
+                        color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                  <button onClick={() => setNuevos(ns => [...ns, filaNueva()])} style={btnLink}>
+                    + Otro insumo
+                  </button>
+                  <span style={{ marginLeft: 'auto' }} />
+                  <Btn onClick={() => setNuevos([])}>Cancelar</Btn>
+                  <Btn primario onClick={guardarNuevos}
+                       disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}>
+                    {guardandoNuevos ? 'Agregando...' : 'Agregar a la lista'}
+                  </Btn>
+                </div>
+              </div>
+            )}
           </div>
 
           <Tabla
@@ -690,3 +777,5 @@ function limpio(n) {
 const entrada = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
                   border: '0.5px solid ' + BORDE, borderRadius: '9px',
                   boxSizing: 'border-box', background: 'white' }
+const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
