@@ -38,7 +38,7 @@ const ANCHOS_SALDO_BOD  = '1fr 110px 120px'   // bodeguero: sin dolares
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
 
-export default function Inventario({ finca, esJefe, abrirIngresos }) {
+export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion }) {
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
   // producto (ingresos y pedidos).
   const [seccion, setSeccion] = useState('bodega')
@@ -288,7 +288,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos }) {
       </div>
 
       {seccion === 'movimiento' ? (
-        <Ingresos finca={finca} esJefe={esJefe} />
+        <Ingresos finca={finca} esJefe={esJefe} onCorreccion={onCorreccion} />
       ) : seccion === 'precios' && esJefe ? (
         <PreciosInsumos finca={finca} esJefe={esJefe} />
       ) : (
