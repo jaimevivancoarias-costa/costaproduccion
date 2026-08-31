@@ -64,7 +64,7 @@ export default function PresupuestoBarra({ finca, esJefe, onIr }) {
     return (
       <div style={barra}>
         <span style={{ fontSize: '12px', color: GRIS }}>
-          {finca.nombre}: sin presupuesto de insumos para {MESES[mes - 1].toLowerCase()}.
+          Sin presupuesto de insumos para {MESES[mes - 1].toLowerCase()}.
           {esJefe && (
             <button onClick={onIr} style={enlace}>Fijarlo</button>
           )}
