@@ -218,7 +218,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       ) : (
         <Caja>
           <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px', padding: '11px 16px',
-                        fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
+                        fontSize: '12px', color: GRIS,
                         borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
             <span>{agrupar === 'item' ? 'Producto' : agrupar === 'piscina' ? 'Piscina' : 'Finca'}</span>
             <span style={{ textAlign: 'right' }}>Cantidad</span>
@@ -327,8 +327,8 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
       <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px',
                     alignItems: 'center' }}>
         <Kpi titulo="Cosechas" valor={String(cosechas.length)} />
-        <Kpi titulo="Libras producidas" valor={miles(totalLibras)} />
-        {esJefe && <Kpi titulo="Costo total" valor={dinero(totalCosto)} />}
+        <Kpi titulo="Libras Producidas" valor={miles(totalLibras)} />
+        {esJefe && <Kpi titulo="Costo Total" valor={dinero(totalCosto)} />}
         {esJefe && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }} className="ocultar-impresion">
             <button onClick={() => exportarCosechasCSV(cosechas)} style={btnExp}>Excel</button>
@@ -337,65 +337,49 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
         )}
       </div>
 
-      <Caja>
-        <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '11px 16px',
-                      fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
-                      borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
-          <span>Piscina{todasFincas ? ' / finca' : ''}</span>
-          <span style={{ textAlign: 'right' }}>Cosecha</span>
-          <span style={{ textAlign: 'right' }}>Días</span>
-          <span style={{ textAlign: 'right' }}>Libras</span>
-          {esJefe && <span style={{ textAlign: 'right' }}>Balanceado</span>}
-          {esJefe && <span style={{ textAlign: 'right' }}>Insumos</span>}
-          {esJefe && <span style={{ textAlign: 'right' }}>Costo total</span>}
-          {esJefe && <span style={{ textAlign: 'right' }}>Costo / lb</span>}
-        </div>
-
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {cosechas.map(c => {
           const ab = abierto === c.ciclo_id
           const d = detalle[c.ciclo_id]
           return (
-            <div key={c.ciclo_id}>
-              <div onClick={() => abrir(c)}
-                   style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px',
-                            padding: '10px 16px', alignItems: 'center', fontSize: '13px',
-                            borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer',
-                            background: ab ? '#f6f9fb' : 'white' }}>
-                <span>
-                  {ab ? '▾ ' : '▸ '}{c.piscina}
-                  {todasFincas && <div style={{ fontSize: '11px', color: GRIS }}>{c.finca}</div>}
-                  <div style={{ fontSize: '11px', color: GRIS }}>preparación desde {corta(c.prep_desde)}</div>
-                </span>
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{corta(c.fecha_cosecha)}</span>
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{c.dias}</span>
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-                               color: Number(c.libras) ? NAVY : '#BA7517' }}>
-                  {Number(c.libras) ? miles(c.libras) : 'pendiente'}
-                </span>
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                  {dinero(c.costo_balanceado)}</span>}
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                  {dinero(c.costo_insumos)}</span>}
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-                  {dinero(c.costo_total)}</span>}
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500,
-                                          color: c.costo_por_libra ? AZUL : '#BA7517' }}>
-                  {c.costo_por_libra ? dinero(c.costo_por_libra) : '—'}</span>}
+            <div key={c.ciclo_id} style={tarjeta}>
+              <div onClick={() => abrir(c)} style={{ cursor: 'pointer' }}>
+                <div style={cabezaTarjeta}>
+                  <div>
+                    <span style={{ fontWeight: 500, fontSize: '15px' }}>
+                      {ab ? '▾ ' : '▸ '}{c.piscina}
+                    </span>
+                    {todasFincas && <span style={{ fontSize: '12px', color: GRIS, marginLeft: '8px' }}>{c.finca}</span>}
+                    <div style={{ fontSize: '12px', color: GRIS, marginTop: '2px' }}>
+                      Preparación desde {corta(c.prep_desde)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '14px', fontWeight: 500 }}>Cosecha {corta(c.fecha_cosecha)}</div>
+                    <div style={{ fontSize: '12px', color: GRIS }}>{c.dias} Días</div>
+                  </div>
+                </div>
+                <div style={metricas}>
+                  <Metrica k="Libras" v={Number(c.libras) ? miles(c.libras) : 'Pendiente'}
+                           alerta={!Number(c.libras)} />
+                  {esJefe && <Metrica k="Balanceado" v={dinero(c.costo_balanceado)} />}
+                  {esJefe && <Metrica k="Insumos" v={dinero(c.costo_insumos)} />}
+                  {esJefe && <Metrica k="Costo Total" v={dinero(c.costo_total)} fuerte />}
+                  {esJefe && <Metrica k="Costo Por Libra"
+                             v={c.costo_por_libra ? dinero(c.costo_por_libra) : '—'}
+                             alerta={!c.costo_por_libra} destacado={!!c.costo_por_libra} />}
+                </div>
               </div>
-
               {ab && (
-                <div style={{ padding: '14px 18px', background: '#fbfcfd', borderBottom: '0.5px solid #f1f6f9' }}>
-                  {!d ? (
-                    <div style={{ fontSize: '13px', color: GRIS }}>Cargando detalle...</div>
-                  ) : (
-                    <DetalleCiclo d={d} esJefe={esJefe} />
-                  )}
+                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid #f1f6f9' }}>
+                  {!d ? <div style={{ fontSize: '13px', color: GRIS }}>Cargando detalle...</div>
+                      : <DetalleCiclo d={d} esJefe={esJefe} />}
                 </div>
               )}
             </div>
           )
         })}
-      </Caja>
+      </div>
 
       {cosechas.some(c => !c.costo_por_libra) && (
         <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '10px' }}>
@@ -436,9 +420,9 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
   return (
     <div id="reporte-proceso">
       <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px', alignItems: 'center' }}>
-        <Kpi titulo="Piscinas activas" valor={String(proceso.length)} />
+        <Kpi titulo="Piscinas Activas" valor={String(proceso.length)} />
         <Kpi titulo="Hectáreas" valor={miles(totalHa)} />
-        {esJefe && <Kpi titulo="Costo acumulado" valor={dinero(totalCosto)} />}
+        {esJefe && <Kpi titulo="Costo Acumulado" valor={dinero(totalCosto)} />}
         {esJefe && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
             <button onClick={() => exportarProcesoCSV(proceso)} style={btnExp}>Excel</button>
@@ -447,48 +431,40 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
         )}
       </div>
 
-      <Caja>
-        <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '11px 16px',
-                      fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
-                      borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
-          <span>Piscina{todasFincas ? ' / finca' : ''}</span>
-          <span style={{ textAlign: 'right' }}>Días</span>
-          {esJefe && <span style={{ textAlign: 'right' }}>Balanceado</span>}
-          {esJefe && <span style={{ textAlign: 'right' }}>Insumos</span>}
-          {esJefe && <span style={{ textAlign: 'right' }}>Total</span>}
-          {esJefe && <span style={{ textAlign: 'right' }}>$ / ha</span>}
-        </div>
-
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {proceso.map(c => {
           const ab = abierto === c.ciclo_id
           const d = detalle[c.ciclo_id]
           return (
-            <div key={c.ciclo_id}>
-              <div onClick={() => abrir(c)}
-                   style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '10px 16px',
-                            alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9',
-                            cursor: 'pointer', background: ab ? '#f6f9fb' : 'white' }}>
-                <span>
-                  {ab ? '▾ ' : '▸ '}{c.piscina}
-                  {c.origen && <span style={{ background: '#E6F1FB', color: AZUL, fontSize: '10px',
-                    padding: '2px 7px', borderRadius: '20px', marginLeft: '6px' }}>
-                    viene de {c.origen}{c.origen_pct ? ` · ${c.origen_pct}%` : ''}</span>}
-                  {todasFincas && <div style={{ fontSize: '11px', color: GRIS }}>{c.finca}</div>}
-                  <div style={{ fontSize: '11px', color: GRIS }}>
-                    siembra {corta(c.fecha_siembra)} · {Number(c.hectareas).toFixed(2)} ha</div>
-                </span>
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{c.dias}</span>
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                  {dinero(c.costo_balanceado)}</span>}
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                  {dinero(c.costo_insumos)}</span>}
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-                  {dinero(c.costo_total)}</span>}
-                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                  {dinero(c.costo_por_ha)}</span>}
+            <div key={c.ciclo_id} style={tarjeta}>
+              <div onClick={() => abrir(c)} style={{ cursor: 'pointer' }}>
+                <div style={cabezaTarjeta}>
+                  <div>
+                    <span style={{ fontWeight: 500, fontSize: '15px' }}>
+                      {ab ? '▾ ' : '▸ '}{c.piscina}
+                    </span>
+                    {c.origen && <span style={{ background: '#E6F1FB', color: AZUL, fontSize: '11px',
+                      padding: '2px 9px', borderRadius: '20px', marginLeft: '8px' }}>
+                      Viene de {c.origen}{c.origen_pct ? ` · ${c.origen_pct}%` : ''}</span>}
+                    {todasFincas && <span style={{ fontSize: '12px', color: GRIS, marginLeft: '8px' }}>{c.finca}</span>}
+                    <div style={{ fontSize: '12px', color: GRIS, marginTop: '2px' }}>
+                      Siembra {corta(c.fecha_siembra)} · {Number(c.hectareas).toFixed(2)} Ha
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: '16px', fontWeight: 500 }}>{c.dias}</div>
+                    <div style={{ fontSize: '12px', color: GRIS }}>Días</div>
+                  </div>
+                </div>
+                <div style={metricas}>
+                  {esJefe && <Metrica k="Balanceado" v={dinero(c.costo_balanceado)} />}
+                  {esJefe && <Metrica k="Insumos" v={dinero(c.costo_insumos)} />}
+                  {esJefe && <Metrica k="Costo Total" v={dinero(c.costo_total)} fuerte />}
+                  {esJefe && <Metrica k="Costo Por Ha" v={dinero(c.costo_por_ha)} destacado />}
+                </div>
               </div>
               {ab && (
-                <div style={{ padding: '14px 18px', background: '#fbfcfd', borderBottom: '0.5px solid #f1f6f9' }}>
+                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '0.5px solid #f1f6f9' }}>
                   {!d ? <div style={{ fontSize: '13px', color: GRIS }}>Cargando detalle...</div>
                       : <DetalleCiclo d={d} esJefe={esJefe} />}
                 </div>
@@ -496,7 +472,27 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
             </div>
           )
         })}
-      </Caja>
+      </div>
+    </div>
+  )
+}
+
+// Tarjeta de reporte y su metrica: reemplazan la tabla ancha que se
+// cortaba. Las metricas se acomodan solas y nunca se salen del ancho.
+const tarjeta = { background: '#fff', border: '0.5px solid #dce6ef', borderRadius: '12px',
+                  padding: '14px 16px' }
+const cabezaTarjeta = { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+                        gap: '12px', flexWrap: 'wrap' }
+const metricas = { display: 'flex', gap: '22px', flexWrap: 'wrap', marginTop: '12px' }
+
+function Metrica({ k, v, fuerte, destacado, alerta }) {
+  return (
+    <div>
+      <div style={{ fontSize: '11px', color: '#7d8fa0', marginBottom: '2px' }}>{k}</div>
+      <div style={{ fontSize: fuerte || destacado ? '16px' : '14px',
+                    fontWeight: fuerte || destacado ? 500 : 400,
+                    fontVariantNumeric: 'tabular-nums',
+                    color: alerta ? '#BA7517' : destacado ? '#0D6CB0' : '#022847' }}>{v}</div>
     </div>
   )
 }
@@ -549,7 +545,7 @@ function DetalleCiclo({ d, esJefe }) {
   )
 }
 function Sub({ children }) {
-  return <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
+  return <div style={{ fontSize: '12px', color: GRIS,
                        marginBottom: '7px', fontWeight: 500 }}>{children}</div>
 }
 function Vac({ children }) { return <div style={{ fontSize: '12px', color: '#c3d0db' }}>{children}</div> }
@@ -639,8 +635,7 @@ function Kpi({ titulo, valor }) {
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                   padding: '13px 16px', minWidth: '150px' }}>
-      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '5px',
-                    letterSpacing: '0.03em', textTransform: 'uppercase' }}>{titulo}</div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{titulo}</div>
       <div style={{ fontSize: '20px', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{valor}</div>
     </div>
   )
