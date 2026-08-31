@@ -122,6 +122,13 @@ export default function InventarioBalanceado({ finca, esJefe }) {
     finally { setGuardando(false) }
   }
 
+  async function borrarToma(t) {
+    if (!window.confirm(`¿Borrar el conteo del ${corta(t.fecha)}?\n\nEl saldo vuelve a calcularse desde el conteo anterior (o desde cero). No se puede deshacer.`)) return
+    const { error } = await supabase.schema('produccion').from('toma_balanceado').delete().eq('id', t.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Conteo borrado.' }); await cargar()
+  }
+
   async function corregir(f) {
     const escrito = window.prompt(`${f.producto}\n\nEl sistema dice ${limpio(f.saldo)} sacos.\n¿Cuánto debe decir?`, limpio(f.saldo))
     if (escrito === null) return
@@ -314,9 +321,15 @@ export default function InventarioBalanceado({ finca, esJefe }) {
               <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 8px' }}>Conteos anteriores</h3>
               <Caja>
                 {tomas.map(t => (
-                  <Fila key={t.id} gtc={G_DOS}>
+                  <Fila key={t.id} gtc={esJefe ? '150px 1fr 90px' : G_DOS}>
                     <Cel fuerte>{corta(t.fecha)}</Cel>
                     <Cel gris>{t.observacion || 'Sin observación'}</Cel>
+                    {esJefe && (
+                      <div style={{ padding: '6px 10px', textAlign: 'right' }}>
+                        <button onClick={() => borrarToma(t)} style={{ ...btn, padding: '5px 11px',
+                          fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
+                      </div>
+                    )}
                   </Fila>
                 ))}
               </Caja>
