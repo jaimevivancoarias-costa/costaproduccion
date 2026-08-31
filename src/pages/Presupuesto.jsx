@@ -191,7 +191,7 @@ export default function Presupuesto({ finca, esJefe }) {
               Todas las fincas en {MESES[mes - 1]}
             </h3>
             <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
-              {[['todas', 'Todas'], ['jambeli', 'Jambelí'], ['puna', 'Puna']].map(([z, t]) => (
+              {[['todas', 'Todas'], ['jambeli', 'Jambelí'], ['puna', 'Puná']].map(([z, t]) => (
                 <button key={z} onClick={() => setZonaFiltro(z)} style={{
                   padding: '6px 12px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
                   cursor: 'pointer', border: '0.5px solid ' + (zonaFiltro === z ? '#9cc4e8' : BORDE),
@@ -210,7 +210,7 @@ export default function Presupuesto({ finca, esJefe }) {
                         borderBottom: '0.5px solid #f1f6f9' }}>
                   <span>{r.finca}
                     <span style={{ fontSize: '11px', color: GRIS, marginLeft: '7px' }}>
-                      {r.zona === 'puna' ? 'Puna' : 'Jambelí'}</span>
+                      {r.zona === 'puna' ? 'Puná' : 'Jambelí'}</span>
                   </span>
                   <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
                     {r.monto ? dinero(r.monto) : 'sin fijar'}</span>
