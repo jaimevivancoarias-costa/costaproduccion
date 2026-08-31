@@ -579,6 +579,16 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       </div>
 
+      {/* Resumen de la semana, de un vistazo. */}
+      <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginBottom: '14px',
+                    background: '#f6f9fb', borderRadius: '12px', padding: '12px 16px' }}>
+        <Dato k="Libras de la semana" v={miles(totalSemana)} />
+        <Dato k="Sacos de la semana" v={(totalSemana / LIBRAS_POR_SACO).toFixed(1)} />
+        <Dato k="Piscinas activas" v={String(piscinas.filter(p => p.cicloId).length)} />
+        {semanaDeHoy && <Dato k="Completadas hoy"
+          v={`${piscinas.filter(p => p.tipo !== 'precria').length - pendientesHoy.length} de ${piscinas.filter(p => p.tipo !== 'precria').length}`} />}
+      </div>
+
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
         <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
         <span style={{ ...chip, background: '#E6F1FB', borderColor: '#9cc4e8', color: AZUL, fontWeight: 500 }}>
@@ -670,8 +680,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         {cortita(f)}
                         <span style={{ display: 'block', fontSize: '9px', marginTop: '3px', letterSpacing: '0.04em',
                           color: est === 'cerrado' ? GRIS : (s === 'hoy' ? AZUL : GRIS) }}>
-                          {est === 'cerrado' ? 'CERRADO' : est === 'reabierto' ? 'REABIERTO'
-                            : est === 'borrador' ? 'BORRADOR' : s === 'hoy' ? 'HOY' : '—'}
+                          {est === 'cerrado' ? 'Cerrado' : est === 'reabierto' ? 'Reabierto'
+                            : est === 'borrador' ? 'Borrador' : s === 'hoy' ? 'Hoy' : '—'}
                         </span>
                       </Th>
                     )
@@ -1075,7 +1085,7 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
                       fontSize: '11px', color: 'white', background: v.pasa ? '#1D9E75' : '#E24B4A' }}>
                 {v.pasa ? '✓' : '!'}
               </span>
-              <span style={{ fontWeight: 500, minWidth: '200px' }}>{v.codigo} · {v.nombre}</span>
+              <span style={{ fontWeight: 500, minWidth: '210px' }}>{v.nombre}</span>
               <span style={{ color: GRIS }}>{v.detalle}</span>
             </div>
           ))}
