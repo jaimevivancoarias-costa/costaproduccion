@@ -10,6 +10,7 @@ export const useAuth = () => useContext(AuthContext)
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
+  const [nombre, setNombre] = useState(null)
   const [fincas, setFincas] = useState([])
   const [esJefe, setEsJefe] = useState(false)
   const [cargando, setCargando] = useState(true)
@@ -32,17 +33,27 @@ export function AuthProvider({ children }) {
       if (!session) { setCargando(false); return }
 
       setUser(session.user)
-      await cargarPermisos()
+      await Promise.all([cargarNombre(session.user.id), cargarPermisos()])
     } catch {
       setCargando(false)
     }
+  }
+
+  // El nombre visible vive en public.usuarios, la misma tabla que usa el Hub.
+  async function cargarNombre(id) {
+    const { data } = await supabase
+      .from('usuarios')
+      .select('nombre')
+      .eq('id', id)
+      .maybeSingle()
+    if (data?.nombre) setNombre(data.nombre)
   }
 
   async function cargarPermisos() {
     const { data } = await supabase
       .schema('produccion')
       .from('usuario_finca')
-      .select('rol, finca_id, finca:finca_id (id, codigo, nombre, activa)')
+      .select('rol, finca_id, finca:finca_id (id, codigo, nombre, activa, zona)')
 
     const filas = data || []
     const jefe = filas.some(f => f.rol === 'jefe')
@@ -55,7 +66,7 @@ export function AuthProvider({ children }) {
       const { data: todas } = await supabase
         .schema('produccion')
         .from('finca')
-        .select('id, codigo, nombre, activa')
+        .select('id, codigo, nombre, activa, zona')
         .eq('activa', true)
         .order('nombre')
       setFincas((todas || []).map(f => ({ ...f, rol: 'jefe' })))
@@ -77,6 +88,7 @@ export function AuthProvider({ children }) {
     if (error) return { error }
     const { data: { session } } = await supabase.auth.getSession()
     setUser(session?.user ?? null)
+    if (session?.user) await cargarNombre(session.user.id)
     await cargarPermisos()
     return {}
   }
@@ -84,12 +96,13 @@ export function AuthProvider({ children }) {
   async function logout() {
     await supabase.auth.signOut()
     setUser(null)
+    setNombre(null)
     setFincas([])
     setEsJefe(false)
   }
 
   return (
-    <AuthContext.Provider value={{ user, fincas, esJefe, cargando, login, logout }}>
+    <AuthContext.Provider value={{ user, nombre, fincas, esJefe, cargando, login, logout }}>
       {children}
     </AuthContext.Provider>
   )
