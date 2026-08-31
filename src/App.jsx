@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 import { hoyISO, lunesDe } from './lib/fechas'
@@ -93,23 +93,26 @@ export default function App() {
   // una y volver a navegar, el aviso se actualiza.
   const [corrPend, setCorrPend] = useState([])
   const [pedirIngresos, setPedirIngresos] = useState(0)
-  useEffect(() => {
+  const cargarCorr = useCallback(async () => {
     if (!esJefe) { setCorrPend([]); return }
-    let vivo = true
-    ;(async () => {
-      const { data } = await supabase.schema('produccion').from('solicitud_correccion')
-        .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
-      if (!vivo) return
-      const g = {}
-      ;(data || []).forEach(r => {
-        const k = r.finca_id
-        g[k] = g[k] || { finca_id: k, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0 }
-        g[k].n++
-      })
-      setCorrPend(Object.values(g))
-    })()
-    return () => { vivo = false }
-  }, [esJefe, modulo, fincaId])
+    const { data } = await supabase.schema('produccion').from('solicitud_correccion')
+      .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+    const g = {}
+    ;(data || []).forEach(r => {
+      const k = r.finca_id
+      g[k] = g[k] || { finca_id: k, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0 }
+      g[k].n++
+    })
+    setCorrPend(Object.values(g))
+  }, [esJefe])
+  useEffect(() => { cargarCorr() }, [cargarCorr, modulo, fincaId])
+
+  function irACorreccion(c) {
+    setFincaId(c.finca_id)
+    if (c.zona) setZona(c.zona)
+    setModulo('inventario'); setPanelInv('insumos')
+    setPedirIngresos(n => n + 1)
+  }
 
   // Red de seguridad: si por alguna navegacion interna un bodeguero
   // termina en un modulo que no le toca (Resumen, Costos, Reportes),
@@ -193,37 +196,13 @@ export default function App() {
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {esJefe && <Campana corrPend={corrPend} onIr={irACorreccion} />}
           <a href={HUB_URL} style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>Portal</a>
           <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.75)' }}>{nombre || user.email}</span>
           <button onClick={logout} style={{ background: 'none', border: 'none', cursor: 'pointer',
                     color: 'rgba(255,255,255,0.5)', fontSize: '12px', fontFamily: 'inherit' }}>Salir</button>
         </div>
       </div>
-
-      {/* Aviso al jefe: correcciones de ingreso por aprobar, por finca. */}
-      {esJefe && corrPend.length > 0 && (
-        <div style={{ background: '#FBF5E9', borderBottom: '0.5px solid #ecd9b3',
-                      padding: '9px 1.4rem', display: 'flex', alignItems: 'center',
-                      gap: '10px', flexWrap: 'wrap', fontSize: '13px' }}>
-          <span style={{ color: '#854F0B', fontWeight: 500 }}>
-            Correcciones por aprobar:
-          </span>
-          {corrPend.map(c => (
-            <button key={c.finca_id}
-              onClick={() => {
-                setFincaId(c.finca_id)
-                if (c.zona) setZona(c.zona)
-                setModulo('inventario'); setPanelInv('insumos')
-                setPedirIngresos(n => n + 1)
-              }}
-              style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '20px',
-                       padding: '5px 12px', fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer',
-                       color: '#854F0B', fontWeight: 500 }}>
-              {String(c.nombre).toUpperCase()} · {c.n}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* Barra de presupuesto: una sola franja de ancho completo, debajo
           de la barra azul. Aqui no se puede duplicar. No en Resumen ni
@@ -351,7 +330,7 @@ export default function App() {
                 ))}
               </div>
               {panelInv === 'insumos'
-                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} />
+                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} onCorreccion={cargarCorr} />
                 : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} />}
             </div>
           ) : modulo === 'reportes' ? (
@@ -363,6 +342,66 @@ export default function App() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Campana de correcciones por aprobar (estilo notificaciones).
+function Campana({ corrPend, onIr }) {
+  const [abierto, setAbierto] = useState(false)
+  const total = corrPend.reduce((t, c) => t + c.n, 0)
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setAbierto(a => !a)} title="Correcciones por aprobar"
+        style={{ position: 'relative', background: total ? '#E24B4A' : 'rgba(255,255,255,0.12)',
+                 border: 'none', borderRadius: '9px', width: '34px', height: '30px', cursor: 'pointer',
+                 display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+             strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+        </svg>
+        {total > 0 && (
+          <span style={{ position: 'absolute', top: '-6px', right: '-6px', background: 'white',
+                         color: '#E24B4A', borderRadius: '20px', fontSize: '10px', fontWeight: 600,
+                         minWidth: '17px', height: '17px', display: 'flex', alignItems: 'center',
+                         justifyContent: 'center', padding: '0 4px' }}>{total}</span>
+        )}
+      </button>
+      {abierto && (
+        <>
+          <div onClick={() => setAbierto(false)}
+               style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+          <div style={{ position: 'absolute', right: 0, top: '38px', width: '300px', background: 'white',
+                        border: '0.5px solid #dce6ef', borderRadius: '12px', zIndex: 41,
+                        boxShadow: '0 8px 24px rgba(2,40,71,0.14)', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 15px', borderBottom: '0.5px solid #eef3f7', fontWeight: 500,
+                          fontSize: '14px', color: NAVY }}>
+              Correcciones por aprobar
+            </div>
+            {total === 0 ? (
+              <div style={{ padding: '18px 15px', fontSize: '13px', color: '#7d8fa0', textAlign: 'center' }}>
+                No hay correcciones pendientes.
+              </div>
+            ) : corrPend.map(c => (
+              <button key={c.finca_id} onClick={() => { setAbierto(false); onIr(c) }}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                         gap: '10px', padding: '11px 15px', background: 'white', border: 'none',
+                         borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer', fontFamily: 'inherit',
+                         textAlign: 'left' }}>
+                <span style={{ fontSize: '13px', fontWeight: 500, color: NAVY }}>
+                  {String(c.nombre).toUpperCase()}
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ background: '#FAEEDA', color: '#854F0B', borderRadius: '20px',
+                                 fontSize: '11px', fontWeight: 500, padding: '2px 9px' }}>{c.n}</span>
+                  <span style={{ fontSize: '12px', color: '#0D6CB0', fontWeight: 500 }}>Ver</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }
