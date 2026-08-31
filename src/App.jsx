@@ -8,6 +8,7 @@ import Costos from './pages/Costos'
 import Resumen from './pages/Resumen'
 import Inventario from './pages/Inventario'
 import Reportes from './pages/Reportes'
+import PresupuestoBarra from './pages/PresupuestoBarra'
 import Historial from './pages/Historial'
 import EnConstruccion from './pages/EnConstruccion'
 
@@ -141,6 +142,16 @@ export default function App() {
         </nav>
 
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Barra de presupuesto fija, arriba de cada pagina. En Resumen
+              no aplica porque no hay una sola finca. */}
+          {modulo !== 'resumen' && (
+            <PresupuestoBarra
+              key={finca.id}
+              finca={finca}
+              esJefe={esJefe}
+              onIr={() => setModulo('inventario')}
+            />
+          )}
           {modulo === 'resumen' ? (
             <Resumen
               fincas={fincas}
