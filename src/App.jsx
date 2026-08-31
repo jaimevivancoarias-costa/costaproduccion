@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from './context/AuthContext'
+import { supabase } from './lib/supabase'
 import { hoyISO, lunesDe } from './lib/fechas'
 import RegistroDiario from './pages/RegistroDiario'
 import RegistroInsumos from './pages/RegistroInsumos'
@@ -86,6 +87,29 @@ export default function App() {
     const f = fincas.find(x => x.id === fincaId)
     if (f && f.zona && f.zona !== zona) setZona(f.zona)
   }, [fincaId, fincas]) // eslint-disable-line
+
+  // Correcciones pendientes por finca (para el jefe/contadora). Se
+  // recarga al cambiar de modulo o de finca, asi que despues de aprobar
+  // una y volver a navegar, el aviso se actualiza.
+  const [corrPend, setCorrPend] = useState([])
+  const [pedirIngresos, setPedirIngresos] = useState(0)
+  useEffect(() => {
+    if (!esJefe) { setCorrPend([]); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('solicitud_correccion')
+        .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+      if (!vivo) return
+      const g = {}
+      ;(data || []).forEach(r => {
+        const k = r.finca_id
+        g[k] = g[k] || { finca_id: k, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0 }
+        g[k].n++
+      })
+      setCorrPend(Object.values(g))
+    })()
+    return () => { vivo = false }
+  }, [esJefe, modulo, fincaId])
 
   // Red de seguridad: si por alguna navegacion interna un bodeguero
   // termina en un modulo que no le toca (Resumen, Costos, Reportes),
@@ -175,6 +199,31 @@ export default function App() {
                     color: 'rgba(255,255,255,0.5)', fontSize: '12px', fontFamily: 'inherit' }}>Salir</button>
         </div>
       </div>
+
+      {/* Aviso al jefe: correcciones de ingreso por aprobar, por finca. */}
+      {esJefe && corrPend.length > 0 && (
+        <div style={{ background: '#FBF5E9', borderBottom: '0.5px solid #ecd9b3',
+                      padding: '9px 1.4rem', display: 'flex', alignItems: 'center',
+                      gap: '10px', flexWrap: 'wrap', fontSize: '13px' }}>
+          <span style={{ color: '#854F0B', fontWeight: 500 }}>
+            Correcciones por aprobar:
+          </span>
+          {corrPend.map(c => (
+            <button key={c.finca_id}
+              onClick={() => {
+                setFincaId(c.finca_id)
+                if (c.zona) setZona(c.zona)
+                setModulo('inventario'); setPanelInv('insumos')
+                setPedirIngresos(n => n + 1)
+              }}
+              style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '20px',
+                       padding: '5px 12px', fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer',
+                       color: '#854F0B', fontWeight: 500 }}>
+              {String(c.nombre).toUpperCase()} · {c.n}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Barra de presupuesto: una sola franja de ancho completo, debajo
           de la barra azul. Aqui no se puede duplicar. No en Resumen ni
@@ -302,7 +351,7 @@ export default function App() {
                 ))}
               </div>
               {panelInv === 'insumos'
-                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} />
+                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} />
                 : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} />}
             </div>
           ) : modulo === 'reportes' ? (
