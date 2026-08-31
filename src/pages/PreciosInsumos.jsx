@@ -24,7 +24,7 @@ const UNIDAD = {
 }
 const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
 
-export default function PreciosInsumos({ esJefe }) {
+export default function PreciosInsumos({ finca, esJefe }) {
   const [filas, setFilas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -33,18 +33,24 @@ export default function PreciosInsumos({ esJefe }) {
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
+    // Cada finca tiene su propio precio de insumo. Traemos el de la finca
+    // y el general; si la finca no tiene el suyo, se muestra el general
+    // como "heredado" (es el que rige hasta que se le ponga uno propio).
     const [{ data: ins }, { data: pr }] = await Promise.all([
       supabase.schema('produccion').from('insumo')
         .select('id, nombre, unidad').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('precio_insumo')
-        .select('id, insumo_id, precio_unitario, vigente_desde')
-        .is('finca_id', null).is('vigente_hasta', null),
+        .select('id, insumo_id, finca_id, precio_unitario, vigente_desde')
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`).is('vigente_hasta', null),
     ])
-    const precioDe = {}
-    ;(pr || []).forEach(x => { precioDe[x.insumo_id] = x })
-    setFilas((ins || []).map(i => ({ ...i, precio: precioDe[i.id] || null })))
+    const propio = {}, general = {}
+    ;(pr || []).forEach(x => { (x.finca_id ? propio : general)[x.insumo_id] = x })
+    setFilas((ins || []).map(i => {
+      const p = propio[i.id] || general[i.id] || null
+      return { ...i, precio: p, heredado: !propio[i.id] && !!general[i.id] }
+    }))
     setCargando(false)
-  }, [])
+  }, [finca.id])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -73,17 +79,18 @@ export default function PreciosInsumos({ esJefe }) {
   }
 
   async function guardarPrecio({ insumoId, nuevo, desde }) {
-    // Cierra el precio general vigente el dia antes de que arranque el
-    // nuevo, y abre el nuevo. Si no habia precio, solo abre.
+    // Precio propio de ESTA finca. Cierra el que estuviera vigente para
+    // la finca y abre el nuevo. El precio general no se toca: cambiar el
+    // de una finca no cambia el de las demas.
     await supabase.schema('produccion').from('precio_insumo')
       .update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq('insumo_id', insumoId).is('finca_id', null).is('vigente_hasta', null)
+      .eq('insumo_id', insumoId).eq('finca_id', finca.id).is('vigente_hasta', null)
 
     const { error } = await supabase.schema('produccion').from('precio_insumo')
-      .insert({ insumo_id: insumoId, finca_id: null, precio_unitario: nuevo, vigente_desde: desde })
+      .insert({ insumo_id: insumoId, finca_id: finca.id, precio_unitario: nuevo, vigente_desde: desde })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
     setEditando(null)
-    setAviso({ tipo: 'ok', texto: 'Precio actualizado.' })
+    setAviso({ tipo: 'ok', texto: 'Precio actualizado para ' + String(finca.nombre) + '.' })
     await cargar()
   }
 
@@ -93,11 +100,13 @@ export default function PreciosInsumos({ esJefe }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
                     gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <div>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Precios de insumos</h3>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>
+            Precios de insumos · {String(finca.nombre).toUpperCase()}
+          </h3>
           <p style={{ fontSize: '13px', color: GRIS, margin: 0, maxWidth: '560px' }}>
-            Un precio para todas las fincas.
+            Cada finca tiene su propio precio. Cambiar el de esta finca no toca al de las demás.
             {esJefe
-              ? ' Al cambiarlo, rige desde la fecha que elijas hacia adelante; lo ya registrado no se mueve.'
+              ? ' Rige desde la fecha que elijas hacia adelante; lo ya registrado no se mueve.'
               : ' Solo un jefe puede cambiarlos.'}
           </p>
         </div>
@@ -148,7 +157,12 @@ export default function PreciosInsumos({ esJefe }) {
             </span>
             <span style={{ fontSize: '16px', fontWeight: 500, textAlign: 'right',
                            fontVariantNumeric: 'tabular-nums' }}>
-              {f.precio ? dinero(f.precio.precio_unitario) : <span style={{ fontSize: '13px', color: '#BA7517' }}>sin precio</span>}
+              {f.precio
+                ? <>
+                    {dinero(f.precio.precio_unitario)}
+                    {f.heredado && <div style={{ fontSize: '10px', color: GRIS, fontWeight: 400 }}>general (heredado)</div>}
+                  </>
+                : <span style={{ fontSize: '13px', color: '#BA7517' }}>sin precio</span>}
             </span>
             <span style={{ fontSize: '13px', color: GRIS }}>
               {f.precio ? corta(f.precio.vigente_desde) : '—'}
