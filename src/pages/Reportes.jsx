@@ -22,7 +22,7 @@ const UNIDAD = {
 
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
-export default function Reportes({ finca, fincas, esJefe }) {
+export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [filas, setFilas] = useState([])
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -31,7 +31,8 @@ export default function Reportes({ finca, fincas, esJefe }) {
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
   const [todasFincas, setTodasFincas] = useState(false)
-  const [tipo, setTipo] = useState('todo')      // 'todo' | 'balanceado' | 'insumo'
+  // Si se entra desde la barra de presupuesto, arranca en insumos.
+  const [tipo, setTipo] = useState(enfoqueInsumos ? 'insumo' : 'todo')
   const [agrupar, setAgrupar] = useState('item') // 'item' | 'piscina' | 'finca'
   const [cicloSel, setCicloSel] = useState('')
 
