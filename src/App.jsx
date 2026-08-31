@@ -9,6 +9,7 @@ import Resumen from './pages/Resumen'
 import Inventario from './pages/Inventario'
 import Reportes from './pages/Reportes'
 import PresupuestoBarra from './pages/PresupuestoBarra'
+import Presupuesto from './pages/Presupuesto'
 import Historial from './pages/Historial'
 import EnConstruccion from './pages/EnConstruccion'
 
@@ -23,6 +24,7 @@ const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 
 const MODULOS = [
+  { id: 'presupuesto', nombre: 'Presupuesto',    icono: 'moneda' },
   { id: 'resumen',    nombre: 'Resumen',        icono: 'grid' },
   { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
@@ -145,9 +147,9 @@ export default function App() {
         </nav>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Barra de presupuesto fija, arriba de cada pagina. En Resumen
-              no aplica porque no hay una sola finca. */}
-          {modulo !== 'resumen' && (
+          {/* Barra de presupuesto fija, arriba de cada pagina. No en
+              Resumen (varias fincas) ni en Presupuesto (ya es la pagina). */}
+          {modulo !== 'resumen' && modulo !== 'presupuesto' && (
             <PresupuestoBarra
               key={finca.id}
               finca={finca}
@@ -155,7 +157,17 @@ export default function App() {
               onIr={() => { setVerInsumos(true); setModulo('reportes') }}
             />
           )}
-          {modulo === 'resumen' ? (
+          {modulo === 'presupuesto' ? (
+            <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
+              <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 4px' }}>
+                Presupuesto de insumos
+              </h2>
+              <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 16px' }}>
+                {String(finca.nombre).toUpperCase()}. Se renueva cada mes: arranca de cero el día 1.
+              </p>
+              <Presupuesto key={finca.id} finca={finca} esJefe={esJefe} />
+            </div>
+          ) : modulo === 'resumen' ? (
             <Resumen
               fincas={fincas}
               lunes={lunes}
