@@ -370,11 +370,19 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
           </div>
 
           {primeraVez && (
-            <Nota color={AMBAR} fondo="#FAEEDA">
-              Todavía no se ha contado la bodega de esta finca, así que todo está en cero.
-              Cuenta lo que hay y guárdalo con <b>Cargar inventario inicial</b>. De ahí en adelante
-              el saldo se lleva solo: baja con lo que se aplica en las piscinas y sube con lo que entra.
-            </Nota>
+            filas.some(f => Number(f.saldo) !== 0) ? (
+              <Nota color={AMBAR} fondo="#FAEEDA">
+                Aún no has hecho un conteo físico de esta finca. El saldo de arriba viene de los
+                ingresos registrados. Cuando cuentes la bodega con <b>Cargar inventario inicial</b>,
+                ese conteo fija el punto de partida.
+              </Nota>
+            ) : (
+              <Nota color={AMBAR} fondo="#FAEEDA">
+                Todavía no se ha contado la bodega de esta finca, así que todo está en cero.
+                Cuenta lo que hay y guárdalo con <b>Cargar inventario inicial</b>. De ahí en adelante
+                el saldo se lleva solo: baja con lo que se aplica en las piscinas y sube con lo que entra.
+              </Nota>
+            )
           )}
 
           {negativos > 0 && (
