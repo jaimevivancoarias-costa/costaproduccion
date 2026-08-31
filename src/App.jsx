@@ -50,6 +50,9 @@ export default function App() {
   const [modulo, setModulo] = useState('registro')
   // Dentro de Registro diario: balanceado o insumos. Comparten semana.
   const [panelReg, setPanelReg] = useState('balanceado')
+  // Cuando se entra a Reportes desde la barra de presupuesto, arranca
+  // enfocado en insumos.
+  const [verInsumos, setVerInsumos] = useState(false)
   // La semana es una sola para todo el modulo: si la cambias en una
   // pantalla, las demas se mueven con ella.
   const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
@@ -123,7 +126,7 @@ export default function App() {
             return (
               <button
                 key={m.id}
-                onClick={() => setModulo(m.id)}
+                onClick={() => { setModulo(m.id); setVerInsumos(false) }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '9px', width: '100%',
                   border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
@@ -149,7 +152,7 @@ export default function App() {
               key={finca.id}
               finca={finca}
               esJefe={esJefe}
-              onIr={() => setModulo('inventario')}
+              onIr={() => { setVerInsumos(true); setModulo('reportes') }}
             />
           )}
           {modulo === 'resumen' ? (
@@ -199,7 +202,7 @@ export default function App() {
           ) : modulo === 'inventario' ? (
             <Inventario key={finca.id} finca={finca} esJefe={esJefe} />
           ) : modulo === 'reportes' ? (
-            <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} />
+            <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
           ) : modulo === 'historial' ? (
             <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
           ) : (
