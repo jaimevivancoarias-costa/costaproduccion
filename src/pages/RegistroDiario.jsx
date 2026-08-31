@@ -753,7 +753,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
                               style={{ display: 'block', marginTop: '2px', background: 'none', border: 'none',
                                        padding: 0, cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '10px' }}>
-                              {editSiembra === p.piscinaId ? 'cerrar' : 'editar siembra'}
+                              {editSiembra === p.piscinaId ? 'cerrar' : 'Editar siembra'}
                             </button>
                           )}
                         </div>
