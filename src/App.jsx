@@ -228,7 +228,11 @@ export default function App() {
               <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 16px' }}>
                 {String(finca.nombre).toUpperCase()}. Se renueva cada mes: arranca de cero el día 1.
               </p>
-              <Presupuesto key={finca.id} finca={finca} esJefe={esJefe} />
+              <Presupuesto key={finca.id} finca={finca} esJefe={esJefe}
+                onIrReporte={id => {
+                  setFincaId(id); setVerInsumos(true); setModulo('reportes')
+                  const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
+                }} />
             </div>
           ) : modulo === 'resumen' ? (
             <Resumen
