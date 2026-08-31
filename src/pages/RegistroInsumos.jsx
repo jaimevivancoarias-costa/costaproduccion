@@ -179,7 +179,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }) }
   }
 
-  const COLS = `150px 84px repeat(7, minmax(168px, 1fr))`
+  const COLS = `160px 84px repeat(7, minmax(190px, 1fr))`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -220,7 +220,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       ) : (
         <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white' }}>
-          <div style={{ minWidth: '1360px' }}>
+          <div style={{ minWidth: '1500px' }}>
             {/* Encabezado */}
             <div style={{ display: 'grid', gridTemplateColumns: COLS, borderBottom: '0.5px solid ' + BORDE,
                           background: '#f6f9fb', position: 'sticky', top: 0 }}>
@@ -241,7 +241,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                               borderRight: '0.5px solid #f1f6f9' }}>
                   <div style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</div>
                   <div style={{ fontSize: '11px', color: GRIS }}>
-                    {p.tipo === 'precria' ? 'precría' : (p.cicloId ? 'con ciclo' : 'vacía · preparación')}
+                    {p.tipo === 'precria' ? 'Precría' : (p.cicloId ? 'Con ciclo' : 'Vacía · Preparación')}
                   </div>
                 </div>
                 <div style={{ padding: '10px 12px', fontSize: '13px', color: GRIS }}>
@@ -297,7 +297,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                         <button onClick={() => setAbierta(k)} style={{
                           border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
                           fontSize: '11px', color: AZUL, padding: '2px 0' }}>
-                          + agregar
+                          + Agregar
                         </button>
                       ))}
 
@@ -384,7 +384,7 @@ function Cierre({ validaciones, cerrada, puedeCerrar, onRevisar, onCerrar }) {
                       fontSize: '11px', color: 'white', background: v.pasa ? '#1D9E75' : '#E24B4A' }}>
                 {v.pasa ? '✓' : '!'}
               </span>
-              <span style={{ fontWeight: 500, minWidth: '200px' }}>{v.codigo} · {v.nombre}</span>
+              <span style={{ fontWeight: 500, minWidth: '210px' }}>{v.nombre}</span>
               <span style={{ color: GRIS }}>{v.detalle}</span>
             </div>
           ))}
