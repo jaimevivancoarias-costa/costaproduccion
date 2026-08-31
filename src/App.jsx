@@ -50,6 +50,7 @@ function Icono({ tipo }) {
 export default function App() {
   const { user, nombre, fincas, esJefe, cargando, logout } = useAuth()
   const [fincaId, setFincaId] = useState(null)
+  const [zona, setZona] = useState('jambeli')
   const [modulo, setModulo] = useState('registro')
   // Dentro de Registro diario: balanceado o insumos. Comparten semana.
   const [panelReg, setPanelReg] = useState('balanceado')
@@ -74,8 +75,17 @@ export default function App() {
   const [lunes, setLunes] = useState(() => lunesDe(hoyISO()))
 
   useEffect(() => {
-    if (fincas.length && !fincaId) setFincaId(fincas[0].id)
+    if (fincas.length && !fincaId) {
+      setFincaId(fincas[0].id)
+      if (fincas[0].zona) setZona(fincas[0].zona)
+    }
   }, [fincas, fincaId])
+
+  // Mantener la zona sincronizada con la finca elegida.
+  useEffect(() => {
+    const f = fincas.find(x => x.id === fincaId)
+    if (f && f.zona && f.zona !== zona) setZona(f.zona)
+  }, [fincaId, fincas]) // eslint-disable-line
 
   if (cargando) return <Centro>Cargando...</Centro>
   if (!user) return <IrAlPortal />
@@ -105,19 +115,41 @@ export default function App() {
             PRODUCCIÓN
           </span>
           {fincas.length > 1 ? (
-            <select
-              value={finca.id}
-              onChange={e => setFincaId(e.target.value)}
-              style={{ background: 'rgba(255,255,255,0.1)', border: '0.5px solid rgba(255,255,255,0.18)',
-                       color: 'white', borderRadius: '9px', padding: '7px 12px', fontFamily: 'inherit',
-                       fontSize: '13px', fontWeight: 600, letterSpacing: '0.05em' }}
-            >
-              {fincas.map(f => (
-                <option key={f.id} value={f.id} style={{ color: NAVY }}>
-                  {String(f.nombre).toUpperCase()}
-                </option>
-              ))}
-            </select>
+            <>
+              {/* Selector de zona: divide las fincas en Jambelí y Puna.
+                  Solo aparece si el usuario tiene fincas en las dos. */}
+              {[...new Set(fincas.map(f => f.zona))].filter(Boolean).length > 1 && (
+                <div style={{ display: 'inline-flex', background: 'rgba(255,255,255,0.1)',
+                              borderRadius: '9px', padding: '3px' }}>
+                  {['jambeli', 'puna'].map(z => (
+                    <button key={z} onClick={() => {
+                      setZona(z)
+                      const prim = fincas.find(f => f.zona === z)
+                      if (prim) setFincaId(prim.id)
+                    }} style={{
+                      border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px',
+                      fontWeight: 600, letterSpacing: '0.05em', padding: '5px 11px', borderRadius: '7px',
+                      background: zona === z ? 'white' : 'transparent',
+                      color: zona === z ? NAVY : 'rgba(255,255,255,0.7)' }}>
+                      {z === 'jambeli' ? 'JAMBELÍ' : 'PUNA'}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <select
+                value={finca.id}
+                onChange={e => setFincaId(e.target.value)}
+                style={{ background: 'rgba(255,255,255,0.1)', border: '0.5px solid rgba(255,255,255,0.18)',
+                         color: 'white', borderRadius: '9px', padding: '7px 12px', fontFamily: 'inherit',
+                         fontSize: '13px', fontWeight: 600, letterSpacing: '0.05em' }}
+              >
+                {fincas.filter(f => !f.zona || f.zona === zona).map(f => (
+                  <option key={f.id} value={f.id} style={{ color: NAVY }}>
+                    {String(f.nombre).toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </>
           ) : (
             <span style={{ background: 'rgba(255,255,255,0.1)', borderRadius: '9px', padding: '7px 12px',
                            fontSize: '13px', fontWeight: 600, letterSpacing: '0.05em', color: 'white' }}>
