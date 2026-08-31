@@ -41,6 +41,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [abierta, setAbierta] = useState(null)  // celda con el agregador abierto
   const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [validaciones, setValidaciones] = useState(null)
+  const [dias, setDias] = useState({})   // fecha -> estado del dia (cerrado/borrador/reabierto)
+  const [cerrandoDia, setCerrandoDia] = useState(false)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -94,6 +96,10 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       }
       setLineas(mapa)
 
+      const { data: dr } = await supabase.schema('produccion').from('dia_registro')
+        .select('fecha, estado').eq('finca_id', finca.id).gte('fecha', lunes).lte('fecha', domingo)
+      const de = {}; (dr || []).forEach(r => { de[r.fecha] = r.estado }); setDias(de)
+
       const { anio, semana } = semanaISO(lunes)
       const { data: sc } = await supabase.schema('produccion').from('semana_cerrada')
         .select('id').eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana)
@@ -115,6 +121,25 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     // Aqui solo cuentan las validaciones de insumos. Las de balanceado
     // se revisan y se cierran en su propia pestana.
     setValidaciones((data || []).filter(v => v.codigo === 'V7' || v.codigo === 'V8'))
+  }
+
+  async function cerrarDiaHoy() {
+    setCerrandoDia(true)
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha: hoy, estado: 'cerrado', cerrado_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha' })
+    setCerrandoDia(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo cerrar el día. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Día cerrado.' }); await cargar()
+  }
+
+  async function reabrirDiaHoy() {
+    setCerrandoDia(true)
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha: hoy, estado: 'borrador' }, { onConflict: 'finca_id,fecha' })
+    setCerrandoDia(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir el día. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar()
   }
 
   async function cerrarSemana() {
@@ -357,6 +382,31 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {!cargando && semanaDeHoy && !soloLectura && !semanaCerrada && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: '12px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + BORDE,
+                      borderRadius: '12px', padding: '13px 16px', marginTop: '14px' }}>
+          <div style={{ fontSize: '13px', color: GRIS }}>
+            Los insumos se guardan solos al agregarlos.{' '}
+            {(dias[hoy] === 'cerrado' || dias[hoy] === 'reabierto')
+              ? 'El día de hoy ya está cerrado.'
+              : 'Cuando termines de cargar el día, ciérralo.'}
+          </div>
+          {(dias[hoy] === 'cerrado' || dias[hoy] === 'reabierto') ? (
+            <Btn disabled={cerrandoDia} onClick={reabrirDiaHoy}>
+              {cerrandoDia ? 'Un momento...' : 'Reabrir día de hoy'}
+            </Btn>
+          ) : (
+            <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
+              padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+              border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
+              cursor: cerrandoDia ? 'default' : 'pointer', opacity: cerrandoDia ? 0.6 : 1 }}>
+              {cerrandoDia ? 'Cerrando...' : 'Guardar y cerrar día'}
+            </button>
+          )}
         </div>
       )}
 
