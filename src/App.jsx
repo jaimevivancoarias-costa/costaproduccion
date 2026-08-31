@@ -7,6 +7,7 @@ import Gramaje from './pages/Gramaje'
 import Costos from './pages/Costos'
 import Resumen from './pages/Resumen'
 import Inventario from './pages/Inventario'
+import InventarioBalanceado from './pages/InventarioBalanceado'
 import Reportes from './pages/Reportes'
 import PresupuestoBarra from './pages/PresupuestoBarra'
 import Presupuesto from './pages/Presupuesto'
@@ -55,6 +56,8 @@ export default function App() {
   // Cuando se entra a Reportes desde la barra de presupuesto, arranca
   // enfocado en insumos.
   const [verInsumos, setVerInsumos] = useState(false)
+  // Inventario: insumos o balanceado.
+  const [panelInv, setPanelInv] = useState('insumos')
   // Menu lateral colapsado a solo iconos. Se recuerda entre recargas.
   const [navColapsado, setNavColapsado] = useState(() => {
     try { return localStorage.getItem('nav') === 'colapsado' } catch { return false }
@@ -237,7 +240,22 @@ export default function App() {
           ) : modulo === 'costos' ? (
             <Costos key={finca.id} finca={finca} esJefe={esJefe} lunes={lunes} setLunes={setLunes} />
           ) : modulo === 'inventario' ? (
-            <Inventario key={finca.id} finca={finca} esJefe={esJefe} />
+            <div>
+              <div style={{ display: 'flex', gap: '4px', padding: '14px 1.5rem 0' }}>
+                {[['insumos', 'Insumos'], ['balanceado', 'Balanceado']].map(([id, txt]) => (
+                  <button key={id} onClick={() => setPanelInv(id)} style={{
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14px',
+                    fontWeight: 500, padding: '9px 18px', borderRadius: '9px 9px 0 0',
+                    background: panelInv === id ? 'white' : 'transparent',
+                    color: panelInv === id ? AZUL : GRIS,
+                    borderBottom: panelInv === id ? '2px solid ' + AZUL : '2px solid transparent',
+                  }}>{txt}</button>
+                ))}
+              </div>
+              {panelInv === 'insumos'
+                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} />
+                : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} />}
+            </div>
           ) : modulo === 'reportes' ? (
             <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
           ) : modulo === 'historial' ? (
