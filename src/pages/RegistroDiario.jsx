@@ -1090,9 +1090,9 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
         <div>
           <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar la semana</h3>
-          <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
+          <p style={{ fontSize: '13px', color: GRIS, margin: 0, maxWidth: '620px' }}>
             {cerrada ? 'Esta semana ya está cerrada.'
-              : 'No se puede cerrar mientras alguna validación falle. Cada una dice qué revisar.'}
+              : 'Esto se cierra al final de la semana (domingo). Durante la semana solo cierras cada día con “Cerrar día”; cuando estén los 7, se puede cerrar la semana. Cada validación dice qué revisar.'}
           </p>
         </div>
         {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
