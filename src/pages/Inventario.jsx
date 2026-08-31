@@ -415,9 +415,9 @@ export default function Inventario({ finca, esJefe }) {
       ) : vista === 'movimientos' ? (
         <>
           <Tabla
-            caja
-            columnas={['Insumo', 'Unidad', 'Saldo inicial', 'Ingresos', 'Consumo',
-                       'Ajustes', 'Conteo', 'Saldo final', ...(esJefe ? ['Consumo $'] : [])]}
+            caja min={esJefe ? '940px' : '820px'}
+            columnas={['Insumo', 'Unidad', 'Inicial', 'Ingresos', 'Consumo',
+                       'Ajustes', 'Conteo', 'Final', ...(esJefe ? ['Costo $'] : [])]}
             anchos={esJefe ? ANCHOS_MOV : ANCHOS_MOV_BOD}
           >
             {movs.map(m => (
@@ -469,9 +469,9 @@ export default function Inventario({ finca, esJefe }) {
       ) : (
         <>
           <Tabla
-            caja
+            caja min={esJefe ? '760px' : '420px'}
             columnas={esJefe
-              ? ['Insumo', 'Unidad', 'Saldo', 'Precio unitario', 'Valor en bodega', '']
+              ? ['Insumo', 'Unidad', 'Saldo', 'Precio', 'Valor', '']
               : ['Insumo', 'Unidad', 'Saldo']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
@@ -571,28 +571,28 @@ export default function Inventario({ finca, esJefe }) {
 // ---------------------------------------------------------------------
 // Piezas de tabla
 // ---------------------------------------------------------------------
-function Tabla({ columnas, anchos, children, caja }) {
+function Tabla({ columnas, anchos, children, caja, min }) {
   const cuerpo = (
-    <>
+    <div style={{ minWidth: min || 'auto' }}>
       <div style={{ display: 'grid', gridTemplateColumns: anchos,
                     background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE }}>
         {columnas.map((c, i) => (
           <div key={c} style={{ padding: '10px 12px', fontSize: '11px', fontWeight: 500,
-                  color: GRIS, letterSpacing: '0.03em', textTransform: 'uppercase',
+                  color: GRIS, letterSpacing: '0.02em', textTransform: 'uppercase',
                   textAlign: i >= 2 ? 'right' : 'left',
-                  borderLeft: i === 0 ? 'none' : '0.5px solid ' + BORDE }}>
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {c}
           </div>
         ))}
       </div>
       {children}
-    </>
+    </div>
   )
   if (!caja) return cuerpo
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                   overflow: 'hidden' }}>
-      {cuerpo}
+      <div style={{ overflowX: 'auto' }}>{cuerpo}</div>
     </div>
   )
 }
@@ -614,8 +614,7 @@ function Celda({ children, derecha, gris, fuerte, color }) {
                   textAlign: derecha ? 'right' : 'left',
                   color: color || (gris ? GRIS : NAVY),
                   fontWeight: fuerte ? 500 : 400,
-                  fontVariantNumeric: derecha ? 'tabular-nums' : 'normal',
-                  borderLeft: '0.5px solid #f6f9fb' }}>
+                  fontVariantNumeric: derecha ? 'tabular-nums' : 'normal' }}>
       {children}
     </div>
   )
