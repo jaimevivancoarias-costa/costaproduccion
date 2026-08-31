@@ -40,6 +40,8 @@ export default function InventarioBalanceado({ finca, esJefe }) {
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
   const [guardando, setGuardando] = useState(false)
+  const [nuevos, setNuevos] = useState([])
+  const [guardandoNuevos, setGuardandoNuevos] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -74,6 +76,26 @@ export default function InventarioBalanceado({ finca, esJefe }) {
   }), [saldos, precios, contado])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
+
+  const filaNueva = () => ({ nombre: '', marca: '' })
+  const setNuevo = (i, campo, val) => setNuevos(ns => ns.map((n, j) => j === i ? { ...n, [campo]: val } : n))
+
+  async function guardarNuevos() {
+    const validos = nuevos.filter(n => n.nombre.trim())
+    if (!validos.length) { setNuevos([]); return }
+    const rows = validos.map(n => ({ nombre: n.nombre.trim(), marca: n.marca.trim() || null }))
+    setGuardandoNuevos(true)
+    const { error } = await supabase.schema('produccion').from('producto').insert(rows)
+    setGuardandoNuevos(false)
+    if (error) {
+      const dup = /duplicate|unique/i.test(error.message)
+      setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
+      return
+    }
+    setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'balanceado agregado' : 'balanceados agregados'}. Ya puedes contarlos abajo.` })
+    setNuevos([])
+    await cargar()
+  }
 
   async function guardarToma() {
     if (!llenadas) { setAviso({ tipo: 'error', texto: 'No has contado ningún producto.' }); return }
@@ -154,6 +176,42 @@ export default function InventarioBalanceado({ finca, esJefe }) {
               </Campo>
             </div>
           </div>
+
+          {/* Agregar balanceados que faltan, varios a la vez. */}
+          <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
+            {nuevos.length === 0 ? (
+              <button onClick={() => setNuevos([filaNueva()])} style={btnLink}>
+                + ¿Falta un balanceado? Agrégalo aquí
+              </button>
+            ) : (
+              <div>
+                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
+                  Balanceados nuevos (puedes agregar varios):
+                </div>
+                {nuevos.map((n, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
+                    <input autoFocus={i === nuevos.length - 1} value={n.nombre} placeholder="Nombre del balanceado"
+                      onChange={e => setNuevo(i, 'nombre', e.target.value)} style={{ ...inp, flex: 1, minWidth: '200px' }} />
+                    <input value={n.marca} placeholder="Marca (opcional)"
+                      onChange={e => setNuevo(i, 'marca', e.target.value)} style={{ ...inp, width: '160px' }} />
+                    <button onClick={() => setNuevos(ns => ns.filter((_, j) => j !== i))} title="Quitar"
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                  <button onClick={() => setNuevos(ns => [...ns, filaNueva()])} style={btnLink}>+ Otro balanceado</button>
+                  <span style={{ marginLeft: 'auto' }} />
+                  <button onClick={() => setNuevos([])} style={btn}>Cancelar</button>
+                  <button onClick={guardarNuevos} disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}
+                    style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL,
+                             opacity: (guardandoNuevos || !nuevos.some(n => n.nombre.trim())) ? 0.5 : 1 }}>
+                    {guardandoNuevos ? 'Agregando...' : 'Agregar a la lista'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <Encabezado gtc={G_CONTEO} cols={['Balanceado', 'Unidad', primeraVez ? '' : 'El sistema dice', primeraVez ? 'Inventario inicial' : 'Contado', primeraVez ? '' : 'Diferencia']} />
           {filas.map(f => (
             <Fila gtc={G_CONTEO} key={f.producto_id}>
@@ -388,3 +446,4 @@ function Cel({ children, der, gris, fuerte, color }) {
 }
 const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
 const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
+const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
