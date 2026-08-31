@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
-  nombreDia, semanaISO, situacionDia, num, miles,
+  nombreDia, semanaISO, situacionDia, num, miles, dinero,
 } from '../lib/fechas'
 
 // Registro diario de insumos · modulo Produccion
@@ -83,13 +83,13 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       if (ids.length) {
         const { data: co, error: eC } = await supabase.schema('produccion')
           .from('consumo_insumo')
-          .select('id, piscina_id, fecha, insumo_id, cantidad')
+          .select('id, piscina_id, fecha, insumo_id, cantidad, precio_unitario')
           .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
         if (eC) throw eC
         ;(co || []).forEach(r => {
           const k = `${r.piscina_id}|${r.fecha}`
           ;(mapa[k] = mapa[k] || []).push(
-            { id: r.id, insumoId: r.insumo_id, cantidad: r.cantidad })
+            { id: r.id, insumoId: r.insumo_id, cantidad: r.cantidad, precio: r.precio_unitario })
         })
       }
       setLineas(mapa)
@@ -136,6 +136,21 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     return Object.entries(m)
       .map(([id, cant]) => ({ id, cant }))
       .sort((a, b) => b.cant - a.cant)
+  }, [lineas])
+
+  // Resumen de la semana para las tarjetas de arriba.
+  const resumen = useMemo(() => {
+    const insumosUsados = new Set()
+    const piscinasConMov = new Set()
+    let gasto = 0
+    Object.entries(lineas).forEach(([k, arr]) => {
+      if (arr.length) piscinasConMov.add(k.split('|')[0])
+      arr.forEach(l => {
+        insumosUsados.add(l.insumoId)
+        gasto += num(l.cantidad) * Number(l.precio || 0)
+      })
+    })
+    return { insumos: insumosUsados.size, piscinas: piscinasConMov.size, gasto }
   }, [lineas])
 
   useEffect(() => { cargar() }, [cargar])
@@ -209,6 +224,14 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
           color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
       )}
+
+      {/* Resumen de la semana. */}
+      <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginBottom: '12px',
+                    background: '#f6f9fb', borderRadius: '12px', padding: '12px 16px' }}>
+        <DatoIns k="Insumos distintos" v={String(resumen.insumos)} />
+        <DatoIns k="Piscinas con movimiento" v={String(resumen.piscinas)} />
+        {esJefe && <DatoIns k="Gasto de la semana" v={dinero(resumen.gasto)} />}
+      </div>
 
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
         Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
@@ -442,6 +465,14 @@ function Agregar({ insumos, usados, onGuardar, onCerrar }) {
   )
 }
 
+function DatoIns({ k, v }) {
+  return (
+    <div>
+      <div style={{ fontSize: '11px', color: GRIS }}>{k}</div>
+      <div style={{ fontSize: '18px', fontWeight: 500 }}>{v}</div>
+    </div>
+  )
+}
 function Th({ children, pegado, hoy }) {
   return (
     <div style={{ padding: '9px 12px', fontSize: '11px', fontWeight: 500, color: GRIS,
