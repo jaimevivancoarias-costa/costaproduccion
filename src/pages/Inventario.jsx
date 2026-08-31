@@ -3,7 +3,6 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
-import Presupuesto from './Presupuesto'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -244,9 +243,6 @@ export default function Inventario({ finca, esJefe }) {
         <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
           Ingresos y pedidos
         </Chip>
-        <Chip on={seccion === 'presupuesto'} onClick={() => { setSeccion('presupuesto'); setContando(false) }}>
-          Presupuesto
-        </Chip>
         {/* Los precios son costo por material: solo el jefe. */}
         {esJefe && (
           <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>
@@ -257,8 +253,6 @@ export default function Inventario({ finca, esJefe }) {
 
       {seccion === 'movimiento' ? (
         <Ingresos finca={finca} />
-      ) : seccion === 'presupuesto' ? (
-        <Presupuesto finca={finca} esJefe={esJefe} />
       ) : seccion === 'precios' && esJefe ? (
         <PreciosInsumos esJefe={esJefe} />
       ) : (
