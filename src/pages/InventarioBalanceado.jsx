@@ -273,9 +273,15 @@ export default function InventarioBalanceado({ finca, esJefe }) {
                 </div>
               )}
               {primeraVez && (
-                <Nota color={AMBAR} bg="#FAEEDA">
-                  Todavía no se ha contado el balanceado de esta finca. Carga el inventario inicial y de ahí el saldo se lleva solo.
-                </Nota>
+                filas.some(f => Number(f.saldo) !== 0) ? (
+                  <Nota color={AMBAR} bg="#FAEEDA">
+                    Aún no has hecho un conteo físico de esta finca. El saldo de arriba viene de los ingresos registrados. Cuando cuentes la bodega con “Cargar inventario inicial”, ese conteo fija el punto de partida.
+                  </Nota>
+                ) : (
+                  <Nota color={AMBAR} bg="#FAEEDA">
+                    Todavía no se ha contado el balanceado de esta finca. Carga el inventario inicial y de ahí el saldo se lleva solo.
+                  </Nota>
+                )
               )}
               <Caja>
                 <Encabezado gtc={esJefe ? G_SALDO_J : G_SALDO_B} cols={esJefe ? ['Balanceado', 'Saldo', 'Precio saco', 'Valor', ''] : ['Balanceado', 'Saldo']} />
