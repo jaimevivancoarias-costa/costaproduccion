@@ -207,6 +207,14 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
     await cargar()
   }
 
+  async function borrarConteo(c) {
+    if (!window.confirm(`¿Borrar el conteo del ${corta(c.fecha)}?\n\nEl saldo vuelve a calcularse desde el conteo anterior (o desde cero si no hay otro). No se puede deshacer.`)) return
+    const { error } = await supabase.schema('produccion').from('toma_inventario').delete().eq('id', c.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Conteo borrado.' })
+    await cargar()
+  }
+
   async function guardar() {
     if (!llenadas) {
       setAviso({ tipo: 'error', texto: 'No has contado ningún insumo todavía.' })
@@ -643,11 +651,20 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
               <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 11px' }}>
                 El saldo de arriba se calcula desde el más reciente.
               </p>
-              <Tabla caja columnas={['Fecha', 'Observación']} anchos="150px 1fr">
+              <Tabla caja columnas={esJefe ? ['Fecha', 'Observación', ''] : ['Fecha', 'Observación']}
+                     anchos={esJefe ? '150px 1fr 90px' : '150px 1fr'}>
                 {conteos.map(c => (
-                  <Fila key={c.id} anchos="150px 1fr">
+                  <Fila key={c.id} anchos={esJefe ? '150px 1fr 90px' : '150px 1fr'}>
                     <Celda fuerte>{corta(c.fecha)}</Celda>
                     <Celda gris>{c.observacion || 'Sin observación'}</Celda>
+                    {esJefe && (
+                      <div style={{ padding: '6px 10px', textAlign: 'right' }}>
+                        <button onClick={() => borrarConteo(c)}
+                          style={{ background: 'white', border: '0.5px solid #e7cccb', borderRadius: '8px',
+                                   padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                                   color: ROJO, cursor: 'pointer' }}>Borrar</button>
+                      </div>
+                    )}
                   </Fila>
                 ))}
               </Tabla>
