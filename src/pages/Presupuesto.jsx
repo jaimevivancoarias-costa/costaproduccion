@@ -22,7 +22,7 @@ const ROJO = '#A32D2D'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-export default function Presupuesto({ finca, esJefe }) {
+export default function Presupuesto({ finca, esJefe, onIrReporte }) {
   const hoy = hoyISO()
   const [anio, setAnio] = useState(Number(hoy.slice(0, 4)))
   const [mes, setMes] = useState(Number(hoy.slice(5, 7)))
@@ -177,19 +177,23 @@ export default function Presupuesto({ finca, esJefe }) {
         </Caja>
       )}
 
-      {/* Resumen de las fincas del mes: solo el jefe. */}
+      {/* Tablero del mes de todas las fincas: solo el jefe. */}
       {esJefe && resumen.length > 0 && (() => {
-        const vis = resumen.filter(r => zonaFiltro === 'todas' || r.zona === zonaFiltro)
+        const vis = resumen
+          .filter(r => zonaFiltro === 'todas' || r.zona === zonaFiltro)
+          .map(r => ({ ...r, pctReal: r.monto ? Math.round(Number(r.gasto) / Number(r.monto) * 100) : null }))
+          .map(r => ({ ...r, pct: r.pctReal === null ? null : Math.min(100, r.pctReal) }))
+          .sort((a, b) => (b.pctReal ?? -1) - (a.pctReal ?? -1))
         const tMonto = vis.reduce((t, r) => t + Number(r.monto || 0), 0)
         const tGasto = vis.reduce((t, r) => t + Number(r.gasto || 0), 0)
-        const tPct = tMonto ? Math.min(100, Math.round(tGasto / tMonto * 100)) : null
-        const colT = tPct === null ? GRIS : tPct >= 100 ? ROJO : tPct >= 85 ? AMBAR : VERDE
+        const tPct = tMonto ? Math.min(100, Math.round(tGasto / tMonto * 100)) : 0
+        const enRojo = vis.filter(r => r.pctReal !== null && r.pctReal >= 100).length
+        const LEN = Math.PI * 60
+        const colDe = p => p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
         return (
         <div style={{ marginTop: '22px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '11px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>
-              Todas las fincas en {MESES[mes - 1]}
-            </h3>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Todas las fincas en {MESES[mes - 1]}</h3>
             <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
               {[['todas', 'Todas'], ['jambeli', 'Jambelí'], ['puna', 'Puná']].map(([z, t]) => (
                 <button key={z} onClick={() => setZonaFiltro(z)} style={{
@@ -200,38 +204,43 @@ export default function Presupuesto({ finca, esJefe }) {
               ))}
             </div>
           </div>
-          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
-            {vis.map(r => {
-              const p = r.monto ? Math.min(100, Math.round(Number(r.gasto) / Number(r.monto) * 100)) : null
-              const col = p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
-              return (
-                <div key={r.finca_id} style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 150px 54px',
-                        gap: '12px', alignItems: 'center', padding: '10px 15px', fontSize: '13px',
-                        borderBottom: '0.5px solid #f1f6f9' }}>
-                  <span>{r.finca}
-                    <span style={{ fontSize: '11px', color: GRIS, marginLeft: '7px' }}>
-                      {r.zona === 'puna' ? 'Puná' : 'Jambelí'}</span>
-                  </span>
-                  <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
-                    {r.monto ? dinero(r.monto) : 'sin fijar'}</span>
-                  <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(r.gasto)}</span>
-                  <span style={{ height: '8px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
-                    {p !== null && <i style={{ display: 'block', height: '100%', width: p + '%', background: col, borderRadius: '20px' }} />}
-                  </span>
-                  <span style={{ textAlign: 'right', fontWeight: 500, color: col, fontVariantNumeric: 'tabular-nums' }}>
-                    {p === null ? '—' : p + '%'}</span>
-                </div>
-              )
-            })}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 150px 54px', gap: '12px',
-                    alignItems: 'center', padding: '12px 15px', fontSize: '13px', fontWeight: 500,
-                    background: '#fafcfd' }}>
-              <span>Total del grupo</span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(tMonto)}</span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(tGasto)}</span>
-              <span />
-              <span style={{ textAlign: 'right', color: colT, fontVariantNumeric: 'tabular-nums' }}>
-                {tPct === null ? '—' : tPct + '%'}</span>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '11px', marginBottom: '14px' }}>
+            <TarjetaPpto oscura k="Presupuesto del grupo" v={dinero(tMonto)} />
+            <TarjetaPpto k="Gastado" v={dinero(tGasto)} />
+            <TarjetaPpto k="Queda" v={dinero(tMonto - tGasto)} />
+            <TarjetaPpto k="Fincas en rojo" v={String(enRojo)} rojo={enRojo > 0} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr', gap: '14px', alignItems: 'stretch' }}>
+            <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="150" height="92" viewBox="0 0 150 92">
+                <path d="M15 85 A60 60 0 0 1 135 85" fill="none" stroke="#eef3f7" strokeWidth="14" strokeLinecap="round" />
+                <path d="M15 85 A60 60 0 0 1 135 85" fill="none" stroke={colDe(tPct)} strokeWidth="14" strokeLinecap="round"
+                      strokeDasharray={`${LEN * tPct / 100} ${LEN}`} />
+              </svg>
+              <div style={{ fontSize: '26px', fontWeight: 500, marginTop: '-6px' }}>{tPct}%</div>
+              <div style={{ fontSize: '12px', color: GRIS }}>del grupo</div>
+            </div>
+
+            <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 18px' }}>
+              <div style={{ fontSize: '13px', color: GRIS, marginBottom: '12px' }}>Cómo va cada finca · toca para ver su consumo</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {vis.map(r => (
+                  <div key={r.finca_id} onClick={() => onIrReporte && onIrReporte(r.finca_id)}
+                       style={{ display: 'grid', gridTemplateColumns: '110px 1fr 46px', gap: '10px',
+                                alignItems: 'center', fontSize: '13px', cursor: 'pointer' }}>
+                    <span>{r.finca}</span>
+                    <span style={{ height: '9px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
+                      {r.pct !== null && <i style={{ display: 'block', height: '100%', width: r.pct + '%',
+                        background: colDe(r.pctReal), borderRadius: '20px' }} />}
+                    </span>
+                    <span style={{ textAlign: 'right', fontWeight: 500, color: colDe(r.pctReal), fontVariantNumeric: 'tabular-nums' }}>
+                      {r.pctReal === null ? '—' : r.pctReal + '%'}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -264,6 +273,15 @@ export default function Presupuesto({ finca, esJefe }) {
   )
 }
 
+function TarjetaPpto({ k, v, oscura, rojo }) {
+  return (
+    <div style={{ background: oscura ? NAVY : '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '12px', color: oscura ? 'rgba(255,255,255,0.65)' : GRIS }}>{k}</div>
+      <div style={{ fontSize: '22px', fontWeight: 500,
+                    color: oscura ? 'white' : rojo ? ROJO : NAVY }}>{v}</div>
+    </div>
+  )
+}
 function Caja({ children }) {
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
