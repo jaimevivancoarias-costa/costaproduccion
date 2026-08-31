@@ -24,9 +24,12 @@ const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [filas, setFilas] = useState([])
+  const [cosechas, setCosechas] = useState([])
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
+  // Que reporte: consumo del rango, o cierre de ciclos cosechados.
+  const [kind, setKind] = useState('consumo')
 
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -39,13 +42,15 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const { data, error } = await supabase.schema('produccion')
-        .rpc('fn_reporte_consumo', {
-          p_finca: todasFincas ? null : finca.id,
-          p_desde: desde, p_hasta: hasta,
-        })
-      if (error) throw error
-      setFilas(data || [])
+      const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
+      const [{ data: cons, error: e1 }, { data: cos, error: e2 }] = await Promise.all([
+        supabase.schema('produccion').rpc('fn_reporte_consumo', p),
+        supabase.schema('produccion').rpc('fn_reporte_cosechas', p),
+      ])
+      if (e1) throw e1
+      if (e2) throw e2
+      setFilas(cons || [])
+      setCosechas(cos || [])
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -109,11 +114,12 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
-      <div style={{ marginBottom: '16px' }}>
-        <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 4px' }}>Reportes de consumo</h2>
-        <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
-          Balanceado e insumos. En qué se gasta, en qué piscina y comparado entre fincas.
-        </p>
+      <div style={{ marginBottom: '14px' }}>
+        <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 10px' }}>Reportes</h2>
+        <div style={{ display: 'flex', gap: '7px' }}>
+          <Chip on={kind === 'consumo'} onClick={() => setKind('consumo')}>Consumo</Chip>
+          <Chip on={kind === 'cosechas'} onClick={() => setKind('cosechas')}>Cosechas</Chip>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -158,6 +164,17 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         )}
       </div>
 
+      {aviso && (
+        <div style={{ borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginBottom: '12px',
+                      background: '#FBEAEA', color: '#8A2F2E' }}>{aviso.texto}</div>
+      )}
+
+      {kind === 'cosechas' && (
+        <ReporteCosechas cosechas={cosechas} cargando={cargando} esJefe={esJefe}
+                         todasFincas={todasFincas} />
+      )}
+
+      {kind === 'consumo' && <>
       {/* Ejes */}
       <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <Grupo titulo="Mostrar">
@@ -171,11 +188,6 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           <Chip on={agrupar === 'finca'} onClick={() => setAgrupar('finca')}>Finca</Chip>
         </Grupo>
       </div>
-
-      {aviso && (
-        <div style={{ borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginBottom: '12px',
-                      background: '#FBEAEA', color: '#8A2F2E' }}>{aviso.texto}</div>
-      )}
 
       {/* Resumen */}
       {!cargando && (
@@ -263,7 +275,83 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                  opacity: grupos.length ? 1 : 0.5 }}>
         Descargar en Excel
       </button>}
+      </>}
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Reporte de cierre de ciclo (cosechas): una fila por ciclo cosechado.
+// ---------------------------------------------------------------------
+function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
+  const grid = esJefe
+    ? '150px 100px 60px 110px 110px 110px 120px 110px'
+    : '1fr 110px 70px 130px'
+
+  if (cargando) return <Caja><Centro>Cargando...</Centro></Caja>
+  if (!cosechas.length) return <Caja><Centro>No hay cosechas en este rango.</Centro></Caja>
+
+  const totalLibras = cosechas.reduce((t, c) => t + Number(c.libras || 0), 0)
+  const totalCosto = cosechas.reduce((t, c) => t + Number(c.costo_total || 0), 0)
+
+  return (
+    <>
+      {esJefe && (
+        <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
+          <Kpi titulo="Cosechas" valor={String(cosechas.length)} />
+          <Kpi titulo="Libras producidas" valor={miles(totalLibras)} />
+          <Kpi titulo="Costo total" valor={dinero(totalCosto)} />
+        </div>
+      )}
+
+      <Caja>
+        <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '11px 16px',
+                      fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
+                      borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+          <span>Piscina{todasFincas ? ' / finca' : ''}</span>
+          <span style={{ textAlign: 'right' }}>Cosecha</span>
+          <span style={{ textAlign: 'right' }}>Días</span>
+          <span style={{ textAlign: 'right' }}>Libras</span>
+          {esJefe && <span style={{ textAlign: 'right' }}>Balanceado</span>}
+          {esJefe && <span style={{ textAlign: 'right' }}>Insumos</span>}
+          {esJefe && <span style={{ textAlign: 'right' }}>Costo total</span>}
+          {esJefe && <span style={{ textAlign: 'right' }}>Costo / lb</span>}
+        </div>
+
+        {cosechas.map(c => (
+          <div key={c.ciclo_id} style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px',
+                  padding: '10px 16px', alignItems: 'center', fontSize: '13px',
+                  borderBottom: '0.5px solid #f1f6f9' }}>
+            <span>
+              {c.piscina}
+              {todasFincas && <div style={{ fontSize: '11px', color: GRIS }}>{c.finca}</div>}
+              <div style={{ fontSize: '11px', color: GRIS }}>preparación desde {corta(c.prep_desde)}</div>
+            </span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{corta(c.fecha_cosecha)}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{c.dias}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                           color: Number(c.libras) ? NAVY : '#BA7517' }}>
+              {Number(c.libras) ? miles(c.libras) : 'pendiente'}
+            </span>
+            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+              {dinero(c.costo_balanceado)}</span>}
+            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+              {dinero(c.costo_insumos)}</span>}
+            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+              {dinero(c.costo_total)}</span>}
+            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500,
+                                      color: c.costo_por_libra ? AZUL : '#BA7517' }}>
+              {c.costo_por_libra ? dinero(c.costo_por_libra) : '—'}</span>}
+          </div>
+        ))}
+      </Caja>
+
+      {cosechas.some(c => !c.costo_por_libra) && (
+        <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '10px' }}>
+          Las cosechas sin costo por libra todavía no tienen las libras cargadas (llegan de la empacadora).
+        </div>
+      )}
+    </>
   )
 }
 
