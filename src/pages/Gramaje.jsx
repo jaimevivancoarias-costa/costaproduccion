@@ -27,6 +27,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
+  const [practica, setPractica] = useState(false)  // sin ciclos: solo para familiarizarse
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const muestreos = useMemo(() => fechas.filter(esDiaDeMuestreo), [fechas])
@@ -58,9 +59,22 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
           larva: c.cantidad_larva,
         }))
         .sort(ordenar)
-      setFilas(lista)
-
-      if (!lista.length) { setValores({}); setPrevios({}); return }
+      // Sin ciclos sembrados: mostramos igual el formato con las piscinas
+      // de engorde de la finca, para que el equipo se familiarice. Se puede
+      // escribir para practicar, pero todavia no se guarda (no hay ciclo).
+      if (!lista.length) {
+        const { data: pisc } = await supabase
+          .schema('produccion').from('piscina')
+          .select('id, codigo, nombre, hectareas, tipo')
+          .eq('finca_id', finca.id).eq('tipo', 'engorde').eq('activa', true)
+        const demo = (pisc || []).map(p => ({
+          cicloId: null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
+          hectareas: Number(p.hectareas), fechaSiembra: null, fechaCierre: null, larva: null,
+        })).sort(ordenar)
+        setFilas(demo); setPractica(demo.length > 0)
+        setValores({}); setPrevios({}); return
+      }
+      setFilas(lista); setPractica(false)
 
       const { data: ms } = await supabase
         .schema('produccion').from('muestreo')
@@ -189,10 +203,19 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         )
       })}
 
+      {practica && !cargando && (
+        <div style={{ padding: '11px 14px', borderRadius: '10px', marginBottom: '10px', fontSize: '13px',
+                      background: '#EAF1F8', color: '#1E4E79', border: '0.5px solid #cfe0f0' }}>
+          <b style={{ fontWeight: 600 }}>Modo práctica.</b> Todavía no hay piscinas sembradas en esta
+          finca, así que este es el formato para que se familiaricen. Pueden escribir pesos para
+          practicar, pero aún no se guarda nada: se guardará cuando haya un ciclo sembrado.
+        </div>
+      )}
+
       {cargando ? (
         <Vacio>Cargando...</Vacio>
       ) : !filas.length ? (
-        <Vacio>No hay piscinas de engorde sembradas en esta semana.</Vacio>
+        <Vacio>Esta finca no tiene piscinas de engorde activas.</Vacio>
       ) : (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
@@ -216,7 +239,9 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>{fila.nombre}</span>
                     <div style={{ fontSize: '11px', color: GRIS }}>{fila.hectareas.toFixed(2)} ha</div>
                   </Td>
-                  <Td><span style={{ fontWeight: 500 }}>{diasCultivo(fila.fechaSiembra, corteDias)}</span></Td>
+                  <Td><span style={{ fontWeight: 500 }}>
+                    {fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) : <Guion />}
+                  </span></Td>
                   <Td>
                     {previos[fila.cicloId] ? (
                       <>
@@ -229,7 +254,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                   {muestreos.map(f => {
                     const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < fila.fechaSiembra
                     const c = calculo(fila, f)
-                    const puede = editable(f) && !fuera
+                    const puede = (practica ? situacionDia(f, hoy) !== 'futuro' : editable(f)) && !fuera
                     const futuro = situacionDia(f, hoy) === 'futuro'
                     return (
                       <Grupo.Celdas
@@ -256,7 +281,11 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
               Solo se escribe el peso. El incremento, los días entre muestras y el
               crecimiento diario se calculan contra el muestreo anterior del mismo ciclo.
             </div>
-            {!soloLectura && (
+            {practica ? (
+              <span style={{ fontSize: '13px', color: GRIS, fontStyle: 'italic' }}>
+                Práctica · no se guarda
+              </span>
+            ) : !soloLectura && (
               <Btn primario onClick={guardar} disabled={guardando}>
                 {guardando ? 'Guardando...' : 'Guardar pesos'}
               </Btn>
