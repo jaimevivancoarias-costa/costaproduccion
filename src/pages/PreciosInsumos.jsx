@@ -17,16 +17,19 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 
+const ROJO = '#8A2F2E', VERDE = '#0F6E56'
 const UNIDAD = {
   sacos: 'sacos', litros: 'litros', gramos: 'gramos',
   libras: 'libras', kg: 'kilos', unidad: 'unidades',
 }
+const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
 
 export default function PreciosInsumos({ esJefe }) {
   const [filas, setFilas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [editando, setEditando] = useState(null)
+  const [agregando, setAgregando] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -44,6 +47,30 @@ export default function PreciosInsumos({ esJefe }) {
   }, [])
 
   useEffect(() => { cargar() }, [cargar])
+
+  async function crear({ nombre, unidad, unidadCompra, factor }) {
+    const { error } = await supabase.schema('produccion').from('insumo')
+      .insert({ nombre: nombre.trim(), unidad,
+                unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1 })
+    if (error) {
+      const dup = /duplicate|unique/i.test(error.message)
+      setAviso({ tipo: 'error', texto: dup ? 'Ya existe un insumo con ese nombre.' : 'No se pudo agregar. ' + error.message })
+      return false
+    }
+    setAgregando(false)
+    setAviso({ tipo: 'ok', texto: 'Insumo agregado. Ponle su precio con "Cambiar".' })
+    await cargar()
+    return true
+  }
+
+  async function quitar(f) {
+    if (!window.confirm(`¿Quitar "${f.nombre}" de la lista?\n\nDeja de aparecer para cargar, pero el historial que ya tiene se conserva.`)) return
+    const { error } = await supabase.schema('produccion').from('insumo')
+      .update({ activo: false }).eq('id', f.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo quitar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: `${f.nombre} quitado de la lista.` })
+    await cargar()
+  }
 
   async function guardarPrecio({ insumoId, nuevo, desde }) {
     // Cierra el precio general vigente el dia antes de que arranque el
@@ -74,14 +101,26 @@ export default function PreciosInsumos({ esJefe }) {
               : ' Solo un jefe puede cambiarlos.'}
           </p>
         </div>
-        <button onClick={() => exportar(filas)} disabled={!filas.length}
-          style={{ padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
-                   border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white',
-                   color: NAVY, cursor: filas.length ? 'pointer' : 'default',
-                   opacity: filas.length ? 1 : 0.5 }}>
-          Exportar
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {esJefe && !agregando && (
+            <button onClick={() => { setAgregando(true); setAviso(null) }}
+              style={{ padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                       border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white',
+                       color: NAVY, cursor: 'pointer' }}>
+              + Agregar insumo
+            </button>
+          )}
+          <button onClick={() => exportar(filas)} disabled={!filas.length}
+            style={{ padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                     border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white',
+                     color: NAVY, cursor: filas.length ? 'pointer' : 'default',
+                     opacity: filas.length ? 1 : 0.5 }}>
+            Exportar
+          </button>
+        </div>
       </div>
+
+      {agregando && <AltaInsumo onCrear={crear} onCancelar={() => setAgregando(false)} />}
 
       {aviso && (
         <div style={{ borderRadius: '9px', padding: '10px 13px', fontSize: '13px', marginBottom: '11px',
@@ -89,7 +128,7 @@ export default function PreciosInsumos({ esJefe }) {
                       color: aviso.tipo === 'error' ? '#8A2F2E' : '#0F6E56' }}>{aviso.texto}</div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 120px 140px 130px',
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 120px 140px 200px',
                     gap: '12px', padding: '0 0 8px', fontSize: '11px', color: GRIS }}>
         <div>Insumo</div>
         <div style={{ textAlign: 'right' }}>Precio</div>
@@ -101,7 +140,7 @@ export default function PreciosInsumos({ esJefe }) {
         <div style={{ fontSize: '13px', color: GRIS, padding: '14px 0' }}>Cargando...</div>
       ) : filas.map(f => (
         <div key={f.id} style={{ borderBottom: '0.5px solid #f1f6f9', padding: '9px 0' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 120px 140px 130px',
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px,1fr) 120px 140px 200px',
                         gap: '12px', alignItems: 'center' }}>
             <span style={{ fontWeight: 500, fontSize: '14px' }}>
               {f.nombre}
@@ -115,12 +154,20 @@ export default function PreciosInsumos({ esJefe }) {
               {f.precio ? corta(f.precio.vigente_desde) : '—'}
             </span>
             {esJefe ? (
-              <button onClick={() => setEditando(editando === f.id ? null : f.id)}
-                style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px',
-                         padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px',
-                         color: NAVY, cursor: 'pointer' }}>
-                {editando === f.id ? 'Cancelar' : 'Cambiar'}
-              </button>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button onClick={() => setEditando(editando === f.id ? null : f.id)}
+                  style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                           padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px',
+                           color: NAVY, cursor: 'pointer' }}>
+                  {editando === f.id ? 'Cancelar' : 'Cambiar'}
+                </button>
+                <button onClick={() => quitar(f)}
+                  style={{ background: 'white', border: '0.5px solid #e7cccb', borderRadius: '9px',
+                           padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px',
+                           color: ROJO, cursor: 'pointer' }}>
+                  Quitar
+                </button>
+              </div>
             ) : <span />}
           </div>
           {editando === f.id && (
@@ -178,6 +225,78 @@ function Forma({ actual, onGuardar }) {
     </div>
   )
 }
+
+// Alta de un insumo nuevo. La unidad de consumo es como se aplica en las
+// piscinas. Si se compra distinto (un tambor que trae 25000 gramos, una
+// botella de 5 litros), se marca la casilla y se dice cuanto trae cada uno.
+function AltaInsumo({ onCrear, onCancelar }) {
+  const [nombre, setNombre] = useState('')
+  const [unidad, setUnidad] = useState('kg')
+  const [compraDistinta, setCompraDistinta] = useState(false)
+  const [unidadCompra, setUnidadCompra] = useState('')
+  const [factor, setFactor] = useState('')
+  const [enviando, setEnviando] = useState(false)
+
+  const listo = nombre.trim() && (!compraDistinta || (unidadCompra.trim() && num(factor) > 0))
+
+  return (
+    <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '15px', marginBottom: '14px' }}>
+      <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Nombre del insumo</div>
+          <input autoFocus value={nombre} onChange={e => setNombre(e.target.value)}
+            placeholder="Ej. Cal agrícola" style={{ ...campo, width: '220px' }} />
+        </div>
+        <div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Cómo se aplica</div>
+          <select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...campo, width: '150px' }}>
+            {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '14px 0 0', fontSize: '13px', cursor: 'pointer' }}>
+        <input type="checkbox" checked={compraDistinta} onChange={e => setCompraDistinta(e.target.checked)} />
+        Se compra en otra presentación (tambor, botella, bidón…)
+      </label>
+
+      {compraDistinta && (
+        <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '10px' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Se compra por</div>
+            <input value={unidadCompra} onChange={e => setUnidadCompra(e.target.value)}
+              placeholder="Ej. tambor" style={{ ...campo, width: '150px' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Cada uno trae ({UNIDAD[unidad]})</div>
+            <input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)}
+              placeholder="Ej. 25000" style={{ ...campo, width: '150px', textAlign: 'right' }} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '9px', marginTop: '15px' }}>
+        <button disabled={!listo || enviando}
+          onClick={async () => { setEnviando(true)
+            await onCrear({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? num(factor) : 1 })
+            setEnviando(false) }}
+          style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px',
+                   padding: '10px 20px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
+                   cursor: (!listo || enviando) ? 'default' : 'pointer', opacity: (!listo || enviando) ? 0.45 : 1 }}>
+          {enviando ? 'Agregando...' : 'Agregar'}
+        </button>
+        <button onClick={onCancelar}
+          style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                   padding: '10px 18px', fontFamily: 'inherit', fontSize: '14px', color: NAVY, cursor: 'pointer' }}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const campo = { padding: '9px 11px', fontSize: '14px', fontFamily: 'inherit',
+                border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
 
 function exportar(filas) {
   const cab = ['Insumo', 'Unidad', 'Precio', 'Vigente desde']
