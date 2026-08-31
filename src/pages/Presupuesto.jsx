@@ -28,6 +28,8 @@ export default function Presupuesto({ finca, esJefe }) {
   const [mes, setMes] = useState(Number(hoy.slice(5, 7)))
   const [monto, setMonto] = useState(null)
   const [gasto, setGasto] = useState(0)
+  const [historico, setHistorico] = useState([])
+  const [resumen, setResumen] = useState([])
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
   const [nuevo, setNuevo] = useState('')
@@ -35,17 +37,22 @@ export default function Presupuesto({ finca, esJefe }) {
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: p }, { data: g }] = await Promise.all([
+    const [{ data: p }, { data: g }, { data: h }, { data: r }] = await Promise.all([
       supabase.schema('produccion').from('presupuesto_insumo')
         .select('monto').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle(),
       supabase.schema('produccion').rpc('fn_gasto_insumos_mes',
         { p_finca: finca.id, p_anio: anio, p_mes: mes }),
+      supabase.schema('produccion').rpc('fn_presupuesto_historico', { p_finca: finca.id }),
+      esJefe ? supabase.schema('produccion').rpc('fn_presupuesto_resumen', { p_anio: anio, p_mes: mes })
+             : Promise.resolve({ data: [] }),
     ])
     setMonto(p ? Number(p.monto) : null)
     setGasto(Number(g) || 0)
+    setHistorico((h || []).filter(x => !(x.anio === anio && x.mes === mes)))
+    setResumen(r || [])
     setNuevo(p ? String(p.monto) : '')
     setCargando(false)
-  }, [finca.id, anio, mes])
+  }, [finca.id, anio, mes, esJefe])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -167,6 +174,63 @@ export default function Presupuesto({ finca, esJefe }) {
             )}
           </div>
         </Caja>
+      )}
+
+      {/* Resumen de las fincas del mes: solo el jefe. */}
+      {esJefe && resumen.length > 0 && (
+        <div style={{ marginTop: '22px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 3px' }}>
+            Todas las fincas en {MESES[mes - 1]}
+          </h3>
+          <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 11px' }}>Cómo va cada una este mes.</p>
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
+            {resumen.map(r => {
+              const p = r.monto ? Math.min(100, Math.round(Number(r.gasto) / Number(r.monto) * 100)) : null
+              const col = p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
+              return (
+                <div key={r.finca_id} style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 150px 54px',
+                        gap: '12px', alignItems: 'center', padding: '10px 15px', fontSize: '13px',
+                        borderBottom: '0.5px solid #f1f6f9' }}>
+                  <span>{r.finca}
+                    <span style={{ fontSize: '11px', color: GRIS, marginLeft: '7px' }}>
+                      {r.zona === 'puna' ? 'Puna' : 'Jambelí'}</span>
+                  </span>
+                  <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                    {r.monto ? dinero(r.monto) : 'sin fijar'}</span>
+                  <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(r.gasto)}</span>
+                  <span style={{ height: '8px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
+                    {p !== null && <i style={{ display: 'block', height: '100%', width: p + '%', background: col, borderRadius: '20px' }} />}
+                  </span>
+                  <span style={{ textAlign: 'right', fontWeight: 500, color: col, fontVariantNumeric: 'tabular-nums' }}>
+                    {p === null ? '—' : p + '%'}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Meses anteriores de esta finca. */}
+      {historico.length > 0 && (
+        <div style={{ marginTop: '22px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 11px' }}>Meses anteriores</h3>
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
+            {historico.map(x => {
+              const p = x.monto ? Math.min(100, Math.round(Number(x.gasto) / Number(x.monto) * 100)) : null
+              const col = p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
+              return (
+                <div key={`${x.anio}-${x.mes}`} style={{ display: 'flex', justifyContent: 'space-between',
+                        alignItems: 'center', padding: '10px 15px', fontSize: '13px',
+                        borderBottom: '0.5px solid #f1f6f9' }}>
+                  <span style={{ minWidth: '130px' }}>{MESES[x.mes - 1]} {x.anio}</span>
+                  {esJefe && <span style={{ color: GRIS }}>Presupuesto {dinero(x.monto)} · Gastado {dinero(x.gasto)}</span>}
+                  <span style={{ fontWeight: 500, color: col, fontVariantNumeric: 'tabular-nums' }}>
+                    {p === null ? '—' : p + '%'}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
       )}
     </div>
   )
