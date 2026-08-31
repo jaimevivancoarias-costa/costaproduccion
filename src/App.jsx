@@ -130,6 +130,18 @@ export default function App() {
         </div>
       </div>
 
+      {/* Barra de presupuesto: una sola franja de ancho completo, debajo
+          de la barra azul. Aqui no se puede duplicar. No en Resumen ni
+          en la propia pagina de Presupuesto. */}
+      {modulo !== 'resumen' && modulo !== 'presupuesto' && (
+        <PresupuestoBarra
+          key={finca.id}
+          finca={finca}
+          esJefe={esJefe}
+          onIr={() => { setVerInsumos(true); setModulo('reportes') }}
+        />
+      )}
+
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
         <nav style={{ width: navColapsado ? '58px' : '178px', flexShrink: 0, background: 'white',
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
@@ -170,16 +182,6 @@ export default function App() {
         </nav>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Barra de presupuesto fija, arriba de cada pagina. No en
-              Resumen (varias fincas) ni en Presupuesto (ya es la pagina). */}
-          {modulo !== 'resumen' && modulo !== 'presupuesto' && (
-            <PresupuestoBarra
-              key={finca.id}
-              finca={finca}
-              esJefe={esJefe}
-              onIr={() => { setVerInsumos(true); setModulo('reportes') }}
-            />
-          )}
           {modulo === 'presupuesto' ? (
             <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
               <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 4px' }}>
