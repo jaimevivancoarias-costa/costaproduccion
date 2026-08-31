@@ -34,6 +34,7 @@ export default function Presupuesto({ finca, esJefe }) {
   const [editando, setEditando] = useState(false)
   const [nuevo, setNuevo] = useState('')
   const [aviso, setAviso] = useState(null)
+  const [zonaFiltro, setZonaFiltro] = useState('todas')
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -177,14 +178,30 @@ export default function Presupuesto({ finca, esJefe }) {
       )}
 
       {/* Resumen de las fincas del mes: solo el jefe. */}
-      {esJefe && resumen.length > 0 && (
+      {esJefe && resumen.length > 0 && (() => {
+        const vis = resumen.filter(r => zonaFiltro === 'todas' || r.zona === zonaFiltro)
+        const tMonto = vis.reduce((t, r) => t + Number(r.monto || 0), 0)
+        const tGasto = vis.reduce((t, r) => t + Number(r.gasto || 0), 0)
+        const tPct = tMonto ? Math.min(100, Math.round(tGasto / tMonto * 100)) : null
+        const colT = tPct === null ? GRIS : tPct >= 100 ? ROJO : tPct >= 85 ? AMBAR : VERDE
+        return (
         <div style={{ marginTop: '22px' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 3px' }}>
-            Todas las fincas en {MESES[mes - 1]}
-          </h3>
-          <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 11px' }}>Cómo va cada una este mes.</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '11px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>
+              Todas las fincas en {MESES[mes - 1]}
+            </h3>
+            <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+              {[['todas', 'Todas'], ['jambeli', 'Jambelí'], ['puna', 'Puna']].map(([z, t]) => (
+                <button key={z} onClick={() => setZonaFiltro(z)} style={{
+                  padding: '6px 12px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
+                  cursor: 'pointer', border: '0.5px solid ' + (zonaFiltro === z ? '#9cc4e8' : BORDE),
+                  background: zonaFiltro === z ? '#E6F1FB' : 'white',
+                  color: zonaFiltro === z ? AZUL : NAVY, fontWeight: zonaFiltro === z ? 500 : 400 }}>{t}</button>
+              ))}
+            </div>
+          </div>
           <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
-            {resumen.map(r => {
+            {vis.map(r => {
               const p = r.monto ? Math.min(100, Math.round(Number(r.gasto) / Number(r.monto) * 100)) : null
               const col = p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
               return (
@@ -206,9 +223,20 @@ export default function Presupuesto({ finca, esJefe }) {
                 </div>
               )
             })}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 150px 54px', gap: '12px',
+                    alignItems: 'center', padding: '12px 15px', fontSize: '13px', fontWeight: 500,
+                    background: '#fafcfd' }}>
+              <span>Total del grupo</span>
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(tMonto)}</span>
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(tGasto)}</span>
+              <span />
+              <span style={{ textAlign: 'right', color: colT, fontVariantNumeric: 'tabular-nums' }}>
+                {tPct === null ? '—' : tPct + '%'}</span>
+            </div>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Meses anteriores de esta finca. */}
       {historico.length > 0 && (
