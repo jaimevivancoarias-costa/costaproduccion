@@ -235,7 +235,7 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
                       {r.finca}
                       <div style={{ fontSize: '11px', color: GRIS, marginTop: '1px', fontVariantNumeric: 'tabular-nums' }}>
                         {Number(r.monto)
-                          ? `Ppto ${dinero(r.monto)} · gastó ${dinero(r.gasto)}`
+                          ? `Ppto ${dinero(r.monto)} · Gastó ${dinero(r.gasto)}`
                           : 'Sin presupuesto'}
                       </div>
                     </span>
