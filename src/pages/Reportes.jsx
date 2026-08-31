@@ -281,12 +281,29 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 }
 
 // ---------------------------------------------------------------------
-// Reporte de cierre de ciclo (cosechas): una fila por ciclo cosechado.
+// Reporte de cierre de ciclo (cosechas): una fila por ciclo cosechado,
+// que se abre para ver el detalle de balanceado e insumos.
 // ---------------------------------------------------------------------
 function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
+  const [abierto, setAbierto] = useState(null)
+  const [detalle, setDetalle] = useState({})   // cicloId -> { lineas, eventos }
+
   const grid = esJefe
-    ? '150px 100px 60px 110px 110px 110px 120px 110px'
+    ? '150px 100px 56px 100px 100px 100px 110px 100px'
     : '1fr 110px 70px 130px'
+
+  async function abrir(c) {
+    if (abierto === c.ciclo_id) { setAbierto(null); return }
+    setAbierto(c.ciclo_id)
+    if (!detalle[c.ciclo_id]) {
+      const [{ data: ln }, { data: ev }] = await Promise.all([
+        supabase.schema('produccion').rpc('fn_ciclo_lineas', { p_ciclo: c.ciclo_id }),
+        supabase.schema('produccion').from('evento')
+          .select('tipo, fecha, libras').eq('ciclo_id', c.ciclo_id).order('fecha'),
+      ])
+      setDetalle(d => ({ ...d, [c.ciclo_id]: { lineas: ln || [], eventos: ev || [] } }))
+    }
+  }
 
   if (cargando) return <Caja><Centro>Cargando...</Centro></Caja>
   if (!cosechas.length) return <Caja><Centro>No hay cosechas en este rango.</Centro></Caja>
@@ -295,14 +312,19 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
   const totalCosto = cosechas.reduce((t, c) => t + Number(c.costo_total || 0), 0)
 
   return (
-    <>
-      {esJefe && (
-        <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
-          <Kpi titulo="Cosechas" valor={String(cosechas.length)} />
-          <Kpi titulo="Libras producidas" valor={miles(totalLibras)} />
-          <Kpi titulo="Costo total" valor={dinero(totalCosto)} />
-        </div>
-      )}
+    <div id="reporte-cosechas">
+      <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px',
+                    alignItems: 'center' }}>
+        <Kpi titulo="Cosechas" valor={String(cosechas.length)} />
+        <Kpi titulo="Libras producidas" valor={miles(totalLibras)} />
+        {esJefe && <Kpi titulo="Costo total" valor={dinero(totalCosto)} />}
+        {esJefe && (
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }} className="ocultar-impresion">
+            <button onClick={() => exportarCosechasCSV(cosechas)} style={btnExp}>Excel</button>
+            <button onClick={() => window.print()} style={btnExp}>PDF</button>
+          </div>
+        )}
+      </div>
 
       <Caja>
         <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '11px 16px',
@@ -318,32 +340,50 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
           {esJefe && <span style={{ textAlign: 'right' }}>Costo / lb</span>}
         </div>
 
-        {cosechas.map(c => (
-          <div key={c.ciclo_id} style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px',
-                  padding: '10px 16px', alignItems: 'center', fontSize: '13px',
-                  borderBottom: '0.5px solid #f1f6f9' }}>
-            <span>
-              {c.piscina}
-              {todasFincas && <div style={{ fontSize: '11px', color: GRIS }}>{c.finca}</div>}
-              <div style={{ fontSize: '11px', color: GRIS }}>preparación desde {corta(c.prep_desde)}</div>
-            </span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{corta(c.fecha_cosecha)}</span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{c.dias}</span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-                           color: Number(c.libras) ? NAVY : '#BA7517' }}>
-              {Number(c.libras) ? miles(c.libras) : 'pendiente'}
-            </span>
-            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-              {dinero(c.costo_balanceado)}</span>}
-            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-              {dinero(c.costo_insumos)}</span>}
-            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-              {dinero(c.costo_total)}</span>}
-            {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500,
-                                      color: c.costo_por_libra ? AZUL : '#BA7517' }}>
-              {c.costo_por_libra ? dinero(c.costo_por_libra) : '—'}</span>}
-          </div>
-        ))}
+        {cosechas.map(c => {
+          const ab = abierto === c.ciclo_id
+          const d = detalle[c.ciclo_id]
+          return (
+            <div key={c.ciclo_id}>
+              <div onClick={() => abrir(c)}
+                   style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px',
+                            padding: '10px 16px', alignItems: 'center', fontSize: '13px',
+                            borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer',
+                            background: ab ? '#f6f9fb' : 'white' }}>
+                <span>
+                  {ab ? '▾ ' : '▸ '}{c.piscina}
+                  {todasFincas && <div style={{ fontSize: '11px', color: GRIS }}>{c.finca}</div>}
+                  <div style={{ fontSize: '11px', color: GRIS }}>preparación desde {corta(c.prep_desde)}</div>
+                </span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{corta(c.fecha_cosecha)}</span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{c.dias}</span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                               color: Number(c.libras) ? NAVY : '#BA7517' }}>
+                  {Number(c.libras) ? miles(c.libras) : 'pendiente'}
+                </span>
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+                  {dinero(c.costo_balanceado)}</span>}
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+                  {dinero(c.costo_insumos)}</span>}
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                  {dinero(c.costo_total)}</span>}
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500,
+                                          color: c.costo_por_libra ? AZUL : '#BA7517' }}>
+                  {c.costo_por_libra ? dinero(c.costo_por_libra) : '—'}</span>}
+              </div>
+
+              {ab && (
+                <div style={{ padding: '14px 18px', background: '#fbfcfd', borderBottom: '0.5px solid #f1f6f9' }}>
+                  {!d ? (
+                    <div style={{ fontSize: '13px', color: GRIS }}>Cargando detalle...</div>
+                  ) : (
+                    <DetalleCiclo d={d} esJefe={esJefe} />
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </Caja>
 
       {cosechas.some(c => !c.costo_por_libra) && (
@@ -351,9 +391,78 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
           Las cosechas sin costo por libra todavía no tienen las libras cargadas (llegan de la empacadora).
         </div>
       )}
-    </>
+    </div>
   )
 }
+
+// El detalle de un ciclo: que paso (eventos) y que se consumio.
+function DetalleCiclo({ d, esJefe }) {
+  const bal = d.lineas.filter(l => l.tipo === 'balanceado')
+  const ins = d.lineas.filter(l => l.tipo === 'insumo')
+  return (
+    <div style={{ display: 'flex', gap: '26px', flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 220px' }}>
+        <Sub>Qué pasó</Sub>
+        {d.eventos.length === 0 ? <Vac>Sin eventos</Vac> : d.eventos.map((e, i) => (
+          <Rengl key={i} a={cap(e.tipo)} b={corta(e.fecha) + (e.libras ? ` · ${miles(e.libras)} lb` : '')} />
+        ))}
+      </div>
+      <div style={{ flex: '1 1 280px' }}>
+        <Sub>Balanceado</Sub>
+        {bal.length === 0 ? <Vac>Sin balanceado</Vac> : bal.map((l, i) => (
+          <Rengl key={i} a={l.item}
+            b={`${miles(l.cantidad)} lb${esJefe ? ' · ' + dinero(l.costo) : ''}`}
+            nota={`${corta(l.desde)} a ${corta(l.hasta)}`} />
+        ))}
+      </div>
+      <div style={{ flex: '1 1 280px' }}>
+        <Sub>Insumos</Sub>
+        {ins.length === 0 ? <Vac>Sin insumos</Vac> : ins.map((l, i) => (
+          <Rengl key={i} a={l.item}
+            b={`${miles(l.cantidad)} ${l.unidad}${esJefe ? ' · ' + dinero(l.costo) : ''}`}
+            nota={`${corta(l.desde)} a ${corta(l.hasta)}`} />
+        ))}
+      </div>
+    </div>
+  )
+}
+function Sub({ children }) {
+  return <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
+                       marginBottom: '7px', fontWeight: 500 }}>{children}</div>
+}
+function Vac({ children }) { return <div style={{ fontSize: '12px', color: '#c3d0db' }}>{children}</div> }
+function Rengl({ a, b, nota }) {
+  return (
+    <div style={{ marginBottom: '6px', fontSize: '13px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+        <span>{a}</span>
+        <span style={{ fontVariantNumeric: 'tabular-nums', color: NAVY, whiteSpace: 'nowrap' }}>{b}</span>
+      </div>
+      {nota && <div style={{ fontSize: '11px', color: GRIS }}>{nota}</div>}
+    </div>
+  )
+}
+function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s }
+
+function exportarCosechasCSV(cosechas) {
+  const cab = ['Piscina', 'Finca', 'Cosecha', 'Preparación desde', 'Días', 'Libras',
+               'Costo balanceado', 'Costo insumos', 'Costo total', 'Costo por libra']
+  const filas = cosechas.map(c => [
+    c.piscina, c.finca, c.fecha_cosecha, c.prep_desde, c.dias, c.libras || '',
+    Number(c.costo_balanceado).toFixed(2), Number(c.costo_insumos).toFixed(2),
+    Number(c.costo_total).toFixed(2), c.costo_por_libra ? Number(c.costo_por_libra).toFixed(4) : '',
+  ])
+  const csv = [cab, ...filas].map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'reporte_cosechas.csv'; a.click()
+  URL.revokeObjectURL(url)
+}
+
+const btnExp = { padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                 border: '0.5px solid #dce6ef', borderRadius: '9px', background: 'white',
+                 color: '#022847', cursor: 'pointer' }
 
 // Descarga un CSV que Excel abre directo. No es para volver a trabajar
 // ahi, es para mandarle un cuadro a quien no entra al sistema.
