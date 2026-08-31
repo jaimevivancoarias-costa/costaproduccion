@@ -25,6 +25,7 @@ const primeroDelMes = iso => iso.slice(0, 8) + '01'
 export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [filas, setFilas] = useState([])
   const [cosechas, setCosechas] = useState([])
+  const [proceso, setProceso] = useState([])
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -43,14 +44,18 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     setCargando(true); setAviso(null)
     try {
       const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
-      const [{ data: cons, error: e1 }, { data: cos, error: e2 }] = await Promise.all([
+      const [{ data: cons, error: e1 }, { data: cos, error: e2 }, { data: proc, error: e3 }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_reporte_consumo', p),
         supabase.schema('produccion').rpc('fn_reporte_cosechas', p),
+        supabase.schema('produccion').rpc('fn_reporte_en_proceso',
+          { p_finca: todasFincas ? null : finca.id, p_hasta: hasta }),
       ])
       if (e1) throw e1
       if (e2) throw e2
+      if (e3) throw e3
       setFilas(cons || [])
       setCosechas(cos || [])
+      setProceso(proc || [])
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -118,6 +123,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 10px' }}>Reportes</h2>
         <div style={{ display: 'flex', gap: '7px' }}>
           <Chip on={kind === 'consumo'} onClick={() => setKind('consumo')}>Consumo</Chip>
+          <Chip on={kind === 'proceso'} onClick={() => setKind('proceso')}>En proceso</Chip>
           <Chip on={kind === 'cosechas'} onClick={() => setKind('cosechas')}>Cosechas</Chip>
         </div>
       </div>
@@ -172,6 +178,11 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       {kind === 'cosechas' && (
         <ReporteCosechas cosechas={cosechas} cargando={cargando} esJefe={esJefe}
                          todasFincas={todasFincas} />
+      )}
+
+      {kind === 'proceso' && (
+        <ReporteEnProceso proceso={proceso} cargando={cargando} esJefe={esJefe}
+                          todasFincas={todasFincas} />
       )}
 
       {kind === 'consumo' && <>
@@ -393,6 +404,117 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
       )}
     </div>
   )
+}
+
+// ---------------------------------------------------------------------
+// Piscinas en proceso: una fila por ciclo abierto, expandible.
+// ---------------------------------------------------------------------
+function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
+  const [abierto, setAbierto] = useState(null)
+  const [detalle, setDetalle] = useState({})
+  const grid = esJefe ? '1.5fr 56px 96px 96px 106px 96px' : '1fr 70px'
+
+  async function abrir(c) {
+    if (abierto === c.ciclo_id) { setAbierto(null); return }
+    setAbierto(c.ciclo_id)
+    if (!detalle[c.ciclo_id]) {
+      const [{ data: ln }, { data: ev }] = await Promise.all([
+        supabase.schema('produccion').rpc('fn_ciclo_lineas', { p_ciclo: c.ciclo_id }),
+        supabase.schema('produccion').from('evento')
+          .select('tipo, fecha, libras').eq('ciclo_id', c.ciclo_id).order('fecha'),
+      ])
+      setDetalle(d => ({ ...d, [c.ciclo_id]: { lineas: ln || [], eventos: ev || [] } }))
+    }
+  }
+
+  if (cargando) return <Caja><Centro>Cargando...</Centro></Caja>
+  if (!proceso.length) return <Caja><Centro>No hay piscinas en proceso.</Centro></Caja>
+
+  const totalHa = proceso.reduce((t, c) => t + Number(c.hectareas || 0), 0)
+  const totalCosto = proceso.reduce((t, c) => t + Number(c.costo_total || 0), 0)
+
+  return (
+    <div id="reporte-proceso">
+      <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px', alignItems: 'center' }}>
+        <Kpi titulo="Piscinas activas" valor={String(proceso.length)} />
+        <Kpi titulo="Hectáreas" valor={miles(totalHa)} />
+        {esJefe && <Kpi titulo="Costo acumulado" valor={dinero(totalCosto)} />}
+        {esJefe && (
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+            <button onClick={() => exportarProcesoCSV(proceso)} style={btnExp}>Excel</button>
+            <button onClick={() => window.print()} style={btnExp}>PDF</button>
+          </div>
+        )}
+      </div>
+
+      <Caja>
+        <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '11px 16px',
+                      fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '0.03em',
+                      borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+          <span>Piscina{todasFincas ? ' / finca' : ''}</span>
+          <span style={{ textAlign: 'right' }}>Días</span>
+          {esJefe && <span style={{ textAlign: 'right' }}>Balanceado</span>}
+          {esJefe && <span style={{ textAlign: 'right' }}>Insumos</span>}
+          {esJefe && <span style={{ textAlign: 'right' }}>Total</span>}
+          {esJefe && <span style={{ textAlign: 'right' }}>$ / ha</span>}
+        </div>
+
+        {proceso.map(c => {
+          const ab = abierto === c.ciclo_id
+          const d = detalle[c.ciclo_id]
+          return (
+            <div key={c.ciclo_id}>
+              <div onClick={() => abrir(c)}
+                   style={{ display: 'grid', gridTemplateColumns: grid, gap: '10px', padding: '10px 16px',
+                            alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9',
+                            cursor: 'pointer', background: ab ? '#f6f9fb' : 'white' }}>
+                <span>
+                  {ab ? '▾ ' : '▸ '}{c.piscina}
+                  {c.origen && <span style={{ background: '#E6F1FB', color: AZUL, fontSize: '10px',
+                    padding: '2px 7px', borderRadius: '20px', marginLeft: '6px' }}>
+                    viene de {c.origen}{c.origen_pct ? ` · ${c.origen_pct}%` : ''}</span>}
+                  {todasFincas && <div style={{ fontSize: '11px', color: GRIS }}>{c.finca}</div>}
+                  <div style={{ fontSize: '11px', color: GRIS }}>
+                    siembra {corta(c.fecha_siembra)} · {Number(c.hectareas).toFixed(2)} ha</div>
+                </span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{c.dias}</span>
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+                  {dinero(c.costo_balanceado)}</span>}
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+                  {dinero(c.costo_insumos)}</span>}
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                  {dinero(c.costo_total)}</span>}
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+                  {dinero(c.costo_por_ha)}</span>}
+              </div>
+              {ab && (
+                <div style={{ padding: '14px 18px', background: '#fbfcfd', borderBottom: '0.5px solid #f1f6f9' }}>
+                  {!d ? <div style={{ fontSize: '13px', color: GRIS }}>Cargando detalle...</div>
+                      : <DetalleCiclo d={d} esJefe={esJefe} />}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </Caja>
+    </div>
+  )
+}
+
+function exportarProcesoCSV(proceso) {
+  const cab = ['Piscina', 'Finca', 'Viene de', 'Siembra', 'Hectáreas', 'Días',
+               'Costo balanceado', 'Costo insumos', 'Costo total', 'Costo por ha']
+  const filas = proceso.map(c => [
+    c.piscina, c.finca, c.origen || '', c.fecha_siembra, c.hectareas, c.dias,
+    Number(c.costo_balanceado).toFixed(2), Number(c.costo_insumos).toFixed(2),
+    Number(c.costo_total).toFixed(2), Number(c.costo_por_ha).toFixed(2),
+  ])
+  const csv = [cab, ...filas].map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'piscinas_en_proceso.csv'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 // El detalle de un ciclo: que paso (eventos) y que se consumio.
