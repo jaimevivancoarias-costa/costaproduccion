@@ -19,6 +19,10 @@ const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
 export default function PresupuestoBarra({ finca, esJefe, onIr }) {
   const [monto, setMonto] = useState(null)
   const [gasto, setGasto] = useState(0)
+  // Colapsada o no. Se recuerda entre paginas y recargas.
+  const [colapsada, setColapsada] = useState(() => {
+    try { return localStorage.getItem('ppto_barra') === 'colapsada' } catch { return false }
+  })
   const hoy = hoyISO()
   const anio = Number(hoy.slice(0, 4))
   const mes = Number(hoy.slice(5, 7))
@@ -38,6 +42,23 @@ export default function PresupuestoBarra({ finca, esJefe, onIr }) {
     return () => { vivo = false }
   }, [finca.id, anio, mes])
 
+  function alternar() {
+    const v = !colapsada
+    setColapsada(v)
+    try { localStorage.setItem('ppto_barra', v ? 'colapsada' : 'abierta') } catch (e) { /* sin storage */ }
+  }
+
+  // Colapsada: solo una pestañita para volver a abrirla.
+  if (colapsada) {
+    return (
+      <div style={{ ...barra, padding: '4px 1.4rem', justifyContent: 'flex-end' }}>
+        <button onClick={alternar} style={{ ...enlace, color: GRIS }}>
+          Mostrar presupuesto ▾
+        </button>
+      </div>
+    )
+  }
+
   if (monto === null) {
     // Sin presupuesto fijado: una linea discreta, sin barra.
     return (
@@ -48,6 +69,7 @@ export default function PresupuestoBarra({ finca, esJefe, onIr }) {
             <button onClick={onIr} style={enlace}>Fijarlo</button>
           )}
         </span>
+        <button onClick={alternar} title="Ocultar" style={{ ...enlace, marginLeft: 'auto', color: GRIS }}>▴</button>
       </div>
     )
   }
@@ -73,6 +95,7 @@ export default function PresupuestoBarra({ finca, esJefe, onIr }) {
           : (pct >= 100 ? 'Presupuesto pasado' : `Queda ${100 - pct}%`)}
       </span>
       <button onClick={onIr} style={enlace}>Ver</button>
+      <button onClick={alternar} title="Ocultar" style={{ ...enlace, color: GRIS }}>▴</button>
     </div>
   )
 }
