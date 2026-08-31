@@ -229,9 +229,16 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {vis.map(r => (
                   <div key={r.finca_id} onClick={() => onIrReporte && onIrReporte(r.finca_id)}
-                       style={{ display: 'grid', gridTemplateColumns: '110px 1fr 46px', gap: '10px',
+                       style={{ display: 'grid', gridTemplateColumns: '150px 1fr 46px', gap: '10px',
                                 alignItems: 'center', fontSize: '13px', cursor: 'pointer' }}>
-                    <span>{r.finca}</span>
+                    <span>
+                      {r.finca}
+                      <div style={{ fontSize: '11px', color: GRIS, marginTop: '1px', fontVariantNumeric: 'tabular-nums' }}>
+                        {Number(r.monto)
+                          ? `Ppto ${dinero(r.monto)} · gastó ${dinero(r.gasto)}`
+                          : 'Sin presupuesto'}
+                      </div>
+                    </span>
                     <span style={{ height: '9px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
                       {r.pct !== null && <i style={{ display: 'block', height: '100%', width: r.pct + '%',
                         background: colDe(r.pctReal), borderRadius: '20px' }} />}
