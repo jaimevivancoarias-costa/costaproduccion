@@ -94,7 +94,7 @@ export default function PresupuestoBarra({ finca, esJefe, onIr }) {
           ? `Queda ${dinero(monto - gasto)}`
           : (pct >= 100 ? 'Presupuesto pasado' : `Queda ${100 - pct}%`)}
       </span>
-      <button onClick={onIr} style={enlace}>Ver</button>
+      {onIr && <button onClick={onIr} style={enlace}>Ver</button>}
       <button onClick={alternar} title="Ocultar" style={{ ...enlace, color: GRIS }}>▴</button>
     </div>
   )
