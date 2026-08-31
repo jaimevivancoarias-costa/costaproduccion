@@ -56,8 +56,14 @@ export function AuthProvider({ children }) {
       .select('rol, finca_id, finca:finca_id (id, codigo, nombre, activa, zona)')
 
     const filas = data || []
+    // El jefe GLOBAL (rol 'jefe', finca_id nulo) ve las 11 fincas.
     const jefe = filas.some(f => f.rol === 'jefe')
-    setEsJefe(jefe)
+    // La contadora se comporta como jefe (ve todo, dolares, precios,
+    // reportes) pero SOLO en las fincas que tiene asignadas. Por eso
+    // "verTodo" prende los mismos permisos de pantalla que el jefe, pero
+    // la lista de fincas se queda acotada (rama de abajo).
+    const contadora = filas.some(f => f.rol === 'contador')
+    setEsJefe(jefe || contadora)
 
     // El jefe se registra con una sola fila de finca_id nulo, que
     // significa "todas". Sus fincas se leen del catalogo, asi una finca
