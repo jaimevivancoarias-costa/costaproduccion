@@ -22,6 +22,16 @@ const UNIDAD = {
 
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
+// Lunes y domingo de la semana pasada, para el reporte de los lunes.
+function semanaPasada() {
+  const d = new Date(hoyISO() + 'T12:00:00')
+  const dia = (d.getDay() + 6) % 7          // 0 = lunes
+  const lunEsta = new Date(d); lunEsta.setDate(d.getDate() - dia)
+  const lun = new Date(lunEsta); lun.setDate(lunEsta.getDate() - 7)
+  const dom = new Date(lun); dom.setDate(lun.getDate() + 6)
+  return [lun.toISOString().slice(0, 10), dom.toISOString().slice(0, 10)]
+}
+
 export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [filas, setFilas] = useState([])
   const [cosechas, setCosechas] = useState([])
@@ -140,7 +150,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           <input type="date" value={hasta} min={desde} max={hoyISO()}
                  onChange={e => { setHasta(e.target.value); setCicloSel('') }} style={entrada} />
         </Campo>
-        <div style={{ display: 'flex', gap: '6px' }}>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          <Chip pequeno onClick={() => { const [l, d] = semanaPasada(); setDesde(l); setHasta(d); setCicloSel('') }}>
+            Semana pasada
+          </Chip>
           <Chip pequeno onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()); setCicloSel('') }}>
             Este mes
           </Chip>
