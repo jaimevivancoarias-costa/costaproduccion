@@ -26,12 +26,12 @@ const GRIS = '#7d8fa0'
 
 const MODULOS = [
   { id: 'presupuesto', nombre: 'Presupuesto',    icono: 'moneda' },
-  { id: 'resumen',    nombre: 'Resumen',        icono: 'grid' },
+  { id: 'resumen',    nombre: 'Resumen',        icono: 'grid', soloJefe: true },
   { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
-  { id: 'costos',     nombre: 'Costos',         icono: 'moneda' },
-  { id: 'reportes',   nombre: 'Reportes',       icono: 'barras' },
+  { id: 'costos',     nombre: 'Costos',         icono: 'moneda', soloJefe: true },
+  { id: 'reportes',   nombre: 'Reportes',       icono: 'barras', soloJefe: true },
   // El historial es la bitacora de cambios: herramienta de supervision.
   { id: 'historial',  nombre: 'Historial',      icono: 'reloj', soloJefe: true },
 ]
@@ -86,6 +86,14 @@ export default function App() {
     const f = fincas.find(x => x.id === fincaId)
     if (f && f.zona && f.zona !== zona) setZona(f.zona)
   }, [fincaId, fincas]) // eslint-disable-line
+
+  // Red de seguridad: si por alguna navegacion interna un bodeguero
+  // termina en un modulo que no le toca (Resumen, Costos, Reportes),
+  // lo devolvemos a Registro diario.
+  useEffect(() => {
+    const m = MODULOS.find(x => x.id === modulo)
+    if (m && m.soloJefe && !esJefe) setModulo('registro')
+  }, [modulo, esJefe])
 
   if (cargando) return <Centro>Cargando...</Centro>
   if (!user) return <IrAlPortal />
@@ -176,7 +184,7 @@ export default function App() {
           key={finca.id}
           finca={finca}
           esJefe={esJefe}
-          onIr={() => { setVerInsumos(true); setModulo('reportes') }}
+          onIr={esJefe ? () => { setVerInsumos(true); setModulo('reportes') } : undefined}
         />
       )}
 
