@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento } from './DialogoEvento'
 import {
@@ -44,6 +44,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [acumulado, setAcumulado] = useState({})   // cicloId -> libras desde la siembra
   const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
   const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
+  const [editSiembra, setEditSiembra] = useState(null)  // piscinaId en edicion de larva/gramaje
   const refs = useRef({})
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
@@ -332,6 +333,19 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     fechas.reduce((s, f) => s + (cel(p, f)?.sinAlimentacion ? 0 : (num(cel(p, f)?.libras) || 0)), 0)
   const totalDia = f =>
     piscinas.reduce((s, p) => s + (cel(p, f)?.sinAlimentacion ? 0 : (num(cel(p, f)?.libras) || 0)), 0)
+  async function guardarSiembra(p, larva, gramaje) {
+    const lv = larva === '' || larva == null ? null : Math.round(Number(String(larva).replace(/[.,]/g, '')))
+    const gr = gramaje === '' || gramaje == null ? null : Number(String(gramaje).replace(',', '.'))
+    if (lv !== null && !(lv > 0)) { setAviso({ tipo: 'error', texto: 'La larva debe ser un número mayor que cero.' }); return }
+    if (gr !== null && !(gr >= 0)) { setAviso({ tipo: 'error', texto: 'El gramaje no es válido.' }); return }
+    const { error } = await supabase.schema('produccion').from('ciclo')
+      .update({ cantidad_larva: lv, gramaje_precria: gr }).eq('id', p.cicloId)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setEditSiembra(null)
+    setAviso({ tipo: 'ok', texto: `Siembra de ${p.nombre} actualizada.` })
+    await cargar(true)
+  }
+
   const totalSemana = useMemo(
     () => piscinas.reduce((s, p) => s + totalPiscina(p), 0), [piscinas, celdas, fechas])
   const hectareas = useMemo(
@@ -719,8 +733,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                 </div>
 
                 {visibles.map((p, i) => (
-                  <div key={p.piscinaId} style={{ display: 'grid', gridTemplateColumns: COLS,
-                        borderBottom: '0.5px solid #f1f6f9', alignItems: 'center' }}>
+                  <Fragment key={p.piscinaId}>
+                  <div style={{ display: 'grid', gridTemplateColumns: COLS,
+                        borderBottom: editSiembra === p.piscinaId ? 'none' : '0.5px solid #f1f6f9', alignItems: 'center' }}>
                     <Td pegado alineado="left">
                       <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
                       <div style={{ fontSize: '11px', color: GRIS }}>
@@ -728,9 +743,22 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         {p.tipo === 'precria' && ' · precría'}
                       </div>
                     </Td>
-                    <Td><span style={{ color: GRIS, fontSize: '12px' }}>
-                      {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
-                    </span></Td>
+                    <Td>
+                      <span style={{ color: GRIS, fontSize: '12px' }}>{p.fechaSiembra ? corta(p.fechaSiembra) : '—'}</span>
+                      {p.cicloId && (
+                        <div style={{ fontSize: '10px', color: GRIS, marginTop: '2px', lineHeight: 1.4 }}>
+                          {p.larva ? miles(p.larva) + ' larva' : 'sin larva'}
+                          {' · '}{p.gramajePrecria != null ? p.gramajePrecria + ' g' : 'sin g'}
+                          {!soloLectura && modo === 'registrar' && (
+                            <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
+                              style={{ display: 'block', marginTop: '2px', background: 'none', border: 'none',
+                                       padding: 0, cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '10px' }}>
+                              {editSiembra === p.piscinaId ? 'cerrar' : 'editar siembra'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </Td>
                     <Td><span style={{ fontWeight: 500 }}>
                       {p.fechaSiembra ? diasCultivo(p.fechaSiembra, corteDias) : ''}
                     </span></Td>
@@ -792,6 +820,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       )
                     })()}
                   </div>
+                  {editSiembra === p.piscinaId && (
+                    <EditorSiembra p={p} onGuardar={guardarSiembra} onCancelar={() => setEditSiembra(null)} />
+                  )}
+                  </Fragment>
                 ))}
 
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
@@ -1192,6 +1224,42 @@ function Btn({ children, onClick, primario, fantasma, disabled }) {
 }
 
 const Sep = () => <span style={{ width: '1px', height: '22px', background: BORDE }} />
+
+// Editor en línea de larva y gramaje de siembra de un ciclo abierto.
+function EditorSiembra({ p, onGuardar, onCancelar }) {
+  const [larva, setLarva] = useState(p.larva != null ? String(p.larva) : '')
+  const [gramaje, setGramaje] = useState(p.gramajePrecria != null ? String(p.gramajePrecria) : '')
+  const [enviando, setEnviando] = useState(false)
+  return (
+    <div style={{ background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9',
+                  padding: '12px 16px', display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+      <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500, alignSelf: 'center' }}>
+        Siembra de {p.nombre}
+      </div>
+      <div>
+        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Larva sembrada</div>
+        <input inputMode="numeric" value={larva} onChange={e => setLarva(e.target.value)} placeholder="ej. 850000"
+          style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit', width: '150px',
+                   border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
+      </div>
+      <div>
+        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Gramaje de siembra (g)</div>
+        <input inputMode="decimal" value={gramaje} onChange={e => setGramaje(e.target.value)} placeholder="ej. 0.02"
+          style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit', width: '130px',
+                   border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
+      </div>
+      <button disabled={enviando}
+        onClick={async () => { setEnviando(true); await onGuardar(p, larva, gramaje); setEnviando(false) }}
+        style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '9px 18px',
+                 fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer', opacity: enviando ? 0.5 : 1 }}>
+        {enviando ? 'Guardando...' : 'Guardar'}
+      </button>
+      <button onClick={onCancelar}
+        style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '9px 16px',
+                 fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }}>Cancelar</button>
+    </div>
+  )
+}
 
 function TarjetaReg({ k, v }) {
   return (
