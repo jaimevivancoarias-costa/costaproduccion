@@ -282,7 +282,7 @@ export default function Inventario({ finca, esJefe }) {
       </div>
 
       {seccion === 'movimiento' ? (
-        <Ingresos finca={finca} />
+        <Ingresos finca={finca} esJefe={esJefe} />
       ) : seccion === 'precios' && esJefe ? (
         <PreciosInsumos finca={finca} esJefe={esJefe} />
       ) : (
