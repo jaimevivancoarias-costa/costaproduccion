@@ -23,7 +23,7 @@ const UNIDAD = {
   tambor: 'tambores', botella: 'botellas',
 }
 
-export default function Ingresos({ finca, esJefe }) {
+export default function Ingresos({ finca, esJefe, onCorreccion }) {
   const [modo, setModo] = useState('ingresos')   // 'ingresos' | 'pedidos'
   const [insumos, setInsumos] = useState([])
   const [ingresos, setIngresos] = useState([])
@@ -243,7 +243,9 @@ export default function Ingresos({ finca, esJefe }) {
     const { error } = await supabase.schema('produccion')
       .rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Solicitud rechazada.' }); await cargar()
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Solicitud rechazada.' })
+    await cargar()
+    if (onCorreccion) onCorreccion()
   }
 
   async function cerrarPedido(id) {
