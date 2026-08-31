@@ -176,4 +176,3 @@ const sel = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
 const boton = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                 border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY,
                 cursor: 'pointer' }
-s
