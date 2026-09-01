@@ -21,6 +21,8 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 const HOYB = '#E6F1FB'
+const miniLink = { display: 'block', margin: '3px auto 0', background: 'none', border: 'none',
+                   padding: 0, cursor: 'pointer', color: '#0D6CB0', fontFamily: 'inherit', fontSize: '9px' }
 const HOYL = '#85B7EB'
 
 export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setLunes }) {
@@ -28,6 +30,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [productos, setProductos] = useState([])
   const [celdas, setCeldas] = useState({})       // clave `${piscinaId}|${fecha}`
   const [dias, setDias] = useState({})           // estado por fecha
+  const [diasId, setDiasId] = useState({})       // id de la fila dia_registro por fecha
+  const [solReapertura, setSolReapertura] = useState([])  // solicitudes de reabrir día
   const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [modo, setModo] = useState('registrar')
   const [soloPendientes, setSoloPendientes] = useState(false)
@@ -85,7 +89,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         supabase.schema('produccion').from('producto')
           .select('id, nombre, nombre_corto').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('dia_registro')
-          .select('fecha, estado').eq('finca_id', finca.id)
+          .select('id, fecha, estado').eq('finca_id', finca.id)
           .gte('fecha', lunes).lte('fecha', domingo),
         supabase.schema('produccion').from('semana_cerrada')
           .select('id').eq('finca_id', finca.id)
@@ -156,10 +160,20 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       setLaboratorios(labs || [])
       setProductos(prods || [])
 
-      const md = {}
-      ;(dr || []).forEach(d => { md[d.fecha] = d.estado })
-      setDias(md)
+      const md = {}, mid = {}
+      ;(dr || []).forEach(d => { md[d.fecha] = d.estado; mid[d.fecha] = d.id })
+      setDias(md); setDiasId(mid)
       setSemanaCerrada(!!sc)
+
+      // Solicitudes de reapertura de día pendientes (para el panel del jefe).
+      const idsDia = Object.values(mid).filter(Boolean)
+      if (idsDia.length) {
+        const { data: sr } = await supabase.schema('produccion').from('solicitud_correccion')
+          .select('id, registro_id, valor_propuesto, motivo, estado, solicitado_en')
+          .eq('finca_id', finca.id).eq('tabla', 'dia_registro').eq('estado', 'pendiente')
+          .in('registro_id', idsDia)
+        setSolReapertura(sr || [])
+      } else { setSolReapertura([]) }
 
       const ids = lista.map(p => p.piscinaId)
       const ciclosIds = lista.filter(x => x.cicloId).map(x => x.cicloId)
@@ -245,6 +259,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     if (soloLectura || modo !== 'registrar') return false
     if (semanaCerrada) return false
     if (situacionDia(fecha, hoy) === 'futuro') return false
+    // Un día cerrado queda bloqueado hasta que se reabra. Reabierto vuelve a editarse.
+    if (dias[fecha] === 'cerrado') return false
     if (esJefe) return true
     // El bodeguero trabaja su semana entera, no solo el dia de hoy. Si
     // se le paso cerrar el viernes, el lunes tiene que poder volver.
@@ -333,6 +349,37 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     fechas.reduce((s, f) => s + (cel(p, f)?.sinAlimentacion ? 0 : (num(cel(p, f)?.libras) || 0)), 0)
   const totalDia = f =>
     piscinas.reduce((s, p) => s + (cel(p, f)?.sinAlimentacion ? 0 : (num(cel(p, f)?.libras) || 0)), 0)
+  async function reabrirDia(fecha) {
+    const id = diasId[fecha]
+    if (!id) return
+    if (!window.confirm(`¿Reabrir el ${nombreDia(fecha).toLowerCase()} ${corta(fecha)}? Vuelve a quedar editable.`)) return
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .update({ estado: 'reabierto', reabierto_en: new Date().toISOString() }).eq('id', id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar(true)
+  }
+
+  async function pedirReabrir(fecha) {
+    const id = diasId[fecha]
+    if (!id) return
+    const motivo = window.prompt('¿Por qué necesitas reabrir este día? El jefe lo revisará.')
+    if (!motivo || !motivo.trim()) return
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+      finca_id: finca.id, tabla: 'dia_registro', registro_id: id,
+      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha },
+      motivo: motivo.trim(), solicitado_por: user?.id })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Pedido enviado. El jefe lo revisará.' }); await cargar(true)
+  }
+
+  async function resolverReapertura(sol, aprobar) {
+    const { error } = await supabase.schema('produccion')
+      .rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar(true)
+  }
+
   async function guardarSiembra(p, larva, gramaje) {
     const lv = larva === '' || larva == null ? null : Math.round(Number(String(larva).replace(/[.,]/g, '')))
     const gr = gramaje === '' || gramaje == null ? null : Number(String(gramaje).replace(',', '.'))
@@ -630,6 +677,28 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         )
       })()}
 
+      {esJefe && solReapertura.length > 0 && (
+        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
+                      padding: '13px 16px', marginBottom: '12px' }}>
+          <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
+            Reaperturas por autorizar ({solReapertura.length})
+          </div>
+          {solReapertura.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', flexWrap: 'wrap', borderTop: '0.5px solid #ecd9b3', paddingTop: '9px', marginTop: '9px' }}>
+              <div style={{ fontSize: '13px' }}>
+                Reabrir el día {corta(s.valor_propuesto?.fecha)}
+                <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic' }}>Motivo: {s.motivo || '—'}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Btn onClick={() => resolverReapertura(s, true)}>Aprobar</Btn>
+                <Btn onClick={() => resolverReapertura(s, false)}>Rechazar</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
         <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
         <span style={{ ...chip, background: '#E6F1FB', borderColor: '#9cc4e8', color: AZUL, fontWeight: 500 }}>
@@ -713,6 +782,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           {est === 'cerrado' ? 'Cerrado' : est === 'reabierto' ? 'Reabierto'
                             : est === 'borrador' ? 'Borrador' : s === 'hoy' ? 'Hoy' : '—'}
                         </span>
+                        {est === 'cerrado' && !soloLectura && !semanaCerrada && (
+                          esJefe
+                            ? <button onClick={() => reabrirDia(f)} style={miniLink}>Reabrir</button>
+                            : solReapertura.some(x => x.registro_id === diasId[f])
+                              ? <span style={{ display: 'block', fontSize: '9px', color: '#BA7517', marginTop: '2px' }}>Pedido enviado</span>
+                              : <button onClick={() => pedirReabrir(f)} style={miniLink}>Pedir reabrir</button>
+                        )}
                       </Th>
                     )
                   })}
@@ -744,16 +820,22 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       </div>
                     </Td>
                     <Td>
-                      <span style={{ color: GRIS, fontSize: '12px' }}>{p.fechaSiembra ? corta(p.fechaSiembra) : '—'}</span>
+                      <span style={{ fontSize: '13px', color: NAVY, fontWeight: 500 }}>{p.fechaSiembra ? corta(p.fechaSiembra) : '—'}</span>
                       {p.cicloId && (
-                        <div style={{ fontSize: '10px', color: GRIS, marginTop: '2px', lineHeight: 1.4 }}>
-                          {p.larva ? miles(p.larva) + ' larva' : 'sin larva'}
-                          {' · '}{p.gramajePrecria != null ? p.gramajePrecria + ' g' : 'sin g'}
+                        <div style={{ marginTop: '3px', lineHeight: 1.5 }}>
+                          <div style={{ fontSize: '11px', color: GRIS }}>
+                            <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</span> larva
+                          </div>
+                          <div style={{ fontSize: '11px', color: GRIS }}>
+                            Siembra <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + ' g' : '—'}</span>
+                          </div>
                           {!soloLectura && modo === 'registrar' && (
                             <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
-                              style={{ display: 'block', marginTop: '2px', background: 'none', border: 'none',
-                                       padding: 0, cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '10px' }}>
-                              {editSiembra === p.piscinaId ? 'cerrar' : 'Editar siembra'}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', marginTop: '3px',
+                                       background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                       color: AZUL, fontFamily: 'inherit', fontSize: '10px' }}>
+                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                              {editSiembra === p.piscinaId ? 'Cerrar' : 'Editar siembra'}
                             </button>
                           )}
                         </div>
@@ -877,6 +959,16 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                 <Dato k="Total de la semana" v={miles(totalSemana)} />
               </div>
               {!soloLectura && modo === 'registrar' && !semanaCerrada && (semanaDeHoy || esJefe) && (
+                dias[hoy] === 'cerrado' ? (
+                  <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', color: GRIS }}>El día de hoy está cerrado.</span>
+                    {esJefe
+                      ? <Btn onClick={() => reabrirDia(hoy)}>Reabrir día</Btn>
+                      : solReapertura.some(x => x.registro_id === diasId[hoy])
+                        ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
+                        : <Btn onClick={() => pedirReabrir(hoy)}>Pedir reabrir</Btn>}
+                  </div>
+                ) : (
                 <div style={{ display: 'flex', gap: '9px' }}>
                   <Btn onClick={() => guardar(false)} disabled={guardando}>
                     {guardando ? 'Guardando...' : (semanaDeHoy ? 'Guardar borrador' : 'Guardar cambios')}
@@ -885,6 +977,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
                   )}
                 </div>
+                )
               )}
             </div>
           </div>
@@ -949,7 +1042,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
       <div style={{ ...cajaSinAlim, cursor: editable ? 'pointer' : 'default' }}
            onClick={() => editable && onLimpiar()}
            title={editable ? 'Clic para volver a registrar libras' : undefined}>
-        sin alimentación
+        Sin alimentación
       </div>
     )
   }
