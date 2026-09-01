@@ -23,7 +23,6 @@ const G_DOS = '150px 1fr'
 export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
   const [seccion, setSeccion] = useState('bodega')  // 'bodega' | 'ingresos' | 'precios'
   useEffect(() => { if (abrirIngresos) setSeccion('ingresos') }, [abrirIngresos])
-  useEffect(() => { if (abrirPrecios) setSeccion('precios') }, [abrirPrecios])
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
@@ -183,9 +182,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       <div style={{ display: 'flex', gap: '9px', marginBottom: '14px', flexWrap: 'wrap' }}>
         <Chip on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</Chip>
         <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</Chip>
-        {esJefe && (
-          <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>Precios</Chip>
-        )}
         {seccion === 'bodega' && !contando && !cargando && (
           <button onClick={() => setContando(true)} style={{ ...btn, marginLeft: 'auto',
             background: AZUL, color: 'white', borderColor: AZUL }}>
@@ -200,9 +196,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
       )}
 
-      {seccion === 'precios' && esJefe ? (
-        <PreciosBalanceado finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} />
-      ) : seccion === 'ingresos' ? (
+      {seccion === 'ingresos' ? (
         <IngresosBalanceado finca={finca} esJefe={esJefe} onCambio={cargar} onCorreccion={onCorreccion} />
       ) : contando ? (
         <Caja>
