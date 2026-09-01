@@ -58,7 +58,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: ps, error: eP }, { data: ins }, { data: cs }] = await Promise.all([
+      const [{ data: ps, error: eP }, { data: ins }, { data: cs }, { data: ov }] = await Promise.all([
         supabase.schema('produccion').from('piscina')
           .select('id, codigo, nombre, hectareas, tipo')
           .eq('finca_id', finca.id).eq('activa', true),
@@ -67,8 +67,13 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         supabase.schema('produccion').from('ciclo')
           .select('id, piscina_origen_id, fecha_siembra, fecha_cierre')
           .eq('finca_id', finca.id),
+        supabase.schema('produccion').from('insumo_finca')
+          .select('insumo_id, unidad').eq('finca_id', finca.id),
       ])
       if (eP) throw eP
+      // Unidad por finca: si esta finca tiene override, se usa esa.
+      const over = {}; (ov || []).forEach(x => { over[x.insumo_id] = x.unidad })
+      const insFinca = (ins || []).map(i => ({ ...i, unidad: over[i.id] || i.unidad }))
 
       const lista = (ps || []).map(p => ({
         piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
@@ -81,7 +86,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           && (!c.fecha_cierre || c.fecha_cierre >= lunes))?.id || null,
       })).sort(ordenar)
       setPiscinas(lista)
-      setInsumos(ins || [])
+      setInsumos(insFinca)
 
       const ids = lista.map(p => p.piscinaId)
       const mapa = {}
