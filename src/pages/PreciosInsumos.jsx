@@ -43,18 +43,28 @@ export default function PreciosInsumos({ finca, esJefe }) {
     // Cada finca tiene su propio precio de insumo. Traemos el de la finca
     // y el general; si la finca no tiene el suyo, se muestra el general
     // como "heredado" (es el que rige hasta que se le ponga uno propio).
-    const [{ data: ins }, { data: pr }] = await Promise.all([
+    const [{ data: ins }, { data: pr }, { data: ov }] = await Promise.all([
       supabase.schema('produccion').from('insumo')
         .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('precio_insumo')
         .select('id, insumo_id, finca_id, precio_unitario, vigente_desde')
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`).is('vigente_hasta', null),
+      // Override de unidad de ESTA finca.
+      supabase.schema('produccion').from('insumo_finca')
+        .select('insumo_id, unidad, unidad_compra, factor').eq('finca_id', finca.id),
     ])
     const propio = {}, general = {}
     ;(pr || []).forEach(x => { (x.finca_id ? propio : general)[x.insumo_id] = x })
+    const over = {}; (ov || []).forEach(x => { over[x.insumo_id] = x })
     setFilas((ins || []).map(i => {
       const p = propio[i.id] || general[i.id] || null
-      return { ...i, precio: p, heredado: !propio[i.id] && !!general[i.id] }
+      const o = over[i.id]
+      return { ...i, precio: p, heredado: !propio[i.id] && !!general[i.id],
+        // Unidad RESUELTA para esta finca (override o catálogo).
+        unidad: o?.unidad || i.unidad,
+        unidad_compra: o?.unidad_compra || i.unidad_compra,
+        factor: o?.factor != null ? Number(o.factor) : i.factor,
+        unidadPropia: !!o }
     }))
     setCargando(false)
   }, [finca.id])
@@ -77,27 +87,11 @@ export default function PreciosInsumos({ finca, esJefe }) {
   }
 
   async function guardarInsumo({ id, nombre, unidad, unidadCompra, factor }) {
-    const prev = filas.find(f => f.id === id)
-    const cambioUnidad = prev && prev.unidad !== unidad
-    if (cambioUnidad) {
-      // La función recalcula. Entre masa convierte sola; entre masa y
-      // sacos/unidad pide cuántos kilos/gramos pesa un saco.
-      let { error: eU } = await supabase.schema('produccion')
-        .rpc('fn_cambiar_unidad_insumo', { p_insumo: id, p_nueva: unidad })
-      if (eU && /FALTA_POR/.test(eU.message)) {
-        const MASA = ['gramos', 'kg', 'libras']
-        const um = MASA.includes(prev.unidad) ? prev.unidad : unidad
-        const uc = MASA.includes(prev.unidad) ? unidad : prev.unidad
-        const singular = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
-        const resp = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${singular} de "${prev.nombre}"?`)
-        if (resp === null) return
-        const por = numDec(resp)
-        if (!(por > 0)) { setAviso({ tipo: 'error', texto: 'Pon un número mayor que cero.' }); return }
-        ;({ error: eU } = await supabase.schema('produccion')
-          .rpc('fn_cambiar_unidad_insumo', { p_insumo: id, p_nueva: unidad, p_por: por }))
-      }
-      if (eU) { setAviso({ tipo: 'error', texto: eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta el dato de equivalencia.') }); return }
-      // La función ya fijó unidad y factor; aquí solo el nombre.
+    const prev = filas.find(f => f.id === id)   // valores RESUELTOS para esta finca
+    const compra = (unidadCompra || unidad).trim()
+
+    // 1) El NOMBRE es del catálogo (compartido). Se actualiza si cambió.
+    if (nombre.trim() !== prev.nombre) {
       const { error } = await supabase.schema('produccion').from('insumo')
         .update({ nombre: nombre.trim() }).eq('id', id)
       if (error) {
@@ -105,22 +99,43 @@ export default function PreciosInsumos({ finca, esJefe }) {
         setAviso({ tipo: 'error', texto: dup ? 'Ya existe un insumo con ese nombre.' : 'No se pudo guardar. ' + error.message })
         return
       }
+    }
+
+    // 2) La UNIDAD es POR FINCA. Si cambió, la función convierte los datos
+    //    de esta finca (y pide kilos/saco si aplica).
+    if (prev.unidad !== unidad) {
+      let { error: eU } = await supabase.schema('produccion')
+        .rpc('fn_cambiar_unidad_insumo_finca', { p_insumo: id, p_finca: finca.id, p_nueva: unidad })
+      if (eU && /FALTA_POR/.test(eU.message)) {
+        const MASA = ['gramos', 'kg', 'libras']
+        const um = MASA.includes(prev.unidad) ? prev.unidad : unidad
+        const uc = MASA.includes(prev.unidad) ? unidad : prev.unidad
+        const singular = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
+        const resp = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${singular} de "${prev.nombre}" en ${String(finca.nombre).toUpperCase()}?`)
+        if (resp === null) return
+        const por = numDec(resp)
+        if (!(por > 0)) { setAviso({ tipo: 'error', texto: 'Pon un número mayor que cero.' }); return }
+        ;({ error: eU } = await supabase.schema('produccion')
+          .rpc('fn_cambiar_unidad_insumo_finca', { p_insumo: id, p_finca: finca.id, p_nueva: unidad, p_por: por }))
+      }
+      if (eU) { setAviso({ tipo: 'error', texto: eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta el dato de equivalencia.') }); return }
       setEditandoInsumo(null)
-      setAviso({ tipo: 'ok', texto: 'Insumo actualizado. La unidad se cambió y los números se recalcularon.' })
+      setAviso({ tipo: 'ok', texto: `Unidad de ${String(finca.nombre).toUpperCase()} actualizada y recalculada.` })
       await cargar()
       return
     }
-    const { error } = await supabase.schema('produccion').from('insumo')
-      .update({ nombre: nombre.trim(), unidad,
-                unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1 })
-      .eq('id', id)
-    if (error) {
-      const dup = /duplicate|unique/i.test(error.message)
-      setAviso({ tipo: 'error', texto: dup ? 'Ya existe un insumo con ese nombre.' : 'No se pudo guardar. ' + error.message })
-      return
+
+    // 3) Misma unidad, pero cambió la presentación de compra o el factor:
+    //    guardar el override de ESTA finca (si difiere del catálogo/actual).
+    if (compra !== prev.unidad_compra || (factor || 1) !== prev.factor) {
+      const { error } = await supabase.schema('produccion').from('insumo_finca')
+        .upsert({ insumo_id: id, finca_id: finca.id, unidad,
+                  unidad_compra: compra, factor: factor || 1 }, { onConflict: 'insumo_id,finca_id' })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
     }
+
     setEditandoInsumo(null)
-    setAviso({ tipo: 'ok', texto: 'Insumo actualizado. Cambia en todas las fincas.' })
+    setAviso({ tipo: 'ok', texto: 'Insumo actualizado.' })
     await cargar()
   }
 
@@ -431,7 +446,7 @@ function EditarInsumo({ actual, onGuardar, onCancelar }) {
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
-        Editar insumo · el cambio vale para todas las fincas
+        Editar insumo · el nombre es de todas; la unidad es de esta finca
       </div>
       <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
