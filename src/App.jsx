@@ -96,12 +96,20 @@ export default function App() {
   const cargarCorr = useCallback(async () => {
     if (!esJefe) { setCorrPend([]); return }
     const { data } = await supabase.schema('produccion').from('solicitud_correccion')
-      .select('finca_id, tabla, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+      .select('finca_id, tabla, valor_propuesto, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+    // Agrupar por finca + destino exacto (dónde se aprueba).
     const g = {}
     ;(data || []).forEach(r => {
-      const k = r.finca_id
-      g[k] = g[k] || { finca_id: k, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0, tablas: new Set() }
-      g[k].n++; g[k].tablas.add(r.tabla)
+      let destino, etiqueta
+      if (r.tabla === 'ingreso_insumo') { destino = 'inv-ins'; etiqueta = 'Corrección de insumos' }
+      else if (r.tabla === 'ingreso_balanceado') { destino = 'inv-bal'; etiqueta = 'Corrección de balanceado' }
+      else if (r.tabla === 'dia_registro') {
+        if (r.valor_propuesto?.ambito === 'insumos') { destino = 'reg-ins'; etiqueta = 'Reapertura de insumos' }
+        else { destino = 'reg-bal'; etiqueta = 'Reapertura de balanceado' }
+      } else return
+      const k = r.finca_id + '|' + destino
+      g[k] = g[k] || { finca_id: r.finca_id, nombre: r.finca?.nombre || '', zona: r.finca?.zona, destino, etiqueta, n: 0 }
+      g[k].n++
     })
     setCorrPend(Object.values(g))
   }, [esJefe])
@@ -110,17 +118,10 @@ export default function App() {
   function irACorreccion(c) {
     setFincaId(c.finca_id)
     if (c.zona) setZona(c.zona)
-    // Si solo hay reaperturas de día, llevar a Registro diario; si hay
-    // correcciones de ingreso, a Inventario.
-    const t = c.tablas || new Set()
-    const soloDias = t.has('dia_registro') && !t.has('ingreso_insumo') && !t.has('ingreso_balanceado')
-    if (soloDias) {
-      setModulo('registro'); setPanelReg('balanceado')
-    } else {
-      // Si hay corrección de balanceado y no de insumo, abrir la pestaña Balanceado.
-      const bal = t.has('ingreso_balanceado') && !t.has('ingreso_insumo')
-      setModulo('inventario'); setPanelInv(bal ? 'balanceado' : 'insumos'); setPedirIngresos(n => n + 1)
-    }
+    if (c.destino === 'reg-bal') { setModulo('registro'); setPanelReg('balanceado') }
+    else if (c.destino === 'reg-ins') { setModulo('registro'); setPanelReg('insumos') }
+    else if (c.destino === 'inv-bal') { setModulo('inventario'); setPanelInv('balanceado'); setPedirIngresos(n => n + 1) }
+    else { setModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1) }
   }
 
   // Red de seguridad: si por alguna navegacion interna un bodeguero
@@ -392,14 +393,17 @@ function Campana({ corrPend, onIr }) {
               <div style={{ padding: '18px 15px', fontSize: '13px', color: '#7d8fa0', textAlign: 'center' }}>
                 No hay correcciones pendientes.
               </div>
-            ) : corrPend.map(c => (
-              <button key={c.finca_id} onClick={() => { setAbierto(false); onIr(c) }}
+            ) : corrPend.map((c, i) => (
+              <button key={i} onClick={() => { setAbierto(false); onIr(c) }}
                 style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                          gap: '10px', padding: '11px 15px', background: 'white', border: 'none',
                          borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer', fontFamily: 'inherit',
                          textAlign: 'left' }}>
-                <span style={{ fontSize: '13px', fontWeight: 500, color: NAVY }}>
-                  {String(c.nombre).toUpperCase()}
+                <span>
+                  <span style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: NAVY }}>
+                    {String(c.nombre).toUpperCase()}
+                  </span>
+                  <span style={{ display: 'block', fontSize: '11px', color: '#7d8fa0' }}>{c.etiqueta}</span>
                 </span>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ background: '#FAEEDA', color: '#854F0B', borderRadius: '20px',
