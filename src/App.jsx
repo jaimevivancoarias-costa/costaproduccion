@@ -13,6 +13,7 @@ import Reportes from './pages/Reportes'
 import PresupuestoBarra from './pages/PresupuestoBarra'
 import Presupuesto from './pages/Presupuesto'
 import Historial from './pages/Historial'
+import Catalogo from './pages/Catalogo'
 import EnConstruccion from './pages/EnConstruccion'
 
 // Navegacion de dos niveles (regla 9): la finca vive arriba como
@@ -31,6 +32,7 @@ const MODULOS = [
   { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
+  { id: 'catalogo',   nombre: 'Catálogo',       icono: 'caja', soloJefeGlobal: true },
   { id: 'costos',     nombre: 'Costos',         icono: 'moneda', soloJefe: true },
   { id: 'reportes',   nombre: 'Reportes',       icono: 'barras', soloJefe: true },
   // El historial es la bitacora de cambios: herramienta de supervision.
@@ -94,6 +96,8 @@ export default function App() {
   const [corrPend, setCorrPend] = useState([])
   const [pedirIngresos, setPedirIngresos] = useState(0)
   const [pedirPrecios, setPedirPrecios] = useState(0)
+  const [catTab, setCatTab] = useState('insumos')
+  const [catNonce, setCatNonce] = useState(0)
   const cargarCorr = useCallback(async () => {
     if (!esJefe) { setCorrPend([]); return }
     const { data } = await supabase.schema('produccion').from('solicitud_correccion')
@@ -125,8 +129,8 @@ export default function App() {
     if (c.destino === 'reg-bal') { setModulo('registro'); setPanelReg('balanceado') }
     else if (c.destino === 'reg-ins') { setModulo('registro'); setPanelReg('insumos') }
     else if (c.destino === 'inv-bal') { setModulo('inventario'); setPanelInv('balanceado'); setPedirIngresos(n => n + 1) }
-    else if (c.destino === 'cat-ins') { setModulo('inventario'); setPanelInv('insumos'); setPedirPrecios(n => n + 1) }
-    else if (c.destino === 'cat-bal') { setModulo('inventario'); setPanelInv('balanceado'); setPedirPrecios(n => n + 1) }
+    else if (c.destino === 'cat-ins') { setCatTab('insumos'); setCatNonce(n => n + 1); setModulo('catalogo') }
+    else if (c.destino === 'cat-bal') { setCatTab('balanceados'); setCatNonce(n => n + 1); setModulo('catalogo') }
     else { setModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1) }
   }
 
@@ -135,8 +139,8 @@ export default function App() {
   // lo devolvemos a Registro diario.
   useEffect(() => {
     const m = MODULOS.find(x => x.id === modulo)
-    if (m && m.soloJefe && !esJefe) setModulo('registro')
-  }, [modulo, esJefe])
+    if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) setModulo('registro')
+  }, [modulo, esJefe, esJefeGlobal])
 
   if (cargando) return <Centro>Cargando...</Centro>
   if (!user) return <IrAlPortal />
@@ -237,7 +241,7 @@ export default function App() {
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
                       padding: '1.1rem 0.7rem', transition: 'width .12s',
                       display: 'flex', flexDirection: 'column' }}>
-          {MODULOS.filter(m => !m.soloJefe || esJefe).map(m => {
+          {MODULOS.filter(m => (!m.soloJefe || esJefe) && (!m.soloJefeGlobal || esJefeGlobal)).map(m => {
             const activo = m.id === modulo
             return (
               <button
@@ -349,6 +353,8 @@ export default function App() {
                 ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
                 : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />}
             </div>
+          ) : modulo === 'catalogo' ? (
+            <Catalogo key={catNonce} esJefeGlobal={esJefeGlobal} tabInicial={catTab} />
           ) : modulo === 'reportes' ? (
             <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
           ) : modulo === 'historial' ? (
