@@ -83,7 +83,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }] = await Promise.all([
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_insumo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_insumo',
@@ -98,13 +98,16 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
         supabase.schema('produccion').from('insumo').select('id, factor').eq('activo', true),
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
           { p_finca: finca.id, p_hasta: alDia }),
+        supabase.schema('produccion').from('insumo_finca')
+          .select('insumo_id, factor').eq('finca_id', finca.id),
       ])
       if (eS) throw eS
 
       // El factor convierte el precio (por unidad de consumo) a precio
-      // por unidad de compra, que es en la que se muestra el inventario.
+      // por unidad de compra. Se resuelve por finca (override o catálogo).
       const factor = {}
       ;(ins || []).forEach(x => { factor[x.id] = Number(x.factor) || 1 })
+      ;(ovFactor || []).forEach(x => { factor[x.insumo_id] = Number(x.factor) || 1 })
 
       // El precio de la finca le gana al general. Se guarda ya por
       // unidad de compra: precio del catalogo por el factor.
