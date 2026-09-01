@@ -20,8 +20,9 @@ const G_MOV_J = '1.3fr repeat(7, 1fr)'
 const G_MOV_B = '1.3fr repeat(6, 1fr)'
 const G_DOS = '150px 1fr'
 
-export default function InventarioBalanceado({ finca, esJefe }) {
+export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onCorreccion }) {
   const [seccion, setSeccion] = useState('bodega')  // 'bodega' | 'ingresos'
+  useEffect(() => { if (abrirIngresos) setSeccion('ingresos') }, [abrirIngresos])
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
@@ -169,7 +170,7 @@ export default function InventarioBalanceado({ finca, esJefe }) {
       {seccion === 'precios' && esJefe ? (
         <PreciosBalanceado finca={finca} esJefe={esJefe} />
       ) : seccion === 'ingresos' ? (
-        <IngresosBalanceado finca={finca} onCambio={cargar} />
+        <IngresosBalanceado finca={finca} esJefe={esJefe} onCambio={cargar} onCorreccion={onCorreccion} />
       ) : contando ? (
         <Caja>
           <div style={{ padding: '15px 16px', borderBottom: '0.5px solid ' + BORDE, display: 'flex',
@@ -348,7 +349,7 @@ export default function InventarioBalanceado({ finca, esJefe }) {
 }
 
 // Ingresos de balanceado con guía.
-function IngresosBalanceado({ finca, onCambio }) {
+function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   const [productos, setProductos] = useState([])
   const [lista, setLista] = useState([])
   const [nuevo, setNuevo] = useState(false)
@@ -356,20 +357,41 @@ function IngresosBalanceado({ finca, onCambio }) {
   const [guia, setGuia] = useState(''); const [prov, setProv] = useState('')
   const [lineas, setLineas] = useState([{ productoId: '', cantidad: '' }])
   const [aviso, setAviso] = useState(null)
+  const [solicitudes, setSolicitudes] = useState([])
+  const [userId, setUserId] = useState(null)
+  const [editando, setEditando] = useState(null)
 
   const cargar = useCallback(async () => {
-    const [{ data: pr }, { data: g }] = await Promise.all([
+    const [{ data: pr }, { data: g }, { data: sol }, { data: auth }] = await Promise.all([
       supabase.schema('produccion').from('producto').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('ingreso_balanceado')
         .select('id, fecha, numero_guia, proveedor, ingreso_balanceado_linea(producto_id, cantidad)')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
+      supabase.schema('produccion').from('solicitud_correccion')
+        .select('id, registro_id, valor_propuesto, motivo, estado')
+        .eq('finca_id', finca.id).eq('tabla', 'ingreso_balanceado').eq('estado', 'pendiente'),
+      supabase.auth.getUser(),
     ])
     setProductos(pr || []); setLista(g || [])
+    setSolicitudes(sol || []); setUserId(auth?.user?.id || null)
   }, [finca.id])
   useEffect(() => { cargar() }, [cargar])
 
   const nombre = id => productos.find(p => p.id === id)?.nombre || ''
   const validas = lineas.filter(l => l.productoId && num(l.cantidad))
+
+  async function borrarJefe(g) {
+    if (!window.confirm('¿Borrar este ingreso? Se resta de la bodega.')) return
+    const { error } = await supabase.schema('produccion').from('ingreso_balanceado').delete().eq('id', g.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Ingreso borrado.' }); await cargar(); onCambio && onCambio()
+  }
+  async function resolver(sol, aprobar) {
+    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Solicitud rechazada.' })
+    await cargar(); onCambio && onCambio(); onCorreccion && onCorreccion()
+  }
 
   async function guardar() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Agrega al menos una línea.' }); return }
@@ -387,6 +409,33 @@ function IngresosBalanceado({ finca, onCambio }) {
     <div>
       {aviso && <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
         background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE', color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>}
+
+      {solicitudes.length > 0 && (
+        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
+          <div style={{ fontWeight: 500 }}>{esJefe ? 'Correcciones por autorizar' : 'Correcciones pendientes'} ({solicitudes.length})</div>
+          {solicitudes.map(s => {
+            const vp = s.valor_propuesto || {}
+            return (
+              <div key={s.id} style={{ borderTop: '0.5px solid #ecd9b3', paddingTop: '10px', marginTop: '10px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 500 }}>{vp.borrar ? 'Pide borrar el ingreso' : 'Propone cambios en el ingreso'}</div>
+                {!vp.borrar && (
+                  <div style={{ fontSize: '12px', color: GRIS, marginTop: '4px' }}>
+                    {corta(vp.fecha)} · {vp.numero_guia ? ('Guía ' + vp.numero_guia) : 'Sin guía'}{vp.proveedor ? (' · ' + vp.proveedor) : ''}
+                    <div>{(vp.lineas || []).map((l, i) => <span key={i}>{nombre(l.producto_id)}: {miles(l.cantidad)} sacos{i < vp.lineas.length - 1 ? '  ·  ' : ''}</span>)}</div>
+                  </div>
+                )}
+                <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '4px' }}>Motivo: {s.motivo || '—'}</div>
+                {esJefe && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '9px' }}>
+                    <button onClick={() => resolver(s, true)} style={btn}>Aprobar</button>
+                    <button onClick={() => resolver(s, false)} style={{ ...btn, color: ROJO, borderColor: '#e7cccb' }}>Rechazar</button>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {!nuevo && <button onClick={() => setNuevo(true)} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, marginBottom: '12px' }}>Registrar ingreso</button>}
 
@@ -419,10 +468,28 @@ function IngresosBalanceado({ finca, onCambio }) {
 
       {lista.length === 0 ? (
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay ingresos. Cuando llegue balanceado, regístralo con su guía.</div></Caja>
-      ) : lista.map(g => (
+      ) : lista.map(g => {
+        const solPend = solicitudes.find(s => s.registro_id === g.id)
+        return (
         <div key={g.id} style={{ ...cajaS, padding: '15px 17px', marginBottom: '10px' }}>
-          <div style={{ fontWeight: 500 }}>{corta(g.fecha)}</div>
-          <div style={{ fontSize: '12px', color: GRIS }}>{g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}{g.proveedor ? ` · ${g.proveedor}` : ''}</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontWeight: 500 }}>{corta(g.fecha)}</div>
+              <div style={{ fontSize: '12px', color: GRIS }}>{g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}{g.proveedor ? ` · ${g.proveedor}` : ''}</div>
+            </div>
+            <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start' }}>
+              {solPend ? (
+                <span style={{ fontSize: '11px', fontWeight: 500, padding: '4px 11px', borderRadius: '20px', background: '#FAEEDA', color: AMBAR, height: 'fit-content' }}>Corrección pendiente</span>
+              ) : editando === g.id ? null : esJefe ? (
+                <>
+                  <button onClick={() => setEditando(g.id)} style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Editar</button>
+                  <button onClick={() => borrarJefe(g)} style={{ ...btn, padding: '6px 11px', fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
+                </>
+              ) : (
+                <button onClick={() => setEditando(g.id)} style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Solicitar corrección</button>
+              )}
+            </div>
+          </div>
           <div style={{ marginTop: '9px', borderTop: '0.5px solid #f1f6f9', paddingTop: '8px' }}>
             {(g.ingreso_balanceado_linea || []).map((l, i) => (
               <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0' }}>
@@ -430,8 +497,95 @@ function IngresosBalanceado({ finca, onCambio }) {
               </div>
             ))}
           </div>
+          {editando === g.id && (
+            <EditorIngBal g={g} productos={productos} esJefe={esJefe} finca={finca} userId={userId}
+              onHecho={async (msg) => { setEditando(null); await cargar(); onCambio && onCambio(); setAviso({ tipo: 'ok', texto: msg }) }}
+              onCancelar={() => setEditando(null)} setAviso={setAviso} />
+          )}
+        </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// Editor de un ingreso de balanceado: el jefe guarda directo, el bodeguero pide.
+function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar, setAviso }) {
+  const [fecha, setFecha] = useState(g.fecha)
+  const [guia, setGuia] = useState(g.numero_guia || '')
+  const [prov, setProv] = useState(g.proveedor || '')
+  const [lineas, setLineas] = useState((g.ingreso_balanceado_linea || []).map(l => ({ productoId: l.producto_id, cantidad: String(l.cantidad) })))
+  const [motivo, setMotivo] = useState('')
+  const [enviando, setEnviando] = useState(false)
+  const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
+  const validas = lineas.filter(l => l.productoId && num(l.cantidad))
+
+  async function guardarJefe() {
+    if (!validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
+    setEnviando(true)
+    const { error } = await supabase.schema('produccion').from('ingreso_balanceado')
+      .update({ fecha, numero_guia: guia || null, proveedor: prov || null }).eq('id', g.id)
+    if (error) { setEnviando(false); setAviso({ tipo: 'error', texto: error.message }); return }
+    await supabase.schema('produccion').from('ingreso_balanceado_linea').delete().eq('ingreso_id', g.id)
+    const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
+      .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: num(l.cantidad) })))
+    setEnviando(false)
+    if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
+    onHecho('Ingreso actualizado.')
+  }
+  async function enviarSolicitud(borrar) {
+    if (!motivo.trim()) { setAviso({ tipo: 'error', texto: 'Escribe el motivo de la corrección.' }); return }
+    if (!borrar && !validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
+    setEnviando(true)
+    const anterior = { fecha: g.fecha, numero_guia: g.numero_guia, proveedor: g.proveedor,
+      lineas: (g.ingreso_balanceado_linea || []).map(l => ({ producto_id: l.producto_id, cantidad: Number(l.cantidad) })) }
+    const propuesto = borrar ? { borrar: true }
+      : { borrar: false, fecha, numero_guia: guia || null, proveedor: prov || null,
+          lineas: validas.map(l => ({ producto_id: l.productoId, cantidad: num(l.cantidad) })) }
+    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+      finca_id: finca.id, tabla: 'ingreso_balanceado', registro_id: g.id,
+      valor_anterior: anterior, valor_propuesto: propuesto, motivo: motivo.trim(), solicitado_por: userId })
+    setEnviando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+    onHecho(borrar ? 'Solicitud de borrado enviada.' : 'Solicitud enviada. El jefe la revisará.')
+  }
+
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '10px', padding: '14px', marginTop: '11px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '10px' }}>{esJefe ? 'Editar ingreso' : 'Proponer corrección'}</div>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <Campo label="Fecha"><input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={inp} /></Campo>
+        <Campo label="Número de guía"><input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={inp} /></Campo>
+        <Campo label="Proveedor"><input value={prov} placeholder="Opcional" onChange={e => setProv(e.target.value)} style={inp} /></Campo>
+      </div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Balanceados (en sacos)</div>
+      {lineas.map((l, i) => (
+        <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '7px' }}>
+          <select value={l.productoId} onChange={e => setLinea(i, 'productoId', e.target.value)} style={{ ...inp, flex: 1 }}>
+            <option value="">Elegir balanceado</option>
+            {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+          <input inputMode="decimal" value={l.cantidad} placeholder="Sacos" onChange={e => setLinea(i, 'cantidad', e.target.value)} style={{ ...inp, width: '150px' }} />
+          {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
         </div>
       ))}
+      <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ otra línea</button>
+      {!esJefe && (
+        <div style={{ marginTop: '10px' }}>
+          <Campo label="Motivo de la corrección"><input value={motivo} placeholder="Por qué se corrige — lo verá el jefe" onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%' }} /></Campo>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px', flexWrap: 'wrap' }}>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+        {esJefe ? (
+          <button onClick={guardarJefe} disabled={enviando} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: enviando ? 0.6 : 1 }}>{enviando ? 'Guardando...' : 'Guardar cambios'}</button>
+        ) : (
+          <>
+            <button onClick={() => enviarSolicitud(true)} style={{ ...btn, color: ROJO, borderColor: '#e7cccb' }}>Solicitar borrado</button>
+            <button onClick={() => enviarSolicitud(false)} disabled={enviando} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: enviando ? 0.6 : 1 }}>{enviando ? 'Enviando...' : 'Enviar solicitud'}</button>
+          </>
+        )}
+      </div>
     </div>
   )
 }
