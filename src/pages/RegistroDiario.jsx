@@ -89,7 +89,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         supabase.schema('produccion').from('producto')
           .select('id, nombre, nombre_corto').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('dia_registro')
-          .select('id, fecha, estado').eq('finca_id', finca.id)
+          .select('id, fecha, estado').eq('finca_id', finca.id).eq('ambito', 'balanceado')
           .gte('fecha', lunes).lte('fecha', domingo),
         supabase.schema('produccion').from('semana_cerrada')
           .select('id').eq('finca_id', finca.id)
@@ -460,9 +460,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       if (semanaDeHoy) {
         const estado = cerrarDia ? 'cerrado' : 'borrador'
         const { error: e2 } = await supabase.schema('produccion').from('dia_registro')
-          .upsert({ finca_id: finca.id, fecha: hoy, estado,
+          .upsert({ finca_id: finca.id, fecha: hoy, ambito: 'balanceado', estado,
                     ...(cerrarDia ? { cerrado_en: new Date().toISOString() } : {}) },
-                  { onConflict: 'finca_id,fecha' })
+                  { onConflict: 'finca_id,fecha,ambito' })
         if (e2) throw e2
       }
 
@@ -506,9 +506,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       `Es tu firma de que ese día quedó revisado. Queda registrado en la bitácora.`)) return
 
     const { error } = await supabase.schema('produccion').from('dia_registro')
-      .upsert(faltan.map(f => ({ finca_id: finca.id, fecha: f, estado: 'cerrado',
+      .upsert(faltan.map(f => ({ finca_id: finca.id, fecha: f, ambito: 'balanceado', estado: 'cerrado',
                                  cerrado_en: new Date().toISOString() })),
-              { onConflict: 'finca_id,fecha' })
+              { onConflict: 'finca_id,fecha,ambito' })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     setAviso({ tipo: 'ok', texto: `${faltan.length} días cerrados` })
     await cargar(true)
