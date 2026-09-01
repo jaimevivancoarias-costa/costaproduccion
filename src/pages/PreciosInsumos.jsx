@@ -31,6 +31,12 @@ export default function PreciosInsumos({ finca, esJefe }) {
   const [editando, setEditando] = useState(null)
   const [editandoInsumo, setEditandoInsumo] = useState(null)
   const [agregando, setAgregando] = useState(false)
+  const [fincas, setFincas] = useState([])   // fincas que puedo gestionar
+
+  useEffect(() => {
+    supabase.schema('produccion').from('finca').select('id, nombre').eq('activa', true).order('nombre')
+      .then(({ data }) => setFincas(data || []))
+  }, [])
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -94,22 +100,23 @@ export default function PreciosInsumos({ finca, esJefe }) {
     await cargar()
   }
 
-  async function guardarPrecio({ insumoId, nuevo, desde }) {
-    // Precio propio de ESTA finca. El precio general no se toca.
-    // 1) Borra cualquier precio de esta finca que arranque en o después
-    //    de `desde` (evita el choque de rangos si ya se puso hoy).
-    await supabase.schema('produccion').from('precio_insumo')
-      .delete().eq('insumo_id', insumoId).eq('finca_id', finca.id).gte('vigente_desde', desde)
-    // 2) Cierra el que estaba vigente antes de `desde`.
-    await supabase.schema('produccion').from('precio_insumo')
-      .update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq('insumo_id', insumoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', desde)
-    // 3) Abre el nuevo.
-    const { error } = await supabase.schema('produccion').from('precio_insumo')
-      .insert({ insumo_id: insumoId, finca_id: finca.id, precio_unitario: nuevo, vigente_desde: desde })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+  async function guardarPrecio({ insumoId, nuevo, desde, fincaIds }) {
+    // Se aplica a cada finca elegida. Para cada una: borra precios que
+    // arranquen en o después de `desde`, cierra el vigente anterior, abre
+    // el nuevo. El precio general (finca nula) no se toca.
+    const ids = (fincaIds && fincaIds.length) ? fincaIds : [finca.id]
+    for (const fid of ids) {
+      await supabase.schema('produccion').from('precio_insumo')
+        .delete().eq('insumo_id', insumoId).eq('finca_id', fid).gte('vigente_desde', desde)
+      await supabase.schema('produccion').from('precio_insumo')
+        .update({ vigente_hasta: sumarDias(desde, -1) })
+        .eq('insumo_id', insumoId).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', desde)
+      const { error } = await supabase.schema('produccion').from('precio_insumo')
+        .insert({ insumo_id: insumoId, finca_id: fid, precio_unitario: nuevo, vigente_desde: desde })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    }
     setEditando(null)
-    setAviso({ tipo: 'ok', texto: 'Precio actualizado para ' + String(finca.nombre) + '.' })
+    setAviso({ tipo: 'ok', texto: ids.length === 1 ? 'Precio actualizado.' : `Precio actualizado en ${ids.length} fincas.` })
     await cargar()
   }
 
@@ -203,7 +210,7 @@ export default function PreciosInsumos({ finca, esJefe }) {
             ) : <span />}
           </div>
           {editando === f.id && (
-            <Forma actual={f} onGuardar={guardarPrecio} />
+            <Forma actual={f} onGuardar={guardarPrecio} fincas={fincas} fincaActual={finca} />
           )}
           {editandoInsumo === f.id && (
             <EditarInsumo actual={f} onGuardar={guardarInsumo} onCancelar={() => setEditandoInsumo(null)} />
@@ -214,13 +221,16 @@ export default function PreciosInsumos({ finca, esJefe }) {
   )
 }
 
-function Forma({ actual, onGuardar }) {
+function Forma({ actual, onGuardar, fincas, fincaActual }) {
   const [nuevo, setNuevo] = useState(actual.precio ? String(actual.precio.precio_unitario) : '')
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
+  const [sel, setSel] = useState([fincaActual.id])   // fincas donde aplicar
   const v = numDec(nuevo)
   const anterior = actual.precio ? Number(actual.precio.precio_unitario) : null
-  const cambio = v && v !== anterior
+  const cambio = v && v !== anterior && sel.length > 0
+  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
@@ -242,7 +252,7 @@ function Forma({ actual, onGuardar }) {
         </div>
         <button disabled={!cambio || enviando}
           onClick={async () => { setEnviando(true)
-            await onGuardar({ insumoId: actual.id, nuevo: v, desde }); setEnviando(false) }}
+            await onGuardar({ insumoId: actual.id, nuevo: v, desde, fincaIds: sel }); setEnviando(false) }}
           style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px',
                    padding: '10px 20px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
                    cursor: (!cambio || enviando) ? 'default' : 'pointer',
@@ -250,11 +260,49 @@ function Forma({ actual, onGuardar }) {
           {enviando ? 'Guardando...' : 'Aplicar'}
         </button>
       </div>
+
+      {otras.length > 0 && (
+        <div style={{ marginTop: '12px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>
+            Aplicar este mismo precio a:
+          </div>
+          <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px',
+                           background: '#e7eef5', borderRadius: '20px', padding: '5px 11px', color: NAVY }}>
+              {String(fincaActual.nombre).toUpperCase()} (esta)
+            </span>
+            {otras.map(f => {
+              const on = sel.includes(f.id)
+              return (
+                <button key={f.id} onClick={() => toggle(f.id)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px',
+                           borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
+                           border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
+                           background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
+                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
+                </button>
+              )
+            })}
+          </div>
+          {sel.length > 1 && (
+            <button onClick={() => setSel([fincaActual.id])}
+              style={{ marginTop: '7px', background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                       color: GRIS, fontFamily: 'inherit', fontSize: '11px' }}>Solo esta finca</button>
+          )}
+          {otras.length > 1 && (
+            <button onClick={() => setSel([fincaActual.id, ...otras.map(f => f.id)])}
+              style={{ marginTop: '7px', marginLeft: '12px', background: 'none', border: 'none', padding: 0,
+                       cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px' }}>Todas las fincas</button>
+          )}
+        </div>
+      )}
+
       {cambio && anterior !== null && (
         <div style={{ fontSize: '13px', color: GRIS, marginTop: '11px' }}>
           {v > anterior ? 'Sube' : 'Baja'}{' '}
           <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(Math.abs(v - anterior))}</b>.
           Lo registrado antes del {corta(desde)} no cambia.
+          {sel.length > 1 && ` Se aplicará a ${sel.length} fincas.`}
         </div>
       )}
     </div>
