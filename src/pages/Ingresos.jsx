@@ -41,7 +41,15 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
     try {
       const [{ data: ins }, { data: g }, { data: pd }, { data: pend }, { data: sol }, { data: auth }] = await Promise.all([
         supabase.schema('produccion').from('insumo')
-          .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
+          .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre')
+          .then(async r => {
+            const { data: ov } = await supabase.schema('produccion').from('insumo_finca')
+              .select('insumo_id, unidad, unidad_compra, factor').eq('finca_id', finca.id)
+            const o = {}; (ov || []).forEach(x => { o[x.insumo_id] = x })
+            return { data: (r.data || []).map(i => o[i.id]
+              ? { ...i, unidad: o[i.id].unidad, unidad_compra: o[i.id].unidad_compra, factor: Number(o[i.id].factor) }
+              : i) }
+          }),
         supabase.schema('produccion').from('ingreso_insumo')
           .select('id, fecha, numero_guia, proveedor, observacion, ingreso_insumo_linea(insumo_id, cantidad)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
