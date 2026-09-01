@@ -96,12 +96,12 @@ export default function App() {
   const cargarCorr = useCallback(async () => {
     if (!esJefe) { setCorrPend([]); return }
     const { data } = await supabase.schema('produccion').from('solicitud_correccion')
-      .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+      .select('finca_id, tabla, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
     const g = {}
     ;(data || []).forEach(r => {
       const k = r.finca_id
-      g[k] = g[k] || { finca_id: k, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0 }
-      g[k].n++
+      g[k] = g[k] || { finca_id: k, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0, tablas: new Set() }
+      g[k].n++; g[k].tablas.add(r.tabla)
     })
     setCorrPend(Object.values(g))
   }, [esJefe])
@@ -110,8 +110,14 @@ export default function App() {
   function irACorreccion(c) {
     setFincaId(c.finca_id)
     if (c.zona) setZona(c.zona)
-    setModulo('inventario'); setPanelInv('insumos')
-    setPedirIngresos(n => n + 1)
+    // Si solo hay reaperturas de día, llevar a Registro diario; si hay
+    // correcciones de ingreso, a Inventario.
+    const soloDias = c.tablas && c.tablas.has('dia_registro') && !c.tablas.has('ingreso_insumo') && !c.tablas.has('ingreso_balanceado')
+    if (soloDias) {
+      setModulo('registro'); setPanelReg('balanceado')
+    } else {
+      setModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1)
+    }
   }
 
   // Red de seguridad: si por alguna navegacion interna un bodeguero
