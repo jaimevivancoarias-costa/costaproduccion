@@ -20,9 +20,10 @@ const G_MOV_J = '1.3fr repeat(7, 1fr)'
 const G_MOV_B = '1.3fr repeat(6, 1fr)'
 const G_DOS = '150px 1fr'
 
-export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onCorreccion }) {
-  const [seccion, setSeccion] = useState('bodega')  // 'bodega' | 'ingresos'
+export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
+  const [seccion, setSeccion] = useState('bodega')  // 'bodega' | 'ingresos' | 'precios'
   useEffect(() => { if (abrirIngresos) setSeccion('ingresos') }, [abrirIngresos])
+  useEffect(() => { if (abrirPrecios) setSeccion('precios') }, [abrirPrecios])
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
@@ -87,14 +88,25 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
     if (!validos.length) { setNuevos([]); return }
     const rows = validos.map(n => ({ nombre: n.nombre.trim(), marca: n.marca.trim() || null }))
     setGuardandoNuevos(true)
-    const { error } = await supabase.schema('produccion').from('producto').insert(rows)
-    setGuardandoNuevos(false)
-    if (error) {
-      const dup = /duplicate|unique/i.test(error.message)
-      setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
-      return
+    if (esJefeGlobal) {
+      const { error } = await supabase.schema('produccion').from('producto').insert(rows)
+      setGuardandoNuevos(false)
+      if (error) {
+        const dup = /duplicate|unique/i.test(error.message)
+        setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
+        return
+      }
+      setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'balanceado agregado' : 'balanceados agregados'}.` })
+    } else {
+      const { data: au } = await supabase.auth.getUser()
+      const solis = rows.map(r => ({
+        finca_id: finca.id, tabla: 'nuevo_producto', registro_id: crypto.randomUUID(),
+        valor_propuesto: r, motivo: 'Balanceado que falta en la lista', solicitado_por: au?.user?.id }))
+      const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert(solis)
+      setGuardandoNuevos(false)
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+      setAviso({ tipo: 'ok', texto: 'Pedido enviado al jefe. Lo agregará al catálogo.' })
     }
-    setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'balanceado agregado' : 'balanceados agregados'}. Ya puedes contarlos abajo.` })
     setNuevos([])
     await cargar()
   }
@@ -189,7 +201,7 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
       )}
 
       {seccion === 'precios' && esJefe ? (
-        <PreciosBalanceado finca={finca} esJefe={esJefe} />
+        <PreciosBalanceado finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} />
       ) : seccion === 'ingresos' ? (
         <IngresosBalanceado finca={finca} esJefe={esJefe} onCambio={cargar} onCorreccion={onCorreccion} />
       ) : contando ? (
@@ -215,7 +227,7 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
           <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
             {nuevos.length === 0 ? (
               <button onClick={() => setNuevos([filaNueva()])} style={btnLink}>
-                + ¿Falta un balanceado? Agrégalo aquí
+                + ¿Falta un balanceado? {esJefeGlobal ? 'Agrégalo aquí' : 'Pídelo al jefe'}
               </button>
             ) : (
               <div>
@@ -239,7 +251,7 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
                   <button onClick={guardarNuevos} disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}
                     style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL,
                              opacity: (guardandoNuevos || !nuevos.some(n => n.nombre.trim())) ? 0.5 : 1 }}>
-                    {guardandoNuevos ? 'Agregando...' : 'Agregar a la lista'}
+                    {guardandoNuevos ? (esJefeGlobal ? 'Agregando...' : 'Enviando...') : (esJefeGlobal ? 'Agregar a la lista' : 'Enviar pedido al jefe')}
                   </button>
                 </div>
               </div>
