@@ -112,11 +112,14 @@ export default function App() {
     if (c.zona) setZona(c.zona)
     // Si solo hay reaperturas de día, llevar a Registro diario; si hay
     // correcciones de ingreso, a Inventario.
-    const soloDias = c.tablas && c.tablas.has('dia_registro') && !c.tablas.has('ingreso_insumo') && !c.tablas.has('ingreso_balanceado')
+    const t = c.tablas || new Set()
+    const soloDias = t.has('dia_registro') && !t.has('ingreso_insumo') && !t.has('ingreso_balanceado')
     if (soloDias) {
       setModulo('registro'); setPanelReg('balanceado')
     } else {
-      setModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1)
+      // Si hay corrección de balanceado y no de insumo, abrir la pestaña Balanceado.
+      const bal = t.has('ingreso_balanceado') && !t.has('ingreso_insumo')
+      setModulo('inventario'); setPanelInv(bal ? 'balanceado' : 'insumos'); setPedirIngresos(n => n + 1)
     }
   }
 
@@ -337,7 +340,7 @@ export default function App() {
               </div>
               {panelInv === 'insumos'
                 ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} onCorreccion={cargarCorr} />
-                : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} />}
+                : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} onCorreccion={cargarCorr} />}
             </div>
           ) : modulo === 'reportes' ? (
             <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
