@@ -80,11 +80,23 @@ export default function PreciosInsumos({ finca, esJefe }) {
     const prev = filas.find(f => f.id === id)
     const cambioUnidad = prev && prev.unidad !== unidad
     if (cambioUnidad) {
-      // La función recalcula: entre unidades de masa convierte cantidades,
-      // precios y factor; entre otras solo si no hay movimientos.
-      const { error: eU } = await supabase.schema('produccion')
+      // La función recalcula. Entre masa convierte sola; entre masa y
+      // sacos/unidad pide cuántos kilos/gramos pesa un saco.
+      let { error: eU } = await supabase.schema('produccion')
         .rpc('fn_cambiar_unidad_insumo', { p_insumo: id, p_nueva: unidad })
-      if (eU) { setAviso({ tipo: 'error', texto: eU.message.replace(/^.*?:\s*/, '') }); return }
+      if (eU && /FALTA_POR/.test(eU.message)) {
+        const MASA = ['gramos', 'kg', 'libras']
+        const um = MASA.includes(prev.unidad) ? prev.unidad : unidad
+        const uc = MASA.includes(prev.unidad) ? unidad : prev.unidad
+        const singular = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
+        const resp = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${singular} de "${prev.nombre}"?`)
+        if (resp === null) return
+        const por = numDec(resp)
+        if (!(por > 0)) { setAviso({ tipo: 'error', texto: 'Pon un número mayor que cero.' }); return }
+        ;({ error: eU } = await supabase.schema('produccion')
+          .rpc('fn_cambiar_unidad_insumo', { p_insumo: id, p_nueva: unidad, p_por: por }))
+      }
+      if (eU) { setAviso({ tipo: 'error', texto: eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta el dato de equivalencia.') }); return }
       // La función ya fijó unidad y factor; aquí solo el nombre.
       const { error } = await supabase.schema('produccion').from('insumo')
         .update({ nombre: nombre.trim() }).eq('id', id)
@@ -432,7 +444,7 @@ function EditarInsumo({ actual, onGuardar, onCancelar }) {
             {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
           </select>
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '4px', maxWidth: '160px', lineHeight: 1.4 }}>
-            Entre masa (kilos, gramos, libras) se recalcula todo. Entre otras unidades, solo si no hay movimientos.
+            Entre masa (kilos, gramos, libras) se recalcula solo. A sacos/unidades te pedirá cuántos kilos pesa un saco.
           </div>
         </div>
       </div>
