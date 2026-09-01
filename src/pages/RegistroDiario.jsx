@@ -594,7 +594,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS_BASE = '170px 96px 56px 124px 136px'
+  const COLS_BASE = '170px 152px 56px 124px 136px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
   const COLS_IND = verIndicadores ? ' 104px 96px 104px 96px 92px 92px 92px 116px 104px' : ''
   const COLS = `${COLS_BASE} ${COLS_DIAS}${COLS_IND}`
@@ -820,26 +820,26 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       </div>
                     </Td>
                     <Td>
-                      <span style={{ fontSize: '13px', color: NAVY, fontWeight: 500 }}>{p.fechaSiembra ? corta(p.fechaSiembra) : '—'}</span>
-                      {p.cicloId && (
-                        <div style={{ marginTop: '3px', lineHeight: 1.5 }}>
-                          <div style={{ fontSize: '11px', color: GRIS }}>
-                            <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</span> larva
-                          </div>
-                          <div style={{ fontSize: '11px', color: GRIS }}>
-                            Siembra <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + ' g' : '—'}</span>
-                          </div>
-                          {!soloLectura && modo === 'registrar' && (
-                            <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', marginTop: '3px',
-                                       background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                                       color: AZUL, fontFamily: 'inherit', fontSize: '10px' }}>
-                              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                              {editSiembra === p.piscinaId ? 'Cerrar' : 'Editar siembra'}
-                            </button>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '6px' }}>
+                        <div>
+                          <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500 }}>{p.fechaSiembra ? corta(p.fechaSiembra) : '—'}</div>
+                          {p.cicloId && (
+                            <div style={{ fontSize: '11px', color: GRIS, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', marginTop: '1px' }}>
+                              <span style={{ color: NAVY }}>{p.larva ? miles(p.larva) : '—'}</span> larva · <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + ' g' : '—'}</span>
+                            </div>
                           )}
                         </div>
-                      )}
+                        {p.cicloId && !soloLectura && modo === 'registrar' && (
+                          <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
+                            title={editSiembra === p.piscinaId ? 'Cerrar' : 'Editar siembra'}
+                            style={{ flexShrink: 0, background: 'none', border: 'none', padding: '1px 0 0',
+                                     cursor: 'pointer', color: editSiembra === p.piscinaId ? GRIS : AZUL, lineHeight: 1 }}>
+                            {editSiembra === p.piscinaId
+                              ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                              : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>}
+                          </button>
+                        )}
+                      </div>
                     </Td>
                     <Td><span style={{ fontWeight: 500 }}>
                       {p.fechaSiembra ? diasCultivo(p.fechaSiembra, corteDias) : ''}
