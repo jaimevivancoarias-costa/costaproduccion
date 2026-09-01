@@ -18,7 +18,7 @@ const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const ROJO = '#8A2F2E', VERDE = '#0F6E56'
 const G = 'minmax(220px,1fr) 130px 140px 200px'
 
-export default function PreciosBalanceado({ finca, esJefe }) {
+export default function PreciosBalanceado({ finca, esJefe, esJefeGlobal }) {
   const [filas, setFilas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -28,11 +28,28 @@ export default function PreciosBalanceado({ finca, esJefe }) {
   const [marcaNueva, setMarcaNueva] = useState('')
   const [creando, setCreando] = useState(false)
   const [fincas, setFincas] = useState([])
+  const [solNuevos, setSolNuevos] = useState([])
 
   useEffect(() => {
     supabase.schema('produccion').from('finca').select('id, nombre').eq('activa', true).order('nombre')
       .then(({ data }) => setFincas(data || []))
   }, [])
+
+  const cargarNuevos = useCallback(async () => {
+    if (!esJefeGlobal) { setSolNuevos([]); return }
+    const { data } = await supabase.schema('produccion').from('solicitud_correccion')
+      .select('id, valor_propuesto, finca:finca_id (nombre)')
+      .eq('tabla', 'nuevo_producto').eq('estado', 'pendiente').order('solicitado_en')
+    setSolNuevos(data || [])
+  }, [esJefeGlobal])
+  useEffect(() => { cargarNuevos() }, [cargarNuevos])
+
+  async function resolverNuevo(sol, aprobar) {
+    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Balanceado agregado al catálogo.' : 'Pedido rechazado.' })
+    await cargar(); await cargarNuevos()
+  }
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -106,7 +123,7 @@ export default function PreciosBalanceado({ finca, esJefe }) {
               : ' Solo un jefe puede cambiarlos.'}
           </p>
         </div>
-        {esJefe && !agregando && (
+        {esJefeGlobal && !agregando && (
           <button onClick={() => { setAgregando(true); setAviso(null) }} style={botonSec}>+ Agregar balanceado</button>
         )}
       </div>
@@ -115,6 +132,30 @@ export default function PreciosBalanceado({ finca, esJefe }) {
         <div style={{ borderRadius: '9px', padding: '10px 13px', fontSize: '13px', marginBottom: '11px',
                       background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
                       color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
+      )}
+
+      {esJefeGlobal && solNuevos.length > 0 && (
+        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '10px', padding: '13px 15px', marginBottom: '12px' }}>
+          <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
+            Balanceados pedidos por bodega ({solNuevos.length})
+          </div>
+          {solNuevos.map(s => {
+            const vp = s.valor_propuesto || {}
+            return (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', flexWrap: 'wrap', borderTop: '0.5px solid #ecd9b3', paddingTop: '9px', marginTop: '9px' }}>
+                <div style={{ fontSize: '13px' }}>
+                  <b style={{ fontWeight: 500 }}>{vp.nombre}</b>{vp.marca ? ` · ${vp.marca}` : ''}
+                  <div style={{ fontSize: '11px', color: GRIS }}>Pedido por {s.finca?.nombre}</div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => resolverNuevo(s, true)} style={botonSec}>Aprobar</button>
+                  <button onClick={() => resolverNuevo(s, false)} style={{ ...botonSec, color: ROJO, borderColor: '#e7cccb' }}>Rechazar</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       )}
 
       {agregando && (
@@ -167,9 +208,11 @@ export default function PreciosBalanceado({ finca, esJefe }) {
                 <button onClick={() => setEditando(editando === f.id ? null : f.id)} style={botonSec}>
                   {editando === f.id ? 'Cancelar' : 'Cambiar'}
                 </button>
-                <button onClick={() => quitar(f)} style={{ ...botonSec, color: ROJO, borderColor: '#e7cccb' }}>
-                  Quitar
-                </button>
+                {esJefeGlobal && (
+                  <button onClick={() => quitar(f)} style={{ ...botonSec, color: ROJO, borderColor: '#e7cccb' }}>
+                    Quitar
+                  </button>
+                )}
               </div>
             ) : <span />}
           </div>
