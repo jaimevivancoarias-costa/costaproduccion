@@ -74,14 +74,16 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     setAviso({ tipo: 'ok', texto: aprobar ? 'Agregado al catálogo.' : 'Pedido rechazado.' }); await cargar()
   }
 
-  // Guardar precio de un (producto, finca). tabla: 'precio_insumo'|'precio_producto'.
-  async function guardarPrecio({ tabla, col, prodCol, prodId, fincaId, nuevo: v, desde }) {
-    await supabase.schema('produccion').from(tabla).delete().eq(prodCol, prodId).eq('finca_id', fincaId).gte('vigente_desde', desde)
-    await supabase.schema('produccion').from(tabla).update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq(prodCol, prodId).eq('finca_id', fincaId).is('vigente_hasta', null).lt('vigente_desde', desde)
-    const { error } = await supabase.schema('produccion').from(tabla).insert({ [prodCol]: prodId, finca_id: fincaId, [col]: v, vigente_desde: desde })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el precio. ' + error.message }); return }
-    setEditP(null); setAviso({ tipo: 'ok', texto: 'Precio actualizado.' }); await cargar()
+  // Guardar precio de un producto para una o varias fincas.
+  async function guardarPrecio({ tabla, col, prodCol, prodId, fincaIds, nuevo: v, desde }) {
+    for (const fid of fincaIds) {
+      await supabase.schema('produccion').from(tabla).delete().eq(prodCol, prodId).eq('finca_id', fid).gte('vigente_desde', desde)
+      await supabase.schema('produccion').from(tabla).update({ vigente_hasta: sumarDias(desde, -1) })
+        .eq(prodCol, prodId).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', desde)
+      const { error } = await supabase.schema('produccion').from(tabla).insert({ [prodCol]: prodId, finca_id: fid, [col]: v, vigente_desde: desde })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el precio. ' + error.message }); return }
+    }
+    setEditP(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Precio actualizado.' : `Precio aplicado a ${fincaIds.length} fincas.` }); await cargar()
   }
 
   async function quitar(tabla, id, nombre) {
@@ -238,8 +240,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                           </div>
 
                           {editP === claveP && (
-                            <EditorPrecio actual={precio}
-                              onGuardar={(v, desde) => guardarPrecio({ tabla, col, prodCol, prodId: p.id, fincaId: f.id, nuevo: v, desde })}
+                            <EditorPrecio actual={precio} fincas={fincas} fincaActual={f}
+                              onGuardar={(v, desde, fincaIds) => guardarPrecio({ tabla, col, prodCol, prodId: p.id, fincaIds, nuevo: v, desde })}
                               onCancelar={() => setEditP(null)} />
                           )}
                           {hist === claveP && (
@@ -252,7 +254,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             </div>
                           )}
                           {editU === claveP && tab === 'insumos' && (
-                            <EditorUnidadFinca insumo={p} finca={f} actual={{ unidad: uCons, unidad_compra: uCompra, factor }}
+                            <EditorUnidadFinca insumo={p} finca={f} fincas={fincas} actual={{ unidad: uCons, unidad_compra: uCompra, factor }}
                               onHecho={async (msg) => { setEditU(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                               onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditU(null)} />
                           )}
@@ -299,56 +301,106 @@ async function editarProducto(actual, { nombre, marca }, setAviso) {
   setAviso({ tipo: 'ok', texto: 'Balanceado actualizado.' }); return true
 }
 
-function EditorPrecio({ actual, onGuardar, onCancelar }) {
+function EditorPrecio({ actual, fincas, fincaActual, onGuardar, onCancelar }) {
   const [v, setV] = useState(actual != null ? String(actual) : '')
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
+  const [sel, setSel] = useState([fincaActual.id])
   const val = numDec(v)
+  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
   return (
-    <div style={{ background: '#eef3f7', padding: '10px 12px', borderBottom: '0.5px solid #eef3f7', display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-      <Campo label="Precio nuevo"><input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)} style={{ ...inp, width: '120px', textAlign: 'right' }} /></Campo>
-      <Campo label="Rige desde"><input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} /></Campo>
-      <button disabled={!(val > 0) || enviando} onClick={async () => { setEnviando(true); await onGuardar(val, desde); setEnviando(false) }}
-        style={{ ...btnPri, opacity: (!(val > 0) || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
-      <button onClick={onCancelar} style={btn}>Cancelar</button>
+    <div style={{ background: '#eef3f7', padding: '10px 12px', borderBottom: '0.5px solid #eef3f7' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Campo label="Precio nuevo"><input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)} style={{ ...inp, width: '120px', textAlign: 'right' }} /></Campo>
+        <Campo label="Rige desde"><input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} /></Campo>
+        <button disabled={!(val > 0) || sel.length === 0 || enviando} onClick={async () => { setEnviando(true); await onGuardar(val, desde, sel); setEnviando(false) }}
+          style={{ ...btnPri, opacity: (!(val > 0) || sel.length === 0 || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+      </div>
+      {otras.length > 0 && (
+        <div style={{ marginTop: '10px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar el mismo precio a:</div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
+            {otras.map(f => {
+              const on = sel.includes(f.id)
+              return (
+                <button key={f.id} onClick={() => toggle(f.id)} style={{
+                  fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
+                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
+                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
+                </button>
+              )
+            })}
+            {otras.length > 1 && (
+              <button onClick={() => setSel([fincaActual.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function EditorUnidadFinca({ insumo, finca, actual, onHecho, onError, onCancelar }) {
+function EditorUnidadFinca({ insumo, finca, fincas, actual, onHecho, onError, onCancelar }) {
   const [unidad, setUnidad] = useState(actual.unidad)
   const dist = actual.unidad_compra && actual.unidad_compra !== actual.unidad
   const [compraDistinta, setCompraDistinta] = useState(!!dist)
   const [unidadCompra, setUnidadCompra] = useState(dist ? actual.unidad_compra : '')
   const [factor, setFactor] = useState(dist ? String(actual.factor) : '')
   const [enviando, setEnviando] = useState(false)
-  const listo = !compraDistinta || (unidadCompra.trim() && numDec(factor) > 0)
+  const [sel, setSel] = useState([finca.id])
+  const listo = sel.length > 0 && (!compraDistinta || (unidadCompra.trim() && numDec(factor) > 0))
+  const otras = (fincas || []).filter(f => f.id !== finca.id)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+
+  // Aplica la unidad/presentación a una finca. `por` = kg por saco/unidad si hace falta conversión.
+  async function aplicarUna(fid, por) {
+    if (unidad !== actual.unidad) {
+      const args = { p_insumo: insumo.id, p_finca: fid, p_nueva: unidad }
+      if (por != null) args.p_por = por
+      const { error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca', args)
+      return error
+    }
+    const { error } = await supabase.schema('produccion').from('insumo_finca')
+      .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: (compraDistinta ? unidadCompra : unidad).trim(), factor: compraDistinta ? numDec(factor) : 1 }, { onConflict: 'insumo_id,finca_id' })
+    return error
+  }
 
   async function guardar() {
     setEnviando(true)
+    let por = null
+    // Si cambia la unidad y puede requerir conversión sacos↔masa, preguntamos una vez para todas.
     if (unidad !== actual.unidad) {
-      let { error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca', { p_insumo: insumo.id, p_finca: finca.id, p_nueva: unidad })
-      if (error && /FALTA_POR/.test(error.message)) {
+      const MASA = ['gramos', 'kg', 'libras']
+      const cambiaFamilia = MASA.includes(actual.unidad) !== MASA.includes(unidad)
+      if (cambiaFamilia) {
+        const um = MASA.includes(actual.unidad) ? actual.unidad : unidad
+        const uc = MASA.includes(actual.unidad) ? unidad : actual.unidad
+        const sing = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
+        const r = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${sing} de "${insumo.nombre}"?` + (sel.length > 1 ? ' (se aplica a las fincas elegidas)' : ''))
+        if (r === null) { setEnviando(false); return }
+        por = numDec(r); if (!(por > 0)) { setEnviando(false); onError('Pon un número mayor que cero.'); return }
+      }
+    }
+    for (const fid of sel) {
+      let err = await aplicarUna(fid, por)
+      if (err && /FALTA_POR/.test(err.message) && por == null) {
         const MASA = ['gramos', 'kg', 'libras']
         const um = MASA.includes(actual.unidad) ? actual.unidad : unidad
         const uc = MASA.includes(actual.unidad) ? unidad : actual.unidad
         const sing = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
-        const r = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${sing} de "${insumo.nombre}" en ${String(finca.nombre).toUpperCase()}?`)
+        const r = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${sing} de "${insumo.nombre}"?`)
         if (r === null) { setEnviando(false); return }
-        const por = numDec(r); if (!(por > 0)) { setEnviando(false); onError('Pon un número mayor que cero.'); return }
-        ;({ error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca', { p_insumo: insumo.id, p_finca: finca.id, p_nueva: unidad, p_por: por }))
+        por = numDec(r); if (!(por > 0)) { setEnviando(false); onError('Pon un número mayor que cero.'); return }
+        err = await aplicarUna(fid, por)
       }
-      setEnviando(false)
-      if (error) { onError(error.message.replace(/^.*?:\s*/, '')); return }
-      onHecho('Unidad actualizada para ' + String(finca.nombre).toUpperCase() + '.')
-      return
+      if (err) { setEnviando(false); onError(err.message.replace(/^.*?:\s*/, '')); return }
     }
-    // Misma unidad: solo presentación/factor de esta finca.
-    const { error } = await supabase.schema('produccion').from('insumo_finca')
-      .upsert({ insumo_id: insumo.id, finca_id: finca.id, unidad, unidad_compra: (compraDistinta ? unidadCompra : unidad).trim(), factor: compraDistinta ? numDec(factor) : 1 }, { onConflict: 'insumo_id,finca_id' })
     setEnviando(false)
-    if (error) { onError(error.message); return }
-    onHecho('Presentación actualizada para ' + String(finca.nombre).toUpperCase() + '.')
+    const n = sel.length
+    onHecho((unidad !== actual.unidad ? 'Unidad' : 'Presentación') + (n === 1 ? ' actualizada para ' + String(finca.nombre).toUpperCase() + '.' : ` actualizada en ${n} fincas.`))
   }
 
   return (
@@ -363,6 +415,27 @@ function EditorUnidadFinca({ insumo, finca, actual, onHecho, onError, onCancelar
         <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '8px' }}>
           <Campo label="Se compra por"><input value={unidadCompra} onChange={e => setUnidadCompra(e.target.value)} placeholder="ej. saco" style={{ ...inp, width: '130px' }} /></Campo>
           <Campo label={`Cada uno trae (${UNIDAD[unidad]})`}><input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '130px', textAlign: 'right' }} /></Campo>
+        </div>
+      )}
+      {otras.length > 0 && (
+        <div style={{ marginTop: '10px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar la misma unidad a:</div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(finca.nombre).toUpperCase()} (esta)</span>
+            {otras.map(f => {
+              const on = sel.includes(f.id)
+              return (
+                <button key={f.id} onClick={() => toggle(f.id)} style={{
+                  fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
+                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
+                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
+                </button>
+              )
+            })}
+            {otras.length > 1 && (
+              <button onClick={() => setSel([finca.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>
+            )}
+          </div>
         </div>
       )}
       <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
