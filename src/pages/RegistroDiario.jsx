@@ -367,7 +367,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     const { data: { user } } = await supabase.auth.getUser()
     const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
       finca_id: finca.id, tabla: 'dia_registro', registro_id: id,
-      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha },
+      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha, ambito: 'balanceado' },
       motivo: motivo.trim(), solicitado_por: user?.id })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Pedido enviado. El jefe lo revisará.' }); await cargar(true)
