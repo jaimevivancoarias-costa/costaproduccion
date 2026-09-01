@@ -63,6 +63,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
   const [hasta, setHasta] = useState(hoyISO())
 
   const [contando, setContando] = useState(false)
+  const [editToma, setEditToma] = useState(null)   // conteo que se está editando
   const [fecha, setFecha] = useState(hoyISO())
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
@@ -207,6 +208,15 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
     await cargar()
   }
 
+  async function editarConteo(c) {
+    const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
+      .select('insumo_id, cantidad_contada').eq('toma_id', c.id)
+    const mapa = {}
+    ;(data || []).forEach(l => { mapa[l.insumo_id] = String(l.cantidad_contada) })
+    setContado(mapa); setFecha(c.fecha); setObs(c.observacion || '')
+    setEditToma(c); setContando(true); setAviso(null)
+  }
+
   async function borrarConteo(c) {
     if (!window.confirm(`¿Borrar el conteo del ${corta(c.fecha)}?\n\nEl saldo vuelve a calcularse desde el conteo anterior (o desde cero si no hay otro). No se puede deshacer.`)) return
     const { error } = await supabase.schema('produccion').from('toma_inventario').delete().eq('id', c.id)
@@ -221,7 +231,9 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
       return
     }
 
-    const texto = primeraVez
+    const texto = editToma
+      ? `Vas a guardar los cambios del conteo del ${corta(editToma.fecha)}.\n\n¿Guardar?`
+      : primeraVez
       ? `Vas a cargar el inventario inicial con ${llenadas} insumos contados.\n\n` +
         `De aquí en adelante el saldo se lleva solo: baja con lo que se aplica en las piscinas y sube con lo que entra a bodega.\n\n¿Guardar?`
       : descuadres.length
@@ -237,14 +249,25 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
 
     setGuardando(true); setAviso(null)
     try {
-      const { data: toma, error } = await supabase.schema('produccion')
-        .from('toma_inventario')
-        .insert({ finca_id: finca.id, fecha, observacion: obs || null })
-        .select('id').single()
-      if (error) throw error
+      let tomaId
+      if (editToma) {
+        // Editar un conteo existente: actualiza cabecera y reemplaza líneas.
+        const { error: eU } = await supabase.schema('produccion').from('toma_inventario')
+          .update({ fecha, observacion: obs || null }).eq('id', editToma.id)
+        if (eU) throw eU
+        await supabase.schema('produccion').from('toma_inventario_linea').delete().eq('toma_id', editToma.id)
+        tomaId = editToma.id
+      } else {
+        const { data: toma, error } = await supabase.schema('produccion')
+          .from('toma_inventario')
+          .insert({ finca_id: finca.id, fecha, observacion: obs || null })
+          .select('id').single()
+        if (error) throw error
+        tomaId = toma.id
+      }
 
       const lineas = filas.filter(f => f.contado !== null).map(f => ({
-        toma_id: toma.id, insumo_id: f.insumo_id,
+        toma_id: tomaId, insumo_id: f.insumo_id,
         cantidad_contada: f.contado,
         cantidad_sistema: Number(f.saldo),
         diferencia: f.diferencia,
@@ -254,8 +277,8 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
       if (e2) throw e2
 
       setAviso({ tipo: 'ok',
-        texto: primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
-      setContando(false); setContado({}); setObs('')
+        texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
+      setContando(false); setEditToma(null); setContado({}); setObs('')
       await cargar()
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -402,6 +425,12 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
 
       ) : contando ? (
         <Caja>
+          {editToma && (
+            <div style={{ padding: '11px 16px', background: '#E6F1FB', color: AZUL, fontSize: '13px',
+                          borderBottom: '0.5px solid ' + BORDE }}>
+              Editando el conteo del {corta(editToma.fecha)}. Cambia las cantidades y guarda.
+            </div>
+          )}
           <div style={{ padding: '15px 16px', borderBottom: '0.5px solid ' + BORDE,
                         display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div>
@@ -474,8 +503,8 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
           </div>
 
           <Tabla
-            columnas={primeraVez
-              ? ['Insumo', 'Unidad', '', 'Inventario inicial', '']
+            columnas={(primeraVez || editToma)
+              ? ['Insumo', 'Unidad', '', editToma ? 'Contado' : 'Inventario inicial', '']
               : ['Insumo', 'Unidad', 'El sistema dice', 'Contado', 'Diferencia']}
             anchos="1fr 110px 130px 130px 150px"
           >
@@ -483,7 +512,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
               <Fila key={f.insumo_id} anchos="1fr 110px 130px 130px 150px">
                 <Celda>{f.insumo}</Celda>
                 <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
-                <Celda derecha gris>{primeraVez ? '' : limpio(f.saldo)}</Celda>
+                <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                   <input
                     inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="—"
@@ -499,7 +528,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
                   : f.diferencia < 0 ? ROJO
                   : f.diferencia > 0 ? AMBAR : VERDE
                 }>
-                  {primeraVez ? ''
+                  {(primeraVez || editToma) ? ''
                     : f.diferencia === null ? '—'
                     : f.diferencia === 0 ? 'cuadra'
                     : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
@@ -514,9 +543,9 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
               {llenadas} de {saldos.length} contados
               {!primeraVez && descuadres.length > 0 && ` · ${descuadres.length} no cuadran`}
             </span>
-            <Btn onClick={() => { setContando(false); setContado({}) }}>Cancelar</Btn>
+            <Btn onClick={() => { setContando(false); setContado({}); setEditToma(null) }}>Cancelar</Btn>
             <Btn primario onClick={guardar} disabled={guardando || !llenadas}>
-              {guardando ? 'Guardando...' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
+              {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
             </Btn>
           </div>
         </Caja>
@@ -660,13 +689,17 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
                 El saldo de arriba se calcula desde el más reciente.
               </p>
               <Tabla caja columnas={esJefe ? ['Fecha', 'Observación', ''] : ['Fecha', 'Observación']}
-                     anchos={esJefe ? '150px 1fr 90px' : '150px 1fr'}>
+                     anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
                 {conteos.map(c => (
-                  <Fila key={c.id} anchos={esJefe ? '150px 1fr 90px' : '150px 1fr'}>
+                  <Fila key={c.id} anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
                     <Celda fuerte>{corta(c.fecha)}</Celda>
                     <Celda gris>{c.observacion || 'Sin observación'}</Celda>
                     {esJefe && (
-                      <div style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => editarConteo(c)}
+                          style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                                   padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                                   color: NAVY, cursor: 'pointer' }}>Editar</button>
                         <button onClick={() => borrarConteo(c)}
                           style={{ background: 'white', border: '0.5px solid #e7cccb', borderRadius: '8px',
                                    padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
