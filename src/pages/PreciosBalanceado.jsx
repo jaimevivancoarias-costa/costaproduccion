@@ -27,6 +27,12 @@ export default function PreciosBalanceado({ finca, esJefe }) {
   const [nombreNuevo, setNombreNuevo] = useState('')
   const [marcaNueva, setMarcaNueva] = useState('')
   const [creando, setCreando] = useState(false)
+  const [fincas, setFincas] = useState([])
+
+  useEffect(() => {
+    supabase.schema('produccion').from('finca').select('id, nombre').eq('activa', true).order('nombre')
+      .then(({ data }) => setFincas(data || []))
+  }, [])
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -45,17 +51,20 @@ export default function PreciosBalanceado({ finca, esJefe }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  async function guardarPrecio({ productoId, nuevo, desde }) {
-    await supabase.schema('produccion').from('precio_producto')
-      .delete().eq('producto_id', productoId).eq('finca_id', finca.id).gte('vigente_desde', desde)
-    await supabase.schema('produccion').from('precio_producto')
-      .update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq('producto_id', productoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', desde)
-    const { error } = await supabase.schema('produccion').from('precio_producto')
-      .insert({ producto_id: productoId, finca_id: finca.id, precio_saco: nuevo, vigente_desde: desde })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+  async function guardarPrecio({ productoId, nuevo, desde, fincaIds }) {
+    const ids = (fincaIds && fincaIds.length) ? fincaIds : [finca.id]
+    for (const fid of ids) {
+      await supabase.schema('produccion').from('precio_producto')
+        .delete().eq('producto_id', productoId).eq('finca_id', fid).gte('vigente_desde', desde)
+      await supabase.schema('produccion').from('precio_producto')
+        .update({ vigente_hasta: sumarDias(desde, -1) })
+        .eq('producto_id', productoId).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', desde)
+      const { error } = await supabase.schema('produccion').from('precio_producto')
+        .insert({ producto_id: productoId, finca_id: fid, precio_saco: nuevo, vigente_desde: desde })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    }
     setEditando(null)
-    setAviso({ tipo: 'ok', texto: 'Precio actualizado.' })
+    setAviso({ tipo: 'ok', texto: ids.length === 1 ? 'Precio actualizado.' : `Precio actualizado en ${ids.length} fincas.` })
     await cargar()
   }
 
@@ -164,20 +173,23 @@ export default function PreciosBalanceado({ finca, esJefe }) {
               </div>
             ) : <span />}
           </div>
-          {editando === f.id && <Forma actual={f} onGuardar={guardarPrecio} />}
+          {editando === f.id && <Forma actual={f} onGuardar={guardarPrecio} fincas={fincas} fincaActual={finca} />}
         </div>
       ))}
     </div>
   )
 }
 
-function Forma({ actual, onGuardar }) {
+function Forma({ actual, onGuardar, fincas, fincaActual }) {
   const [nuevo, setNuevo] = useState(actual.precio ? String(actual.precio.precio_saco) : '')
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
+  const [sel, setSel] = useState([fincaActual.id])
   const v = numDec(nuevo)
   const anterior = actual.precio ? Number(actual.precio.precio_saco) : null
-  const cambio = v && v !== anterior
+  const cambio = v && v !== anterior && sel.length > 0
+  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
@@ -192,16 +204,47 @@ function Forma({ actual, onGuardar }) {
           <input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} />
         </div>
         <button disabled={!cambio || enviando}
-          onClick={async () => { setEnviando(true); await onGuardar({ productoId: actual.id, nuevo: v, desde }); setEnviando(false) }}
+          onClick={async () => { setEnviando(true); await onGuardar({ productoId: actual.id, nuevo: v, desde, fincaIds: sel }); setEnviando(false) }}
           style={{ ...botonPri, padding: '10px 20px', opacity: (!cambio || enviando) ? 0.45 : 1 }}>
           {enviando ? 'Guardando...' : 'Aplicar'}
         </button>
       </div>
+
+      {otras.length > 0 && (
+        <div style={{ marginTop: '12px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar este mismo precio a:</div>
+          <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px',
+                           background: '#e7eef5', borderRadius: '20px', padding: '5px 11px', color: NAVY }}>
+              {String(fincaActual.nombre).toUpperCase()} (esta)
+            </span>
+            {otras.map(f => {
+              const on = sel.includes(f.id)
+              return (
+                <button key={f.id} onClick={() => toggle(f.id)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px',
+                           borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
+                           border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
+                           background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
+                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
+                </button>
+              )
+            })}
+          </div>
+          {otras.length > 1 && (
+            <button onClick={() => setSel([fincaActual.id, ...otras.map(f => f.id)])}
+              style={{ marginTop: '7px', background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                       color: AZUL, fontFamily: 'inherit', fontSize: '11px' }}>Todas las fincas</button>
+          )}
+        </div>
+      )}
+
       {cambio && anterior !== null && (
         <div style={{ fontSize: '13px', color: GRIS, marginTop: '11px' }}>
           {v > anterior ? 'Sube' : 'Baja'}{' '}
           <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(Math.abs(v - anterior))}</b>.
           Lo registrado antes del {corta(desde)} no cambia.
+          {sel.length > 1 && ` Se aplicará a ${sel.length} fincas.`}
         </div>
       )}
     </div>
