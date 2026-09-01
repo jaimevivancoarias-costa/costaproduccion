@@ -77,6 +77,27 @@ export default function PreciosInsumos({ finca, esJefe }) {
   }
 
   async function guardarInsumo({ id, nombre, unidad, unidadCompra, factor }) {
+    const prev = filas.find(f => f.id === id)
+    const cambioUnidad = prev && prev.unidad !== unidad
+    if (cambioUnidad) {
+      // La función recalcula: entre unidades de masa convierte cantidades,
+      // precios y factor; entre otras solo si no hay movimientos.
+      const { error: eU } = await supabase.schema('produccion')
+        .rpc('fn_cambiar_unidad_insumo', { p_insumo: id, p_nueva: unidad })
+      if (eU) { setAviso({ tipo: 'error', texto: eU.message.replace(/^.*?:\s*/, '') }); return }
+      // La función ya fijó unidad y factor; aquí solo el nombre.
+      const { error } = await supabase.schema('produccion').from('insumo')
+        .update({ nombre: nombre.trim() }).eq('id', id)
+      if (error) {
+        const dup = /duplicate|unique/i.test(error.message)
+        setAviso({ tipo: 'error', texto: dup ? 'Ya existe un insumo con ese nombre.' : 'No se pudo guardar. ' + error.message })
+        return
+      }
+      setEditandoInsumo(null)
+      setAviso({ tipo: 'ok', texto: 'Insumo actualizado. La unidad se cambió y los números se recalcularon.' })
+      await cargar()
+      return
+    }
     const { error } = await supabase.schema('produccion').from('insumo')
       .update({ nombre: nombre.trim(), unidad,
                 unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1 })
@@ -410,6 +431,9 @@ function EditarInsumo({ actual, onGuardar, onCancelar }) {
           <select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...campo, width: '150px' }}>
             {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
           </select>
+          <div style={{ fontSize: '11px', color: GRIS, marginTop: '4px', maxWidth: '160px', lineHeight: 1.4 }}>
+            Entre masa (kilos, gramos, libras) se recalcula todo. Entre otras unidades, solo si no hay movimientos.
+          </div>
         </div>
       </div>
       <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '12px 0 0', fontSize: '13px', cursor: 'pointer' }}>
