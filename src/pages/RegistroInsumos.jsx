@@ -42,6 +42,9 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [validaciones, setValidaciones] = useState(null)
   const [dias, setDias] = useState({})   // fecha -> estado del dia (cerrado/borrador/reabierto)
+  const [diasId, setDiasId] = useState({})
+  const [solReapertura, setSolReapertura] = useState([])
+  const [userId, setUserId] = useState(null)
   const [cerrandoDia, setCerrandoDia] = useState(false)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
@@ -50,7 +53,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const domingo = fechas[6]
 
   const puedeEditar = f =>
-    !soloLectura && situacionDia(f, hoy) !== 'futuro' && (esJefe || semanaDeHoy)
+    !soloLectura && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado' && (esJefe || semanaDeHoy)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -97,8 +100,21 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       setLineas(mapa)
 
       const { data: dr } = await supabase.schema('produccion').from('dia_registro')
-        .select('fecha, estado').eq('finca_id', finca.id).gte('fecha', lunes).lte('fecha', domingo)
-      const de = {}; (dr || []).forEach(r => { de[r.fecha] = r.estado }); setDias(de)
+        .select('id, fecha, estado').eq('finca_id', finca.id).eq('ambito', 'insumos')
+        .gte('fecha', lunes).lte('fecha', domingo)
+      const de = {}, di = {}; (dr || []).forEach(r => { de[r.fecha] = r.estado; di[r.fecha] = r.id })
+      setDias(de); setDiasId(di)
+
+      const idsDia = Object.values(di).filter(Boolean)
+      if (idsDia.length) {
+        const { data: sr } = await supabase.schema('produccion').from('solicitud_correccion')
+          .select('id, registro_id, valor_propuesto, motivo, estado')
+          .eq('finca_id', finca.id).eq('tabla', 'dia_registro').eq('estado', 'pendiente')
+          .in('registro_id', idsDia)
+        setSolReapertura(sr || [])
+      } else { setSolReapertura([]) }
+      const { data: au } = await supabase.auth.getUser()
+      setUserId(au?.user?.id || null)
 
       const { anio, semana } = semanaISO(lunes)
       const { data: sc } = await supabase.schema('produccion').from('semana_cerrada')
@@ -126,20 +142,41 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   async function cerrarDiaHoy() {
     setCerrandoDia(true)
     const { error } = await supabase.schema('produccion').from('dia_registro')
-      .upsert({ finca_id: finca.id, fecha: hoy, estado: 'cerrado', cerrado_en: new Date().toISOString() },
-              { onConflict: 'finca_id,fecha' })
+      .upsert({ finca_id: finca.id, fecha: hoy, ambito: 'insumos', estado: 'cerrado', cerrado_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
     setCerrandoDia(false)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo cerrar el día. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Día cerrado.' }); await cargar()
+    setAviso({ tipo: 'ok', texto: 'Día de insumos cerrado.' }); await cargar()
   }
 
+  // El jefe reabre directo; el bodeguero pide y el jefe autoriza.
   async function reabrirDiaHoy() {
     setCerrandoDia(true)
     const { error } = await supabase.schema('produccion').from('dia_registro')
-      .upsert({ finca_id: finca.id, fecha: hoy, estado: 'borrador' }, { onConflict: 'finca_id,fecha' })
+      .upsert({ finca_id: finca.id, fecha: hoy, ambito: 'insumos', estado: 'reabierto', reabierto_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
     setCerrandoDia(false)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir el día. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar()
+  }
+
+  async function pedirReabrirHoy() {
+    const id = diasId[hoy]
+    if (!id) return
+    const motivo = window.prompt('¿Por qué necesitas reabrir los insumos de hoy? El jefe lo revisará.')
+    if (!motivo || !motivo.trim()) return
+    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+      finca_id: finca.id, tabla: 'dia_registro', registro_id: id,
+      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha: hoy, ambito: 'insumos' },
+      motivo: motivo.trim(), solicitado_por: userId })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Pedido enviado. El jefe lo revisará.' }); await cargar()
+  }
+
+  async function resolverReapertura(sol, aprobar) {
+    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
   async function cerrarSemana() {
@@ -385,20 +422,44 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
+      {!cargando && esJefe && solReapertura.length > 0 && (
+        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
+                      padding: '13px 16px', marginTop: '14px' }}>
+          <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
+            Reaperturas de insumos por autorizar ({solReapertura.length})
+          </div>
+          {solReapertura.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', flexWrap: 'wrap', borderTop: '0.5px solid #ecd9b3', paddingTop: '9px', marginTop: '9px' }}>
+              <div style={{ fontSize: '13px' }}>
+                Reabrir el día {corta(s.valor_propuesto?.fecha)}
+                <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic' }}>Motivo: {s.motivo || '—'}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Btn onClick={() => resolverReapertura(s, true)}>Aprobar</Btn>
+                <Btn onClick={() => resolverReapertura(s, false)}>Rechazar</Btn>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {!cargando && semanaDeHoy && !soloLectura && !semanaCerrada && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                       gap: '12px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + BORDE,
                       borderRadius: '12px', padding: '13px 16px', marginTop: '14px' }}>
           <div style={{ fontSize: '13px', color: GRIS }}>
             Los insumos se guardan solos al agregarlos.{' '}
-            {(dias[hoy] === 'cerrado' || dias[hoy] === 'reabierto')
-              ? 'El día de hoy ya está cerrado.'
+            {dias[hoy] === 'cerrado'
+              ? 'El día de hoy está cerrado.'
               : 'Cuando termines de cargar el día, ciérralo.'}
           </div>
-          {(dias[hoy] === 'cerrado' || dias[hoy] === 'reabierto') ? (
-            <Btn disabled={cerrandoDia} onClick={reabrirDiaHoy}>
-              {cerrandoDia ? 'Un momento...' : 'Reabrir día de hoy'}
-            </Btn>
+          {dias[hoy] === 'cerrado' ? (
+            esJefe
+              ? <Btn disabled={cerrandoDia} onClick={reabrirDiaHoy}>{cerrandoDia ? 'Un momento...' : 'Reabrir día de hoy'}</Btn>
+              : solReapertura.some(x => x.registro_id === diasId[hoy])
+                ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
+                : <Btn onClick={pedirReabrirHoy}>Pedir reabrir</Btn>
           ) : (
             <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
               padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
