@@ -37,6 +37,7 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
   const [aviso, setAviso] = useState(null)
 
   const [contando, setContando] = useState(false)
+  const [editToma, setEditToma] = useState(null)
   const [fecha, setFecha] = useState(hoyISO())
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
@@ -98,27 +99,47 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
     await cargar()
   }
 
+  async function editarToma(t) {
+    const { data } = await supabase.schema('produccion').from('toma_balanceado_linea')
+      .select('producto_id, cantidad_contada').eq('toma_id', t.id)
+    const mapa = {}; (data || []).forEach(l => { mapa[l.producto_id] = String(l.cantidad_contada) })
+    setContado(mapa); setFecha(t.fecha); setObs(t.observacion || '')
+    setEditToma(t); setContando(true); setAviso(null)
+  }
+
   async function guardarToma() {
     if (!llenadas) { setAviso({ tipo: 'error', texto: 'No has contado ningún producto.' }); return }
     const desc = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.001)
-    const txt = primeraVez
+    const txt = editToma
+      ? `Vas a guardar los cambios del conteo del ${corta(editToma.fecha)}. ¿Guardar?`
+      : primeraVez
       ? `Vas a cargar el inventario inicial de balanceado con ${llenadas} productos.\n¿Guardar?`
       : desc.length ? `${desc.length} productos no cuadran. Las diferencias quedan registradas. ¿Guardar?`
                     : 'Todo cuadra. ¿Guardar el conteo?'
     if (!window.confirm(txt)) return
     setGuardando(true)
     try {
-      const { data: toma, error } = await supabase.schema('produccion').from('toma_balanceado')
-        .insert({ finca_id: finca.id, fecha, observacion: obs || null }).select('id').single()
-      if (error) throw error
+      let tomaId
+      if (editToma) {
+        const { error: eU } = await supabase.schema('produccion').from('toma_balanceado')
+          .update({ fecha, observacion: obs || null }).eq('id', editToma.id)
+        if (eU) throw eU
+        await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', editToma.id)
+        tomaId = editToma.id
+      } else {
+        const { data: toma, error } = await supabase.schema('produccion').from('toma_balanceado')
+          .insert({ finca_id: finca.id, fecha, observacion: obs || null }).select('id').single()
+        if (error) throw error
+        tomaId = toma.id
+      }
       const lineas = filas.filter(f => f.contado !== null).map(f => ({
-        toma_id: toma.id, producto_id: f.producto_id, cantidad_contada: f.contado,
+        toma_id: tomaId, producto_id: f.producto_id, cantidad_contada: f.contado,
         cantidad_sistema: Number(f.saldo), diferencia: f.diferencia,
       }))
       const { error: e2 } = await supabase.schema('produccion').from('toma_balanceado_linea').insert(lineas)
       if (e2) throw e2
-      setAviso({ tipo: 'ok', texto: primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} productos.` })
-      setContando(false); setContado({}); setObs(''); await cargar()
+      setAviso({ tipo: 'ok', texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} productos.` })
+      setContando(false); setEditToma(null); setContado({}); setObs(''); await cargar()
     } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') }) }
     finally { setGuardando(false) }
   }
@@ -173,6 +194,11 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
         <IngresosBalanceado finca={finca} esJefe={esJefe} onCambio={cargar} onCorreccion={onCorreccion} />
       ) : contando ? (
         <Caja>
+          {editToma && (
+            <div style={{ padding: '11px 16px', background: '#E6F1FB', color: AZUL, fontSize: '13px', borderBottom: '0.5px solid ' + BORDE }}>
+              Editando el conteo del {corta(editToma.fecha)}. Cambia las cantidades y guarda.
+            </div>
+          )}
           <div style={{ padding: '15px 16px', borderBottom: '0.5px solid ' + BORDE, display: 'flex',
                         gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <Campo label="Fecha del conteo">
@@ -220,29 +246,29 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
             )}
           </div>
 
-          <Encabezado gtc={G_CONTEO} cols={['Balanceado', 'Unidad', primeraVez ? '' : 'El sistema dice', primeraVez ? 'Inventario inicial' : 'Contado', primeraVez ? '' : 'Diferencia']} />
+          <Encabezado gtc={G_CONTEO} cols={['Balanceado', 'Unidad', (primeraVez || editToma) ? '' : 'El sistema dice', editToma ? 'Contado' : primeraVez ? 'Inventario inicial' : 'Contado', (primeraVez || editToma) ? '' : 'Diferencia']} />
           {filas.map(f => (
             <Fila gtc={G_CONTEO} key={f.producto_id}>
               <Cel>{f.producto}</Cel><Cel gris>Sacos</Cel>
-              <Cel der gris>{primeraVez ? '' : limpio(f.saldo)}</Cel>
+              <Cel der gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Cel>
               <div style={{ padding: '5px 10px' }}>
                 <input inputMode="decimal" value={contado[f.producto_id] ?? ''} placeholder="—"
                   onChange={e => setContado(c => ({ ...c, [f.producto_id]: e.target.value }))}
                   style={{ ...inp, width: '100%', textAlign: 'right' }} />
               </div>
               <Cel der color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
-                {primeraVez ? '' : f.diferencia === null ? '—' : f.diferencia === 0 ? 'Cuadra'
+                {(primeraVez || editToma) ? '' : f.diferencia === null ? '—' : f.diferencia === 0 ? 'Cuadra'
                   : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
               </Cel>
             </Fila>
           ))}
           <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
                         display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button onClick={() => { setContando(false); setContado({}) }} style={btn}>Cancelar</button>
+            <button onClick={() => { setContando(false); setContado({}); setEditToma(null) }} style={btn}>Cancelar</button>
             <button onClick={guardarToma} disabled={guardando || !llenadas}
               style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL,
                        opacity: (guardando || !llenadas) ? 0.5 : 1 }}>
-              {guardando ? 'Guardando...' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
+              {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
             </button>
           </div>
         </Caja>
@@ -328,11 +354,12 @@ export default function InventarioBalanceado({ finca, esJefe, abrirIngresos, onC
               <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 8px' }}>Conteos anteriores</h3>
               <Caja>
                 {tomas.map(t => (
-                  <Fila key={t.id} gtc={esJefe ? '150px 1fr 90px' : G_DOS}>
+                  <Fila key={t.id} gtc={esJefe ? '150px 1fr 160px' : G_DOS}>
                     <Cel fuerte>{corta(t.fecha)}</Cel>
                     <Cel gris>{t.observacion || 'Sin observación'}</Cel>
                     {esJefe && (
-                      <div style={{ padding: '6px 10px', textAlign: 'right' }}>
+                      <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => editarToma(t)} style={{ ...btn, padding: '5px 11px', fontSize: '12px' }}>Editar</button>
                         <button onClick={() => borrarToma(t)} style={{ ...btn, padding: '5px 11px',
                           fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
                       </div>
