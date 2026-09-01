@@ -49,7 +49,7 @@ function Icono({ tipo }) {
 }
 
 export default function App() {
-  const { user, nombre, fincas, esJefe, cargando, logout } = useAuth()
+  const { user, nombre, fincas, esJefe, esJefeGlobal, cargando, logout } = useAuth()
   const [fincaId, setFincaId] = useState(null)
   const [zona, setZona] = useState('jambeli')
   const [modulo, setModulo] = useState('registro')
@@ -93,6 +93,7 @@ export default function App() {
   // una y volver a navegar, el aviso se actualiza.
   const [corrPend, setCorrPend] = useState([])
   const [pedirIngresos, setPedirIngresos] = useState(0)
+  const [pedirPrecios, setPedirPrecios] = useState(0)
   const cargarCorr = useCallback(async () => {
     if (!esJefe) { setCorrPend([]); return }
     const { data } = await supabase.schema('produccion').from('solicitud_correccion')
@@ -106,7 +107,10 @@ export default function App() {
       else if (r.tabla === 'dia_registro') {
         if (r.valor_propuesto?.ambito === 'insumos') { destino = 'reg-ins'; etiqueta = 'Reapertura de insumos' }
         else { destino = 'reg-bal'; etiqueta = 'Reapertura de balanceado' }
-      } else return
+      }
+      else if (r.tabla === 'nuevo_insumo') { destino = 'cat-ins'; etiqueta = 'Insumo pedido por bodega' }
+      else if (r.tabla === 'nuevo_producto') { destino = 'cat-bal'; etiqueta = 'Balanceado pedido por bodega' }
+      else return
       const k = r.finca_id + '|' + destino
       g[k] = g[k] || { finca_id: r.finca_id, nombre: r.finca?.nombre || '', zona: r.finca?.zona, destino, etiqueta, n: 0 }
       g[k].n++
@@ -121,6 +125,8 @@ export default function App() {
     if (c.destino === 'reg-bal') { setModulo('registro'); setPanelReg('balanceado') }
     else if (c.destino === 'reg-ins') { setModulo('registro'); setPanelReg('insumos') }
     else if (c.destino === 'inv-bal') { setModulo('inventario'); setPanelInv('balanceado'); setPedirIngresos(n => n + 1) }
+    else if (c.destino === 'cat-ins') { setModulo('inventario'); setPanelInv('insumos'); setPedirPrecios(n => n + 1) }
+    else if (c.destino === 'cat-bal') { setModulo('inventario'); setPanelInv('balanceado'); setPedirPrecios(n => n + 1) }
     else { setModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1) }
   }
 
@@ -340,8 +346,8 @@ export default function App() {
                 ))}
               </div>
               {panelInv === 'insumos'
-                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} onCorreccion={cargarCorr} />
-                : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} abrirIngresos={pedirIngresos} onCorreccion={cargarCorr} />}
+                ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
+                : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />}
             </div>
           ) : modulo === 'reportes' ? (
             <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
