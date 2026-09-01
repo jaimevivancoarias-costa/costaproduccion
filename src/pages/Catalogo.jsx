@@ -23,6 +23,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [productos, setProductos] = useState([])
   const [over, setOver] = useState({})        // insumo_id|finca_id -> {unidad, unidad_compra, factor}
   const [preIns, setPreIns] = useState({})     // insumo_id|finca_id -> [rows precio]
+  const [preInsGen, setPreInsGen] = useState({}) // insumo_id -> precio general vigente (finca nula)
   const [preBal, setPreBal] = useState({})     // producto_id|finca_id -> [rows precio]
   const [solIns, setSolIns] = useState([])
   const [solBal, setSolBal] = useState([])
@@ -48,9 +49,16 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_insumo').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_producto').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
     ])
+    // Precios generales (finca nula) como respaldo, en consulta aparte.
+    const { data: pg } = await supabase.schema('produccion').from('precio_insumo')
+      .select('insumo_id, precio_unitario').is('finca_id', null).is('vigente_hasta', null)
+    const pig2 = {}; (pg || []).forEach(x => { pig2[x.insumo_id] = Number(x.precio_unitario) })
+    setPreInsGen(pig2)
     setInsumos(ins || []); setProductos(prod || [])
     const om = {}; (ov || []).forEach(x => { om[k(x.insumo_id, x.finca_id)] = x }); setOver(om)
-    const pim = {}; (pi || []).forEach(x => { (pim[k(x.insumo_id, x.finca_id)] = pim[k(x.insumo_id, x.finca_id)] || []).push(x) }); setPreIns(pim)
+    const pim = {}
+    ;(pi || []).forEach(x => { if (x.finca_id) { (pim[k(x.insumo_id, x.finca_id)] = pim[k(x.insumo_id, x.finca_id)] || []).push(x) } })
+    setPreIns(pim)
     const pbm = {}; (pb || []).forEach(x => { (pbm[k(x.producto_id, x.finca_id)] = pbm[k(x.producto_id, x.finca_id)] || []).push(x) }); setPreBal(pbm)
     setSolIns(si || []); setSolBal(sb || [])
     setCargando(false)
@@ -197,7 +205,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const col = tab === 'insumos' ? 'precio_unitario' : 'precio_saco'
                       const tabla = tab === 'insumos' ? 'precio_insumo' : 'precio_producto'
                       const vig = vigente(map, p.id, f.id)
-                      const precio = vig ? Number(vig[col]) : null
+                      let precio = vig ? Number(vig[col]) : null
+                      const heredado = tab === 'insumos' && precio == null && preInsGen[p.id] != null
+                      if (heredado) precio = preInsGen[p.id]
                       const claveP = k(p.id, f.id)
                       return (
                         <Fragment key={f.id}>
@@ -218,6 +228,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                                          fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer', fontVariantNumeric: 'tabular-nums',
                                          color: precio == null ? '#BA7517' : NAVY }}>
                                 {precio == null ? 'Sin precio' : dinero(precio)}
+                                {heredado && <span style={{ fontSize: '9px', color: GRIS, display: 'block' }}>general</span>}
                               </button>
                               <button onClick={() => { setHist(hist === claveP ? null : claveP); setEditP(null) }} title="Historial de precios"
                                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, padding: 0, lineHeight: 1 }}>
