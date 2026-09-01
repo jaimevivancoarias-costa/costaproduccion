@@ -42,7 +42,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
   // producto (ingresos y pedidos).
   const [seccion, setSeccion] = useState('bodega')
-  useEffect(() => { if (abrirPrecios) setSeccion('precios') }, [abrirPrecios])
 
   // Cuando el jefe entra desde el aviso de "correcciones por aprobar",
   // abrimos directo la seccion de ingresos.
@@ -326,18 +325,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
           Ingresos y pedidos
         </Chip>
-        {/* Los precios son costo por material: solo el jefe. */}
-        {esJefe && (
-          <Chip on={seccion === 'precios'} onClick={() => { setSeccion('precios'); setContando(false) }}>
-            Precios
-          </Chip>
-        )}
       </div>
 
       {seccion === 'movimiento' ? (
         <Ingresos finca={finca} esJefe={esJefe} onCorreccion={onCorreccion} />
-      ) : seccion === 'precios' && esJefe ? (
-        <PreciosInsumos finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} />
       ) : (
       <>
       {/* --- seccion bodega --- */}
