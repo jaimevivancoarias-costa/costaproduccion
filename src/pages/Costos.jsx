@@ -1,38 +1,32 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import {
-  LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, semanaISO, corta, num, miles, dinero,
+  LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, semanaISO, corta, miles, dinero,
 } from '../lib/fechas'
 
-// Costos · banda 3 del Excel
+// Costos · analisis del gasto de la semana (balanceado + insumos).
 //
-// Todo aqui es calculo. El unico dato almacenado es el precio del saco
-// que se congelo al registrar cada dia (regla P3), asi que cambiar un
-// precio hoy no mueve estos numeros.
+// Todo es calculo: el balanceado usa el precio congelado de cada dia
+// (vw_alimentacion_costeada) y los insumos el precio de cada consumo.
+// El inventario y los precios vivos viven en el modulo Inventario; aqui
+// solo se mira en que se va la plata.
 
-const NAVY = '#022847'
-const AZUL = '#0D6CB0'
-const BORDE = '#dce6ef'
-const GRIS = '#7d8fa0'
+const NAVY = '#022847', AZUL = '#0D6CB0', VERDE = '#1D9E75'
+const BORDE = '#dce6ef', GRIS = '#7d8fa0'
 
 export default function Costos({ finca, esJefe, lunes, setLunes }) {
-  // El inventario lo lleva quien esta en la bodega. Los ajustes no:
-  // un ajuste es donde se tapa un descuadre, y esa decision es del jefe.
-  const puedeInventario = finca.rol !== 'visor'
-  const [filas, setFilas] = useState([])
-  const [productos, setProductos] = useState([])
-  const [acumulado, setAcumulado] = useState({})
-  const [anual, setAnual] = useState(0)
-  const [sacosAnual, setSacosAnual] = useState(0)
+  const [bal, setBal] = useState([])       // { piscinaId, nombre, hectareas, tipo, costo, sacos, libras, prod:{id:costo} }
+  const [ins, setIns] = useState([])       // { piscinaId, costo, item:{id:costo} }
+  const [productos, setProductos] = useState({})   // id -> nombre balanceado
+  const [insumos, setInsumos] = useState({})       // id -> nombre insumo
+  const [anual, setAnual] = useState({ bal: 0, ins: 0, sacos: 0 })
+  const [tendencia, setTendencia] = useState([])   // [{ semana, bal, ins }]
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
-  const [precios, setPrecios] = useState([])
-  const [editando, setEditando] = useState(null)   // { producto, precioActual }
-  const [sacos, setSacos] = useState({})           // productoId -> consumo en sacos
-  const [sacosPre, setSacosPre] = useState({})     // productoId -> consumo de precrias
-  const [inv, setInv] = useState({})               // productoId -> fila de inventario
-  const [arrastre, setArrastre] = useState(null)   // productoId -> saldo final de la semana anterior
-  const [guardandoInv, setGuardandoInv] = useState(false)
+
+  const [tipo, setTipo] = useState('ambos')        // 'bal' | 'ins' | 'ambos'
+  const [nPisc, setNPisc] = useState(10)           // cuántas piscinas mostrar (0 = todas)
+  const [abierta, setAbierta] = useState(null)     // piscinaId expandida
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -41,113 +35,72 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
     setCargando(true); setAviso(null)
     try {
       const domingo = fechas[6]
-
-      const { data: piscinas } = await supabase
-        .schema('produccion').from('piscina')
-        .select('id, codigo, nombre, hectareas, tipo')
-        .eq('finca_id', finca.id).eq('activa', true)
-
+      const { data: piscinas } = await supabase.schema('produccion').from('piscina')
+        .select('id, codigo, nombre, hectareas, tipo').eq('finca_id', finca.id).eq('activa', true)
       const ids = (piscinas || []).map(p => p.id)
-      if (!ids.length) { setFilas([]); return }
+      const pInfo = {}; (piscinas || []).forEach(p => { pInfo[p.id] = p })
+      if (!ids.length) { setBal([]); setIns([]); setCargando(false); return }
 
-      // La vista ya trae el costo calculado con el precio congelado.
-      const { data: sem, error } = await supabase
-        .schema('produccion').from('vw_alimentacion_costeada')
-        .select('piscina_id, ciclo_id, producto_id, libras, costo, sacos')
-        .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
-      if (error) throw error
+      const rango8 = sumarDias(lunes, -49)   // 8 semanas atrás
+      const [{ data: prods }, { data: insu }, { data: semBal }, { data: semIns },
+             { data: anioBal }, { data: anioIns }, { data: tBal }, { data: tIns }] = await Promise.all([
+        supabase.schema('produccion').from('producto').select('id, nombre, nombre_corto'),
+        supabase.schema('produccion').from('insumo').select('id, nombre'),
+        supabase.schema('produccion').from('vw_alimentacion_costeada')
+          .select('piscina_id, producto_id, libras, costo, sacos').in('piscina_id', ids)
+          .gte('fecha', lunes).lte('fecha', domingo),
+        supabase.schema('produccion').from('consumo_insumo')
+          .select('piscina_id, insumo_id, cantidad, precio_unitario').in('piscina_id', ids)
+          .gte('fecha', lunes).lte('fecha', domingo),
+        supabase.schema('produccion').from('vw_alimentacion_costeada')
+          .select('costo, sacos').in('piscina_id', ids)
+          .gte('fecha', lunes.slice(0, 4) + '-01-01').lte('fecha', domingo),
+        supabase.schema('produccion').from('consumo_insumo')
+          .select('cantidad, precio_unitario').in('piscina_id', ids)
+          .gte('fecha', lunes.slice(0, 4) + '-01-01').lte('fecha', domingo),
+        supabase.schema('produccion').from('vw_alimentacion_costeada')
+          .select('costo, fecha').in('piscina_id', ids).gte('fecha', rango8).lte('fecha', domingo),
+        supabase.schema('produccion').from('consumo_insumo')
+          .select('cantidad, precio_unitario, fecha').in('piscina_id', ids).gte('fecha', rango8).lte('fecha', domingo),
+      ])
 
-      const { data: prods } = await supabase
-        .schema('produccion').from('producto')
-        .select('id, nombre, nombre_corto, activo').eq('activo', true).order('nombre_corto')
+      const pm = {}; (prods || []).forEach(p => { pm[p.id] = p.nombre_corto || p.nombre }); setProductos(pm)
+      const im = {}; (insu || []).forEach(i => { im[i.id] = i.nombre }); setInsumos(im)
 
-      // Todos los balanceados activos, no solo los que se usaron esta
-      // semana: en el control de sacos un producto puede tener saldo sin
-      // haber consumido, y aun asi hay que poder verlo y cuadrarlo.
-      setProductos(prods || [])
-
-      const esPrecria = {}
-      ;(piscinas || []).forEach(p => { esPrecria[p.id] = p.tipo === 'precria' })
-      const sc = {}, scp = {}
-      ;(sem || []).forEach(r => {
-        sc[r.producto_id] = (sc[r.producto_id] || 0) + Number(r.sacos)
-        if (esPrecria[r.piscina_id]) scp[r.producto_id] = (scp[r.producto_id] || 0) + Number(r.sacos)
-      })
-      setSacos(sc); setSacosPre(scp)
-
-      const porPiscina = {}
-      ;(sem || []).forEach(r => {
-        const f = porPiscina[r.piscina_id] || (porPiscina[r.piscina_id] = { libras: 0, costo: 0, sacos: 0, prod: {} })
-        f.libras += Number(r.libras); f.costo += Number(r.costo); f.sacos += Number(r.sacos)
+      // Balanceado por piscina
+      const balMap = {}
+      ;(semBal || []).forEach(r => {
+        const f = balMap[r.piscina_id] || (balMap[r.piscina_id] = { costo: 0, sacos: 0, libras: 0, prod: {} })
+        f.costo += Number(r.costo); f.sacos += Number(r.sacos); f.libras += Number(r.libras)
         f.prod[r.producto_id] = (f.prod[r.producto_id] || 0) + Number(r.costo)
       })
+      setBal(ids.filter(id => balMap[id] || insMapHas(semIns, id)).map(id => ({
+        piscinaId: id, nombre: pInfo[id].nombre, hectareas: Number(pInfo[id].hectareas),
+        codigo: pInfo[id].codigo, tipo: pInfo[id].tipo, ...(balMap[id] || { costo: 0, sacos: 0, libras: 0, prod: {} }),
+      })).sort(ordenar))
 
-      const lista = (piscinas || [])
-        .filter(p => porPiscina[p.id])
-        .map(p => ({ ...p, ...porPiscina[p.id] }))
-        .sort(ordenar)
-      setFilas(lista)
+      // Insumos por piscina
+      const insMap = {}
+      ;(semIns || []).forEach(r => {
+        const c = Number(r.cantidad) * Number(r.precio_unitario || 0)
+        const f = insMap[r.piscina_id] || (insMap[r.piscina_id] = { costo: 0, item: {} })
+        f.costo += c; f.item[r.insumo_id] = (f.item[r.insumo_id] || 0) + c
+      })
+      setIns(insMap)
 
-      // Acumulado del ciclo de cada piscina.
-      const ciclos = [...new Set((sem || []).map(r => r.ciclo_id))]
-      const acum = {}
-      if (ciclos.length) {
-        const { data: hist } = await supabase
-          .schema('produccion').from('vw_alimentacion_costeada')
-          .select('piscina_id, costo').in('ciclo_id', ciclos).lte('fecha', domingo)
-        ;(hist || []).forEach(r => { acum[r.piscina_id] = (acum[r.piscina_id] || 0) + Number(r.costo) })
-      }
-      setAcumulado(acum)
+      setAnual({
+        bal: (anioBal || []).reduce((s, r) => s + Number(r.costo), 0),
+        ins: (anioIns || []).reduce((s, r) => s + Number(r.cantidad) * Number(r.precio_unitario || 0), 0),
+        sacos: (anioBal || []).reduce((s, r) => s + Number(r.sacos), 0),
+      })
 
-      const { anio: an, semana: se } = semanaISO(lunes)
-      const { data: invRows } = await supabase
-        .schema('produccion').from('inventario_saco')
-        .select('*').eq('finca_id', finca.id).eq('anio', an).eq('semana', se)
-      const mi = {}
-      ;(invRows || []).forEach(r => { mi[r.producto_id] = r })
-      setInv(mi)
-
-      // El saldo inicial no se teclea: es el saldo final de la semana
-      // anterior. Si al contar no cuadra, la diferencia va como ajuste.
-      const lunesPrevio = sumarDias(lunes, -7)
-      const { anio: anP, semana: seP } = semanaISO(lunesPrevio)
-      const { data: invPrev } = await supabase
-        .schema('produccion').from('inventario_saco')
-        .select('*').eq('finca_id', finca.id).eq('anio', anP).eq('semana', seP)
-
-      if (!invPrev || !invPrev.length) {
-        setArrastre(null)     // primera semana: hay que contar la bodega
-      } else {
-        const { data: consPrev } = await supabase
-          .schema('produccion').from('vw_alimentacion_costeada')
-          .select('producto_id, sacos').in('piscina_id', ids)
-          .gte('fecha', lunesPrevio).lte('fecha', sumarDias(lunesPrevio, 6))
-        const cp = {}
-        ;(consPrev || []).forEach(r => { cp[r.producto_id] = (cp[r.producto_id] || 0) + Number(r.sacos) })
-
-        const arr = {}
-        invPrev.forEach(r => {
-          arr[r.producto_id] = Number(r.saldo_inicial || 0) + Number(r.entradas_recibidas || 0)
-                             + Number(r.ajustes || 0) - (cp[r.producto_id] || 0)
-        })
-        setArrastre(arr)
-      }
-
-      // Precios vigentes de esta finca, para el panel de abajo.
-      const { data: pr } = await supabase
-        .schema('produccion').from('precio_producto')
-        .select('id, precio_saco, vigente_desde, producto:producto_id (id, nombre, nombre_corto, activo)')
-        .eq('finca_id', finca.id).is('vigente_hasta', null)
-      setPrecios((pr || [])
-        .filter(x => x.producto?.activo)
-        .sort((a, b) => a.producto.nombre_corto.localeCompare(b.producto.nombre_corto)))
-
-      const { data: anio } = await supabase
-        .schema('produccion').from('vw_alimentacion_costeada')
-        .select('costo, sacos').in('piscina_id', ids)
-        .gte('fecha', lunes.slice(0, 4) + '-01-01').lte('fecha', domingo)
-      setAnual((anio || []).reduce((s, r) => s + Number(r.costo), 0))
-      setSacosAnual((anio || []).reduce((s, r) => s + Number(r.sacos), 0))
+      // Tendencia por semana (últimas 8)
+      const semanas = Array.from({ length: 8 }, (_, k) => sumarDias(lunes, -7 * (7 - k)))
+      const tw = {}; semanas.forEach(s => { tw[s] = { semana: s, bal: 0, ins: 0 } })
+      const lunOf = f => lunesDe(f)
+      ;(tBal || []).forEach(r => { const k = lunOf(r.fecha); if (tw[k]) tw[k].bal += Number(r.costo) })
+      ;(tIns || []).forEach(r => { const k = lunOf(r.fecha); if (tw[k]) tw[k].ins += Number(r.cantidad) * Number(r.precio_unitario || 0) })
+      setTendencia(semanas.map(s => tw[s]))
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -157,501 +110,242 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  const totalCosto = filas.reduce((s, f) => s + f.costo, 0)
-  const totalLibras = filas.reduce((s, f) => s + f.libras, 0)
-  const totalSacos = filas.reduce((s, f) => s + f.sacos, 0)
-  const porProducto = {}
-  filas.forEach(f => Object.entries(f.prod).forEach(([id, c]) => {
-    porProducto[id] = (porProducto[id] || 0) + c
-  }))
-  const masUsado = Object.entries(porProducto).sort((a, b) => b[1] - a[1])[0]
+  // ---- derivados según el filtro ----
+  const costoBalPisc = p => p.costo || 0
+  const costoInsPisc = p => (ins[p.piscinaId]?.costo) || 0
+  const costoPisc = p => (tipo === 'bal' ? costoBalPisc(p) : tipo === 'ins' ? costoInsPisc(p) : costoBalPisc(p) + costoInsPisc(p))
 
-  // Regla P3: el precio nuevo rige desde su fecha hacia adelante. El
-  // anterior se cierra el dia previo, asi no se pisan y las semanas ya
-  // registradas conservan el costo con el que se guardaron.
-  async function cambiarPrecio(productoId, nuevo, desde) {
-    const { error: e1 } = await supabase.schema('produccion').from('precio_producto')
-      .update({ vigente_hasta: sumarDias(desde, -1) })
-      .eq('finca_id', finca.id).eq('producto_id', productoId).is('vigente_hasta', null)
-    if (e1) throw e1
-    const { error: e2 } = await supabase.schema('produccion').from('precio_producto')
-      .insert({ finca_id: finca.id, producto_id: productoId,
-                precio_saco: nuevo, vigente_desde: desde })
-    if (e2) throw e2
-  }
+  const totBal = bal.reduce((s, p) => s + costoBalPisc(p), 0)
+  const totIns = bal.reduce((s, p) => s + costoInsPisc(p), 0)
+  const totLibras = bal.reduce((s, p) => s + (p.libras || 0), 0)
+  const totSacos = bal.reduce((s, p) => s + (p.sacos || 0), 0)
+  const totFiltro = tipo === 'bal' ? totBal : tipo === 'ins' ? totIns : totBal + totIns
 
-  async function guardarPrecio({ productoId, nuevo, desde }) {
-    try {
-      await cambiarPrecio(productoId, nuevo, desde)
-      setEditando(null)
-      setAviso({ tipo: 'ok', texto: 'Precio actualizado. Rige desde el ' + corta(desde) + '.' })
-      await cargar()
-    } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo cambiar el precio. ' + (err.message || '') })
+  // Ranking de items (productos y/o insumos)
+  const ranking = useMemo(() => {
+    const items = []
+    if (tipo !== 'ins') {
+      const byProd = {}
+      bal.forEach(p => Object.entries(p.prod).forEach(([id, c]) => { byProd[id] = (byProd[id] || 0) + c }))
+      Object.entries(byProd).forEach(([id, c]) => items.push({ nombre: productos[id] || id, costo: c, es: 'bal' }))
     }
-  }
-
-  function setInvCampo(productoId, campo, valor) {
-    setInv(x => ({ ...x, [productoId]: { ...(x[productoId] || {}), [campo]: valor } }))
-  }
-
-  // Si hay semana anterior, el saldo inicial viene de ella y no se toca.
-  const saldoInicial = pid =>
-    arrastre ? (arrastre[pid] || 0) : (num(inv[pid]?.saldo_inicial) || 0)
-
-  const saldoFinal = pid =>
-    saldoInicial(pid) + (num(inv[pid]?.entradas_recibidas) || 0)
-    + (num(inv[pid]?.ajustes) || 0) - (sacos[pid] || 0)
-
-  async function guardarInventario() {
-    setGuardandoInv(true); setAviso(null)
-    try {
-      const { anio, semana } = semanaISO(lunes)
-      const filasInv = productos.map(p => {
-        const r = inv[p.id] || {}
-        return {
-          finca_id: finca.id, producto_id: p.id, anio, semana,
-          saldo_inicial: saldoInicial(p.id),
-          entradas_recibidas: num(r.entradas_recibidas) || 0,
-          ajustes: num(r.ajustes) || 0,
-          motivo_ajuste: r.motivo_ajuste || null,
-        }
-      })
-      const { error } = await supabase.schema('produccion').from('inventario_saco')
-        .upsert(filasInv, { onConflict: 'finca_id,producto_id,anio,semana' })
-      if (error) throw error
-      setAviso({ tipo: 'ok', texto: 'Inventario guardado' })
-      await cargar()
-    } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar el inventario. ' + (err.message || '') })
-    } finally {
-      setGuardandoInv(false)
+    if (tipo !== 'bal') {
+      const byIns = {}
+      Object.values(ins).forEach(f => Object.entries(f.item).forEach(([id, c]) => { byIns[id] = (byIns[id] || 0) + c }))
+      Object.entries(byIns).forEach(([id, c]) => items.push({ nombre: insumos[id] || id, costo: c, es: 'ins' }))
     }
-  }
+    return items.sort((a, b) => b.costo - a.costo).slice(0, 7)
+  }, [bal, ins, productos, insumos, tipo])
+  const maxRank = ranking.length ? ranking[0].costo : 1
 
-  const precioDe = {}
-  precios.forEach(x => { precioDe[x.producto.id] = Number(x.precio_saco) })
+  const piscOrden = useMemo(() =>
+    [...bal].sort((a, b) => costoPisc(b) - costoPisc(a)).filter(p => costoPisc(p) > 0),
+    [bal, ins, tipo])
+  const piscVis = nPisc ? piscOrden.slice(0, nPisc) : piscOrden
 
-  const COLS = `170px ${productos.map(() => '132px').join(' ')} 116px 124px`
-  const COLS_SACOS = `210px ${productos.map(() => '132px').join(' ')} 116px`
+  const maxTend = Math.max(1, ...tendencia.map(t => (tipo === 'bal' ? t.bal : tipo === 'ins' ? t.ins : t.bal + t.ins)))
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
-
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-                    gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Costos</h1>
           <div style={{ fontSize: '13px', color: GRIS }}>
-            Semana del {corta(lunes)} al {corta(fechas[6])} · con el precio vigente cada día
+            Semana del {corta(lunes)} al {corta(fechas[6])} · en qué se va la plata
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <Btn onClick={() => setLunes(sumarDias(lunes, -7))}>‹</Btn>
           <Btn onClick={() => setLunes(lunesDe(hoy))}>Esta semana</Btn>
           <Btn onClick={() => setLunes(sumarDias(lunes, 7))} disabled={lunes >= lunesDe(hoy)}>›</Btn>
-          <input type="date" value={lunes} max={hoy}
-                 onChange={e => e.target.value && setLunes(lunesDe(e.target.value))}
-                 style={{ padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit',
-                          border: '0.5px solid ' + BORDE, borderRadius: '9px', color: NAVY }} />
+          <input type="date" value={lunes} max={hoy} onChange={e => e.target.value && setLunes(lunesDe(e.target.value))}
+            style={{ padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', color: NAVY }} />
         </div>
       </div>
 
       {aviso && (
         <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
-          background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
-          color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
+          background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE', color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                    gap: '11px', marginBottom: '12px' }}>
-        <Kpi k="Costo de la semana" v={dinero(totalCosto)} />
-        <Kpi k="Costo por libra aplicada" v={totalLibras ? dinero(totalCosto / totalLibras) : '—'} />
-        <Kpi k="Sacos de la semana" v={miles(totalSacos)} s={`${miles(totalLibras)} lb`} />
-        <Kpi k="Acumulado del año" v={dinero(anual)} s={`${miles(sacosAnual)} sacos`} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '11px', marginBottom: '14px' }}>
+        <Kpi oscura k="Costo total semana" v={dinero(totBal + totIns)} s={totLibras ? dinero((totBal + totIns) / totLibras) + ' por libra' : null} />
+        <Kpi k="Balanceado" v={dinero(totBal)} s={`${miles(totSacos)} sacos`} />
+        <Kpi k="Insumos" v={dinero(totIns)} s={(totBal + totIns) ? `${Math.round(totIns / (totBal + totIns) * 100)}% del total` : null} />
+        <Kpi k="Acumulado del año" v={dinero(anual.bal + anual.ins)} s={`${miles(anual.sacos)} sacos`} />
+      </div>
+
+      {/* Filtro */}
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <div style={{ display: 'inline-flex', background: '#e7eef5', borderRadius: '10px', padding: '3px', gap: '3px' }}>
+          {[['ambos', 'Juntos'], ['bal', 'Balanceado'], ['ins', 'Insumos']].map(([id, txt]) => (
+            <button key={id} onClick={() => setTipo(id)} style={{
+              border: 0, background: tipo === id ? 'white' : 'transparent', borderRadius: '8px',
+              padding: '7px 15px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer',
+              fontWeight: tipo === id ? 500 : 400, color: tipo === id ? NAVY : GRIS }}>{txt}</button>
+          ))}
+        </div>
+        <span style={{ marginLeft: 'auto', fontSize: '13px', color: GRIS }}>Mostrar</span>
+        <select value={nPisc} onChange={e => setNPisc(Number(e.target.value))}
+          style={{ padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', color: NAVY }}>
+          <option value={5}>5 piscinas</option>
+          <option value={10}>10 piscinas</option>
+          <option value={20}>20 piscinas</option>
+          <option value={0}>Todas</option>
+        </select>
       </div>
 
       {cargando ? (
         <Vacio>Cargando...</Vacio>
-      ) : !filas.length ? (
-        <Vacio>No hay alimentación registrada en esta semana.</Vacio>
+      ) : (totBal + totIns) === 0 ? (
+        <Vacio>No hay consumo registrado en esta semana.</Vacio>
       ) : (
-        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <div style={{ minWidth: 170 + productos.length * 112 + 344 + 'px' }}>
-
-              <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
-                            borderBottom: '0.5px solid ' + BORDE }}>
-                <Th pegado>Piscina</Th>
-                {productos.map(p => (
-                  <Th key={p.id} titulo={p.nombre}>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'flex-end',
-                                  justifyContent: 'center', paddingBottom: '6px' }}>
-                      {p.nombre}
+        <>
+          {/* Gráficos */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px', marginBottom: '14px' }}>
+            <Caja>
+              <Titulo>En qué se va el costo · semana</Titulo>
+              {ranking.length === 0 ? <VacioChico>Sin datos con este filtro.</VacioChico> : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
+                  {ranking.map((r, i) => (
+                    <div key={i}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '3px' }}>
+                        <span>{r.nombre}</span>
+                        <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                          {dinero(r.costo)} · {Math.round(r.costo / (totFiltro || 1) * 100)}%
+                        </span>
+                      </div>
+                      <div style={{ height: '8px', background: '#eef3f7', borderRadius: '20px' }}>
+                        <i style={{ display: 'block', height: '100%', width: (r.costo / maxRank * 100) + '%',
+                          background: r.es === 'ins' ? VERDE : AZUL, borderRadius: '20px' }} />
+                      </div>
                     </div>
-                    <div style={{ borderTop: '0.5px solid #e8eef4', paddingTop: '5px' }}>
-                      {precioDe[p.id] ? (
-                        <>
-                          <div style={{ color: AZUL, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-                            {dinero(precioDe[p.id])}
-                          </div>
-                          <div style={{ color: GRIS, fontWeight: 400, fontVariantNumeric: 'tabular-nums' }}>
-                            {dinero(precioDe[p.id] / LIBRAS_POR_SACO)} lb
-                          </div>
-                        </>
-                      ) : <div style={{ color: '#c3d0db' }}>sin precio</div>}
-                    </div>
-                  </Th>
-                ))}
-                <Th>Costo semana</Th>
-                <Th>Acumulado del ciclo</Th>
-              </div>
-
-              {filas.map(f => (
-                <div key={f.id} style={{ display: 'grid', gridTemplateColumns: COLS,
-                      borderBottom: '0.5px solid #f1f6f9', alignItems: 'center' }}>
-                  <Td pegado alineado="left">
-                    <span style={{ fontWeight: 500, fontSize: '14px' }}>{f.nombre}</span>
-                    <div style={{ fontSize: '11px', color: GRIS }}>
-                      {Number(f.hectareas).toFixed(2)} ha{f.tipo === 'precria' && ' · precría'}
-                    </div>
-                  </Td>
-                  {productos.map(p => (
-                    <Td key={p.id}>
-                      <span style={{ color: f.prod[p.id] ? NAVY : '#c3d0db' }}>
-                        {f.prod[p.id] ? dinero(f.prod[p.id]) : '—'}
-                      </span>
-                    </Td>
                   ))}
-                  <Td><span style={{ fontWeight: 500 }}>{dinero(f.costo)}</span></Td>
-                  <Td><span style={{ color: GRIS }}>{dinero(acumulado[f.id] || 0)}</span></Td>
+                  {tipo === 'ambos' && (
+                    <div style={{ fontSize: '11px', color: '#a7b4c0', marginTop: '4px' }}>
+                      <span style={{ color: AZUL }}>■</span> balanceado &nbsp; <span style={{ color: VERDE }}>■</span> insumos
+                    </div>
+                  )}
                 </div>
-              ))}
-
-              <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
-                            borderTop: '0.5px solid ' + BORDE, alignItems: 'center' }}>
-                <Td pegado alineado="left" fondo="#fafcfd">
-                  <span style={{ fontWeight: 500, fontSize: '14px' }}>Total</span>
-                  <div style={{ fontSize: '11px', color: GRIS }}>{filas.length} piscinas</div>
-                </Td>
-                {productos.map(p => (
-                  <Td key={p.id} fondo="#fafcfd">
-                    <span style={{ fontWeight: 500 }}>{porProducto[p.id] ? dinero(porProducto[p.id]) : '—'}</span>
-                  </Td>
-                ))}
-                <Td fondo="#fafcfd"><span style={{ fontWeight: 500, fontSize: '15px' }}>{dinero(totalCosto)}</span></Td>
-                <Td fondo="#fafcfd" />
-              </div>
-            </div>
-          </div>
-
-          <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE,
-                        background: '#fafcfd', fontSize: '13px', color: GRIS }}>
-            La suma de los costos por producto tiene que dar el costo total. Es la
-            validación V2, la que en el Excel no cuadraba.
-            {masUsado && productos.find(p => p.id === masUsado[0]) && (
-              <> El producto de mayor peso esta semana es{' '}
-                <b style={{ color: NAVY, fontWeight: 500 }}>
-                  {productos.find(p => p.id === masUsado[0]).nombre_corto}
-                </b>, con {Math.round(masUsado[1] / totalCosto * 100)}% del costo.</>
-            )}
-          </div>
-        </div>
-      )}
-
-      {!!productos.length && (
-        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                      marginTop: '12px', overflow: 'hidden' }}>
-          <div style={{ padding: '16px 18px 12px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Control de sacos</h3>
-            <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
-              Saldo final = saldo inicial + pedido semanal + ajustes − consumo.
-              El saldo inicial es el saldo final de la semana anterior: no se teclea.
-              Si al contar la bodega no cuadra, la diferencia va como ajuste.
-            </p>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <div style={{ minWidth: 210 + productos.length * 132 + 116 + 'px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: COLS_SACOS, background: '#fafcfd',
-                            borderBottom: '0.5px solid ' + BORDE }}>
-                <Th pegado>Concepto</Th>
-                {productos.map(p => <Th key={p.id} titulo={p.nombre}>{p.nombre}</Th>)}
-                <Th>Total</Th>
-              </div>
-
-              {arrastre ? (
-                <FilaSacos etiqueta="Saldo inicial" productos={productos}
-                  nota="viene de la semana anterior"
-                  calculado={p => saldoInicial(p.id)} />
-              ) : (
-                <FilaSacos etiqueta="Saldo inicial" productos={productos} editable={puedeInventario}
-                  nota="primera semana: cuenta la bodega"
-                  valor={p => inv[p.id]?.saldo_inicial ?? ''}
-                  onChange={(p, v) => setInvCampo(p.id, 'saldo_inicial', v)} />
               )}
+            </Caja>
 
-              <FilaSacos etiqueta="Pedido semanal" productos={productos} editable={puedeInventario}
-                valor={p => inv[p.id]?.entradas_recibidas ?? ''}
-                onChange={(p, v) => setInvCampo(p.id, 'entradas_recibidas', v)} />
+            <Caja>
+              <Titulo>Costo por semana · últimas 8</Titulo>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '7px', height: '130px' }}>
+                {tendencia.map((t, i) => {
+                  const val = tipo === 'bal' ? t.bal : tipo === 'ins' ? t.ins : t.bal + t.ins
+                  const esActual = t.semana === lunes
+                  return (
+                    <div key={i} title={dinero(val)} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                      <div style={{ width: '100%', minHeight: '2px', height: (val / maxTend * 108) + 'px',
+                        background: esActual ? NAVY : AZUL, borderRadius: '4px 4px 0 0' }} />
+                      <span style={{ fontSize: '10px', color: esActual ? NAVY : '#a7b4c0', fontWeight: esActual ? 500 : 400 }}>
+                        {semanaISO(t.semana).semana}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </Caja>
+          </div>
 
-              <FilaSacos etiqueta="Consumo de la semana" productos={productos}
-                calculado={p => sacos[p.id] || 0} />
+          {/* Tabla por piscina (expandible) */}
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: cols(tipo), padding: '10px 15px', background: '#fafcfd',
+              fontSize: '11px', color: GRIS, textTransform: 'uppercase', borderBottom: '0.5px solid ' + BORDE }}>
+              <span>Piscina</span>
+              {tipo !== 'ins' && <span style={{ textAlign: 'right' }}>Balanceado</span>}
+              {tipo !== 'bal' && <span style={{ textAlign: 'right' }}>Insumos</span>}
+              <span style={{ textAlign: 'right' }}>Total</span>
+            </div>
 
-              <FilaSacos etiqueta="Consumo de precrías" productos={productos}
-                calculado={p => sacosPre[p.id] || 0} />
+            {piscVis.map(p => {
+              const abiertoAqui = abierta === p.piscinaId
+              const items = []
+              if (tipo !== 'ins') Object.entries(p.prod).forEach(([id, c]) => items.push({ nombre: productos[id] || id, costo: c, es: 'bal' }))
+              if (tipo !== 'bal') Object.entries(ins[p.piscinaId]?.item || {}).forEach(([id, c]) => items.push({ nombre: insumos[id] || id, costo: c, es: 'ins' }))
+              items.sort((a, b) => b.costo - a.costo)
+              return (
+                <Fragment key={p.piscinaId}>
+                  <div onClick={() => setAbierta(abiertoAqui ? null : p.piscinaId)}
+                    style={{ display: 'grid', gridTemplateColumns: cols(tipo), padding: '11px 15px', fontSize: '13px',
+                      alignItems: 'center', cursor: 'pointer', borderBottom: '0.5px solid #f1f6f9',
+                      background: abiertoAqui ? '#f6f9fb' : 'white' }}>
+                    <span style={{ fontWeight: 500 }}>
+                      <span style={{ display: 'inline-block', width: '12px', color: GRIS }}>{abiertoAqui ? '▾' : '▸'}</span>
+                      {p.nombre}
+                      {p.tipo === 'precria' && <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}> · precría</span>}
+                    </span>
+                    {tipo !== 'ins' && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{costoBalPisc(p) ? dinero(costoBalPisc(p)) : '—'}</span>}
+                    {tipo !== 'bal' && <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{costoInsPisc(p) ? dinero(costoInsPisc(p)) : '—'}</span>}
+                    <span style={{ textAlign: 'right', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{dinero(costoPisc(p))}</span>
+                  </div>
+                  {abiertoAqui && (
+                    <div style={{ padding: '4px 15px 12px 30px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      {items.length === 0 ? <span style={{ fontSize: '12px', color: GRIS }}>Sin desglose.</span> : items.map((it, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '4px 0', fontSize: '12px' }}>
+                          <span>
+                            <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '2px', marginRight: '7px',
+                              background: it.es === 'ins' ? VERDE : AZUL }} />
+                            {it.nombre}
+                          </span>
+                          <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{dinero(it.costo)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Fragment>
+              )
+            })}
 
-              <FilaSacos etiqueta="Ajustes" productos={productos} editable={esJefe}
-                nota={esJefe ? 'exige motivo' : 'solo el jefe'}
-                valor={p => inv[p.id]?.ajustes ?? ''}
-                onChange={(p, v) => setInvCampo(p.id, 'ajustes', v)} />
-
-              <FilaSacos etiqueta="Saldo final" resaltado productos={productos}
-                calculado={p => saldoFinal(p.id)} />
-
+            <div style={{ display: 'grid', gridTemplateColumns: cols(tipo), padding: '11px 15px', background: '#fafcfd',
+              fontSize: '13px', fontWeight: 500, alignItems: 'center', borderTop: '0.5px solid ' + BORDE }}>
+              <span>Total{nPisc && piscOrden.length > nPisc ? ` (top ${nPisc} de ${piscOrden.length})` : ''}</span>
+              {tipo !== 'ins' && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(piscVis.reduce((s, p) => s + costoBalPisc(p), 0))}</span>}
+              {tipo !== 'bal' && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(piscVis.reduce((s, p) => s + costoInsPisc(p), 0))}</span>}
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(piscVis.reduce((s, p) => s + costoPisc(p), 0))}</span>
             </div>
           </div>
-
-          {puedeInventario && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '13px 18px',
-                          borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
-              <Btn primario onClick={guardarInventario} disabled={guardandoInv}>
-                {guardandoInv ? 'Guardando...' : 'Guardar inventario'}
-              </Btn>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                    padding: '16px 18px', marginTop: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-                      gap: '12px', flexWrap: 'wrap' }}>
-          <div>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Precios vigentes</h3>
-            <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 14px', maxWidth: '560px' }}>
-              Precio por saco de 55 libras en {String(finca.nombre).toUpperCase()}.
-              {esJefe
-                ? ' Al cambiarlo, rige desde la fecha que elijas hacia adelante: las semanas ya registradas conservan el precio con el que se guardaron.'
-                : ' Solo un jefe puede cambiarlos.'}
-            </p>
-          </div>
-          <button onClick={() => exportarPrecios(precios, finca)} disabled={!precios.length}
-            style={{ padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
-                     border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white',
-                     color: NAVY, cursor: precios.length ? 'pointer' : 'default',
-                     opacity: precios.length ? 1 : 0.5 }}>
-            Exportar
-          </button>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,1fr) 100px 96px 132px 130px',
-                      gap: '12px', padding: '0 0 8px', fontSize: '11px', color: GRIS }}>
-          <div>Producto</div>
-          <div style={{ textAlign: 'right' }}>Por saco</div>
-          <div style={{ textAlign: 'right' }}>Por libra</div>
-          <div>Vigente desde</div>
-          <div />
-        </div>
-
-        {precios.map(p => (
-          <div key={p.id} style={{ borderBottom: '0.5px solid #f1f6f9', padding: '9px 0' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px,1fr) 100px 96px 132px 130px',
-                          gap: '12px', alignItems: 'center' }}>
-              <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.producto.nombre}</span>
-              <span style={{ fontSize: '16px', fontWeight: 500, textAlign: 'right',
-                             fontVariantNumeric: 'tabular-nums' }}>
-                {dinero(p.precio_saco)}
-              </span>
-              <span style={{ fontSize: '13px', color: GRIS, textAlign: 'right',
-                             fontVariantNumeric: 'tabular-nums' }}>
-                {dinero(p.precio_saco / LIBRAS_POR_SACO)}
-              </span>
-              <span style={{ fontSize: '13px', color: GRIS }}>{corta(p.vigente_desde)}</span>
-              {esJefe ? (
-                <button
-                  onClick={() => setEditando(editando?.id === p.id ? null : p)}
-                  style={{ background: 'white', border: '0.5px solid ' + BORDE,
-                           borderRadius: '9px', padding: '7px 13px', fontFamily: 'inherit',
-                           fontSize: '13px', color: NAVY, cursor: 'pointer' }}>
-                  {editando?.id === p.id ? 'Cancelar' : 'Cambiar precio'}
-                </button>
-              ) : <span />}
-            </div>
-            {editando?.id === p.id && (
-              <FormaPrecio actual={p} onGuardar={guardarPrecio} />
-            )}
-          </div>
-        ))}
-
-        {!precios.length && (
-          <div style={{ fontSize: '13px', color: GRIS }}>
-            Esta finca no tiene precios cargados.
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function exportarPrecios(precios, finca) {
-  const cab = ['Producto', 'Precio por saco', 'Precio por libra', 'Vigente desde']
-  const rows = precios.map(p => [
-    p.producto.nombre, p.precio_saco,
-    (p.precio_saco / LIBRAS_POR_SACO).toFixed(4), p.vigente_desde,
-  ])
-  const csv = [cab, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url; a.download = `precios_balanceado_${finca.codigo || finca.nombre}.csv`; a.click()
-  URL.revokeObjectURL(url)
-}
-
-function FormaPrecio({ actual, onGuardar }) {
-  const [nuevo, setNuevo] = useState(String(actual.precio_saco))
-  const [desde, setDesde] = useState(hoyISO())
-  const [enviando, setEnviando] = useState(false)
-  const v = num(nuevo)
-  const cambio = v && v !== Number(actual.precio_saco)
-  const diferencia = v ? v - Number(actual.precio_saco) : 0
-
-  return (
-    <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
-      <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Precio nuevo por saco</div>
-          <input inputMode="decimal" value={nuevo} onChange={e => setNuevo(e.target.value)}
-            style={{ padding: '9px 11px', fontSize: '15px', fontFamily: 'inherit', width: '130px',
-                     border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right',
-                     fontVariantNumeric: 'tabular-nums' }} />
-        </div>
-        <div>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Rige desde</div>
-          <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-            style={{ padding: '9px 11px', fontSize: '14px', fontFamily: 'inherit',
-                     border: '0.5px solid ' + BORDE, borderRadius: '9px' }} />
-        </div>
-        <button
-          disabled={!cambio || enviando}
-          onClick={async () => {
-            setEnviando(true)
-            await onGuardar({ productoId: actual.producto.id, nuevo: v, desde })
-            setEnviando(false)
-          }}
-          style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px',
-                   padding: '10px 20px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
-                   cursor: (!cambio || enviando) ? 'default' : 'pointer',
-                   opacity: (!cambio || enviando) ? 0.45 : 1 }}>
-          {enviando ? 'Guardando...' : 'Aplicar'}
-        </button>
-      </div>
-      {cambio && (
-        <div style={{ fontSize: '13px', color: GRIS, marginTop: '11px' }}>
-          {diferencia > 0 ? 'Sube' : 'Baja'}{' '}
-          <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(Math.abs(diferencia))}</b> por saco,
-          de {dinero(actual.precio_saco / LIBRAS_POR_SACO)} a {dinero(v / LIBRAS_POR_SACO)} por libra.
-          Los días anteriores al {corta(desde)} no cambian.
-        </div>
+        </>
       )}
     </div>
   )
 }
 
-function FilaSacos({ etiqueta, productos, editable, valor, onChange, calculado, resaltado, nota }) {
-  const COLS = `210px ${productos.map(() => '132px').join(' ')} 116px`
-  const total = calculado
-    ? productos.reduce((s, p) => s + (calculado(p) || 0), 0)
-    : productos.reduce((s, p) => s + (num(valor(p)) || 0), 0)
-  const fondo = resaltado ? '#fafcfd' : 'white'
+function insMapHas(semIns, id) { return (semIns || []).some(r => r.piscina_id === id) }
+function cols(tipo) { return tipo === 'ambos' ? '1fr 120px 120px 130px' : '1fr 130px 130px' }
+
+function Kpi({ k, v, s, oscura }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: COLS, alignItems: 'center',
-                  borderBottom: '0.5px solid #f1f6f9', background: fondo }}>
-      <Td pegado alineado="left" fondo={fondo}>
-        <span style={{ fontSize: '13px', fontWeight: resaltado ? 500 : 400 }}>{etiqueta}</span>
-        {nota && <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>{nota}</div>}
-      </Td>
-      {productos.map(p => (
-        <Td key={p.id} fondo={fondo}>
-          {calculado ? (
-            <span style={{ fontWeight: resaltado ? 500 : 400,
-                           color: calculado(p) < 0 ? '#A32D2D' : (calculado(p) ? NAVY : '#c3d0db') }}>
-              {calculado(p) ? Math.round(calculado(p) * 10) / 10 : '—'}
-            </span>
-          ) : editable ? (
-            <input inputMode="decimal" value={valor(p)} placeholder="0"
-              onChange={e => onChange(p, e.target.value)}
-              style={{ width: '100%', padding: '6px', fontSize: '14px', textAlign: 'center',
-                       fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '7px',
-                       fontVariantNumeric: 'tabular-nums' }} />
-          ) : (
-            <span style={{ color: valor(p) ? NAVY : '#c3d0db' }}>{valor(p) || '—'}</span>
-          )}
-        </Td>
-      ))}
-      <Td fondo={fondo}>
-        <span style={{ fontWeight: 500, color: total < 0 ? '#A32D2D' : NAVY }}>
-          {Math.round(total * 10) / 10}
-        </span>
-      </Td>
+    <div style={{ background: oscura ? NAVY : 'white', border: oscura ? 'none' : '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '11px', color: oscura ? 'rgba(255,255,255,0.65)' : GRIS, marginBottom: '4px' }}>{k}</div>
+      <div style={{ fontSize: '23px', fontWeight: 500, color: oscura ? 'white' : NAVY }}>{v}</div>
+      {s && <div style={{ fontSize: '12px', color: oscura ? 'rgba(255,255,255,0.5)' : GRIS, marginTop: '2px' }}>{s}</div>}
     </div>
   )
 }
-
-function Kpi({ k, v, s }) {
-  return (
-    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px' }}>
-      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>{k}</div>
-      <div style={{ fontSize: '23px', fontWeight: 500 }}>{v}</div>
-      {s && <div style={{ fontSize: '12px', color: GRIS, marginTop: '2px' }}>{s}</div>}
-    </div>
-  )
+function Caja({ children }) {
+  return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '15px 17px' }}>{children}</div>
 }
-
-function Th({ children, pegado, titulo }) {
-  return (
-    <div title={titulo} style={{
-      padding: '10px 9px', fontSize: '11px', color: GRIS, fontWeight: 500, textAlign: 'center',
-      background: '#fafcfd', lineHeight: 1.3,
-      display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
-      ...(pegado ? { position: 'sticky', left: 0, zIndex: 3, textAlign: 'left',
-                     paddingLeft: '16px', borderRight: '0.5px solid ' + BORDE } : {}),
-    }}>{children}</div>
-  )
+function Titulo({ children }) {
+  return <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '12px' }}>{children}</div>
 }
-
-function Td({ children, pegado, fondo, alineado }) {
-  return (
-    <div style={{
-      padding: '9px', textAlign: alineado || 'center', fontSize: '13px',
-      fontVariantNumeric: 'tabular-nums', background: fondo || 'white',
-      ...(pegado ? { position: 'sticky', left: 0, zIndex: 2, paddingLeft: '16px',
-                     borderRight: '0.5px solid ' + BORDE } : {}),
-    }}>{children}</div>
-  )
-}
-
-function Btn({ children, onClick, primario, disabled }) {
+function Btn({ children, onClick, disabled }) {
   return (
     <button onClick={onClick} disabled={disabled} style={{
-      background: primario ? AZUL : 'white', color: primario ? 'white' : NAVY,
-      border: '0.5px solid ' + (primario ? AZUL : BORDE), borderRadius: '9px',
+      background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px',
       padding: '9px 14px', fontFamily: 'inherit', fontSize: '13px',
-      cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-    }}>{children}</button>
+      cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1 }}>{children}</button>
   )
 }
-
 function Vacio({ children }) {
-  return (
-    <div style={{ padding: '3rem 1rem', textAlign: 'center', border: '0.5px dashed ' + BORDE,
-                  borderRadius: '12px', color: GRIS, fontSize: '14px', background: 'white' }}>
-      {children}
-    </div>
-  )
+  return <div style={{ padding: '3rem 1rem', textAlign: 'center', border: '0.5px dashed ' + BORDE, borderRadius: '12px', color: GRIS, fontSize: '14px', background: 'white' }}>{children}</div>
 }
-
+function VacioChico({ children }) {
+  return <div style={{ padding: '18px 0', textAlign: 'center', color: GRIS, fontSize: '13px' }}>{children}</div>
+}
 function ordenar(a, b) {
   if (a.tipo !== b.tipo) return a.tipo === 'precria' ? 1 : -1
-  return (parseInt(a.codigo.replace(/\D/g, ''), 10) || 0) - (parseInt(b.codigo.replace(/\D/g, ''), 10) || 0)
+  return (parseInt(String(a.codigo).replace(/\D/g, ''), 10) || 0) - (parseInt(String(b.codigo).replace(/\D/g, ''), 10) || 0)
 }
