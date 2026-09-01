@@ -13,6 +13,7 @@ export function AuthProvider({ children }) {
   const [nombre, setNombre] = useState(null)
   const [fincas, setFincas] = useState([])
   const [esJefe, setEsJefe] = useState(false)
+  const [esJefeGlobal, setEsJefeGlobal] = useState(false)
   const [cargando, setCargando] = useState(true)
 
   useEffect(() => { iniciar() }, [])
@@ -64,6 +65,7 @@ export function AuthProvider({ children }) {
     // la lista de fincas se queda acotada (rama de abajo).
     const contadora = filas.some(f => f.rol === 'contador')
     setEsJefe(jefe || contadora)
+    setEsJefeGlobal(jefe)   // solo el jefe global gestiona el catálogo
 
     // El jefe se registra con una sola fila de finca_id nulo, que
     // significa "todas". Sus fincas se leen del catalogo, asi una finca
@@ -105,10 +107,11 @@ export function AuthProvider({ children }) {
     setNombre(null)
     setFincas([])
     setEsJefe(false)
+    setEsJefeGlobal(false)
   }
 
   return (
-    <AuthContext.Provider value={{ user, nombre, fincas, esJefe, cargando, login, logout }}>
+    <AuthContext.Provider value={{ user, nombre, fincas, esJefe, esJefeGlobal, cargando, login, logout }}>
       {children}
     </AuthContext.Provider>
   )
