@@ -38,10 +38,11 @@ const ANCHOS_SALDO_BOD  = '1fr 110px 120px'   // bodeguero: sin dolares
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
 
-export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion }) {
+export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
   // producto (ingresos y pedidos).
   const [seccion, setSeccion] = useState('bodega')
+  useEffect(() => { if (abrirPrecios) setSeccion('precios') }, [abrirPrecios])
 
   // Cuando el jefe entra desde el aviso de "correcciones por aprobar",
   // abrimos directo la seccion de ingresos.
@@ -199,14 +200,26 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
       factor: n.compraDistinta ? (Number(String(n.factor).replace(',', '.')) || 1) : 1,
     }))
     setGuardandoNuevos(true)
-    const { error } = await supabase.schema('produccion').from('insumo').insert(rows)
-    setGuardandoNuevos(false)
-    if (error) {
-      const dup = /duplicate|unique/i.test(error.message)
-      setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
-      return
+    if (esJefeGlobal) {
+      const { error } = await supabase.schema('produccion').from('insumo').insert(rows)
+      setGuardandoNuevos(false)
+      if (error) {
+        const dup = /duplicate|unique/i.test(error.message)
+        setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
+        return
+      }
+      setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'insumo agregado' : 'insumos agregados'}. Ya puedes contarlos abajo.` })
+    } else {
+      // Bodeguero/contadora: no crea, PIDE al jefe.
+      const { data: au } = await supabase.auth.getUser()
+      const solis = rows.map(r => ({
+        finca_id: finca.id, tabla: 'nuevo_insumo', registro_id: crypto.randomUUID(),
+        valor_propuesto: r, motivo: 'Insumo que falta en la lista', solicitado_por: au?.user?.id }))
+      const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert(solis)
+      setGuardandoNuevos(false)
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+      setAviso({ tipo: 'ok', texto: 'Pedido enviado al jefe. Lo agregará al catálogo.' })
     }
-    setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'insumo agregado' : 'insumos agregados'}. Ya puedes contarlos abajo.` })
     setNuevos([])
     await cargar()
   }
@@ -324,7 +337,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
       {seccion === 'movimiento' ? (
         <Ingresos finca={finca} esJefe={esJefe} onCorreccion={onCorreccion} />
       ) : seccion === 'precios' && esJefe ? (
-        <PreciosInsumos finca={finca} esJefe={esJefe} />
+        <PreciosInsumos finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} />
       ) : (
       <>
       {/* --- seccion bodega --- */}
@@ -452,7 +465,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
           <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
             {nuevos.length === 0 ? (
               <button onClick={() => setNuevos([filaNueva()])} style={{ ...btnLink }}>
-                + ¿Falta un insumo? Agrégalo aquí
+                + ¿Falta un insumo? {esJefeGlobal ? 'Agrégalo aquí' : 'Pídelo al jefe'}
               </button>
             ) : (
               <div>
@@ -498,7 +511,7 @@ export default function Inventario({ finca, esJefe, abrirIngresos, onCorreccion 
                   <Btn onClick={() => setNuevos([])}>Cancelar</Btn>
                   <Btn primario onClick={guardarNuevos}
                        disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}>
-                    {guardandoNuevos ? 'Agregando...' : 'Agregar a la lista'}
+                    {guardandoNuevos ? (esJefeGlobal ? 'Agregando...' : 'Enviando...') : (esJefeGlobal ? 'Agregar a la lista' : 'Enviar pedido al jefe')}
                   </Btn>
                 </div>
               </div>
