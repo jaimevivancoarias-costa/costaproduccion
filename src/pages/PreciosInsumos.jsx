@@ -24,7 +24,7 @@ const UNIDAD = {
 }
 const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
 
-export default function PreciosInsumos({ finca, esJefe }) {
+export default function PreciosInsumos({ finca, esJefe, esJefeGlobal }) {
   const [filas, setFilas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -32,6 +32,7 @@ export default function PreciosInsumos({ finca, esJefe }) {
   const [editandoInsumo, setEditandoInsumo] = useState(null)
   const [agregando, setAgregando] = useState(false)
   const [fincas, setFincas] = useState([])   // fincas que puedo gestionar
+  const [solNuevos, setSolNuevos] = useState([])   // pedidos de insumos nuevos
 
   useEffect(() => {
     supabase.schema('produccion').from('finca').select('id, nombre').eq('activa', true).order('nombre')
@@ -66,8 +67,22 @@ export default function PreciosInsumos({ finca, esJefe }) {
         factor: o?.factor != null ? Number(o.factor) : i.factor,
         unidadPropia: !!o }
     }))
+    // Pedidos de insumos nuevos por aprobar (catálogo, jefe global).
+    if (esJefeGlobal) {
+      const { data: sn } = await supabase.schema('produccion').from('solicitud_correccion')
+        .select('id, valor_propuesto, motivo, finca:finca_id (nombre)')
+        .eq('tabla', 'nuevo_insumo').eq('estado', 'pendiente').order('solicitado_en')
+      setSolNuevos(sn || [])
+    } else { setSolNuevos([]) }
     setCargando(false)
-  }, [finca.id])
+  }, [finca.id, esJefeGlobal])
+
+  async function resolverNuevo(sol, aprobar) {
+    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Insumo agregado al catálogo.' : 'Pedido rechazado.' })
+    await cargar()
+  }
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -185,7 +200,7 @@ export default function PreciosInsumos({ finca, esJefe }) {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          {esJefe && !agregando && (
+          {esJefeGlobal && !agregando && (
             <button onClick={() => { setAgregando(true); setAviso(null) }}
               style={{ padding: '8px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                        border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white',
@@ -202,6 +217,31 @@ export default function PreciosInsumos({ finca, esJefe }) {
           </button>
         </div>
       </div>
+
+      {esJefeGlobal && solNuevos.length > 0 && (
+        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '10px', padding: '13px 15px', marginBottom: '12px' }}>
+          <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
+            Insumos pedidos por bodega ({solNuevos.length})
+          </div>
+          {solNuevos.map(s => {
+            const vp = s.valor_propuesto || {}
+            return (
+              <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    gap: '10px', flexWrap: 'wrap', borderTop: '0.5px solid #ecd9b3', paddingTop: '9px', marginTop: '9px' }}>
+                <div style={{ fontSize: '13px' }}>
+                  <b style={{ fontWeight: 500 }}>{vp.nombre}</b> · {UNIDAD[vp.unidad] || vp.unidad}
+                  {vp.unidad_compra && vp.unidad_compra !== vp.unidad ? ` · compra por ${vp.unidad_compra} (${vp.factor})` : ''}
+                  <div style={{ fontSize: '11px', color: GRIS }}>Pedido por {s.finca?.nombre}</div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => resolverNuevo(s, true)} style={accion}>Aprobar</button>
+                  <button onClick={() => resolverNuevo(s, false)} style={{ ...accion, color: ROJO, borderColor: '#e7cccb' }}>Rechazar</button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {agregando && <AltaInsumo onCrear={crear} onCancelar={() => setAgregando(false)} />}
 
@@ -250,10 +290,14 @@ export default function PreciosInsumos({ finca, esJefe }) {
               <div style={{ display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
                 <button onClick={() => { setEditando(editando === f.id ? null : f.id); setEditandoInsumo(null) }}
                   style={accion}>{editando === f.id ? 'Cancelar' : 'Precio'}</button>
-                <button onClick={() => { setEditandoInsumo(editandoInsumo === f.id ? null : f.id); setEditando(null) }}
-                  style={accion}>{editandoInsumo === f.id ? 'Cancelar' : 'Editar'}</button>
-                <button onClick={() => quitar(f)}
-                  style={{ ...accion, borderColor: '#e7cccb', color: ROJO }}>Quitar</button>
+                {esJefeGlobal && (
+                  <button onClick={() => { setEditandoInsumo(editandoInsumo === f.id ? null : f.id); setEditando(null) }}
+                    style={accion}>{editandoInsumo === f.id ? 'Cancelar' : 'Editar'}</button>
+                )}
+                {esJefeGlobal && (
+                  <button onClick={() => quitar(f)}
+                    style={{ ...accion, borderColor: '#e7cccb', color: ROJO }}>Quitar</button>
+                )}
               </div>
             ) : <span />}
           </div>
