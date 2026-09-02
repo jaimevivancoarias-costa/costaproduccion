@@ -16,7 +16,7 @@ const VERDE = '#0F6E56'
 const AMBAR = '#854F0B'
 
 const UNIDAD = {
-  sacos: 'sacos', litros: 'litros', gramos: 'g',
+  sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
   libras: 'lb', kg: 'kg', unidad: 'u',
 }
 
