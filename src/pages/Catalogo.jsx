@@ -349,30 +349,33 @@ function EditorPrecio({ tab, fincas, fincaActual, uCons, uCompra, factor, actual
     const enCompra = esInsumo && entrada === 'compra' ? a * factor : a
     return String(Math.round(enCompra * 10000) / 10000)
   }
-  const [vals, setVals] = useState(() => Object.fromEntries(PLAZOS.map(pz => [pz, prefill(pz)])))
+  const [plazoSel, setPlazoSel] = useState(0)
+  const [v, setV] = useState(() => prefill(0))
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
   const [sel, setSel] = useState([fincaActual.id])
   const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
   const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-  const setVal = (pz, v) => setVals(o => ({ ...o, [pz]: v }))
-  // Al cambiar la unidad de entrada, reconvertir lo que ya está escrito.
+  // Al cambiar de plazo, precargar el precio vigente de ese plazo.
+  const cambiarPlazo = (pz) => { setPlazoSel(pz); setV(prefillCon(actuales[pz], entrada)) }
+  // Al cambiar la unidad de entrada, reconvertir lo escrito.
   const cambiarEntrada = (nueva) => {
     if (nueva === entrada) return
-    setVals(o => Object.fromEntries(PLAZOS.map(pz => {
-      const n = numDec(o[pz]); if (!(n > 0)) return [pz, o[pz]]
-      const conv = nueva === 'compra' ? n * factor : n / factor
-      return [pz, String(Math.round(conv * 10000) / 10000)]
-    })))
+    const n = numDec(v)
+    if (n > 0) setV(String(Math.round((nueva === 'compra' ? n * factor : n / factor) * 10000) / 10000))
     setEntrada(nueva)
   }
+  function prefillCon(a, ent) {
+    if (a == null) return ''
+    const enUnidad = esInsumo && ent === 'compra' ? a * factor : a
+    return String(Math.round(enUnidad * 10000) / 10000)
+  }
   const unidadTxt = entrada === 'compra' ? (UNIDAD[uCompra] || cap(uCompra)) : (UNIDAD[uCons] || cap(uCons))
-  const hayAlgo = PLAZOS.some(pz => numDec(vals[pz]) > 0)
+  const val = numDec(v)
+  const equiv = esInsumo && val > 0 ? (entrada === 'compra' ? val / factor : val * factor) : null
   const guardar = async () => {
     setEnviando(true)
-    const valores = {}
-    PLAZOS.forEach(pz => { const n = numDec(vals[pz]); if (n > 0) valores[pz] = n })
-    await onGuardar(valores, entrada, desde, sel)
+    await onGuardar({ [plazoSel]: val }, entrada, desde, sel)
     setEnviando(false)
   }
   return (
@@ -389,31 +392,26 @@ function EditorPrecio({ tab, fincas, fincaActual, uCons, uCompra, factor, actual
           <span style={{ fontSize: '11px', color: GRIS, marginLeft: 'auto' }}>1 {cap(uCompra)} = {factor} {UNIDAD[uCons] || uCons}</span>
         </div>
       )}
-      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px', textTransform: 'uppercase' }}>Precio por {unidadTxt} · por plazo</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px' }}>
-        {PLAZOS.map(pz => {
-          const n = numDec(vals[pz])
-          const equiv = esInsumo && n > 0 ? (entrada === 'compra' ? n / factor : n * factor) : null
-          return (
-            <div key={pz}>
-              <div style={{ fontSize: '12px', color: GRIS, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-              <input inputMode="decimal" value={vals[pz]} onChange={e => setVal(pz, e.target.value)}
-                placeholder="—" style={{ ...inp, width: '100%', textAlign: 'right' }} />
-              {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '2px', textAlign: 'right' }}>
-                {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
-            </div>
-          )
-        })}
-      </div>
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '12px' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Campo label="Este precio es de">
+          <select value={plazoSel} onChange={e => cambiarPlazo(Number(e.target.value))} style={{ ...inp, width: '130px' }}>
+            {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+          </select>
+        </Campo>
+        <Campo label={`Precio por ${unidadTxt}`}>
+          <input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)}
+            placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
+          {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
+            = {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
+        </Campo>
         <Campo label="Rige desde"><input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} /></Campo>
-        <button disabled={!hayAlgo || sel.length === 0 || enviando} onClick={guardar}
-          style={{ ...btnPri, opacity: (!hayAlgo || sel.length === 0 || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
+        <button disabled={!(val > 0) || sel.length === 0 || enviando} onClick={guardar}
+          style={{ ...btnPri, opacity: (!(val > 0) || sel.length === 0 || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
         <button onClick={onCancelar} style={btn}>Cancelar</button>
       </div>
       {otras.length > 0 && (
         <div style={{ marginTop: '10px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar los mismos precios a:</div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar este precio a:</div>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
             {otras.map(f => {
