@@ -388,7 +388,6 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   const [nuevo, setNuevo] = useState(false)
   const [fecha, setFecha] = useState(hoyISO())
   const [guia, setGuia] = useState(''); const [prov, setProv] = useState('')
-  const [plazo, setPlazo] = useState(0)
   const [lineas, setLineas] = useState([{ productoId: '', cantidad: '' }])
   const [aviso, setAviso] = useState(null)
   const [solicitudes, setSolicitudes] = useState([])
@@ -399,7 +398,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     const [{ data: pr }, { data: g }, { data: sol }, { data: auth }] = await Promise.all([
       supabase.schema('produccion').from('producto').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('ingreso_balanceado')
-        .select('id, fecha, numero_guia, proveedor, plazo, ingreso_balanceado_linea(producto_id, cantidad)')
+        .select('id, fecha, numero_guia, proveedor, ingreso_balanceado_linea(producto_id, cantidad, plazo)')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
       supabase.schema('produccion').from('solicitud_correccion')
         .select('id, registro_id, valor_propuesto, motivo, estado')
@@ -430,12 +429,12 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   async function guardar() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Agrega al menos una línea.' }); return }
     const { data: g, error } = await supabase.schema('produccion').from('ingreso_balanceado')
-      .insert({ finca_id: finca.id, fecha, numero_guia: guia || null, proveedor: prov || null, plazo }).select('id').single()
+      .insert({ finca_id: finca.id, fecha, numero_guia: guia || null, proveedor: prov || null }).select('id').single()
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
       .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: num(l.cantidad) })))
     if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
-    setNuevo(false); setLineas([{ productoId: '', cantidad: '' }]); setGuia(''); setProv(''); setPlazo(0)
+    setNuevo(false); setLineas([{ productoId: '', cantidad: '' }]); setGuia(''); setProv('')
     setAviso({ tipo: 'ok', texto: 'Ingreso registrado.' }); await cargar(); onCambio && onCambio()
   }
 
@@ -479,11 +478,6 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
             <Campo label="Fecha"><input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={inp} /></Campo>
             <Campo label="Número de guía"><input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={inp} /></Campo>
             <Campo label="Proveedor"><input value={prov} placeholder="Opcional" onChange={e => setProv(e.target.value)} style={inp} /></Campo>
-            <Campo label="Plazo de pago">
-              <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={inp}>
-                {[[0, 'Contado'], [30, '30 días'], [60, '60 días'], [90, '90 días'], [120, '120 días']].map(([v, t]) => <option key={v} value={v}>{t}</option>)}
-              </select>
-            </Campo>
           </div>
           <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Balanceados (en sacos)</div>
           {lineas.map((l, i) => (
@@ -514,7 +508,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontWeight: 500 }}>{corta(g.fecha)}</div>
-              <div style={{ fontSize: '12px', color: GRIS }}>{g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}{g.proveedor ? ` · ${g.proveedor}` : ''}{` · ${({ 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' })[g.plazo] || 'Contado'}`}</div>
+              <div style={{ fontSize: '12px', color: GRIS }}>{g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}{g.proveedor ? ` · ${g.proveedor}` : ''}</div>
             </div>
             <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start' }}>
               {solPend ? (
