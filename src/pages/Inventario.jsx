@@ -23,11 +23,11 @@ const AMBAR = '#854F0B'
 // El inventario se muestra en unidad de compra (tambores, botellas,
 // sacos), que es lo que devuelven las funciones de saldo.
 const UNIDAD = {
-  sacos: 'Sacos', litros: 'Litros', gramos: 'Gramos',
+  sacos: 'Sacos', litros: 'Litros', ml: 'Mililitros', gramos: 'Gramos',
   libras: 'Libras', kg: 'Kilos', unidad: 'Unidades',
   tambor: 'Tambores', botella: 'Botellas',
 }
-const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
+const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
