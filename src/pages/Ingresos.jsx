@@ -21,7 +21,7 @@ const VERDE = '#0F6E56'
 const AMBAR = '#854F0B'
 
 const UNIDAD = {
-  sacos: 'sacos', litros: 'litros', gramos: 'gramos',
+  sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'gramos',
   libras: 'libras', kg: 'kilos', unidad: 'unidades',
   tambor: 'tambores', botella: 'botellas',
 }
@@ -282,7 +282,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '', unidad: '' }])
   const [guardando, setGuardando] = useState(false)
 
-  const UNI = { sacos: 'sacos', litros: 'litros', gramos: 'gramos',
+  const UNI = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'gramos',
                 libras: 'libras', kg: 'kilos', unidad: 'unidades',
                 tambor: 'tambores', botella: 'botellas' }
 
@@ -483,7 +483,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
   const [lineas, setLineas] = useState((g.ingreso_insumo_linea || []).map(l => ({ insumoId: l.insumo_id, cantidad: String(l.cantidad) })))
   const [motivo, setMotivo] = useState('')
   const [enviando, setEnviando] = useState(false)
-  const UNI = { sacos: 'sacos', litros: 'litros', gramos: 'gramos', libras: 'libras', kg: 'kilos',
+  const UNI = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'gramos', libras: 'libras', kg: 'kilos',
                 unidad: 'unidades', tambor: 'tambores', botella: 'botellas' }
   const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
   const validas = lineas.filter(l => l.insumoId && num(l.cantidad))
