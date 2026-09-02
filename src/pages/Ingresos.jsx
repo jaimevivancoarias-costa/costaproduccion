@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, miles } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, miles } from '../lib/fechas'
+
+const PLAZOS = [0, 30, 60, 90, 120]
+const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 
 // Ingresos y pedidos de insumos · modulo Produccion
 //
@@ -51,7 +54,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
               : i) }
           }),
         supabase.schema('produccion').from('ingreso_insumo')
-          .select('id, fecha, numero_guia, proveedor, observacion, ingreso_insumo_linea(insumo_id, cantidad)')
+          .select('id, fecha, numero_guia, proveedor, plazo, observacion, ingreso_insumo_linea(insumo_id, cantidad)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
         supabase.schema('produccion').from('pedido_insumo')
           .select('id, fecha, fecha_esperada, proveedor, estado, pedido_insumo_linea(insumo_id, cantidad)')
@@ -151,6 +154,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
                 <div style={{ fontSize: '12px', color: GRIS }}>
                   {g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}
                   {g.proveedor ? ` · ${g.proveedor}` : ''}
+                  {` · ${PLAZO_LBL[g.plazo] || 'Contado'}`}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start' }}>
@@ -276,7 +280,8 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const [esperada, setEsperada] = useState('')
   const [pedidoId, setPedidoId] = useState('')
   const [obs, setObs] = useState('')
-  const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '' }])
+  const [plazo, setPlazo] = useState(0)
+  const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '', unidad: '' }])
   const [guardando, setGuardando] = useState(false)
 
   const UNI = { sacos: 'sacos', litros: 'litros', gramos: 'gramos',
@@ -286,10 +291,21 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   function setLinea(i, campo, valor) {
     setLineas(ls => ls.map((l, j) => j === i ? { ...l, [campo]: valor } : l))
   }
-  const agregarLinea = () => setLineas(ls => [...ls, { insumoId: '', cantidad: '' }])
+  const agregarLinea = () => setLineas(ls => [...ls, { insumoId: '', cantidad: '', unidad: '' }])
   const quitarLinea = i => setLineas(ls => ls.filter((_, j) => j !== i))
 
   const validas = lineas.filter(l => l.insumoId && num(l.cantidad))
+
+  // Convierte la cantidad digitada a la unidad de compra (como se guarda).
+  // Si el bodeguero cargó en la unidad de conteo (kg), pasa a saco ÷ factor.
+  function cantidadEnCompra(l) {
+    const ins = insumos.find(x => x.id === l.insumoId)
+    const factor = Number(ins?.factor) || 1
+    const uCompra = ins?.unidad_compra || ins?.unidad
+    const uElegida = l.unidad || uCompra
+    const q = numDec(l.cantidad)
+    return uElegida === uCompra ? q : q / factor
+  }
 
   async function guardar() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Agrega al menos una línea.' }); return }
@@ -299,11 +315,11 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         const { data: g, error } = await supabase.schema('produccion').from('ingreso_insumo')
           .insert({ finca_id: finca.id, fecha, numero_guia: guia || null,
                     proveedor: proveedor || null, pedido_id: pedidoId || null,
-                    observacion: obs || null })
+                    plazo, observacion: obs || null })
           .select('id').single()
         if (error) throw error
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
-          .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: num(l.cantidad) })))
+          .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) })))
         if (e2) throw e2
       } else {
         const { data: p, error } = await supabase.schema('produccion').from('pedido_insumo')
@@ -350,6 +366,11 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
                 </select>
               </Campo>
             )}
+            <Campo label="Plazo de pago">
+              <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={entrada}>
+                {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+              </select>
+            </Campo>
           </>
         ) : (
           <Campo label="Fecha esperada">
@@ -366,18 +387,35 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
       {lineas.map((l, i) => {
         const ins = insumos.find(x => x.id === l.insumoId)
-        const uni = ins ? (UNI[ins.unidad_compra] || ins.unidad_compra) : null
+        const uCompra = ins?.unidad_compra || ins?.unidad
+        const uCons = ins?.unidad
+        const factor = Number(ins?.factor) || 1
+        // Unidades en que puede cargar: la de compra (saco) y la de conteo (kg), si difieren.
+        const unidades = ins ? [...new Set([uCompra, uCons])] : []
+        const uElegida = l.unidad || uCompra
+        const enCompra = esIngreso && ins && num(l.cantidad) ? cantidadEnCompra(l) : null
+        const mostrarEquiv = esIngreso && ins && uElegida !== uCompra && enCompra != null
         return (
-          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px' }}>
-            <select value={l.insumoId} onChange={e => setLinea(i, 'insumoId', e.target.value)}
-              style={{ ...entrada, flex: 1 }}>
+          <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
+            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', '') }}
+              style={{ ...entrada, flex: 1, minWidth: '180px' }}>
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad_compra] || x.unidad_compra}</option>)}
             </select>
             <input inputMode="decimal" value={l.cantidad}
-              placeholder={uni ? `Cantidad en ${UNI[uni] || uni}` : 'Cantidad'}
+              placeholder="Cantidad"
               onChange={e => setLinea(i, 'cantidad', e.target.value)}
-              style={{ ...entrada, width: '190px' }} />
+              style={{ ...entrada, width: '110px' }} />
+            {esIngreso && unidades.length > 1 ? (
+              <select value={uElegida} onChange={e => setLinea(i, 'unidad', e.target.value)} style={{ ...entrada, width: '110px' }}>
+                {unidades.map(u => <option key={u} value={u}>{UNI[u] || u}</option>)}
+              </select>
+            ) : ins ? (
+              <span style={{ fontSize: '13px', color: GRIS, width: '110px' }}>{UNI[uCompra] || uCompra}</span>
+            ) : null}
+            {mostrarEquiv && (
+              <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(enCompra * 100) / 100)} {UNI[uCompra] || uCompra}</span>
+            )}
             {lineas.length > 1 && (
               <button onClick={() => quitarLinea(i)} style={{ border: 'none', background: 'none',
                 cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
