@@ -11,6 +11,7 @@ import PreciosBalanceado from './PreciosBalanceado'
 // solo para el jefe.
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
+const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 const ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#BA7517'
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 const G_CONTEO = '1fr 90px 120px 130px 130px'
@@ -30,6 +31,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
+  const [desglose, setDesglose] = useState({})
+  const [abierto, setAbierto] = useState(null)
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
   const [tomas, setTomas] = useState([])
@@ -48,7 +51,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }] = await Promise.all([
+      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
@@ -56,11 +59,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           .select('producto_id, precio_saco').eq('finca_id', finca.id).is('vigente_hasta', null),
         supabase.schema('produccion').from('toma_balanceado')
           .select('id, fecha, observacion').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
+        supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
       ])
       if (e) throw e
       const pr = {}; (p || []).forEach(x => { pr[x.producto_id] = Number(x.precio_saco) })
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
-      setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || [])
+      const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
+      setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
@@ -318,9 +323,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               )}
               <Caja>
                 <Encabezado gtc={esJefe ? G_SALDO_J : G_SALDO_B} cols={esJefe ? ['Balanceado', 'Saldo', 'Precio saco', 'Valor', ''] : ['Balanceado', 'Saldo']} />
-                {filas.map(f => (
-                  <Fila key={f.producto_id} gtc={esJefe ? G_SALDO_J : G_SALDO_B}>
-                    <Cel>{f.producto}</Cel>
+                {filas.map(f => {
+                  const dg = desglose[f.producto_id] || []
+                  const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
+                  const ab = abierto === f.producto_id
+                  return (
+                  <div key={f.producto_id}>
+                  <Fila gtc={esJefe ? G_SALDO_J : G_SALDO_B}>
+                    <Cel>
+                      {varios ? (
+                        <button onClick={() => setAbierto(ab ? null : f.producto_id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, textAlign: 'left' }}>
+                          <span style={{ color: GRIS, marginRight: '5px' }}>{ab ? '▾' : '▸'}</span>{f.producto}
+                        </button>
+                      ) : f.producto}
+                    </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></Cel>
                     {esJefe && <Cel der gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(valorFifo[f.producto_id] || 0)}</Cel>}
@@ -328,7 +344,29 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       <button onClick={() => corregir(f)} style={{ ...btn, padding: '5px 11px', fontSize: '12px', color: GRIS }}>Corregir</button>
                     </div>}
                   </Fila>
-                ))}
+                  {ab && (
+                    <div style={{ padding: '8px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
+                      {dg.map((d, i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                          <span>{PLAZO_LBL[d.plazo]}</span>
+                          <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
+                            <span>{limpio(d.cantidad)} sacos</span>
+                            {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(d.valor)}</span>}
+                          </span>
+                        </div>
+                      ))}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', fontWeight: 500, padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
+                        <span>Total</span>
+                        <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
+                          <span>{limpio(f.saldo)} sacos</span>
+                          {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(valorFifo[f.producto_id] || 0)}</span>}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                  </div>
+                )})}
               </Caja>
             </>
           ) : (
