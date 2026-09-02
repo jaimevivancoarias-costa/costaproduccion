@@ -21,7 +21,7 @@ const GRIS = '#7d8fa0'
 const HOYB = '#F3F8FD'
 
 const UNIDAD = {
-  sacos: 'sacos', litros: 'litros', gramos: 'g',
+  sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
   libras: 'lb', kg: 'kg', unidad: 'u',
 }
 
