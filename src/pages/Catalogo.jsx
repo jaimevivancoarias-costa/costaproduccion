@@ -28,6 +28,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [preInsGen, setPreInsGen] = useState({}) // insumo_id -> {plazo: precio general vigente}
   const [preBal, setPreBal] = useState({})     // producto_id|finca_id -> [rows precio]
   const [preBalGen, setPreBalGen] = useState({}) // producto_id -> {plazo: precio general vigente}
+  const [plz, setPlz] = useState({})           // prod|finca -> {plazo, vigente_desde} vigente
+  const [editPz, setEditPz] = useState(null)   // clave de plazo en edición
   const [solIns, setSolIns] = useState([])
   const [solBal, setSolBal] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -63,6 +65,14 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     setPreInsGen(pig2)
     const pbg2 = {}; (pgb || []).forEach(x => { (pbg2[x.producto_id] = pbg2[x.producto_id] || {})[x.plazo] = Number(x.precio_saco) })
     setPreBalGen(pbg2)
+    // Plazo de compra vigente por producto y finca.
+    const tablaPz = tab === 'insumos' ? 'plazo_insumo' : 'plazo_producto'
+    const colPz = tab === 'insumos' ? 'insumo_id' : 'producto_id'
+    const { data: pz } = await supabase.schema('produccion').from(tablaPz)
+      .select(`${colPz}, finca_id, plazo, vigente_desde`).is('vigente_hasta', null)
+      .in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000'])
+    const pzm = {}; (pz || []).forEach(x => { pzm[k(x[colPz], x.finca_id)] = { plazo: Number(x.plazo), vigente_desde: x.vigente_desde } })
+    setPlz(pzm)
     setInsumos(ins || []); setProductos(prod || [])
     const om = {}; (ov || []).forEach(x => { om[k(x.insumo_id, x.finca_id)] = x }); setOver(om)
     const pim = {}
@@ -71,7 +81,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     const pbm = {}; (pb || []).forEach(x => { (pbm[k(x.producto_id, x.finca_id)] = pbm[k(x.producto_id, x.finca_id)] || []).push(x) }); setPreBal(pbm)
     setSolIns(si || []); setSolBal(sb || [])
     setCargando(false)
-  }, [esJefeGlobal, JSON.stringify(fincaIds)])
+  }, [esJefeGlobal, tab, JSON.stringify(fincaIds)])
   useEffect(() => { cargar() }, [cargar])
 
   // Vigente para un plazo dado (uno por plazo puede estar abierto).
@@ -103,6 +113,20 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       }
     }
     setEditP(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Precios actualizados.' : `Precios aplicados a ${fincaIds.length} fincas.` }); await cargar()
+  }
+
+  // Guardar el plazo de compra vigente para una o varias fincas, desde una fecha.
+  async function guardarPlazo({ prodId, fincaIds, plazo, desde }) {
+    const tablaPz = tab === 'insumos' ? 'plazo_insumo' : 'plazo_producto'
+    const colPz = tab === 'insumos' ? 'insumo_id' : 'producto_id'
+    for (const fid of fincaIds) {
+      await supabase.schema('produccion').from(tablaPz).delete().eq(colPz, prodId).eq('finca_id', fid).gte('vigente_desde', desde)
+      await supabase.schema('produccion').from(tablaPz).update({ vigente_hasta: sumarDias(desde, -1) })
+        .eq(colPz, prodId).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', desde)
+      const { error } = await supabase.schema('produccion').from(tablaPz).insert({ [colPz]: prodId, finca_id: fid, plazo, vigente_desde: desde })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el plazo. ' + error.message }); return }
+    }
+    setEditPz(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Plazo actualizado.' : `Plazo aplicado a ${fincaIds.length} fincas.` }); await cargar()
   }
 
   async function quitar(tabla, id, nombre) {
@@ -243,7 +267,13 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                         <Fragment key={f.id}>
                           <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1.1fr 1.3fr 0.9fr 160px' : '1.6fr 1fr 160px',
                                         alignItems: 'center', padding: '9px 0', fontSize: '13px', borderBottom: '0.5px solid #eef3f7' }}>
-                            <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
+                            <span style={{ fontWeight: 500 }}>
+                              {String(f.nombre).toUpperCase()}
+                              <span style={{ display: 'block', fontSize: '11px', color: GRIS, fontWeight: 400 }}>
+                                Compra a {PLAZO_LBL[plz[claveP]?.plazo ?? 0]}
+                                {esJefe && <button onClick={() => setEditPz(editPz === claveP ? null : claveP)} style={miniLink}>{editPz === claveP ? ' cerrar' : ' editar'}</button>}
+                              </span>
+                            </span>
                             {tab === 'insumos' && (
                               <span style={{ color: GRIS }}>
                                 {uCompra && uCompra !== uCons ? `${cap(uCompra)} · ${factor} ${UNIDAD[uCons] || uCons}` : UNIDAD[uCompra] || cap(uCompra)}
@@ -268,6 +298,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             </span>
                           </div>
 
+                          {editPz === claveP && (
+                            <EditorPlazo fincas={fincas} fincaActual={f} actual={plz[claveP]?.plazo ?? 0}
+                              onGuardar={(plazo, desde, fincaIds) => guardarPlazo({ prodId: p.id, fincaIds, plazo, desde })}
+                              onCancelar={() => setEditPz(null)} />
+                          )}
                           {editP === claveP && (
                             <EditorPrecio tab={tab} fincas={fincas} fincaActual={f} uCons={uCons} uCompra={uCompra} factor={factor}
                               actuales={Object.fromEntries(PLAZOS.map(pz => [pz, precioPlazo(pz).val]))}
@@ -429,6 +464,52 @@ function EditorPrecio({ tab, fincas, fincaActual, uCons, uCompra, factor, actual
             )}
           </div>
           {esInsumo && hayCompra && <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Si otra finca tiene distinto peso por {cap(uCompra)}, el precio por {UNIDAD[uCons] || uCons} se ajusta a su factor.</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EditorPlazo({ fincas, fincaActual, actual, onGuardar, onCancelar }) {
+  const [plazo, setPlazo] = useState(actual ?? 0)
+  const [desde, setDesde] = useState(hoyISO())
+  const [enviando, setEnviando] = useState(false)
+  const [sel, setSel] = useState([fincaActual.id])
+  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+  return (
+    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Campo label="Se compra a">
+          <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={{ ...inp, width: '130px' }}>
+            {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Rige desde"><input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} /></Campo>
+        <button disabled={sel.length === 0 || enviando} onClick={async () => { setEnviando(true); await onGuardar(plazo, desde, sel); setEnviando(false) }}
+          style={{ ...btnPri, opacity: (sel.length === 0 || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+      </div>
+      <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Desde esa fecha, todo lo que ingrese de este producto en la finca se costea a ese plazo. El bodeguero no lo ve.</div>
+      {otras.length > 0 && (
+        <div style={{ marginTop: '10px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar este plazo a:</div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
+            {otras.map(f => {
+              const on = sel.includes(f.id)
+              return (
+                <button key={f.id} onClick={() => toggle(f.id)} style={{
+                  fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
+                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
+                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
+                </button>
+              )
+            })}
+            {otras.length > 1 && (
+              <button onClick={() => setSel([fincaActual.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>
+            )}
+          </div>
         </div>
       )}
     </div>
