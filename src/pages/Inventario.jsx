@@ -28,6 +28,7 @@ const UNIDAD = {
   tambor: 'Tambores', botella: 'Botellas',
 }
 const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
+const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
@@ -52,6 +53,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
   const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
+  const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
+  const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -83,7 +86,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }] = await Promise.all([
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_insumo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_insumo',
@@ -100,6 +103,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('insumo_finca')
           .select('insumo_id, factor').eq('finca_id', finca.id),
+        supabase.schema('produccion').rpc('fn_saldo_insumo_plazo',
+          { p_finca: finca.id, p_hasta: alDia }),
       ])
       if (eS) throw eS
 
@@ -120,6 +125,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const vfMap = {}
       ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
       setValorFifo(vfMap)
+
+      const dgm = {}
+      ;(dpz || []).forEach(x => { (dgm[x.insumo_id] = dgm[x.insumo_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
+      setDesglose(dgm)
 
       setSaldos(s || []); setMovs(m || []); setPrecios(pr); setConteos(t || [])
     } catch (err) {
@@ -622,10 +631,21 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           >
             {filas.map(f => {
               const edit = editando === f.insumo_id
+              const dg = desglose[f.insumo_id] || []
+              const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
+              const ab = abierto === f.insumo_id
               return (
               <div key={f.insumo_id}>
                 <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}>
-                  <Celda>{f.insumo}</Celda>
+                  <Celda>
+                    {varios ? (
+                      <button onClick={() => setAbierto(ab ? null : f.insumo_id)} style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: '13px', color: NAVY, textAlign: 'left' }}>
+                        <span style={{ color: GRIS, marginRight: '5px' }}>{ab ? '▾' : '▸'}</span>{f.insumo}
+                      </button>
+                    ) : f.insumo}
+                  </Celda>
                   <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
                   {edit ? (
                     <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f6f9fb' }}>
@@ -675,6 +695,30 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoAj}>
                       {guardandoAj ? 'Guardando...' : 'Guardar corrección'}
                     </Btn>
+                  </div>
+                )}
+
+                {ab && !edit && (
+                  <div style={{ padding: '8px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                    <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
+                    {dg.map((d, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px',
+                                            padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                        <span>{PLAZO_LBL[d.plazo]}</span>
+                        <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
+                          <span>{limpio(d.cantidad)} {UNIDAD[f.unidad] || f.unidad}</span>
+                          {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(d.valor)}</span>}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', fontWeight: 500,
+                                  padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
+                      <span>Total</span>
+                      <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
+                        <span>{limpio(f.saldo)} {UNIDAD[f.unidad] || f.unidad}</span>
+                        {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(valorFifo[f.insumo_id] || 0)}</span>}
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>
