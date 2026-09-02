@@ -21,6 +21,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
   const [insumos, setInsumos] = useState({})       // id -> nombre insumo
   const [anual, setAnual] = useState({ bal: 0, ins: 0, sacos: 0 })
   const [tendencia, setTendencia] = useState([])   // [{ semana, bal, ins }]
+  const [porPlazo, setPorPlazo] = useState([])     // [{ ambito, plazo, monto }] de la semana
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
 
@@ -43,7 +44,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
 
       const rango8 = sumarDias(lunes, -49)   // 8 semanas atrás
       const [{ data: prods }, { data: insu }, { data: semBal }, { data: semIns },
-             { data: anioBal }, { data: anioIns }, { data: tBal }, { data: tIns }] = await Promise.all([
+             { data: anioBal }, { data: anioIns }, { data: tBal }, { data: tIns }, { data: cpz }] = await Promise.all([
         supabase.schema('produccion').from('producto').select('id, nombre, nombre_corto'),
         supabase.schema('produccion').from('insumo').select('id, nombre'),
         supabase.schema('produccion').from('vw_alimentacion_costeada')
@@ -62,6 +63,8 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
           .select('costo, fecha').in('piscina_id', ids).gte('fecha', rango8).lte('fecha', domingo),
         supabase.schema('produccion').from('consumo_insumo')
           .select('cantidad, precio_unitario, fecha').in('piscina_id', ids).gte('fecha', rango8).lte('fecha', domingo),
+        supabase.schema('produccion').rpc('fn_costo_plazo_periodo',
+          { p_finca: finca.id, p_desde: lunes, p_hasta: domingo }),
       ])
 
       const pm = {}; (prods || []).forEach(p => { pm[p.id] = p.nombre_corto || p.nombre }); setProductos(pm)
@@ -101,6 +104,7 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
       ;(tBal || []).forEach(r => { const k = lunOf(r.fecha); if (tw[k]) tw[k].bal += Number(r.costo) })
       ;(tIns || []).forEach(r => { const k = lunOf(r.fecha); if (tw[k]) tw[k].ins += Number(r.cantidad) * Number(r.precio_unitario || 0) })
       setTendencia(semanas.map(s => tw[s]))
+      setPorPlazo(cpz || [])
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -144,6 +148,20 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
   const piscVis = nPisc ? piscOrden.slice(0, nPisc) : piscOrden
 
   const maxTend = Math.max(1, ...tendencia.map(t => (tipo === 'bal' ? t.bal : tipo === 'ins' ? t.ins : t.bal + t.ins)))
+
+  // Gasto de la semana por plazo de compra, según el filtro.
+  const plazoData = useMemo(() => {
+    const acc = {}
+    porPlazo.forEach(r => {
+      if (tipo === 'bal' && r.ambito !== 'balanceado') return
+      if (tipo === 'ins' && r.ambito !== 'insumos') return
+      acc[r.plazo] = (acc[r.plazo] || 0) + Number(r.monto)
+    })
+    return [0, 30, 60, 90, 120].map(pz => ({ plazo: pz, monto: acc[pz] || 0 })).filter(x => x.monto > 0)
+  }, [porPlazo, tipo])
+  const totPlazo = plazoData.reduce((s, x) => s + x.monto, 0)
+  const maxPlazo = plazoData.length ? Math.max(...plazoData.map(x => x.monto)) : 1
+  const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -248,6 +266,33 @@ export default function Costos({ finca, esJefe, lunes, setLunes }) {
                 })}
               </div>
             </Caja>
+
+            {esJefe && (
+              <Caja>
+                <Titulo>Por plazo de compra · semana</Titulo>
+                {plazoData.length === 0 ? <VacioChico>Sin datos con este filtro.</VacioChico> : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
+                    {plazoData.map((r, i) => (
+                      <div key={i}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '3px' }}>
+                          <span>{PLAZO_LBL[r.plazo]}</span>
+                          <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                            {dinero(r.monto)} · {Math.round(r.monto / (totPlazo || 1) * 100)}%
+                          </span>
+                        </div>
+                        <div style={{ height: '8px', background: '#eef3f7', borderRadius: '20px' }}>
+                          <i style={{ display: 'block', height: '100%', width: (r.monto / maxPlazo * 100) + '%',
+                            background: r.plazo === 0 ? VERDE : AZUL, borderRadius: '20px' }} />
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ fontSize: '11px', color: '#a7b4c0', marginTop: '4px' }}>
+                      Cuánto del gasto vino de compras a cada plazo (costeo real por lote).
+                    </div>
+                  </div>
+                )}
+              </Caja>
+            )}
           </div>
 
           {/* Tabla por piscina (expandible) */}
