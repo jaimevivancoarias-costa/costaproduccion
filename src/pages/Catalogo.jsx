@@ -541,32 +541,38 @@ function EditorUnidadFinca({ insumo, finca, fincas, actual, onHecho, onError, on
     return error
   }
 
+    const METRICO = ['gramos', 'kg', 'libras', 'ml', 'litros']
+    const CONTEO = ['sacos', 'unidad']
+    const pedirPor = () => {
+      const um = METRICO.includes(actual.unidad) ? actual.unidad : unidad
+      const uc = CONTEO.includes(actual.unidad) ? actual.unidad : unidad
+      const sing = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
+      const r = window.prompt(`¿Cuánto trae un ${sing} de "${insumo.nombre}" en ${UNIDAD[um] || um}?` + (sel.length > 1 ? ' (se aplica a las fincas elegidas)' : ''))
+      if (r === null) return null
+      const v = numDec(r)
+      if (!(v > 0)) { onError('Pon un número mayor que cero.'); return NaN }
+      return v
+    }
+
   async function guardar() {
     setEnviando(true)
     let por = null
-    // Si cambia la unidad y puede requerir conversión sacos↔masa, preguntamos una vez para todas.
+    // Sólo cruzar entre métrico (masa/volumen) y conteo (sacos/unidad) necesita el factor.
     if (unidad !== actual.unidad) {
-      const MASA = ['gramos', 'kg', 'libras']
-      const cambiaFamilia = MASA.includes(actual.unidad) !== MASA.includes(unidad)
-      if (cambiaFamilia) {
-        const um = MASA.includes(actual.unidad) ? actual.unidad : unidad
-        const uc = MASA.includes(actual.unidad) ? unidad : actual.unidad
-        const sing = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
-        const r = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${sing} de "${insumo.nombre}"?` + (sel.length > 1 ? ' (se aplica a las fincas elegidas)' : ''))
-        if (r === null) { setEnviando(false); return }
-        por = numDec(r); if (!(por > 0)) { setEnviando(false); onError('Pon un número mayor que cero.'); return }
+      const cruzaConteo = (METRICO.includes(actual.unidad) && CONTEO.includes(unidad))
+                       || (CONTEO.includes(actual.unidad) && METRICO.includes(unidad))
+      if (cruzaConteo) {
+        por = pedirPor()
+        if (por === null) { setEnviando(false); return }
+        if (Number.isNaN(por)) { setEnviando(false); return }
       }
     }
     for (const fid of sel) {
       let err = await aplicarUna(fid, por)
       if (err && /FALTA_POR/.test(err.message) && por == null) {
-        const MASA = ['gramos', 'kg', 'libras']
-        const um = MASA.includes(actual.unidad) ? actual.unidad : unidad
-        const uc = MASA.includes(actual.unidad) ? unidad : actual.unidad
-        const sing = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
-        const r = window.prompt(`¿Cuántos ${UNIDAD[um] || um} pesa un ${sing} de "${insumo.nombre}"?`)
-        if (r === null) { setEnviando(false); return }
-        por = numDec(r); if (!(por > 0)) { setEnviando(false); onError('Pon un número mayor que cero.'); return }
+        por = pedirPor()
+        if (por === null) { setEnviando(false); return }
+        if (Number.isNaN(por)) { setEnviando(false); return }
         err = await aplicarUna(fid, por)
       }
       if (err) { setEnviando(false); onError(err.message.replace(/^.*?:\s*/, '')); return }
