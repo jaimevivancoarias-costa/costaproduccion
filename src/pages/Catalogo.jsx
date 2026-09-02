@@ -41,8 +41,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }] = await Promise.all([
-      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('producto').select('id, nombre, marca').eq('activo', true).order('nombre'),
+      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor').eq('activo', true).order('nombre'),
+      supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.schema('produccion').from('precio_insumo').select('id, insumo_id, finca_id, precio_unitario, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.schema('produccion').from('precio_producto').select('id, producto_id, finca_id, precio_saco, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
@@ -169,6 +169,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                     {p.nombre}
                     <span style={{ fontSize: '12px', color: GRIS, fontWeight: 400 }}>
                       {tab === 'insumos' ? ` · Se aplica en ${UNIDAD[p.unidad] || p.unidad}` : (p.marca ? ` · ${p.marca}` : '')}
+                      {p.proveedor ? ` · Proveedor: ${p.proveedor}` : ''}
                     </span>
                   </span>
                   {esJefeGlobal && (
@@ -280,23 +281,23 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 
-async function crearInsumo({ nombre, unidad, unidadCompra, factor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1 })
+async function crearInsumo({ nombre, unidad, unidadCompra, factor, proveedor }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1, proveedor: (proveedor || '').trim() || null })
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Insumo agregado.' }); return true
 }
-async function editarInsumo(actual, { nombre }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('insumo').update({ nombre: nombre.trim() }).eq('id', actual.id)
+async function editarInsumo(actual, { nombre, proveedor }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('insumo').update({ nombre: nombre.trim(), proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Insumo actualizado.' }); return true
 }
-async function crearProducto({ nombre, marca }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('producto').insert({ nombre: nombre.trim(), marca: (marca || '').trim() || null })
+async function crearProducto({ nombre, marca, proveedor }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('producto').insert({ nombre: nombre.trim(), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null })
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un balanceado con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Balanceado agregado.' }); return true
 }
-async function editarProducto(actual, { nombre, marca }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('producto').update({ nombre: nombre.trim(), marca: (marca || '').trim() || null }).eq('id', actual.id)
+async function editarProducto(actual, { nombre, marca, proveedor }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('producto').update({ nombre: nombre.trim(), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
   if (error) { setAviso({ tipo: 'error', texto: error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Balanceado actualizado.' }); return true
 }
@@ -449,18 +450,20 @@ function EditorUnidadFinca({ insumo, finca, fincas, actual, onHecho, onError, on
 function FormaInsumo({ actual, onGuardar, onCancelar }) {
   const [nombre, setNombre] = useState(actual?.nombre || '')
   const [unidad, setUnidad] = useState(actual?.unidad || 'kg')
+  const [proveedor, setProveedor] = useState(actual?.proveedor || '')
   const dist = actual ? (actual.unidad_compra && actual.unidad_compra !== actual.unidad) : false
   const [compraDistinta, setCompraDistinta] = useState(!!dist)
   const [unidadCompra, setUnidadCompra] = useState(dist ? actual.unidad_compra : '')
   const [factor, setFactor] = useState(dist ? String(actual.factor) : '')
   const [enviando, setEnviando] = useState(false)
-  const soloNombre = !!actual   // al editar, aquí solo cambia el nombre; la unidad va por finca
+  const soloNombre = !!actual   // al editar, aquí solo cambia el nombre y el proveedor; la unidad va por finca
   const listo = nombre.trim() && (soloNombre || !compraDistinta || (unidadCompra.trim() && numDec(factor) > 0))
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
       <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <Campo label="Nombre"><input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} style={{ ...inp, width: '220px' }} placeholder="Ej. Cal agrícola" /></Campo>
         {!soloNombre && <Campo label="Se aplica en (por defecto)"><select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...inp, width: '160px' }}>{UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}</select></Campo>}
+        <Campo label="Proveedor (opcional)"><input value={proveedor} onChange={e => setProveedor(e.target.value)} style={{ ...inp, width: '200px' }} placeholder="Ej. Agripac" /></Campo>
       </div>
       {!soloNombre && (
         <>
@@ -477,7 +480,7 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
         </>
       )}
       <div style={{ display: 'flex', gap: '9px', marginTop: '14px' }}>
-        <button disabled={!listo || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1 }); setEnviando(false) }}
+        <button disabled={!listo || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1, proveedor }); setEnviando(false) }}
           style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
         <button onClick={onCancelar} style={btn}>Cancelar</button>
       </div>
@@ -488,12 +491,14 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
 function FormaProducto({ actual, onGuardar, onCancelar }) {
   const [nombre, setNombre] = useState(actual?.nombre || '')
   const [marca, setMarca] = useState(actual?.marca || '')
+  const [proveedor, setProveedor] = useState(actual?.proveedor || '')
   const [enviando, setEnviando] = useState(false)
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
       <Campo label="Nombre del balanceado"><input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej. Nicovita 35" style={{ ...inp, width: '220px' }} /></Campo>
-      <Campo label="Marca (opcional)"><input value={marca} onChange={e => setMarca(e.target.value)} placeholder="Ej. Nicovita" style={{ ...inp, width: '160px' }} /></Campo>
-      <button disabled={!nombre.trim() || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, marca }); setEnviando(false) }}
+      <Campo label="Marca (opcional)"><input value={marca} onChange={e => setMarca(e.target.value)} placeholder="Ej. Nicovita" style={{ ...inp, width: '150px' }} /></Campo>
+      <Campo label="Proveedor (opcional)"><input value={proveedor} onChange={e => setProveedor(e.target.value)} placeholder="Ej. Vitapro" style={{ ...inp, width: '150px' }} /></Campo>
+      <button disabled={!nombre.trim() || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, marca, proveedor }); setEnviando(false) }}
         style={{ ...btnPri, opacity: (!nombre.trim() || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
       <button onClick={onCancelar} style={btn}>Cancelar</button>
     </div>
