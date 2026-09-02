@@ -12,8 +12,8 @@ import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
 // por finca. Precio: jefe (todas sus fincas) y contadora (las suyas).
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', ROJO = '#8A2F2E', VERDE = '#0F6E56'
-const UNIDAD = { sacos: 'Sacos', litros: 'Litros', gramos: 'Gramos', libras: 'Libras', kg: 'Kilos', unidad: 'Unidades' }
-const UNIDADES = ['sacos', 'litros', 'gramos', 'libras', 'kg', 'unidad']
+const UNIDAD = { sacos: 'Sacos', litros: 'Litros', ml: 'Mililitros', gramos: 'Gramos', libras: 'Libras', kg: 'Kilos', unidad: 'Unidades' }
+const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
 const PLAZOS = [0, 30, 60, 90, 120]
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 const k = (a, b) => a + '|' + b
