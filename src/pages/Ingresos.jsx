@@ -54,7 +54,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
               : i) }
           }),
         supabase.schema('produccion').from('ingreso_insumo')
-          .select('id, fecha, numero_guia, proveedor, plazo, observacion, ingreso_insumo_linea(insumo_id, cantidad)')
+          .select('id, fecha, numero_guia, proveedor, observacion, ingreso_insumo_linea(insumo_id, cantidad, plazo)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
         supabase.schema('produccion').from('pedido_insumo')
           .select('id, fecha, fecha_esperada, proveedor, estado, pedido_insumo_linea(insumo_id, cantidad)')
@@ -154,7 +154,6 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
                 <div style={{ fontSize: '12px', color: GRIS }}>
                   {g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}
                   {g.proveedor ? ` · ${g.proveedor}` : ''}
-                  {` · ${PLAZO_LBL[g.plazo] || 'Contado'}`}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start' }}>
@@ -176,7 +175,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
             <Lineas>
               {(g.ingreso_insumo_linea || []).map((l, i) => (
                 <Linea key={i} nombre={nombreInsumo(l.insumo_id)}
-                       cantidad={`+${miles(num(l.cantidad))} ${unidadInsumo(l.insumo_id)}`}
+                       cantidad={`+${miles(num(l.cantidad))} ${unidadInsumo(l.insumo_id)}${l.plazo ? ` · ${PLAZO_LBL[l.plazo]}` : ''}`}
                        color={VERDE} />
               ))}
             </Lineas>
@@ -280,7 +279,6 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const [esperada, setEsperada] = useState('')
   const [pedidoId, setPedidoId] = useState('')
   const [obs, setObs] = useState('')
-  const [plazo, setPlazo] = useState(0)
   const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '', unidad: '' }])
   const [guardando, setGuardando] = useState(false)
 
@@ -315,7 +313,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         const { data: g, error } = await supabase.schema('produccion').from('ingreso_insumo')
           .insert({ finca_id: finca.id, fecha, numero_guia: guia || null,
                     proveedor: proveedor || null, pedido_id: pedidoId || null,
-                    plazo, observacion: obs || null })
+                    observacion: obs || null })
           .select('id').single()
         if (error) throw error
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
@@ -366,11 +364,6 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
                 </select>
               </Campo>
             )}
-            <Campo label="Plazo de pago">
-              <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={entrada}>
-                {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-              </select>
-            </Campo>
           </>
         ) : (
           <Campo label="Fecha esperada">
