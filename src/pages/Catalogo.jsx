@@ -658,6 +658,13 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
     setUCont(u)
     if (U_FAMILIA(u) !== U_FAMILIA(unidad)) setUnidad(u)
   }
+  // "Completo": aplicar por envase entero (1 = 1). Se cuenta en unidades.
+  const cambiarAplica = (v) => {
+    if (v === '__completo') { setUnidad('unidad'); setContenido('1'); setUCont('unidad') }
+    else cambiarUnidad(v)
+  }
+  // ¿Está en modo "completo"? (se aplica en unidad, 1 por envase)
+  const esCompleto = unidad === 'unidad' && numDec(contenido) === 1 && uCont === 'unidad'
   const factor = factorDe(contenido, uCont, unidad)
   const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
 
@@ -716,7 +723,8 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
           </select>
         </Campo>
         <Campo label="Se aplica en">
-          <select value={unidad} onChange={e => cambiarUnidad(e.target.value)} style={{ ...inp, width: '170px' }}>
+          <select value={esCompleto ? '__completo' : unidad} onChange={e => cambiarAplica(e.target.value)} style={{ ...inp, width: '190px' }}>
+            <optgroup label="Completo (envase entero)"><option value="__completo">{cap(presentacion || 'Envase')} completo</option></optgroup>
             <optgroup label="Masa">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'masa').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
             <optgroup label="Líquido">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'liquido').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
             <optgroup label="Conteo">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'conteo').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
