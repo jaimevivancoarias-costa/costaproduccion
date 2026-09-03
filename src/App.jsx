@@ -79,10 +79,18 @@ export default function App() {
 
   useEffect(() => {
     if (fincas.length && !fincaId) {
-      setFincaId(fincas[0].id)
-      if (fincas[0].zona) setZona(fincas[0].zona)
+      let guardada = null
+      try { guardada = localStorage.getItem('finca') } catch { /* sin storage */ }
+      const elegida = fincas.find(f => f.id === guardada) || fincas[0]
+      setFincaId(elegida.id)
+      if (elegida.zona) setZona(elegida.zona)
     }
   }, [fincas, fincaId])
+
+  // Recordar la última finca elegida, para volver a ella al recargar.
+  useEffect(() => {
+    if (fincaId) { try { localStorage.setItem('finca', fincaId) } catch { /* sin storage */ } }
+  }, [fincaId])
 
   // Mantener la zona sincronizada con la finca elegida.
   useEffect(() => {
@@ -94,6 +102,7 @@ export default function App() {
   // recarga al cambiar de modulo o de finca, asi que despues de aprobar
   // una y volver a navegar, el aviso se actualiza.
   const [corrPend, setCorrPend] = useState([])
+  const [reponer, setReponer] = useState([])
   const [pedirIngresos, setPedirIngresos] = useState(0)
   const [pedirPrecios, setPedirPrecios] = useState(0)
   const [catTab, setCatTab] = useState('insumos')
@@ -120,6 +129,8 @@ export default function App() {
       g[k].n++
     })
     setCorrPend(Object.values(g))
+    const { data: rep } = await supabase.schema('produccion').rpc('fn_por_reponer', {})
+    setReponer(rep || [])
   }, [esJefe])
   useEffect(() => { cargarCorr() }, [cargarCorr, modulo, fincaId])
 
@@ -216,7 +227,7 @@ export default function App() {
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {esJefe && <Campana corrPend={corrPend} onIr={irACorreccion} />}
+          {esJefe && <Campana corrPend={corrPend} reponer={reponer} onIr={irACorreccion} onIrReponer={id => { setFincaId(id); setModulo('inventario') }} />}
           <a href={HUB_URL} style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>Portal</a>
           <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.75)' }}>{nombre || user.email}</span>
           <button onClick={logout} style={{ background: 'none', border: 'none', cursor: 'pointer',
@@ -369,9 +380,9 @@ export default function App() {
 }
 
 // Campana de correcciones por aprobar (estilo notificaciones).
-function Campana({ corrPend, onIr }) {
+function Campana({ corrPend, reponer = [], onIr, onIrReponer }) {
   const [abierto, setAbierto] = useState(false)
-  const total = corrPend.reduce((t, c) => t + c.n, 0)
+  const total = corrPend.reduce((t, c) => t + c.n, 0) + reponer.length
   return (
     <div style={{ position: 'relative' }}>
       <button onClick={() => setAbierto(a => !a)} title="Correcciones por aprobar"
@@ -403,7 +414,7 @@ function Campana({ corrPend, onIr }) {
             </div>
             {total === 0 ? (
               <div style={{ padding: '18px 15px', fontSize: '13px', color: '#7d8fa0', textAlign: 'center' }}>
-                No hay correcciones pendientes.
+                Nada pendiente.
               </div>
             ) : corrPend.map((c, i) => (
               <button key={i} onClick={() => { setAbierto(false); onIr(c) }}
@@ -424,6 +435,28 @@ function Campana({ corrPend, onIr }) {
                 </span>
               </button>
             ))}
+            {reponer.length > 0 && (
+              <>
+                <div style={{ padding: '10px 15px 6px', fontSize: '11px', fontWeight: 600, letterSpacing: '.04em',
+                              textTransform: 'uppercase', color: '#a23a38', background: '#FDF3F3',
+                              borderTop: '0.5px solid #eef3f7' }}>Por reponer ({reponer.length})</div>
+                {reponer.map((r, i) => {
+                  const U = { mg: 'mg', gramos: 'g', kg: 'kg', t: 't', libras: 'lb', ml: 'mL', cl: 'cL', litros: 'L', m3: 'm³', gal: 'gal', floz: 'fl oz', unidad: 'u', sacos: 'sacos' }
+                  return (
+                    <button key={'r' + i} onClick={() => { setAbierto(false); onIrReponer && onIrReponer(r.finca_id) }}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                               gap: '10px', padding: '10px 15px', background: 'white', border: 'none',
+                               borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                      <span>
+                        <span style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: NAVY }}>{String(r.finca).toUpperCase()}</span>
+                        <span style={{ display: 'block', fontSize: '11px', color: '#7d8fa0' }}>{r.insumo}: {Math.round(r.saldo_app * 100) / 100} / mín {r.minimo} {U[r.unidad] || r.unidad}</span>
+                      </span>
+                      <span style={{ fontSize: '12px', color: '#0D6CB0', fontWeight: 500 }}>Ver</span>
+                    </button>
+                  )
+                })}
+              </>
+            )}
           </div>
         </>
       )}
