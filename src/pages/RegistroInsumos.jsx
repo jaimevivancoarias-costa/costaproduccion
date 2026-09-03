@@ -60,7 +60,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     try {
       const [{ data: ps, error: eP }, { data: ins }, { data: cs }, { data: ov }] = await Promise.all([
         supabase.schema('produccion').from('piscina')
-          .select('id, codigo, nombre, hectareas, tipo')
+          .select('id, codigo, nombre, hectareas, tipo, es_reservorio')
           .eq('finca_id', finca.id).eq('activa', true),
         supabase.schema('produccion').from('insumo')
           .select('id, nombre, unidad').eq('activo', true).order('nombre'),
@@ -77,7 +77,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
       const lista = (ps || []).map(p => ({
         piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
-        hectareas: Number(p.hectareas), tipo: p.tipo,
+        hectareas: Number(p.hectareas), tipo: p.tipo, esReservorio: p.es_reservorio,
         // El ciclo que cubre la semana, para colgarle el consumo. Si no
         // hay (piscina en preparacion), va null y el trigger lo pega a
         // la siembra siguiente.
@@ -142,6 +142,15 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     // Aqui solo cuentan las validaciones de insumos. Las de balanceado
     // se revisan y se cierran en su propia pestana.
     setValidaciones((data || []).filter(v => v.codigo === 'V7' || v.codigo === 'V8'))
+  }
+
+  const [guardandoBorrador, setGuardandoBorrador] = useState(false)
+  async function guardarBorrador() {
+    // Todo se guarda solo al agregar cada insumo; esto refresca y confirma.
+    setGuardandoBorrador(true)
+    await cargar()
+    setGuardandoBorrador(false)
+    setAviso({ tipo: 'ok', texto: 'Borrador guardado.' })
   }
 
   async function cerrarDiaHoy() {
@@ -331,7 +340,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                               borderRight: '0.5px solid #f1f6f9' }}>
                   <div style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</div>
                   <div style={{ fontSize: '11px', color: GRIS }}>
-                    {p.tipo === 'precria' ? 'Precría' : (p.cicloId ? 'Con ciclo' : 'Vacía · Preparación')}
+                    {p.esReservorio ? 'Reservorio · solo insumos' : (p.tipo === 'precria' ? 'Precría' : (p.cicloId ? 'Con ciclo' : 'Vacía · Preparación'))}
                   </div>
                 </div>
                 <div style={{ padding: '10px 12px', fontSize: '13px', color: GRIS }}>
@@ -466,12 +475,15 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                 ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
                 : <Btn onClick={pedirReabrirHoy}>Pedir reabrir</Btn>
           ) : (
-            <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
-              padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
-              border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
-              cursor: cerrandoDia ? 'default' : 'pointer', opacity: cerrandoDia ? 0.6 : 1 }}>
-              {cerrandoDia ? 'Cerrando...' : 'Guardar y cerrar día'}
-            </button>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <Btn onClick={guardarBorrador} disabled={guardandoBorrador}>{guardandoBorrador ? 'Guardando...' : 'Guardar borrador'}</Btn>
+              <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
+                padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
+                cursor: cerrandoDia ? 'default' : 'pointer', opacity: cerrandoDia ? 0.6 : 1 }}>
+                {cerrandoDia ? 'Cerrando...' : 'Guardar y cerrar día'}
+              </button>
+            </div>
           )}
         </div>
       )}
