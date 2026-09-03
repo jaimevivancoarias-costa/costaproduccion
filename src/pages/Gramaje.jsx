@@ -100,8 +100,11 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 
   useEffect(() => { cargar() }, [cargar])
 
+  // Se puede editar cualquier día de muestreo que ya pasó (o el de hoy),
+  // no solo el del día exacto: si se olvidaron el miércoles, lo llenan
+  // después. Los días futuros siguen bloqueados.
   const editable = f =>
-    !soloLectura && situacionDia(f, hoy) !== 'futuro' && (esJefe || f === hoy)
+    !soloLectura && situacionDia(f, hoy) !== 'futuro'
 
   // Peso anterior a una fecha dada, mirando primero dentro de la semana.
   function anterior(fila, fecha) {
