@@ -24,15 +24,19 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
   const [hasta, setHasta] = useState(() => semanaActual()[1])
   const [zonaFiltro, setZonaFiltro] = useState('todas')
   const [filas, setFilas] = useState([])
+  const [reponer, setReponer] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const { data, error } = await supabase.schema('produccion')
-      .rpc('fn_resumen_fincas', { p_desde: desde, p_hasta: hasta })
+    const [{ data, error }, { data: rep }] = await Promise.all([
+      supabase.schema('produccion').rpc('fn_resumen_fincas', { p_desde: desde, p_hasta: hasta }),
+      supabase.schema('produccion').rpc('fn_por_reponer', {}),
+    ])
     if (error) setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + error.message })
     setFilas(data || [])
+    setReponer(rep || [])
     setCargando(false)
   }, [desde, hasta])
 
@@ -97,6 +101,26 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
         <Tarjeta k="Hectáreas" v={miles(tot.ha)} />
         <Tarjeta k="Fincas" v={String(vis.length)} />
       </div>
+
+      {reponer.length > 0 && (
+        <div style={{ background: '#FDF3F3', border: '0.5px solid #f0d4d3', borderRadius: '12px',
+                      padding: '13px 16px', marginBottom: '16px' }}>
+          <div style={{ fontWeight: 600, fontSize: '14px', color: '#6d2b29', marginBottom: '7px' }}>
+            ⚠ Por reponer ({reponer.length})
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(240px,1fr))', gap: '6px 18px' }}>
+            {reponer.map((r, i) => {
+              const U = { mg: 'mg', gramos: 'g', kg: 'kg', t: 't', libras: 'lb', ml: 'mL', cl: 'cL', litros: 'L', m3: 'm³', gal: 'gal', floz: 'fl oz', unidad: 'u', sacos: 'sacos' }
+              return (
+                <div key={i} onClick={() => onIrAFinca && onIrAFinca(r.finca_id)}
+                     style={{ fontSize: '12.5px', color: '#6d2b29', cursor: onIrAFinca ? 'pointer' : 'default' }}>
+                  <b style={{ fontWeight: 600 }}>{r.finca}</b> · {r.insumo}: {miles(r.saldo_app)} / mín {miles(r.minimo)} {U[r.unidad] || r.unidad}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {cargando ? (
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div></Caja>
