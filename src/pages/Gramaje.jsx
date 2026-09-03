@@ -28,6 +28,11 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
   const [practica, setPractica] = useState(false)  // sin ciclos: solo para familiarizarse
+  const [dias, setDias] = useState({})          // fecha -> estado del día de gramaje (cerrado/reabierto)
+  const [diasId, setDiasId] = useState({})      // fecha -> id del dia_registro
+  const [solReapertura, setSolReapertura] = useState([])
+  const [userId, setUserId] = useState(null)
+  const [cerrando, setCerrando] = useState('')  // fecha que se está cerrando/reabriendo
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const muestreos = useMemo(() => fechas.filter(esDiaDeMuestreo), [fechas])
@@ -91,6 +96,24 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         if (m.fecha < lunes) prev[m.ciclo_id] = { fecha: m.fecha, peso: Number(m.peso_gramos) }
       })
       setValores(v); setPrevios(prev)
+
+      // Estado del día de gramaje (cerrado/reabierto) por muestreo.
+      const { data: dr } = await supabase.schema('produccion').from('dia_registro')
+        .select('id, fecha, estado').eq('finca_id', finca.id).eq('ambito', 'gramaje')
+        .gte('fecha', lunes).lte('fecha', domingo)
+      const de = {}, di = {}; (dr || []).forEach(r => { de[r.fecha] = r.estado; di[r.fecha] = r.id })
+      setDias(de); setDiasId(di)
+
+      const idsDia = Object.values(di).filter(Boolean)
+      if (idsDia.length) {
+        const { data: sr } = await supabase.schema('produccion').from('solicitud_correccion')
+          .select('id, registro_id, valor_propuesto, motivo, estado')
+          .eq('finca_id', finca.id).eq('tabla', 'dia_registro').eq('estado', 'pendiente')
+          .in('registro_id', idsDia)
+        setSolReapertura(sr || [])
+      } else { setSolReapertura([]) }
+      const { data: au } = await supabase.auth.getUser()
+      setUserId(au?.user?.id || null)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -104,7 +127,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   // no solo el del día exacto: si se olvidaron el miércoles, lo llenan
   // después. Los días futuros siguen bloqueados.
   const editable = f =>
-    !soloLectura && situacionDia(f, hoy) !== 'futuro'
+    !soloLectura && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado'
 
   // Peso anterior a una fecha dada, mirando primero dentro de la semana.
   function anterior(fila, fecha) {
@@ -157,11 +180,57 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       }
       setAviso({ tipo: 'ok', texto: 'Pesos guardados' })
       await cargar()
+      return true
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+      return false
     } finally {
       setGuardando(false)
     }
+  }
+
+  // Cerrar un día de muestreo: guarda los pesos y lo deja cerrado.
+  async function cerrarDia(fe) {
+    setCerrando(fe)
+    const ok = await guardar()
+    if (!ok) { setCerrando(''); return }
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha: fe, ambito: 'gramaje', estado: 'cerrado', cerrado_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    setCerrando('')
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo cerrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: `Gramaje del ${corta(fe)} cerrado.` }); await cargar()
+  }
+
+  // El jefe reabre directo.
+  async function reabrirDia(fe) {
+    setCerrando(fe)
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha: fe, ambito: 'gramaje', estado: 'reabierto', reabierto_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    setCerrando('')
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar()
+  }
+
+  // El bodeguero pide, el jefe autoriza.
+  async function pedirReabrir(fe) {
+    const id = diasId[fe]
+    if (!id) return
+    const motivo = window.prompt(`¿Por qué necesitas reabrir el gramaje del ${corta(fe)}? El jefe lo revisará.`)
+    if (!motivo || !motivo.trim()) return
+    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+      finca_id: finca.id, tabla: 'dia_registro', registro_id: id,
+      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha: fe, ambito: 'gramaje' },
+      motivo: motivo.trim(), solicitado_por: userId })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Pedido enviado. El jefe lo revisará.' }); await cargar()
+  }
+
+  async function resolverReapertura(sol, aprobar) {
+    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
   const COLS = `170px 56px 128px ${muestreos.map(() => '112px 88px 74px 88px').join(' ')} 116px`
@@ -294,6 +363,66 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
               </Btn>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Cerrar / reabrir cada día de muestreo */}
+      {!cargando && !practica && !soloLectura && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                      padding: '13px 16px', marginTop: '14px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '2px' }}>Cerrar el gramaje del día</div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
+            Al cerrar un día se guardan los pesos y queda bloqueado. Reabrir necesita permiso del jefe.
+          </div>
+          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+            {muestreos.filter(fe => situacionDia(fe, hoy) !== 'futuro').map(fe => {
+              const cerrado = dias[fe] === 'cerrado'
+              const pedido = solReapertura.some(x => x.registro_id === diasId[fe])
+              return (
+                <div key={fe} style={{ display: 'flex', alignItems: 'center', gap: '8px',
+                      border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '8px 11px' }}>
+                  <span style={{ fontSize: '13px', textTransform: 'capitalize' }}>{nombreDia(fe)} {corta(fe).slice(0, 5)}</span>
+                  {cerrado ? (
+                    esJefe
+                      ? <Btn onClick={() => reabrirDia(fe)} disabled={cerrando === fe}>{cerrando === fe ? '...' : 'Reabrir'}</Btn>
+                      : pedido
+                        ? <span style={{ fontSize: '12px', color: '#BA7517' }}>Pedido enviado</span>
+                        : <Btn onClick={() => pedirReabrir(fe)}>Pedir reabrir</Btn>
+                  ) : (
+                    <button onClick={() => cerrarDia(fe)} disabled={cerrando === fe || guardando} style={{
+                      padding: '7px 13px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                      border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
+                      cursor: 'pointer', opacity: (cerrando === fe || guardando) ? 0.6 : 1 }}>
+                      {cerrando === fe ? 'Cerrando...' : 'Guardar y cerrar'}
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Reaperturas por autorizar (jefe) */}
+      {!cargando && esJefe && solReapertura.length > 0 && (
+        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
+                      padding: '13px 16px', marginTop: '14px' }}>
+          <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
+            Reaperturas de gramaje por autorizar ({solReapertura.length})
+          </div>
+          {solReapertura.map(s => (
+            <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: '10px', flexWrap: 'wrap', borderTop: '0.5px solid #ecd9b3', paddingTop: '9px', marginTop: '9px' }}>
+              <div style={{ fontSize: '13px' }}>
+                Reabrir el {corta(s.valor_propuesto?.fecha)}
+                <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic' }}>Motivo: {s.motivo || '—'}</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <Btn onClick={() => resolverReapertura(s, true)}>Aprobar</Btn>
+                <Btn onClick={() => resolverReapertura(s, false)}>Rechazar</Btn>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
