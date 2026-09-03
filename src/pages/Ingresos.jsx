@@ -292,17 +292,19 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const agregarLinea = () => setLineas(ls => [...ls, { insumoId: '', cantidad: '', unidad: '' }])
   const quitarLinea = i => setLineas(ls => ls.filter((_, j) => j !== i))
 
-  const validas = lineas.filter(l => l.insumoId && num(l.cantidad))
+  const validas = lineas.filter(l => l.insumoId && (num(l.cantidad) || num(l.sobrante)))
 
   // Convierte la cantidad digitada a la unidad de compra (como se guarda).
-  // Si el bodeguero cargó en la unidad de conteo (kg), pasa a saco ÷ factor.
+  // Suma el sobrante (en unidad de aplicación) dividido por el factor.
   function cantidadEnCompra(l) {
     const ins = insumos.find(x => x.id === l.insumoId)
     const factor = Number(ins?.factor) || 1
     const uCompra = ins?.unidad_compra || ins?.unidad
     const uElegida = l.unidad || uCompra
-    const q = numDec(l.cantidad)
-    return uElegida === uCompra ? q : q / factor
+    const q = numDec(l.cantidad || '')
+    const principal = uElegida === uCompra ? q : q / factor
+    const sob = numDec(l.sobrante || '')
+    return principal + (sob > 0 ? sob / factor : 0)
   }
 
   async function guardar() {
@@ -390,7 +392,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         const mostrarEquiv = esIngreso && ins && uElegida !== uCompra && enCompra != null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
-            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', '') }}
+            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', ''); setLinea(i, 'sobrante', ''); setLinea(i, 'sobranteOn', false) }}
               style={{ ...entrada, flex: 1, minWidth: '180px' }}>
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad_compra] || x.unidad_compra}</option>)}
@@ -412,6 +414,23 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
             {lineas.length > 1 && (
               <button onClick={() => quitarLinea(i)} style={{ border: 'none', background: 'none',
                 cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
+            )}
+            {/* + sobrante: solo si hay conversión y el principal está en la presentación */}
+            {esIngreso && ins && uCompra !== uCons && uElegida === uCompra && (
+              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '2px' }}>
+                {l.sobranteOn ? (
+                  <>
+                    <input inputMode="decimal" value={l.sobrante ?? ''} placeholder={'+ sobrante en ' + (UNI[uCons] || uCons)}
+                      onChange={e => setLinea(i, 'sobrante', e.target.value)} style={{ ...entrada, width: '150px' }} />
+                    <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(cantidadEnCompra(l) * 100) / 100)} {UNI[uCompra] || uCompra}</span>
+                    <button onClick={() => { setLinea(i, 'sobranteOn', false); setLinea(i, 'sobrante', '') }}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontFamily: 'inherit', fontSize: '11px' }}>quitar sobrante</button>
+                  </>
+                ) : (
+                  <button onClick={() => setLinea(i, 'sobranteOn', true)}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px', padding: 0 }}>+ sobrante ({UNI[uCons] || uCons})</button>
+                )}
+              </div>
             )}
           </div>
         )
