@@ -12,8 +12,25 @@ import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
 // por finca. Precio: jefe (todas sus fincas) y contadora (las suyas).
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', ROJO = '#8A2F2E', VERDE = '#0F6E56'
-const UNIDAD = { sacos: 'Sacos', litros: 'Litros', ml: 'Mililitros', gramos: 'Gramos', libras: 'Libras', kg: 'Kilos', unidad: 'Unidades' }
+const UNIDAD = { sacos: 'Sacos', litros: 'L', ml: 'mL', cl: 'cL', m3: 'm³', gal: 'gal', floz: 'fl oz',
+                 gramos: 'g', mg: 'mg', kg: 'kg', t: 't', libras: 'lb', unidad: 'unidad' }
 const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
+// Unidades de aplicación (se cuenta/consume), por familia. Sacos NO va aquí: eso es presentación.
+const UNIDADES_APP = ['mg', 'gramos', 'kg', 't', 'libras', 'ml', 'cl', 'litros', 'm3', 'gal', 'floz', 'unidad']
+const U_POR = { mg: 0.001, gramos: 1, kg: 1000, t: 1000000, libras: 453.592,
+                ml: 1, cl: 10, litros: 1000, m3: 1000000, gal: 3785.41, floz: 29.5735, unidad: 1, sacos: 1 }
+const U_FAMILIA = u => ['mg', 'gramos', 'kg', 't', 'libras'].includes(u) ? 'masa'
+                     : ['ml', 'cl', 'litros', 'm3', 'gal', 'floz'].includes(u) ? 'liquido' : 'conteo'
+const U_LABEL = { mg: 'Miligramos (mg)', gramos: 'Gramos (g)', kg: 'Kilos (kg)', t: 'Toneladas (t)', libras: 'Libras (lb)',
+                  ml: 'Mililitros (mL)', cl: 'Centilitros (cL)', litros: 'Litros (L)', m3: 'Metros cúbicos (m³)',
+                  gal: 'Galones (gal)', floz: 'Onzas líquidas (fl oz)', unidad: 'Unidades' }
+// Factor: cuánto trae 1 presentación, expresado en la unidad de aplicación.
+const factorDe = (contenido, uCont, uApp) => {
+  const c = numDec(String(contenido))
+  if (!(c > 0)) return null
+  if (U_FAMILIA(uCont) !== U_FAMILIA(uApp)) return null
+  return c * (U_POR[uCont] / U_POR[uApp])
+}
 const PLAZOS = [0, 30, 60, 90, 120]
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 const k = (a, b) => a + '|' + b
@@ -40,20 +57,23 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [editU, setEditU] = useState(null)         // clave de unidad en edición
   const [nuevo, setNuevo] = useState(false)
   const [editProd, setEditProd] = useState(null)   // id de producto en edición (nombre)
+  const [presentaciones, setPresentaciones] = useState([])
 
   const fincaIds = (fincas || []).map(f => f.id)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }] = await Promise.all([
+    const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
       supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
+      supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.schema('produccion').from('precio_insumo').select('id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.schema('produccion').from('precio_producto').select('id, producto_id, finca_id, precio_saco, plazo, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_insumo').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_producto').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
+      supabase.schema('produccion').from('presentacion').select('nombre').eq('activo', true).order('nombre'),
     ])
+    setPresentaciones((pres || []).map(x => x.nombre))
     // Precios generales (finca nula) vigentes, por plazo, como respaldo.
     const [{ data: pg }, { data: pgb }] = await Promise.all([
       supabase.schema('produccion').from('precio_insumo')
@@ -246,6 +266,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const uCons = tab === 'insumos' ? (o?.unidad || p.unidad) : 'sacos'
                       const uCompra = tab === 'insumos' ? (o?.unidad_compra || p.unidad_compra) : 'sacos'
                       const factor = tab === 'insumos' ? Number(o?.factor ?? p.factor) : 1
+                      const contenido = o?.contenido != null ? Number(o.contenido) : factor
+                      const uCont = o?.unidad_contenido || uCons
+                      const minimo = o?.stock_minimo != null ? Number(o.stock_minimo) : null
                       const map = tab === 'insumos' ? preIns : preBal
                       const prodCol = tab === 'insumos' ? 'insumo_id' : 'producto_id'
                       const col = tab === 'insumos' ? 'precio_unitario' : 'precio_saco'
@@ -276,11 +299,17 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             </span>
                             {tab === 'insumos' && (
                               <span style={{ color: GRIS }}>
-                                {uCompra && uCompra !== uCons ? `${cap(uCompra)} · ${factor} ${UNIDAD[uCons] || uCons}` : UNIDAD[uCompra] || cap(uCompra)}
-                                {esJefeGlobal && <button onClick={() => setEditU(editU === claveP ? null : claveP)} style={miniLink}>{editU === claveP ? ' cerrar' : ' editar'}</button>}
+                                {cap(uCompra)}
+                                <span style={{ display: 'block', fontSize: '11px' }}>1 = {contenido} {UNIDAD[uCont] || uCont}</span>
+                                {esJefe && <button onClick={() => setEditU(editU === claveP ? null : claveP)} style={miniLink}>{editU === claveP ? ' cerrar' : ' editar'}</button>}
                               </span>
                             )}
-                            {tab === 'insumos' && <span style={{ color: GRIS }}>{UNIDAD[uCons] || uCons}</span>}
+                            {tab === 'insumos' && (
+                              <span style={{ color: GRIS }}>
+                                {UNIDAD[uCons] || uCons}
+                                {minimo != null && <span style={{ display: 'block', fontSize: '10px', color: '#BA7517' }}>mín {minimo}</span>}
+                              </span>
+                            )}
                             {tab === 'balanceados' && <span style={{ color: GRIS }}>Sacos</span>}
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }}
@@ -325,7 +354,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             </div>
                           )}
                           {editU === claveP && tab === 'insumos' && (
-                            <EditorUnidadFinca insumo={p} finca={f} fincas={fincas} actual={{ unidad: uCons, unidad_compra: uCompra, factor }}
+                            <EditorUnidadFinca insumo={p} finca={f} fincas={fincas} presentaciones={presentaciones}
+                              actual={{ unidad: uCons, unidad_compra: uCompra, factor, contenido, unidad_contenido: uCont, stock_minimo: minimo }}
+                              onNuevaPresentacion={async (nom) => { await supabase.schema('produccion').from('presentacion').insert({ nombre: nom }); setPresentaciones(ps => [...new Set([...ps, nom])].sort()) }}
                               onHecho={async (msg) => { setEditU(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                               onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditU(null)} />
                           )}
@@ -516,89 +547,103 @@ function EditorPlazo({ fincas, fincaActual, actual, onGuardar, onCancelar }) {
   )
 }
 
-function EditorUnidadFinca({ insumo, finca, fincas, actual, onHecho, onError, onCancelar }) {
-  const [unidad, setUnidad] = useState(actual.unidad)
-  const dist = actual.unidad_compra && actual.unidad_compra !== actual.unidad
-  const [compraDistinta, setCompraDistinta] = useState(!!dist)
-  const [unidadCompra, setUnidadCompra] = useState(dist ? actual.unidad_compra : '')
-  const [factor, setFactor] = useState(dist ? String(actual.factor) : '')
+function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNuevaPresentacion, onHecho, onError, onCancelar }) {
+  const [presentacion, setPresentacion] = useState(actual.unidad_compra || 'Saco')
+  const [contenido, setContenido] = useState(actual.contenido != null ? String(actual.contenido) : (actual.factor != null ? String(actual.factor) : ''))
+  const [unidad, setUnidad] = useState(actual.unidad)           // se aplica en
+  const [uCont, setUCont] = useState(actual.unidad_contenido || actual.unidad)  // unidad del contenido
+  const [minimo, setMinimo] = useState(actual.stock_minimo != null ? String(actual.stock_minimo) : '')
   const [enviando, setEnviando] = useState(false)
   const [sel, setSel] = useState([finca.id])
-  const listo = sel.length > 0 && (!compraDistinta || (unidadCompra.trim() && numDec(factor) > 0))
   const otras = (fincas || []).filter(f => f.id !== finca.id)
   const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
-  // Aplica la unidad/presentación a una finca. `por` = kg por saco/unidad si hace falta conversión.
-  async function aplicarUna(fid, por) {
+  // Al cambiar la unidad de aplicación, el contenido debe ser de la misma familia.
+  const cambiarUnidad = (u) => {
+    setUnidad(u)
+    if (U_FAMILIA(uCont) !== U_FAMILIA(u)) setUCont(u)  // reencuadra el contenido a la nueva familia
+  }
+  // Opciones de unidad de contenido: misma familia que la de aplicación.
+  const opcionesCont = UNIDADES_APP.filter(u => U_FAMILIA(u) === U_FAMILIA(unidad))
+  const factor = factorDe(contenido, uCont, unidad)
+  const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
+
+  async function aplicarUna(fid) {
+    // 1) Si cambió la unidad de aplicación, convierte el histórico de esa finca.
     if (unidad !== actual.unidad) {
-      const args = { p_insumo: insumo.id, p_finca: fid, p_nueva: unidad }
-      if (por != null) args.p_por = por
-      const { error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca', args)
-      return error
+      const { error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
+        { p_insumo: insumo.id, p_finca: fid, p_nueva: unidad })
+      if (error) return error
     }
+    // 2) Guarda presentación, contenido, unidad y mínimo (factor calculado).
     const { error } = await supabase.schema('produccion').from('insumo_finca')
-      .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: (compraDistinta ? unidadCompra : unidad).trim(), factor: compraDistinta ? numDec(factor) : 1 }, { onConflict: 'insumo_id,finca_id' })
+      .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: presentacion.trim(),
+                contenido: numDec(contenido), unidad_contenido: uCont, factor,
+                stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null }, { onConflict: 'insumo_id,finca_id' })
     return error
   }
 
-    const METRICO = ['gramos', 'kg', 'libras', 'ml', 'litros']
-    const CONTEO = ['sacos', 'unidad']
-    const pedirPor = () => {
-      const um = METRICO.includes(actual.unidad) ? actual.unidad : unidad
-      const uc = CONTEO.includes(actual.unidad) ? actual.unidad : unidad
-      const sing = { sacos: 'saco', unidad: 'unidad' }[uc] || uc
-      const r = window.prompt(`¿Cuánto trae un ${sing} de "${insumo.nombre}" en ${UNIDAD[um] || um}?` + (sel.length > 1 ? ' (se aplica a las fincas elegidas)' : ''))
-      if (r === null) return null
-      const v = numDec(r)
-      if (!(v > 0)) { onError('Pon un número mayor que cero.'); return NaN }
-      return v
-    }
-
   async function guardar() {
+    if (!listo) return
     setEnviando(true)
-    let por = null
-    // Sólo cruzar entre métrico (masa/volumen) y conteo (sacos/unidad) necesita el factor.
-    if (unidad !== actual.unidad) {
-      const cruzaConteo = (METRICO.includes(actual.unidad) && CONTEO.includes(unidad))
-                       || (CONTEO.includes(actual.unidad) && METRICO.includes(unidad))
-      if (cruzaConteo) {
-        por = pedirPor()
-        if (por === null) { setEnviando(false); return }
-        if (Number.isNaN(por)) { setEnviando(false); return }
-      }
-    }
     for (const fid of sel) {
-      let err = await aplicarUna(fid, por)
-      if (err && /FALTA_POR/.test(err.message) && por == null) {
-        por = pedirPor()
-        if (por === null) { setEnviando(false); return }
-        if (Number.isNaN(por)) { setEnviando(false); return }
-        err = await aplicarUna(fid, por)
-      }
+      const err = await aplicarUna(fid)
       if (err) { setEnviando(false); onError(err.message.replace(/^.*?:\s*/, '')); return }
     }
     setEnviando(false)
     const n = sel.length
-    onHecho((unidad !== actual.unidad ? 'Unidad' : 'Presentación') + (n === 1 ? ' actualizada para ' + String(finca.nombre).toUpperCase() + '.' : ` actualizada en ${n} fincas.`))
+    onHecho(n === 1 ? 'Actualizado para ' + String(finca.nombre).toUpperCase() + '.' : `Actualizado en ${n} fincas.`)
+  }
+
+  async function crearPresentacion() {
+    const nom = window.prompt('Nueva presentación (ej. Galonera):')
+    if (!nom || !nom.trim()) return
+    const limpio = nom.trim().charAt(0).toUpperCase() + nom.trim().slice(1)
+    await onNuevaPresentacion(limpio)
+    setPresentacion(limpio)
   }
 
   return (
-    <div style={{ background: '#eef3f7', padding: '10px 12px', borderBottom: '0.5px solid #eef3f7' }}>
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <Campo label="Se cuenta en"><select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...inp, width: '130px' }}>{UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}</select></Campo>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', paddingBottom: '9px' }}>
-          <input type="checkbox" checked={compraDistinta} onChange={e => setCompraDistinta(e.target.checked)} /> Se compra en otra presentación
-        </label>
+    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
+      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Campo label="Llega en">
+          <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '150px' }}>
+            {[...new Set([presentacion, ...(presentaciones || [])])].filter(Boolean).map(pn => <option key={pn} value={pn}>{pn}</option>)}
+            <option value="__nueva">+ crear presentación…</option>
+          </select>
+        </Campo>
+        <Campo label="Cada una trae">
+          <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label="Unidad del contenido">
+          <select value={uCont} onChange={e => setUCont(e.target.value)} style={{ ...inp, width: '170px' }}>
+            {opcionesCont.map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Se aplica en">
+          <select value={unidad} onChange={e => cambiarUnidad(e.target.value)} style={{ ...inp, width: '170px' }}>
+            <optgroup label="Masa">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'masa').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
+            <optgroup label="Líquido">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'liquido').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
+            <optgroup label="Conteo">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'conteo').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
+          </select>
+        </Campo>
       </div>
-      {compraDistinta && (
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '8px' }}>
-          <Campo label="Se compra por"><input value={unidadCompra} onChange={e => setUnidadCompra(e.target.value)} placeholder="ej. saco" style={{ ...inp, width: '130px' }} /></Campo>
-          <Campo label={`Cada uno trae (${UNIDAD[unidad]})`}><input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '130px', textAlign: 'right' }} /></Campo>
+
+      {factor != null && contenido && (
+        <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 11px', marginTop: '10px', display: 'inline-block' }}>
+          Conversión automática: 1 {cap(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[unidad] || unidad}</b>
         </div>
       )}
+
+      <div style={{ marginTop: '10px' }}>
+        <Campo label={`Mínimo para alerta de inventario (${UNIDAD[unidad] || unidad})`}>
+          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '160px', textAlign: 'right' }} />
+        </Campo>
+      </div>
+
       {otras.length > 0 && (
         <div style={{ marginTop: '10px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar la misma unidad a:</div>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar lo mismo a:</div>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(finca.nombre).toUpperCase()} (esta)</span>
             {otras.map(f => {
@@ -617,10 +662,11 @@ function EditorUnidadFinca({ insumo, finca, fincas, actual, onHecho, onError, on
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
         <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
         <button onClick={onCancelar} style={btn}>Cancelar</button>
       </div>
+      {contenido && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
     </div>
   )
 }
