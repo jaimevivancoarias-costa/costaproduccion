@@ -565,8 +565,11 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
     setUnidad(u)
     if (U_FAMILIA(uCont) !== U_FAMILIA(u)) setUCont(u)  // reencuadra el contenido a la nueva familia
   }
-  // Opciones de unidad de contenido: misma familia que la de aplicación.
-  const opcionesCont = UNIDADES_APP.filter(u => U_FAMILIA(u) === U_FAMILIA(unidad))
+  // Al elegir la unidad del contenido, si es de otra familia, alinea la unidad de aplicación.
+  const cambiarUCont = (u) => {
+    setUCont(u)
+    if (U_FAMILIA(u) !== U_FAMILIA(unidad)) setUnidad(u)
+  }
   const factor = factorDe(contenido, uCont, unidad)
   const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
 
@@ -618,8 +621,10 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
           <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
         </Campo>
         <Campo label="Unidad del contenido">
-          <select value={uCont} onChange={e => setUCont(e.target.value)} style={{ ...inp, width: '170px' }}>
-            {opcionesCont.map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}
+          <select value={uCont} onChange={e => cambiarUCont(e.target.value)} style={{ ...inp, width: '190px' }}>
+            <optgroup label="Masa">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'masa').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
+            <optgroup label="Líquido">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'liquido').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
+            <optgroup label="Conteo">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'conteo').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
           </select>
         </Campo>
         <Campo label="Se aplica en">
