@@ -97,7 +97,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .is('vigente_hasta', null)
           .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
         supabase.schema('produccion').from('toma_inventario')
-          .select('id, fecha, observacion')
+          .select('id, fecha, observacion, es_inicial')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').from('insumo').select('id, factor').eq('activo', true),
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
@@ -302,7 +302,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       } else {
         const { data: toma, error } = await supabase.schema('produccion')
           .from('toma_inventario')
-          .insert({ finca_id: finca.id, fecha, observacion: obs || null })
+          .insert({ finca_id: finca.id, fecha, observacion: obs || null, es_inicial: conteos.length === 0 })
           .select('id').single()
         if (error) throw error
         tomaId = toma.id
@@ -778,7 +778,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                      anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
                 {conteos.map(c => (
                   <Fila key={c.id} anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
-                    <Celda fuerte>{corta(c.fecha)}</Celda>
+                    <Celda fuerte>{corta(c.fecha)}{c.es_inicial && <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 500, background: '#E6F1FB', color: AZUL, borderRadius: '6px', padding: '2px 7px' }}>Inventario inicial</span>}</Celda>
                     <Celda gris>{c.observacion || 'Sin observación'}</Celda>
                     {esJefe && (
                       <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
