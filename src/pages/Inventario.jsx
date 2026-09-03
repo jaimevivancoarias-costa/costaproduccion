@@ -724,6 +724,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   ) : (
                     <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
                       {limpio(f.saldo)}
+                      {(() => {
+                        const fac = factores[f.insumo_id]
+                        if (!fac || (fac.factor || 1) === 1) return null
+                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * fac.factor)} {UNIDAD[fac.uApp] || fac.uApp})</span>
+                      })()}
                       {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
                   )}
