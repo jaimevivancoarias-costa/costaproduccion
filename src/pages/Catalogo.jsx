@@ -218,27 +218,27 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
         : <FormaProducto onGuardar={async p => { const ok = await crearProducto(p, setAviso); if (ok) { setNuevo(false); await cargar() } }} onCancelar={() => setNuevo(false)} />)}
 
       {cargando ? <div style={{ fontSize: '13px', color: GRIS, padding: '14px 0' }}>Cargando...</div> : (
-        <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden', background: 'white' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {lista.map(p => {
             const ab = abierto === p.id
             return (
-              <Fragment key={p.id}>
+              <div key={p.id} style={{ background: 'white', border: '1px solid #e6edf3', borderRadius: '14px',
+                                       boxShadow: '0 1px 2px rgba(16,40,71,0.04)', overflow: 'hidden' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
-                              padding: '12px 15px', borderBottom: ab ? 'none' : '0.5px solid #f1f6f9', cursor: 'pointer',
-                              background: ab ? '#f6f9fb' : 'white' }}
+                              padding: '15px 20px', borderBottom: ab ? '1px solid #f0f4f8' : 'none', cursor: 'pointer' }}
                      onClick={() => { setAbierto(ab ? null : p.id); setHist(null); setEditP(null); setEditU(null) }}>
-                  <span style={{ fontSize: '14px', fontWeight: 500 }}>
-                    <span style={{ display: 'inline-block', width: '13px', color: GRIS }}>{ab ? '▾' : '▸'}</span>
+                  <span style={{ fontSize: '15px', fontWeight: 600 }}>
+                    <span style={{ display: 'inline-block', width: '14px', color: GRIS, fontSize: '12px' }}>{ab ? '▾' : '▸'}</span>
                     {p.nombre}
                     <span style={{ fontSize: '12px', color: GRIS, fontWeight: 400 }}>
                       {tab === 'insumos' ? ` · Se aplica en ${UNIDAD[p.unidad] || p.unidad}` : (p.marca ? ` · ${p.marca}` : '')}
-                      {p.proveedor ? ` · Proveedor: ${p.proveedor}` : ''}
+                      {p.proveedor ? ` · Proveedor ${p.proveedor}` : ''}
                     </span>
                   </span>
                   {esJefeGlobal && (
-                    <span style={{ display: 'flex', gap: '7px' }} onClick={e => e.stopPropagation()}>
-                      <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={btn}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>
-                      <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={{ ...btn, color: ROJO, borderColor: '#e7cccb' }}>Quitar</button>
+                    <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={linkAccion(AZUL)}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>
+                      <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={linkAccion(ROJO)}>Quitar</button>
                     </span>
                   )}
                 </div>
@@ -252,9 +252,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                 )}
 
                 {ab && (
-                  <div style={{ background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9', padding: '2px 15px 14px' }}>
+                  <div style={{ background: 'white', padding: '0 20px 8px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.6fr 0.9fr 0.9fr 0.9fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
-                                  padding: '7px 0', fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: '0.5px solid ' + BORDE }}>
+                                  padding: '10px 0', fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #f0f4f8' }}>
                       <span>Finca</span>
                       {tab === 'insumos' && <span>Llega En</span>}
                       {tab === 'insumos' && <span style={{ textAlign: 'center' }}>Se Aplica En</span>}
@@ -311,14 +311,17 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                               {esJefe && <button onClick={() => setEditPz(editPz === claveP ? null : claveP)} style={miniLink}>{editPz === claveP ? 'cerrar' : 'editar'}</button>}
                             </span>
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                              <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }}
-                                style={{ border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '4px 9px', background: 'white',
-                                         fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer', fontVariantNumeric: 'tabular-nums', textAlign: 'right',
-                                         color: contado.val == null ? '#BA7517' : NAVY, minWidth: '120px' }}>
-                                {contado.val == null ? 'Sin precio' : <>{dinero(aCompra(contado.val))} <span style={{ fontSize: '10px', color: GRIS }}>contado/{cap(uCompra)}</span></>}
-                                {contado.heredado && <span style={{ fontSize: '9px', color: GRIS, display: 'block' }}>general</span>}
-                                {otros.length > 0 && <span style={{ fontSize: '10px', color: GRIS, display: 'block' }}>{otros.map(x => `${x.pz}d ${dinero(aCompra(x.val))}`).join(' · ')}</span>}
-                              </button>
+                              {(() => {
+                                const activo = precioPlazo(plz[claveP]?.plazo ?? 0)   // precio del plazo activo
+                                return (
+                                  <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }}
+                                    style={{ border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white',
+                                             fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, cursor: 'pointer', fontVariantNumeric: 'tabular-nums', textAlign: 'right',
+                                             color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }}>
+                                    {activo.val == null ? 'Sin precio' : <>{dinero(aCompra(activo.val))}<span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap(uCompra)}{activo.heredado ? ' · general' : ''}</span></>}
+                                  </button>
+                                )
+                              })()}
                               <button onClick={() => { setHist(hist === claveP ? null : claveP); setEditP(null) }} title="Historial de precios"
                                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, padding: 0, lineHeight: 1 }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -369,7 +372,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                     )}
                   </div>
                 )}
-              </Fragment>
+              </div>
             )
           })}
           {lista.length === 0 && <div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Nada en el catálogo todavía.</div>}
@@ -733,3 +736,4 @@ const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', bord
 const btn = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }
 const btnPri = { background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '9px 18px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }
 const miniLink = { background: 'none', border: 'none', padding: '0 0 0 6px', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px' }
+const linkAccion = color => ({ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color, fontFamily: 'inherit', fontSize: '13px' })
