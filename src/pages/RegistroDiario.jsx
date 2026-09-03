@@ -80,7 +80,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       ] = await Promise.all([
         supabase.schema('produccion').from('piscina')
           .select('id, codigo, nombre, hectareas, tipo')
-          .eq('finca_id', finca.id).eq('activa', true),
+          .eq('finca_id', finca.id).eq('activa', true).eq('es_reservorio', false),
         supabase.schema('produccion').from('ciclo')
           .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
           .eq('finca_id', finca.id),
