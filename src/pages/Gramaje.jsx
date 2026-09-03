@@ -66,7 +66,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         const { data: pisc } = await supabase
           .schema('produccion').from('piscina')
           .select('id, codigo, nombre, hectareas, tipo')
-          .eq('finca_id', finca.id).eq('tipo', 'engorde').eq('activa', true)
+          .eq('finca_id', finca.id).eq('tipo', 'engorde').eq('activa', true).eq('es_reservorio', false)
         const demo = (pisc || []).map(p => ({
           cicloId: null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
           hectareas: Number(p.hectareas), fechaSiembra: null, fechaCierre: null, larva: null,
