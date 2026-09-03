@@ -357,18 +357,18 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                                     : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : 'white',
                           borderLeft: '0.5px solid #f6f9fb' }}>
                       {ls.map(l => (
-                        <div key={l.id} style={{ marginBottom: '6px', paddingBottom: '5px',
-                              borderBottom: '0.5px solid #f1f6f9' }}>
-                          <div style={{ fontSize: '11px', color: NAVY, fontWeight: 500,
-                                        marginBottom: '3px', lineHeight: 1.25 }}>
+                        <div key={l.id} style={{ background: 'white', border: '1px solid ' + BORDE,
+                              borderRadius: '9px', padding: '7px 9px', marginBottom: '6px' }}>
+                          <div style={{ fontSize: '11px', color: NAVY, fontWeight: 600,
+                                        marginBottom: edit ? '4px' : '2px', lineHeight: 1.2 }}>
                             {nombreInsumo(l.insumoId)}
                           </div>
                           {edit ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                               <input inputMode="decimal" value={l.cantidad}
                                 onChange={e => cambiarCantidad(k, l.id, e.target.value)}
-                                style={{ width: '60px', fontFamily: 'inherit', fontSize: '12px',
-                                         padding: '3px 5px', textAlign: 'right', border: '0.5px solid ' + BORDE,
+                                style={{ width: '56px', fontFamily: 'inherit', fontSize: '12px',
+                                         padding: '4px 6px', textAlign: 'right', border: '0.5px solid ' + BORDE,
                                          borderRadius: '6px', fontVariantNumeric: 'tabular-nums' }} />
                               <span style={{ fontSize: '11px', color: GRIS, flex: 1 }}>
                                 {unidadInsumo(l.insumoId)}
@@ -379,7 +379,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                             </div>
                           ) : (
                             <span style={{ fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
-                              {miles(num(l.cantidad))} {unidadInsumo(l.insumoId)}
+                              <b style={{ fontWeight: 600 }}>{miles(num(l.cantidad))}</b> {unidadInsumo(l.insumoId)}
                             </span>
                           )}
                         </div>
