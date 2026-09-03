@@ -55,6 +55,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
+  const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -102,7 +103,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('insumo_finca')
-          .select('insumo_id, factor').eq('finca_id', finca.id),
+          .select('insumo_id, factor, stock_minimo, unidad').eq('finca_id', finca.id),
         supabase.schema('produccion').rpc('fn_saldo_insumo_plazo',
           { p_finca: finca.id, p_hasta: alDia }),
       ])
@@ -113,6 +114,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const factor = {}
       ;(ins || []).forEach(x => { factor[x.id] = Number(x.factor) || 1 })
       ;(ovFactor || []).forEach(x => { factor[x.insumo_id] = Number(x.factor) || 1 })
+
+      // Mínimo por insumo (en unidad de aplicación). Guardamos el min en
+      // unidad de aplicación, el factor y la unidad para comparar y mostrar.
+      const minMap = {}
+      ;(ovFactor || []).forEach(x => {
+        if (x.stock_minimo != null) minMap[x.insumo_id] = { min: Number(x.stock_minimo), factor: Number(x.factor) || 1, unidad: x.unidad }
+      })
+      setMinimos(minMap)
 
       // El precio de la finca le gana al general. Se guarda ya por
       // unidad de compra: precio del catalogo por el factor.
@@ -161,6 +170,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
+
+  // ¿Bajo mínimo? El saldo está en unidad de compra; el mínimo en unidad de
+  // aplicación. Convierto el saldo a aplicación (saldo × factor) y comparo.
+  const bajoMin = f => {
+    const m = minimos[f.insumo_id]; if (!m) return null
+    const saldoApp = Number(f.saldo) * (m.factor || 1)
+    return saldoApp < m.min ? { saldoApp, ...m } : null
+  }
+  const porReponer = filas.map(f => ({ f, a: bajoMin(f) })).filter(x => x.a)
 
   function abrirCorregir(f) {
     setEditando(f.insumo_id)
@@ -622,6 +640,22 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       ) : (
         <>
+          {porReponer.length > 0 && (
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#FDF3F3',
+                          border: '0.5px solid #f0d4d3', borderRadius: '12px', padding: '12px 15px', marginBottom: '14px' }}>
+              <span style={{ color: ROJO, fontSize: '15px', lineHeight: 1.2 }}>⚠</span>
+              <div style={{ fontSize: '13px', color: '#6d2b29' }}>
+                <b style={{ fontWeight: 600 }}>Por reponer ({porReponer.length})</b>
+                <div style={{ marginTop: '3px' }}>
+                  {porReponer.map(({ f, a }) => (
+                    <span key={f.insumo_id} style={{ display: 'inline-block', marginRight: '14px' }}>
+                      {f.insumo}: {limpio(Math.round(a.saldoApp * 100) / 100)} / mín {limpio(a.min)} {UNIDAD[a.unidad] || a.unidad}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           <Tabla
             caja min={esJefe ? '760px' : '420px'}
             columnas={esJefe
@@ -658,6 +692,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   ) : (
                     <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
                       {limpio(f.saldo)}
+                      {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
