@@ -308,7 +308,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             {tab === 'balanceados' && <span style={{ color: GRIS }}>Sacos</span>}
                             <span style={{ color: GRIS }}>
                               <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[plz[claveP]?.plazo ?? 0]}</span>
-                              {esJefe && <button onClick={() => setEditPz(editPz === claveP ? null : claveP)} style={miniLink}>{editPz === claveP ? 'cerrar' : 'editar'}</button>}
+                              {esJefe && <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={miniLink}>{editP === claveP ? 'cerrar' : 'editar'}</button>}
                             </span>
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               {(() => {
@@ -329,15 +329,13 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             </span>
                           </div>
 
-                          {editPz === claveP && (
-                            <EditorPlazo fincas={fincas} fincaActual={f} actual={plz[claveP]?.plazo ?? 0}
-                              onGuardar={(plazo, desde, fincaIds) => guardarPlazo({ prodId: p.id, fincaIds, plazo, desde })}
-                              onCancelar={() => setEditPz(null)} />
-                          )}
                           {editP === claveP && (
-                            <EditorPrecio tab={tab} fincas={fincas} fincaActual={f} uCons={uCons} uCompra={uCompra} factor={factor}
+                            <EditorPrecioPlazo tab={tab} fincas={fincas} fincaActual={f} uCons={uCons} uCompra={uCompra} factor={factor}
+                              plazoActivo={plz[claveP]?.plazo ?? 0}
                               actuales={Object.fromEntries(PLAZOS.map(pz => [pz, precioPlazo(pz).val]))}
-                              onGuardar={(valores, entrada, desde, fincaIds) => guardarPrecio({ tabla, col, prodCol, prodId: p.id, fincaIds, valores, entrada, desde, factorBase: Number(p.factor) })}
+                              aCompra={aCompra}
+                              onGuardarPlazo={(plazo, desde, fincaIds) => guardarPlazo({ prodId: p.id, fincaIds, plazo, desde })}
+                              onGuardarPrecio={(valores, entrada, desde, fincaIds) => guardarPrecio({ tabla, col, prodCol, prodId: p.id, fincaIds, valores, entrada, desde, factorBase: Number(p.factor) })}
                               onCancelar={() => setEditP(null)} />
                           )}
                           {hist === claveP && (
@@ -499,6 +497,96 @@ function EditorPrecio({ tab, fincas, fincaActual, uCons, uCompra, factor, actual
           {esInsumo && hayCompra && <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Si otra finca tiene distinto peso por {cap(uCompra)}, el precio por {UNIDAD[uCons] || uCons} se ajusta a su factor.</div>}
         </div>
       )}
+    </div>
+  )
+}
+
+// Editor unificado: plazo activo arriba, precios guardados + edición abajo.
+function EditorPrecioPlazo({ tab, fincas, fincaActual, uCons, uCompra, factor, plazoActivo, actuales, aCompra, onGuardarPlazo, onGuardarPrecio, onCancelar }) {
+  const esInsumo = tab === 'insumos'
+  const hayCompra = esInsumo && uCompra && uCompra !== uCons
+  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
+  // --- Plazo activo ---
+  const [plazoSel, setPlazoSel] = useState(plazoActivo ?? 0)
+  const [desdePz, setDesdePz] = useState(hoyISO())
+  const [selPz, setSelPz] = useState([fincaActual.id])
+  const [envPz, setEnvPz] = useState(false)
+  // --- Precios ---
+  const [editar, setEditar] = useState(false)
+  const [plazoP, setPlazoP] = useState(plazoActivo ?? 0)
+  const [entrada, setEntrada] = useState(hayCompra ? 'compra' : 'conteo')
+  const prefill = (pz, ent) => { const a = actuales[pz]; if (a == null) return ''; const v = esInsumo && ent === 'compra' ? a * factor : a; return String(Math.round(v * 10000) / 10000) }
+  const [v, setV] = useState(prefill(plazoActivo ?? 0, hayCompra ? 'compra' : 'conteo'))
+  const [desdeP, setDesdeP] = useState(hoyISO())
+  const [selP, setSelP] = useState([fincaActual.id])
+  const [envP, setEnvP] = useState(false)
+  const val = numDec(v)
+  const equiv = esInsumo && val > 0 ? (entrada === 'compra' ? val / factor : val * factor) : null
+  const cambiarPlazoP = pz => { setPlazoP(pz); setV(prefill(pz, entrada)) }
+  const cambiarEntrada = ne => { if (ne === entrada) return; const n = numDec(v); if (n > 0) setV(String(Math.round((ne === 'compra' ? n * factor : n / factor) * 10000) / 10000)); setEntrada(ne) }
+  const toggle = (setF) => id => setF(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+  const chips = (sel, setF) => otras.length > 0 && (
+    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
+      <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
+      {otras.map(f => { const on = sel.includes(f.id); return (
+        <button key={f.id} onClick={() => toggle(setF)(f.id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}</button>
+      )})}
+      {otras.length > 1 && <button onClick={() => setF([fincaActual.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>}
+    </div>
+  )
+  return (
+    <div style={{ background: '#eef3f7', padding: '14px 16px', borderBottom: '0.5px solid #eef3f7' }}>
+      {/* Plazo activo */}
+      <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: AZUL, marginBottom: '8px' }}>Plazo activo</div>
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <Campo label="Se compra a"><select value={plazoSel} onChange={e => setPlazoSel(Number(e.target.value))} style={{ ...inp, width: '130px' }}>{PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}</select></Campo>
+        <Campo label="Rige desde"><input type="date" value={desdePz} onChange={e => setDesdePz(e.target.value)} style={inp} /></Campo>
+        <button disabled={selPz.length === 0 || envPz} onClick={async () => { setEnvPz(true); await onGuardarPlazo(plazoSel, desdePz, selPz); setEnvPz(false) }} style={{ ...btnPri, opacity: (selPz.length === 0 || envPz) ? 0.5 : 1 }}>{envPz ? 'Guardando...' : 'Fijar'}</button>
+      </div>
+      <div style={{ fontSize: '11px', color: GRIS, marginTop: '5px' }}>Desde esa fecha, todo lo que ingrese se costea a ese plazo. El bodeguero no lo ve.</div>
+      {chips(selPz, setSelPz)}
+
+      {/* Precios guardados */}
+      <div style={{ borderTop: '0.5px solid #d9e2ea', margin: '14px 0 10px' }} />
+      <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: AZUL, marginBottom: '8px' }}>Precios guardados (por {cap(uCompra)})</div>
+      <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'center' }}>
+        {PLAZOS.map(pz => {
+          const val0 = actuales[pz]; const act = pz === (plazoActivo ?? 0)
+          return (
+            <span key={pz} style={{ fontSize: '12px', borderRadius: '7px', padding: '4px 10px',
+              background: act ? '#E6F1FB' : '#eef2f6', color: act ? AZUL : NAVY, fontWeight: act ? 500 : 400 }}>
+              {PLAZO_LBL[pz].replace(' días', 'd')} {val0 == null ? '—' : dinero(aCompra(val0))}{act ? ' · activo' : ''}
+            </span>
+          )
+        })}
+        <button onClick={() => setEditar(e => !e)} style={miniLink}>{editar ? 'cerrar' : 'editar precios'}</button>
+      </div>
+
+      {editar && (
+        <div style={{ marginTop: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '12px' }}>
+          {hayCompra && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+              <span style={{ fontSize: '12px', color: GRIS }}>Ingresar precio por:</span>
+              {[['compra', UNIDAD[uCompra] || cap(uCompra)], ['conteo', UNIDAD[uCons] || cap(uCons)]].map(([id, txt]) => (
+                <button key={id} onClick={() => cambiarEntrada(id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 12px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (entrada === id ? '#9cc4e8' : BORDE), background: entrada === id ? '#E6F1FB' : 'white', color: entrada === id ? AZUL : NAVY, fontWeight: entrada === id ? 500 : 400 }}>{txt}</button>
+              ))}
+              <span style={{ fontSize: '11px', color: GRIS, marginLeft: 'auto' }}>1 {cap(uCompra)} = {factor} {UNIDAD[uCons] || uCons}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <Campo label="Este precio es de"><select value={plazoP} onChange={e => cambiarPlazoP(Number(e.target.value))} style={{ ...inp, width: '130px' }}>{PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}</select></Campo>
+            <Campo label={`Precio por ${entrada === 'compra' ? (UNIDAD[uCompra] || cap(uCompra)) : (UNIDAD[uCons] || cap(uCons))}`}>
+              <input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)} placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
+              {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>= {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
+            </Campo>
+            <Campo label="Rige desde"><input type="date" value={desdeP} onChange={e => setDesdeP(e.target.value)} style={inp} /></Campo>
+            <button disabled={!(val > 0) || selP.length === 0 || envP} onClick={async () => { setEnvP(true); await onGuardarPrecio({ [plazoP]: val }, entrada, desdeP, selP); setEnvP(false) }} style={{ ...btnPri, opacity: (!(val > 0) || selP.length === 0 || envP) ? 0.5 : 1 }}>{envP ? 'Guardando...' : 'Aplicar precio'}</button>
+          </div>
+          {chips(selP, setSelP)}
+        </div>
+      )}
+
+      <div style={{ marginTop: '12px' }}><button onClick={onCancelar} style={btn}>Cerrar</button></div>
     </div>
   )
 }
