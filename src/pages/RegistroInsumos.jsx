@@ -84,7 +84,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         cicloId: (cs || []).find(c => c.piscina_origen_id === p.id
           && c.fecha_siembra <= domingo
           && (!c.fecha_cierre || c.fecha_cierre >= lunes))?.id || null,
-      })).sort(ordenar)
+      })).sort((a, b) => (a.esReservorio ? 1 : 0) - (b.esReservorio ? 1 : 0) || ordenar(a, b))
       setPiscinas(lista)
       setInsumos(insFinca)
 
