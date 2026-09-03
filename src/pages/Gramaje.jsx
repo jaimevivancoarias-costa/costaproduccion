@@ -33,6 +33,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const [solReapertura, setSolReapertura] = useState([])
   const [userId, setUserId] = useState(null)
   const [cerrando, setCerrando] = useState('')  // fecha que se está cerrando/reabriendo
+  const [guardadoOk, setGuardadoOk] = useState(false)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const muestreos = useMemo(() => fechas.filter(esDiaDeMuestreo), [fechas])
@@ -178,7 +179,8 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
           .upsert(nuevos, { onConflict: 'piscina_id,fecha' })
         if (error) throw error
       }
-      setAviso({ tipo: 'ok', texto: 'Pesos guardados' })
+      setAviso(null)
+      setGuardadoOk(true); setTimeout(() => setGuardadoOk(false), 2500)
       await cargar()
       return true
     } catch (err) {
@@ -358,47 +360,36 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                 Práctica · no se guarda
               </span>
             ) : !soloLectura && (
-              <Btn primario onClick={guardar} disabled={guardando}>
-                {guardando ? 'Guardando...' : 'Guardar pesos'}
-              </Btn>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Cerrar / reabrir cada día de muestreo */}
-      {!cargando && !practica && !soloLectura && (
-        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                      padding: '13px 16px', marginTop: '14px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '2px' }}>Cerrar el gramaje del día</div>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
-            Al cerrar un día se guardan los pesos y queda bloqueado. Reabrir necesita permiso del jefe.
-          </div>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            {muestreos.filter(fe => situacionDia(fe, hoy) !== 'futuro').map(fe => {
-              const cerrado = dias[fe] === 'cerrado'
-              const pedido = solReapertura.some(x => x.registro_id === diasId[fe])
-              return (
-                <div key={fe} style={{ display: 'flex', alignItems: 'center', gap: '8px',
-                      border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '8px 11px' }}>
-                  <span style={{ fontSize: '13px', textTransform: 'capitalize' }}>{nombreDia(fe)} {corta(fe).slice(0, 5)}</span>
-                  {cerrado ? (
-                    esJefe
-                      ? <Btn onClick={() => reabrirDia(fe)} disabled={cerrando === fe}>{cerrando === fe ? '...' : 'Reabrir'}</Btn>
-                      : pedido
-                        ? <span style={{ fontSize: '12px', color: '#BA7517' }}>Pedido enviado</span>
-                        : <Btn onClick={() => pedirReabrir(fe)}>Pedir reabrir</Btn>
-                  ) : (
-                    <button onClick={() => cerrarDia(fe)} disabled={cerrando === fe || guardando} style={{
-                      padding: '7px 13px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
-                      border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {guardadoOk && <span style={{ fontSize: '13px', color: '#0F6E56', fontWeight: 500 }}>✓ Guardado</span>}
+                <Btn primario onClick={guardar} disabled={guardando}>
+                  {guardando ? 'Guardando...' : 'Guardar pesos'}
+                </Btn>
+                {muestreos.filter(fe => situacionDia(fe, hoy) !== 'futuro').map(fe => {
+                  const cerrado = dias[fe] === 'cerrado'
+                  const pedido = solReapertura.some(x => x.registro_id === diasId[fe])
+                  const et = `${nombreDia(fe).slice(0, 3)} ${corta(fe).slice(0, 5)}`
+                  if (cerrado) return (
+                    <span key={fe} style={{ fontSize: '12px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      {et} cerrado
+                      {esJefe
+                        ? <button onClick={() => reabrirDia(fe)} disabled={cerrando === fe} style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: 0 }}>reabrir</button>
+                        : pedido
+                          ? <span style={{ color: '#BA7517' }}>· pedido enviado</span>
+                          : <button onClick={() => pedirReabrir(fe)} style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: 0 }}>pedir reabrir</button>}
+                    </span>
+                  )
+                  return (
+                    <button key={fe} onClick={() => cerrarDia(fe)} disabled={cerrando === fe || guardando} style={{
+                      padding: '9px 13px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                      border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY,
                       cursor: 'pointer', opacity: (cerrando === fe || guardando) ? 0.6 : 1 }}>
-                      {cerrando === fe ? 'Cerrando...' : 'Guardar y cerrar'}
+                      {cerrando === fe ? 'Cerrando...' : `Cerrar ${et}`}
                     </button>
-                  )}
-                </div>
-              )
-            })}
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
