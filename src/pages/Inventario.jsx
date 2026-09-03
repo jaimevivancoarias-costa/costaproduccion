@@ -71,6 +71,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [fecha, setFecha] = useState(hoyISO())
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
+  const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
+  const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
+  const [factores, setFactores] = useState({})       // insumoId -> { factor, uApp }
   const [guardando, setGuardando] = useState(false)
 
   // Agregar insumos que faltan, varios a la vez, sin salir del conteo.
@@ -99,7 +102,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         supabase.schema('produccion').from('toma_inventario')
           .select('id, fecha, observacion, es_inicial')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
-        supabase.schema('produccion').from('insumo').select('id, factor').eq('activo', true),
+        supabase.schema('produccion').from('insumo').select('id, factor, unidad').eq('activo', true),
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('insumo_finca')
@@ -114,6 +117,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const factor = {}
       ;(ins || []).forEach(x => { factor[x.id] = Number(x.factor) || 1 })
       ;(ovFactor || []).forEach(x => { factor[x.insumo_id] = Number(x.factor) || 1 })
+
+      // Factor + unidad de aplicación por insumo (para el "sobrante" del conteo).
+      const facMap = {}
+      ;(ins || []).forEach(x => { facMap[x.id] = { factor: Number(x.factor) || 1, uApp: x.unidad } })
+      ;(ovFactor || []).forEach(x => { facMap[x.insumo_id] = { factor: Number(x.factor) || 1, uApp: x.unidad || facMap[x.insumo_id]?.uApp } })
+      setFactores(facMap)
 
       // Mínimo por insumo (en unidad de aplicación). Guardamos el min en
       // unidad de aplicación, el factor y la unidad para comparar y mostrar.
@@ -162,11 +171,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.insumo_id]
-    const hay = txt !== undefined && txt !== ''
-    const c = hay ? Number(txt) : null
+    const hayMain = txt !== undefined && txt !== ''
+    const fac = factores[s.insumo_id]?.factor || 1
+    const sob = sobrante[s.insumo_id]
+    const haySob = sob !== undefined && sob !== '' && Number(sob) !== 0
+    // El conteo se guarda en unidad de compra (presentación). El sobrante
+    // viene en unidad de aplicación → se divide por el factor para sumarlo.
+    const c = (hayMain || haySob) ? (hayMain ? Number(txt) : 0) + (haySob ? Number(String(sob).replace(',', '.')) / fac : 0) : null
     return { ...s, precio: precios[s.insumo_id] || 0,
-             contado: c, diferencia: hay ? c - Number(s.saldo) : null }
-  }), [saldos, precios, contado])
+             contado: c, diferencia: c !== null ? c - Number(s.saldo) : null }
+  }), [saldos, precios, contado, sobrante, factores])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
@@ -320,7 +334,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       setAviso({ tipo: 'ok',
         texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
-      setContando(false); setEditToma(null); setContado({}); setObs('')
+      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs('')
       await cargar()
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -554,6 +568,24 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     style={{ ...entrada, width: '100%', textAlign: 'right',
                              fontVariantNumeric: 'tabular-nums' }}
                   />
+                  {(() => {
+                    const fac = factores[f.insumo_id]
+                    if (!fac || (fac.factor || 1) === 1) return null   // sin conversión, no aplica sobrante
+                    const uApp = UNIDAD[fac.uApp] || fac.uApp
+                    if (sobranteOn[f.insumo_id]) return (
+                      <div style={{ marginTop: '5px' }}>
+                        <input inputMode="decimal" value={sobrante[f.insumo_id] ?? ''} placeholder={'+ sobrante en ' + uApp}
+                          onChange={e => setSobrante(s => ({ ...s, [f.insumo_id]: e.target.value }))}
+                          style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                        <button onClick={() => { setSobranteOn(o => ({ ...o, [f.insumo_id]: false })); setSobrante(s => ({ ...s, [f.insumo_id]: '' })) }}
+                          style={{ background: 'none', border: 'none', color: GRIS, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: '2px 0 0' }}>quitar sobrante</button>
+                      </div>
+                    )
+                    return (
+                      <button onClick={() => setSobranteOn(o => ({ ...o, [f.insumo_id]: true }))}
+                        style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: '3px 0 0' }}>+ sobrante ({uApp})</button>
+                    )
+                  })()}
                 </div>
                 {/* La primera vez no hay contra que comparar: es la carga
                     inicial. La diferencia aparece de la segunda en adelante. */}
@@ -577,7 +609,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {llenadas} de {saldos.length} contados
               {!primeraVez && descuadres.length > 0 && ` · ${descuadres.length} no cuadran`}
             </span>
-            <Btn onClick={() => { setContando(false); setContado({}); setEditToma(null) }}>Cancelar</Btn>
+            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setEditToma(null) }}>Cancelar</Btn>
             <Btn primario onClick={guardar} disabled={guardando || !llenadas}>
               {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
             </Btn>
