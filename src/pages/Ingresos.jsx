@@ -395,7 +395,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
             <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', ''); setLinea(i, 'sobrante', ''); setLinea(i, 'sobranteOn', false) }}
               style={{ ...entrada, flex: 1, minWidth: '180px' }}>
               <option value="">Elegir insumo</option>
-              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad_compra] || x.unidad_compra}</option>)}
+              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
             <input inputMode="decimal" value={l.cantidad}
               placeholder="Cantidad"
@@ -556,7 +556,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px' }}>
             <select value={l.insumoId} onChange={e => setLinea(i, 'insumoId', e.target.value)} style={{ ...entrada, flex: 1 }}>
               <option value="">Elegir insumo</option>
-              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre} — {UNI[x.unidad_compra] || x.unidad_compra}</option>)}
+              {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
             <input inputMode="decimal" value={l.cantidad} placeholder={uni ? `Cantidad en ${uni}` : 'Cantidad'}
               onChange={e => setLinea(i, 'cantidad', e.target.value)} style={{ ...entrada, width: '170px' }} />
