@@ -726,26 +726,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       )}
 
-      {modo === 'registrar' && !soloLectura && !semanaCerrada && (semanaDeHoy || esJefe) && (
+      {modo === 'registrar' && !soloLectura && !semanaCerrada && !semanaDeHoy && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
                       background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                       padding: '11px 14px', marginBottom: '10px' }}>
-          {semanaDeHoy && <>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={soloPendientes} onChange={e => setSoloPendientes(e.target.checked)} />
-            Solo pendientes
-          </label>
-          <Sep />
-          <Btn fantasma onClick={() => copiarDiaAnterior(hoy)}>Copiar día anterior</Btn></>}
-          {!semanaDeHoy && (
-            <span style={{ fontSize: '13px', color: '#854F0B' }}>
-              Estás editando una semana anterior. Los cambios quedan en la bitácora.
-            </span>
-          )}
-          <span style={{ marginLeft: 'auto', fontSize: '12px',
-                         color: refrescando ? AZUL : sucio ? '#BA7517' : GRIS }}>
-            {refrescando ? 'Actualizando...'
-              : sucio ? 'Hay cambios sin guardar' : 'Sin cambios sin guardar'}
+          <span style={{ fontSize: '13px', color: '#854F0B' }}>
+            Estás editando una semana anterior. Los cambios quedan en la bitácora.
           </span>
         </div>
       )}
@@ -811,7 +797,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                 {visibles.map((p, i) => (
                   <Fragment key={p.piscinaId}>
                   <div style={{ display: 'grid', gridTemplateColumns: COLS,
-                        borderBottom: editSiembra === p.piscinaId ? 'none' : '0.5px solid #f1f6f9', alignItems: 'center' }}>
+                        borderBottom: editSiembra === p.piscinaId ? 'none' : '0.5px solid #f1f6f9', alignItems: 'stretch' }}>
                     <Td pegado alineado="left">
                       <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
                       <div style={{ fontSize: '11px', color: GRIS }}>
