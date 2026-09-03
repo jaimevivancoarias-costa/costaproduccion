@@ -253,12 +253,14 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
                 {ab && (
                   <div style={{ background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9', padding: '2px 15px 14px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1.1fr 1.3fr 0.9fr 130px' : '1.6fr 1fr 130px',
-                                  padding: '7px 0', fontSize: '11px', color: GRIS, textTransform: 'uppercase', borderBottom: '0.5px solid ' + BORDE }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.6fr 0.9fr 0.9fr 0.9fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
+                                  padding: '7px 0', fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: '0.5px solid ' + BORDE }}>
                       <span>Finca</span>
-                      {tab === 'insumos' && <span>Entra En</span>}
-                      {tab === 'insumos' && <span>Se Cuenta En</span>}
+                      {tab === 'insumos' && <span>Llega En</span>}
+                      {tab === 'insumos' && <span style={{ textAlign: 'center' }}>Se Aplica En</span>}
+                      {tab === 'insumos' && <span>Mínimo Alerta</span>}
                       {tab === 'balanceados' && <span>Unidad</span>}
+                      <span>Plazo Activo</span>
                       <span style={{ textAlign: 'right' }}>Precio</span>
                     </div>
                     {(fincas || []).map(f => {
@@ -288,29 +290,26 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const claveP = k(p.id, f.id)
                       return (
                         <Fragment key={f.id}>
-                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1.1fr 1.3fr 0.9fr 160px' : '1.6fr 1fr 160px',
-                                        alignItems: 'center', padding: '9px 0', fontSize: '13px', borderBottom: '0.5px solid #eef3f7' }}>
-                            <span style={{ fontWeight: 500 }}>
-                              {String(f.nombre).toUpperCase()}
-                              <span style={{ display: 'block', fontSize: '11px', color: GRIS, fontWeight: 400 }}>
-                                Compra a {PLAZO_LBL[plz[claveP]?.plazo ?? 0]}
-                                {esJefe && <button onClick={() => setEditPz(editPz === claveP ? null : claveP)} style={miniLink}>{editPz === claveP ? ' cerrar' : ' editar'}</button>}
-                              </span>
-                            </span>
+                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.6fr 0.9fr 0.9fr 0.9fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
+                                        alignItems: 'center', padding: '10px 0', fontSize: '13px', borderBottom: '0.5px solid #eef3f7' }}>
+                            <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
                             {tab === 'insumos' && (
-                              <span style={{ color: GRIS }}>
-                                {cap(uCompra)}
-                                <span style={{ display: 'block', fontSize: '11px' }}>1 = {contenido} {UNIDAD[uCont] || uCont}</span>
+                              <span style={{ color: NAVY }}>
+                                {cap(uCompra)} <span style={{ color: GRIS, fontSize: '11.5px' }}>(1 = {contenido} {UNIDAD[uCont] || uCont})</span>
                                 {esJefe && <button onClick={() => setEditU(editU === claveP ? null : claveP)} style={miniLink}>{editU === claveP ? ' cerrar' : ' editar'}</button>}
                               </span>
                             )}
                             {tab === 'insumos' && (
-                              <span style={{ color: GRIS }}>
-                                {UNIDAD[uCons] || uCons}
-                                {minimo != null && <span style={{ display: 'block', fontSize: '10px', color: '#BA7517' }}>mín {minimo}</span>}
-                              </span>
+                              <span style={{ color: GRIS, textAlign: 'center', fontWeight: 500 }}>{(UNIDAD[uCons] || uCons).toUpperCase()}</span>
+                            )}
+                            {tab === 'insumos' && (
+                              <span style={{ color: minimo != null ? '#BA7517' : '#c3d0db' }}>{minimo != null ? `${minimo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
                             )}
                             {tab === 'balanceados' && <span style={{ color: GRIS }}>Sacos</span>}
+                            <span style={{ color: GRIS }}>
+                              <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[plz[claveP]?.plazo ?? 0]}</span>
+                              {esJefe && <button onClick={() => setEditPz(editPz === claveP ? null : claveP)} style={miniLink}>{editPz === claveP ? 'cerrar' : 'editar'}</button>}
+                            </span>
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }}
                                 style={{ border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '4px 9px', background: 'white',
