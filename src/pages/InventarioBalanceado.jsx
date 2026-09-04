@@ -207,7 +207,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
       <div style={{ display: 'flex', gap: '9px', marginBottom: '14px', flexWrap: 'wrap' }}>
         <Chip on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</Chip>
-        <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</Chip>
+        <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos y pedidos</Chip>
         {seccion === 'bodega' && !contando && !cargando && (
           <button onClick={() => setContando(true)} style={{ ...btn, marginLeft: 'auto',
             background: AZUL, color: 'white', borderColor: AZUL }}>
@@ -285,25 +285,33 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               <Cel gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
               <Cel der gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Cel>
               <div style={{ padding: '5px 10px' }}>
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                    <span style={{ fontSize: '10px', color: GRIS }}>Sacos completos</span>
-                    <input inputMode="decimal" value={contado[f.producto_id] ?? ''} placeholder="0"
-                      onChange={e => setContado(c => ({ ...c, [f.producto_id]: e.target.value }))}
-                      style={{ ...inp, width: '100%', textAlign: 'right' }} />
-                  </div>
-                  <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                    <span style={{ fontSize: '10px', color: GRIS }}>Libras sueltas</span>
-                    <input inputMode="decimal" value={sueltas[f.producto_id] ?? ''} placeholder="0"
-                      onChange={e => setSueltas(c => ({ ...c, [f.producto_id]: e.target.value }))}
-                      style={{ ...inp, width: '100%', textAlign: 'right' }} />
-                  </div>
-                </div>
-                {f.contado !== null && (
-                  <div style={{ fontSize: '10.5px', color: VERDE, marginTop: '4px', textAlign: 'right' }}>
-                    = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
-                  </div>
+                {primeraVez ? (
+                  <input inputMode="decimal" value={contado[f.producto_id] ?? ''} placeholder="Sacos"
+                    onChange={e => setContado(c => ({ ...c, [f.producto_id]: e.target.value }))}
+                    style={{ ...inp, width: '100%', textAlign: 'right' }} />
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                        <span style={{ fontSize: '10px', color: GRIS }}>Sacos completos</span>
+                        <input inputMode="decimal" value={contado[f.producto_id] ?? ''} placeholder="0"
+                          onChange={e => setContado(c => ({ ...c, [f.producto_id]: e.target.value }))}
+                          style={{ ...inp, width: '100%', textAlign: 'right' }} />
+                      </div>
+                      <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                        <span style={{ fontSize: '10px', color: GRIS }}>Libras sueltas</span>
+                        <input inputMode="decimal" value={sueltas[f.producto_id] ?? ''} placeholder="0"
+                          onChange={e => setSueltas(c => ({ ...c, [f.producto_id]: e.target.value }))}
+                          style={{ ...inp, width: '100%', textAlign: 'right' }} />
+                      </div>
+                    </div>
+                    {f.contado !== null && (
+                      <div style={{ fontSize: '10.5px', color: VERDE, marginTop: '4px', textAlign: 'right' }}>
+                        = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
               <Cel der color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
@@ -545,6 +553,32 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     await cargar()
   }
+  // Marca el pedido como entregado: crea el ingreso con lo que falta y suma a bodega.
+  async function entregarPedido(p) {
+    const pend = (pendientes[p.id] || []).filter(x => Number(x.pendiente) > 0.0001)
+    const lineasIng = pend.length
+      ? pend.map(x => ({ producto_id: x.producto_id, cantidad: Number(x.pendiente) }))
+      : (p.pedido_balanceado_linea || []).map(l => ({ producto_id: l.producto_id, cantidad: num(l.cantidad) }))
+    if (!lineasIng.length) { setAviso({ tipo: 'error', texto: 'El pedido no tiene líneas.' }); return }
+    if (!window.confirm(`Marcar como entregado y sumar a bodega:\n${lineasIng.map(l => `${nombre(l.producto_id)}: ${miles(l.cantidad)} sacos`).join('\n')}\n\n¿Confirmar?`)) return
+    try {
+      const { data: g, error } = await supabase.schema('produccion').from('ingreso_balanceado')
+        .insert({ finca_id: finca.id, fecha: hoyISO(), proveedor: p.proveedor || null, pedido_id: p.id }).select('id').single()
+      if (error) throw error
+      const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
+        .insert(lineasIng.map(l => ({ ingreso_id: g.id, producto_id: l.producto_id, cantidad: l.cantidad })))
+      if (e2) throw e2
+      await supabase.schema('produccion').from('pedido_balanceado').update({ estado: 'recibido' }).eq('id', p.id)
+      setAviso({ tipo: 'ok', texto: 'Pedido entregado y sumado a bodega.' }); await cargar(); onCambio && onCambio()
+    } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo. ' + (err.message || '') }) }
+  }
+  async function borrarPedido(p) {
+    if (!window.confirm('¿Borrar este pedido? No afecta el saldo (un pedido no suma).')) return
+    const { error } = await supabase.schema('produccion').from('pedido_balanceado').delete().eq('id', p.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setPedidos(prev => prev.filter(x => x.id !== p.id))
+    setAviso({ tipo: 'ok', texto: 'Pedido borrado.' })
+  }
   async function resolver(sol, aprobar) {
     const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
@@ -738,11 +772,15 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
                 )
               })}
             </div>
-            {p.estado === 'abierto' && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
-                <button onClick={() => cerrarPedido(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: GRIS }}>Marcar como cerrado</button>
-              </div>
-            )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
+              {p.estado === 'abierto' && (
+                <button onClick={() => entregarPedido(p)} style={{ ...btn, padding: '6px 11px', fontSize: '12px', background: AZUL, color: 'white', borderColor: AZUL }}>Marcar entregado (sumar a bodega)</button>
+              )}
+              {p.estado === 'abierto' && (
+                <button onClick={() => cerrarPedido(p.id)} style={{ ...btn, padding: '6px 11px', fontSize: '12px', color: GRIS }}>Cerrar sin sumar</button>
+              )}
+              <button onClick={() => borrarPedido(p)} style={{ ...btn, padding: '6px 11px', fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
+            </div>
           </div>
           )
         })
