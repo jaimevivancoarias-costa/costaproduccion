@@ -49,6 +49,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
   const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
   const [editSiembra, setEditSiembra] = useState(null)  // piscinaId en edicion de larva/gramaje
+  const [abierta, setAbierta] = useState(null)          // piscinaId con detalle del ciclo abierto
   const refs = useRef({})
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
@@ -594,11 +595,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS_BASE = '170px 152px 56px 124px 136px'
+  const COLS_BASE = '230px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
   const COLS_IND = verIndicadores ? ' 104px 96px 104px 96px 92px 92px 92px 116px 104px' : ''
   const COLS = `${COLS_BASE} ${COLS_DIAS}${COLS_IND}`
-  const ANCHO = verIndicadores ? '2160px' : '1260px'
+  const ANCHO = verIndicadores ? '1760px' : '1090px'
+  // Resumen del estado de la piscina para la etiqueta colapsada.
+  const estadoResumen = p => {
+    if (!p.cicloId || p.cosechadaEstaSemana) return { txt: 'Vacía', bg: '#e7f4ef', color: '#0F6E56' }
+    const evs = eventos[p.piscinaId] || []
+    if (evs.length) { const t = TIPOS[evs[0].tipo] || TIPOS.siembra; return { txt: t.nombre, bg: t.fondo, color: t.color } }
+    return { txt: 'Sin novedad', bg: '#f1f4f7', color: GRIS }
+  }
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -749,10 +757,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                               borderBottom: '0.5px solid ' + BORDE }}>
                   <Th pegado>Piscina</Th>
-                  <Th>Siembra</Th>
-                  <Th>Días</Th>
-                  <Th>Laboratorio</Th>
-                  <Th>Estado</Th>
                   {fechas.map(f => {
                     const s = situacionDia(f, hoy)
                     const est = dias[f]
@@ -799,52 +803,24 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                   <div style={{ display: 'grid', gridTemplateColumns: COLS,
                         borderBottom: editSiembra === p.piscinaId ? 'none' : '0.5px solid #f1f6f9', alignItems: 'stretch' }}>
                     <Td pegado alineado="left">
-                      <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
-                      <div style={{ fontSize: '11px', color: GRIS }}>
-                        {p.hectareas.toFixed(2)} ha
-                        {p.tipo === 'precria' && ' · precría'}
-                      </div>
-                    </Td>
-                    <Td>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '7px' }}>
+                        <button onClick={() => setAbierta(abierta === p.piscinaId ? null : p.piscinaId)}
+                          title="Ver detalle del ciclo"
+                          style={{ background: 'none', border: 'none', padding: '2px 0 0', cursor: 'pointer', color: GRIS, lineHeight: 1 }}>
+                          <span style={{ fontSize: '11px' }}>{abierta === p.piscinaId ? '▾' : '▸'}</span>
+                        </button>
                         <div>
-                          <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500 }}>{p.fechaSiembra ? corta(p.fechaSiembra) : '—'}</div>
-                          {p.cicloId && (
-                            <div style={{ fontSize: '11px', color: GRIS, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', marginTop: '1px' }}>
-                              <span style={{ color: NAVY }}>{p.larva ? miles(p.larva) : '—'}</span> larva · <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + ' g' : '—'}</span>
-                            </div>
-                          )}
+                          <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
+                          <div style={{ fontSize: '11px', color: GRIS }}>
+                            {p.hectareas.toFixed(2)} ha{p.tipo === 'precria' ? ' · precría' : ''}
+                            {p.fechaSiembra ? ` · ${diasCultivo(p.fechaSiembra, corteDias)} días` : ''}
+                          </div>
+                          {(() => { const e = estadoResumen(p); return (
+                            <span style={{ display: 'inline-block', marginTop: '5px', fontSize: '10px', fontWeight: 500,
+                                           borderRadius: '6px', padding: '2px 7px', background: e.bg, color: e.color }}>{e.txt}</span>
+                          ) })()}
                         </div>
-                        {p.cicloId && !soloLectura && modo === 'registrar' && (
-                          <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
-                            title={editSiembra === p.piscinaId ? 'Cerrar' : 'Editar siembra'}
-                            style={{ flexShrink: 0, background: 'none', border: 'none', padding: '1px 0 0',
-                                     cursor: 'pointer', color: editSiembra === p.piscinaId ? GRIS : AZUL, lineHeight: 1 }}>
-                            {editSiembra === p.piscinaId
-                              ? <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-                              : <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>}
-                          </button>
-                        )}
                       </div>
-                    </Td>
-                    <Td><span style={{ fontWeight: 500 }}>
-                      {p.fechaSiembra ? diasCultivo(p.fechaSiembra, corteDias) : ''}
-                    </span></Td>
-                    <Td>
-                      <Laboratorio
-                        fila={p} laboratorios={laboratorios}
-                        puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
-                        onElegir={id => cambiarLaboratorio(p, id)}
-                        onNuevo={() => nuevoLaboratorio(p)}
-                      />
-                    </Td>
-                    <Td>
-                      <Estado
-                        fila={p} eventos={eventos[p.piscinaId] || []}
-                        puede={!soloLectura && modo === 'registrar'}
-                        onElegir={tipo => abrirEvento(tipo, p)}
-                        onDeshacer={ev => borrarEvento(p, ev)}
-                      />
                     </Td>
                     {fechas.map((f, j) => (
                       <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB
@@ -888,8 +864,43 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       )
                     })()}
                   </div>
-                  {editSiembra === p.piscinaId && (
-                    <EditorSiembra p={p} onGuardar={guardarSiembra} onCancelar={() => setEditSiembra(null)} />
+                  {abierta === p.piscinaId && (
+                    <div style={{ background: '#f7fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 14px 34px' }}>
+                      <div style={{ display: 'flex', gap: '26px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontSize: '11px', color: GRIS }}>Siembra</div>
+                          <div style={{ fontSize: '13px', fontWeight: 500 }}>
+                            {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
+                            {p.cicloId && !soloLectura && modo === 'registrar' && (
+                              <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
+                                style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>{editSiembra === p.piscinaId ? 'cerrar' : 'editar'}</button>
+                            )}
+                          </div>
+                          {p.cicloId && (
+                            <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px', fontVariantNumeric: 'tabular-nums' }}>
+                              <span style={{ color: NAVY }}>{p.larva ? miles(p.larva) : '—'}</span> larva · <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + ' g' : '—'}</span>
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ minWidth: '160px' }}>
+                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Laboratorio</div>
+                          <Laboratorio fila={p} laboratorios={laboratorios}
+                            puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
+                            onElegir={id => cambiarLaboratorio(p, id)} onNuevo={() => nuevoLaboratorio(p)} />
+                        </div>
+                        <div style={{ minWidth: '170px' }}>
+                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Estado</div>
+                          <Estado fila={p} eventos={eventos[p.piscinaId] || []}
+                            puede={!soloLectura && modo === 'registrar'}
+                            onElegir={tipo => abrirEvento(tipo, p)} onDeshacer={ev => borrarEvento(p, ev)} />
+                        </div>
+                      </div>
+                      {editSiembra === p.piscinaId && (
+                        <div style={{ marginTop: '10px' }}>
+                          <EditorSiembra p={p} onGuardar={guardarSiembra} onCancelar={() => setEditSiembra(null)} />
+                        </div>
+                      )}
+                    </div>
                   )}
                   </Fragment>
                 ))}
@@ -898,12 +909,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                               borderTop: '0.5px solid ' + BORDE, alignItems: 'center' }}>
                   <Td pegado alineado="left" fondo="#fafcfd">
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>Total</span>
-                    <div style={{ fontSize: '11px', color: GRIS }}>{hectareas.toFixed(2)} ha</div>
+                    <div style={{ fontSize: '11px', color: GRIS }}>{hectareas.toFixed(2)} ha · {piscinas.length} piscinas</div>
                   </Td>
-                  <Td fondo="#fafcfd" />
-                  <Td fondo="#fafcfd"><span style={{ fontSize: '11px', color: GRIS }}>{piscinas.length} piscinas</span></Td>
-                  <Td fondo="#fafcfd" />
-                  <Td fondo="#fafcfd" />
                   {fechas.map(f => (
                     <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
                         borde={situacionDia(f, hoy) === 'hoy'}>
