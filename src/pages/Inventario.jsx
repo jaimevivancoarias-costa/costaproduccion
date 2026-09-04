@@ -41,6 +41,7 @@ const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCas
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
 const ANCHOS_MOV2       = '1.2fr 1.6fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr'   // llega/se aplica + inicial, entró, aplicó, devuelto, queda
+const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 
 export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
@@ -76,6 +77,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [contado, setContado] = useState({})
   const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
   const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
+  const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
+  const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
   const [factores, setFactores] = useState({})       // insumoId -> { factor, uApp }
   const [guardando, setGuardando] = useState(false)
 
@@ -269,10 +272,17 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   async function editarConteo(c) {
     const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
-      .select('insumo_id, cantidad_contada').eq('toma_id', c.id)
-    const mapa = {}
-    ;(data || []).forEach(l => { mapa[l.insumo_id] = String(l.cantidad_contada) })
-    setContado(mapa); setFecha(c.fecha); setObs(c.observacion || '')
+      .select('insumo_id, cantidad_contada, motivo_descuadre').eq('toma_id', c.id)
+    const mapa = {}, md = {}, mo = {}
+    ;(data || []).forEach(l => {
+      mapa[l.insumo_id] = String(l.cantidad_contada)
+      if (l.motivo_descuadre) {
+        if (MOTIVOS_DESCUADRE.includes(l.motivo_descuadre)) md[l.insumo_id] = l.motivo_descuadre
+        else { md[l.insumo_id] = 'Otro'; mo[l.insumo_id] = l.motivo_descuadre }
+      }
+    })
+    setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
+    setFecha(c.fecha); setObs(c.observacion || '')
     setEditToma(c); setContando(true); setAviso(null)
   }
 
@@ -325,19 +335,29 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         tomaId = toma.id
       }
 
-      const lineas = filas.filter(f => f.contado !== null).map(f => ({
-        toma_id: tomaId, insumo_id: f.insumo_id,
-        cantidad_contada: f.contado,
-        cantidad_sistema: Number(f.saldo),
-        diferencia: f.diferencia,
-      }))
+      const lineas = filas.filter(f => f.contado !== null).map(f => {
+        // En un recuento normal, hay descuadre si la diferencia no es cero.
+        // Al editar, conservamos el motivo que ya se había cargado.
+        const hayDesc = !primeraVez && (editToma || Math.abs(f.diferencia || 0) > 0.0001)
+        const cat = motivoDesc[f.insumo_id]
+        const motivoD = hayDesc && cat
+          ? (cat === 'Otro' ? (motivoOtro[f.insumo_id]?.trim() || 'Otro') : cat)
+          : null
+        return {
+          toma_id: tomaId, insumo_id: f.insumo_id,
+          cantidad_contada: f.contado,
+          cantidad_sistema: Number(f.saldo),
+          diferencia: f.diferencia,
+          motivo_descuadre: motivoD,
+        }
+      })
       const { error: e2 } = await supabase.schema('produccion')
         .from('toma_inventario_linea').insert(lineas)
       if (e2) throw e2
 
       setAviso({ tipo: 'ok',
         texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
-      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs('')
+      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({})
       await cargar()
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -611,6 +631,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     : f.diferencia === 0 ? 'cuadra'
                     : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
                 </Celda>
+                {/* Motivo del descuadre: solo cuando no cuadra (recuento). */}
+                {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.0001 && (
+                  <div style={{ gridColumn: '1 / -1', padding: '0 12px 11px 12px',
+                                display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap',
+                                borderBottom: '0.5px solid #f1f6f9', marginTop: '-2px' }}>
+                    <span style={{ fontSize: '11px', color: GRIS }}>
+                      {f.diferencia < 0 ? '¿Por qué faltan?' : '¿Por qué sobran?'}
+                    </span>
+                    <select value={motivoDesc[f.insumo_id] || ''}
+                      onChange={e => setMotivoDesc(m => ({ ...m, [f.insumo_id]: e.target.value }))}
+                      style={{ ...entrada, width: '180px', padding: '5px 8px' }}>
+                      <option value="">Elegir motivo</option>
+                      {MOTIVOS_DESCUADRE.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    {motivoDesc[f.insumo_id] === 'Otro' && (
+                      <input value={motivoOtro[f.insumo_id] || ''} placeholder="Especifica el motivo"
+                        onChange={e => setMotivoOtro(m => ({ ...m, [f.insumo_id]: e.target.value }))}
+                        style={{ ...entrada, flex: 1, minWidth: '160px', padding: '5px 8px' }} />
+                    )}
+                  </div>
+                )}
               </Fila>
             )})}
           </Tabla>
@@ -621,7 +662,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {llenadas} de {saldos.length} contados
               {!primeraVez && descuadres.length > 0 && ` · ${descuadres.length} no cuadran`}
             </span>
-            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setEditToma(null) }}>Cancelar</Btn>
+            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null) }}>Cancelar</Btn>
             <Btn primario onClick={guardar} disabled={guardando || !llenadas}>
               {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
             </Btn>
