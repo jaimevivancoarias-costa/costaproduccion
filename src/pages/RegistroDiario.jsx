@@ -595,11 +595,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
 
-  const COLS_BASE = '230px'
+  const COLS_BASE = '230px 150px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
   const COLS_IND = verIndicadores ? ' 104px 96px 104px 96px 92px 92px 92px 116px 104px' : ''
   const COLS = `${COLS_BASE} ${COLS_DIAS}${COLS_IND}`
-  const ANCHO = verIndicadores ? '1760px' : '1090px'
+  const ANCHO = verIndicadores ? '1910px' : '1240px'
   // Resumen del estado de la piscina para la etiqueta colapsada.
   const estadoResumen = p => {
     if (!p.cicloId || p.cosechadaEstaSemana) return { txt: 'Vacía', bg: '#e7f4ef', color: '#0F6E56' }
@@ -757,6 +757,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                               borderBottom: '0.5px solid ' + BORDE }}>
                   <Th pegado>Piscina</Th>
+                  <Th>Estado</Th>
                   {fechas.map(f => {
                     const s = situacionDia(f, hoy)
                     const est = dias[f]
@@ -767,17 +768,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           {nombreDia(f)}
                         </span>
                         {cortita(f)}
-                        <span style={{ display: 'block', fontSize: '9px', marginTop: '3px', letterSpacing: '0.04em',
-                          color: est === 'cerrado' ? GRIS : (s === 'hoy' ? AZUL : GRIS) }}>
-                          {est === 'cerrado' ? 'Cerrado' : est === 'reabierto' ? 'Reabierto'
-                            : est === 'borrador' ? 'Borrador' : s === 'hoy' ? 'Hoy' : '—'}
-                        </span>
-                        {est === 'cerrado' && !soloLectura && !semanaCerrada && (
-                          esJefe
-                            ? <button onClick={() => reabrirDia(f)} style={miniLink}>Reabrir</button>
-                            : solReapertura.some(x => x.registro_id === diasId[f])
-                              ? <span style={{ display: 'block', fontSize: '9px', color: '#BA7517', marginTop: '2px' }}>Pedido enviado</span>
-                              : <button onClick={() => pedirReabrir(f)} style={miniLink}>Pedir reabrir</button>
+                        {s === 'hoy' && (
+                          <span style={{ display: 'block', fontSize: '9px', marginTop: '3px', letterSpacing: '0.04em', color: AZUL }}>Hoy</span>
                         )}
                       </Th>
                     )
@@ -815,12 +807,16 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             {p.hectareas.toFixed(2)} ha{p.tipo === 'precria' ? ' · precría' : ''}
                             {p.fechaSiembra ? ` · ${diasCultivo(p.fechaSiembra, corteDias)} días` : ''}
                           </div>
-                          {(() => { const e = estadoResumen(p); return (
-                            <span style={{ display: 'inline-block', marginTop: '5px', fontSize: '10px', fontWeight: 500,
-                                           borderRadius: '6px', padding: '2px 7px', background: e.bg, color: e.color }}>{e.txt}</span>
-                          ) })()}
                         </div>
                       </div>
+                    </Td>
+                    <Td>
+                      <Estado
+                        fila={p} eventos={eventos[p.piscinaId] || []}
+                        puede={!soloLectura && modo === 'registrar'}
+                        onElegir={tipo => abrirEvento(tipo, p)}
+                        onDeshacer={ev => borrarEvento(p, ev)}
+                      />
                     </Td>
                     {fechas.map((f, j) => (
                       <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB
@@ -888,12 +884,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
                             onElegir={id => cambiarLaboratorio(p, id)} onNuevo={() => nuevoLaboratorio(p)} />
                         </div>
-                        <div style={{ minWidth: '170px' }}>
-                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Estado</div>
-                          <Estado fila={p} eventos={eventos[p.piscinaId] || []}
-                            puede={!soloLectura && modo === 'registrar'}
-                            onElegir={tipo => abrirEvento(tipo, p)} onDeshacer={ev => borrarEvento(p, ev)} />
-                        </div>
                       </div>
                       {editSiembra === p.piscinaId && (
                         <div style={{ marginTop: '10px' }}>
@@ -911,6 +901,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>Total</span>
                     <div style={{ fontSize: '11px', color: GRIS }}>{hectareas.toFixed(2)} ha · {piscinas.length} piscinas</div>
                   </Td>
+                  <Td fondo="#fafcfd" />
                   {fechas.map(f => (
                     <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
                         borde={situacionDia(f, hoy) === 'hoy'}>
