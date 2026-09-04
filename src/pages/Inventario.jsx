@@ -486,6 +486,37 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               volver a contar.
             </Nota>
           )}
+
+          {/* Reporte de insumos sin precio: su costo no se está valorizando. */}
+          {esJefe && (() => {
+            const sp = filas.filter(f => !Number(precios[f.insumo_id]))
+            if (!sp.length) return null
+            return (
+              <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
+                            padding: '14px 16px', marginBottom: '14px' }}>
+                <div style={{ fontWeight: 500, marginBottom: '2px' }}>
+                  {sp.length} {sp.length === 1 ? 'insumo sin precio' : 'insumos sin precio'}
+                </div>
+                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
+                  No tienen precio vigente en esta finca, así que su consumo y su saldo valen $0.
+                  Cárgales el precio en <b>Precios</b> para que la valorización cuadre.
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px' }}>
+                  {sp.map(f => (
+                    <span key={f.insumo_id} style={{ fontSize: '12px', background: 'white',
+                          border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '4px 10px' }}>
+                      {f.insumo}
+                      {Number(f.saldo) > 0 && (
+                        <b style={{ fontWeight: 600, color: AMBAR, marginLeft: '6px' }}>
+                          saldo {limpio(f.saldo)}
+                        </b>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
         </>
       )}
 
