@@ -77,7 +77,14 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
       const { data: dev } = await supabase.schema('produccion').from('devolucion_insumo')
         .select('id, fecha, insumo_id, cantidad, motivo')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40)
-      setDevoluciones(dev || [])
+      // Fusiona por id: si una devolución recién creada aún no aparece en la
+      // lectura del servidor (lag), no la borramos.
+      setDevoluciones(prev => {
+        const srv = dev || []
+        const ids = new Set(srv.map(x => x.id))
+        const faltantes = prev.filter(x => !ids.has(x.id))
+        return [...faltantes, ...srv]
+      })
       setSolicitudes(sol || [])
       setUserId(auth?.user?.id || null)
       const pp = {}
@@ -135,8 +142,15 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
           pedidosAbiertos={pedidos.filter(p => p.estado === 'abierto')}
           pendientes={pendientes}
           onCancelar={() => setNuevo(null)}
-          onGuardado={async () => { setNuevo(null); await cargar()
-            setAviso({ tipo: 'ok', texto: nuevo === 'ingreso' ? 'Ingreso registrado.' : nuevo === 'pedido' ? 'Pedido registrado.' : 'Devolución registrada.' }) }}
+          onDevolucion={rows => setDevoluciones(d => [...rows, ...d])}
+          onGuardado={async () => {
+            const t = nuevo
+            setNuevo(null)
+            // La devolución ya se agregó de forma optimista; recargamos en
+            // segundo plano sin bloquear ni pisar la lista si hay lag.
+            if (t === 'devolucion') { cargar() }
+            else { await cargar() }
+            setAviso({ tipo: 'ok', texto: t === 'ingreso' ? 'Ingreso registrado.' : t === 'pedido' ? 'Pedido registrado.' : 'Devolución registrada.' }) }}
           setAviso={setAviso}
         />
       )}
@@ -307,7 +321,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
 // ---------------------------------------------------------------------
 // Formulario de ingreso o de pedido: cabecera + lineas
 // ---------------------------------------------------------------------
-function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCancelar, onGuardado, setAviso }) {
+function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCancelar, onGuardado, onDevolucion, setAviso }) {
   const esIngreso = tipo === 'ingreso'
   const esDevolucion = tipo === 'devolucion'
   const esPedido = tipo === 'pedido'
@@ -360,10 +374,12 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
           .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) })))
         if (e2) throw e2
       } else if (esDevolucion) {
-        const { error } = await supabase.schema('produccion').from('devolucion_insumo')
+        const { data: nuevas, error } = await supabase.schema('produccion').from('devolucion_insumo')
           .insert(validas.map(l => ({ finca_id: finca.id, fecha, insumo_id: l.insumoId,
                                       cantidad: cantidadEnCompra(l), motivo: obs || null })))
+          .select('id, fecha, insumo_id, cantidad, motivo')
         if (error) throw error
+        if (onDevolucion && nuevas) onDevolucion(nuevas)
       } else {
         const { data: p, error } = await supabase.schema('produccion').from('pedido_insumo')
           .insert({ finca_id: finca.id, fecha, fecha_esperada: esperada || null,
