@@ -213,6 +213,39 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
         </div>
       )}
 
+      {/* Insumos sin precio: su consumo y su saldo valen $0 hasta cargarlo. */}
+      {!cargando && tab === 'insumos' && (() => {
+        const sp = insumos.filter(p => {
+          const gen = preInsGen[p.id]
+          const tieneGen = gen && Object.values(gen).some(v => Number(v) > 0)
+          if (tieneGen) return false
+          return !fincas.some(f => (preIns[k(p.id, f.id)] || []).length > 0)
+        })
+        if (!sp.length) return null
+        return (
+          <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '10px',
+                        padding: '13px 15px', marginBottom: '14px' }}>
+            <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '2px' }}>
+              {sp.length} {sp.length === 1 ? 'insumo sin precio' : 'insumos sin precio'}
+            </div>
+            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '9px' }}>
+              Sin precio, su consumo y su saldo valen $0 en los reportes. Toca uno para cargarlo.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px' }}>
+              {sp.map(p => (
+                <button key={p.id}
+                  onClick={() => { setAbierto(p.id); setHist(null); setEditP(null); setEditU(null) }}
+                  style={{ fontSize: '12px', background: 'white', border: '0.5px solid #ecd9b3',
+                           borderRadius: '8px', padding: '4px 10px', cursor: 'pointer',
+                           fontFamily: 'inherit', color: NAVY }}>
+                  {p.nombre}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
       {nuevo && (tab === 'insumos'
         ? <FormaInsumo onGuardar={async p => { const ok = await crearInsumo(p, setAviso); if (ok) { setNuevo(false); await cargar() } }} onCancelar={() => setNuevo(false)} />
         : <FormaProducto onGuardar={async p => { const ok = await crearProducto(p, setAviso); if (ok) { setNuevo(false); await cargar() } }} onCancelar={() => setNuevo(false)} />)}
