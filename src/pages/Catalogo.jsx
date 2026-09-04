@@ -41,6 +41,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [insumos, setInsumos] = useState([])
   const [productos, setProductos] = useState([])
   const [over, setOver] = useState({})        // insumo_id|finca_id -> {unidad, unidad_compra, factor}
+  const [overB, setOverB] = useState({})      // producto_id|finca_id -> {stock_minimo, stock_objetivo}
+  const [editMinB, setEditMinB] = useState(null)  // clave en edición de mínimo/objetivo (balanceado)
   const [preIns, setPreIns] = useState({})     // insumo_id|finca_id -> [rows precio]
   const [preInsGen, setPreInsGen] = useState({}) // insumo_id -> {plazo: precio general vigente}
   const [preBal, setPreBal] = useState({})     // producto_id|finca_id -> [rows precio]
@@ -100,6 +102,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     setPreIns(pim)
     const pbm = {}; (pb || []).forEach(x => { (pbm[k(x.producto_id, x.finca_id)] = pbm[k(x.producto_id, x.finca_id)] || []).push(x) }); setPreBal(pbm)
     setSolIns(si || []); setSolBal(sb || [])
+    // Mínimo/objetivo por producto/finca (balanceado).
+    const { data: ovb } = await supabase.schema('produccion').from('producto_finca')
+      .select('producto_id, finca_id, stock_minimo, stock_objetivo')
+      .in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000'])
+    const obm = {}; (ovb || []).forEach(x => { obm[k(x.producto_id, x.finca_id)] = x }); setOverB(obm)
     setCargando(false)
   }, [esJefeGlobal, tab, JSON.stringify(fincaIds)])
   useEffect(() => { cargar() }, [cargar])
@@ -286,7 +293,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
                 {ab && (
                   <div style={{ background: 'white', padding: '0 20px 8px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
+                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
                                   padding: '10px 0', fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #f0f4f8' }}>
                       <span>Finca</span>
                       {tab === 'insumos' && <span>Llega En</span>}
@@ -294,6 +301,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       {tab === 'insumos' && <span>Mínimo Alerta</span>}
                       {tab === 'insumos' && <span>Objetivo</span>}
                       {tab === 'balanceados' && <span>Unidad</span>}
+                      {tab === 'balanceados' && <span>Mínimo</span>}
+                      {tab === 'balanceados' && <span>Objetivo</span>}
                       <span>Plazo Activo</span>
                       <span style={{ textAlign: 'right' }}>Precio</span>
                     </div>
@@ -325,7 +334,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const claveP = k(p.id, f.id)
                       return (
                         <Fragment key={f.id}>
-                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
+                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
                                         alignItems: 'center', padding: '10px 0', fontSize: '13px', borderBottom: '0.5px solid #eef3f7' }}>
                             <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
                             {tab === 'insumos' && (
@@ -344,6 +353,18 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                               <span style={{ color: objetivo != null ? VERDE : '#c3d0db' }}>{objetivo != null ? `${objetivo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
                             )}
                             {tab === 'balanceados' && <span style={{ color: GRIS }}>Sacos</span>}
+                            {tab === 'balanceados' && (() => {
+                              const ob = overB[claveP]
+                              const mn = ob?.stock_minimo != null ? Number(ob.stock_minimo) : null
+                              const oj = ob?.stock_objetivo != null ? Number(ob.stock_objetivo) : null
+                              return <>
+                                <span style={{ color: mn != null ? '#BA7517' : '#c3d0db' }}>
+                                  {mn != null ? `${mn} sacos` : '—'}
+                                  {esJefe && <button onClick={() => setEditMinB(editMinB === claveP ? null : claveP)} style={miniLink}>{editMinB === claveP ? ' cerrar' : ' editar'}</button>}
+                                </span>
+                                <span style={{ color: oj != null ? VERDE : '#c3d0db' }}>{oj != null ? `${oj} sacos` : '—'}</span>
+                              </>
+                            })()}
                             <span style={{ color: GRIS }}>
                               <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[plz[claveP]?.plazo ?? 0]}</span>
                               {esJefe && <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={miniLink}>{editP === claveP ? 'cerrar' : 'editar'}</button>}
@@ -397,6 +418,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                               onNuevaPresentacion={async (nom) => { await supabase.schema('produccion').from('presentacion').insert({ nombre: nom }); setPresentaciones(ps => [...new Set([...ps, nom])].sort()) }}
                               onHecho={async (msg) => { setEditU(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                               onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditU(null)} />
+                          )}
+                          {editMinB === claveP && tab === 'balanceados' && (
+                            <EditorMinBal producto={p} finca={f} fincas={fincas} actual={overB[claveP]}
+                              onHecho={async (msg) => { setEditMinB(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                              onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditMinB(null)} />
                           )}
                         </Fragment>
                       )
@@ -816,6 +842,62 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
         <button onClick={onCancelar} style={btn}>Cancelar</button>
       </div>
       {contenido && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
+    </div>
+  )
+}
+
+// Editor de mínimo/objetivo por producto/finca (balanceado), en sacos.
+function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCancelar }) {
+  const [minimo, setMinimo] = useState(actual?.stock_minimo != null ? String(actual.stock_minimo) : '')
+  const [objetivo, setObjetivo] = useState(actual?.stock_objetivo != null ? String(actual.stock_objetivo) : '')
+  const [sel, setSel] = useState([finca.id])
+  const [enviando, setEnviando] = useState(false)
+  const otras = (fincas || []).filter(f => f.id !== finca.id)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+
+  async function guardar() {
+    setEnviando(true)
+    const rows = sel.map(fid => ({
+      producto_id: producto.id, finca_id: fid,
+      stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
+      stock_objetivo: numDec(objetivo) > 0 ? numDec(objetivo) : null,
+    }))
+    const { error } = await supabase.schema('produccion').from('producto_finca')
+      .upsert(rows, { onConflict: 'producto_id,finca_id' })
+    setEnviando(false)
+    if (error) { onError(error.message); return }
+    onHecho(sel.length === 1 ? 'Mínimo/objetivo guardado.' : `Aplicado a ${sel.length} fincas.`)
+  }
+
+  return (
+    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <Campo label="Mínimo para alerta (sacos)">
+          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label="Objetivo / inventario ideal (sacos)">
+          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+        </Campo>
+      </div>
+      {numDec(minimo) > 0 && numDec(objetivo) > 0 && numDec(objetivo) < numDec(minimo) && (
+        <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El objetivo debería ser mayor o igual que el mínimo.</div>
+      )}
+      {otras.length > 0 && (
+        <div style={{ marginTop: '10px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar lo mismo a:</div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(finca.nombre).toUpperCase()} (esta)</span>
+            {otras.map(f => {
+              const on = sel.includes(f.id)
+              return <button key={f.id} onClick={() => toggle(f.id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}</button>
+            })}
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+        <button disabled={enviando} onClick={guardar} style={{ ...btnPri, opacity: enviando ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+      </div>
     </div>
   )
 }
