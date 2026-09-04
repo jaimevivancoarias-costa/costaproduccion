@@ -923,7 +923,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             </div>
 
             {atrasadas.length > 0 && modo === 'registrar' && (
-              <div style={{ display: 'flex', gap: '9px', alignItems: 'center', fontSize: '13px',
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
                             padding: '9px 16px', background: '#FAEEDA', color: '#854F0B' }}>
                 <span>
                   {atrasadas.length === 1
@@ -931,6 +931,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     : `Hay ${atrasadas.length} celdas sin registrar en días anteriores.`}
                   {' '}Ponles las libras o márcalas sin alimentación.
                 </span>
+                {/* Reabrir los días cerrados que tienen celdas atrasadas */}
+                {!soloLectura && !semanaCerrada && [...new Set(atrasadas.map(a => a.f))]
+                  .filter(f => dias[f] === 'cerrado')
+                  .map(f => (
+                    <span key={f} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                      {esJefe
+                        ? <button onClick={() => reabrirDia(f)} style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: '#854F0B', cursor: 'pointer' }}>Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>
+                        : solReapertura.some(x => x.registro_id === diasId[f])
+                          ? <span style={{ fontSize: '12px' }}>Pedido de {nombreDia(f).slice(0, 3)} enviado</span>
+                          : <button onClick={() => pedirReabrir(f)} style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: '#854F0B', cursor: 'pointer' }}>Pedir reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>}
+                    </span>
+                  ))}
               </div>
             )}
 
