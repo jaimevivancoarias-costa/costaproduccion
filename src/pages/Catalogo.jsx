@@ -66,7 +66,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
       supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
+      supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo, stock_objetivo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.schema('produccion').from('precio_insumo').select('id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       supabase.schema('produccion').from('precio_producto').select('id, producto_id, finca_id, precio_saco, plazo, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_insumo').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
@@ -286,12 +286,13 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
                 {ab && (
                   <div style={{ background: 'white', padding: '0 20px 8px' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.6fr 0.9fr 0.9fr 0.9fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
+                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
                                   padding: '10px 0', fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #f0f4f8' }}>
                       <span>Finca</span>
                       {tab === 'insumos' && <span>Llega En</span>}
                       {tab === 'insumos' && <span style={{ textAlign: 'center' }}>Se Aplica En</span>}
                       {tab === 'insumos' && <span>Mínimo Alerta</span>}
+                      {tab === 'insumos' && <span>Objetivo</span>}
                       {tab === 'balanceados' && <span>Unidad</span>}
                       <span>Plazo Activo</span>
                       <span style={{ textAlign: 'right' }}>Precio</span>
@@ -304,6 +305,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const contenido = o?.contenido != null ? Number(o.contenido) : factor
                       const uCont = o?.unidad_contenido || uCons
                       const minimo = o?.stock_minimo != null ? Number(o.stock_minimo) : null
+                      const objetivo = o?.stock_objetivo != null ? Number(o.stock_objetivo) : null
                       const map = tab === 'insumos' ? preIns : preBal
                       const prodCol = tab === 'insumos' ? 'insumo_id' : 'producto_id'
                       const col = tab === 'insumos' ? 'precio_unitario' : 'precio_saco'
@@ -323,7 +325,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const claveP = k(p.id, f.id)
                       return (
                         <Fragment key={f.id}>
-                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.6fr 0.9fr 0.9fr 0.9fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
+                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.4fr 0.9fr 0.9fr 150px',
                                         alignItems: 'center', padding: '10px 0', fontSize: '13px', borderBottom: '0.5px solid #eef3f7' }}>
                             <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
                             {tab === 'insumos' && (
@@ -337,6 +339,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             )}
                             {tab === 'insumos' && (
                               <span style={{ color: minimo != null ? '#BA7517' : '#c3d0db' }}>{minimo != null ? `${minimo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
+                            )}
+                            {tab === 'insumos' && (
+                              <span style={{ color: objetivo != null ? VERDE : '#c3d0db' }}>{objetivo != null ? `${objetivo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
                             )}
                             {tab === 'balanceados' && <span style={{ color: GRIS }}>Sacos</span>}
                             <span style={{ color: GRIS }}>
@@ -388,7 +393,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                           )}
                           {editU === claveP && tab === 'insumos' && (
                             <EditorUnidadFinca insumo={p} finca={f} fincas={fincas} presentaciones={presentaciones}
-                              actual={{ unidad: uCons, unidad_compra: uCompra, factor, contenido, unidad_contenido: uCont, stock_minimo: minimo }}
+                              actual={{ unidad: uCons, unidad_compra: uCompra, factor, contenido, unidad_contenido: uCont, stock_minimo: minimo, stock_objetivo: objetivo }}
                               onNuevaPresentacion={async (nom) => { await supabase.schema('produccion').from('presentacion').insert({ nombre: nom }); setPresentaciones(ps => [...new Set([...ps, nom])].sort()) }}
                               onHecho={async (msg) => { setEditU(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                               onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditU(null)} />
@@ -676,6 +681,7 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
   const [unidad, setUnidad] = useState(actual.unidad)           // se aplica en
   const [uCont, setUCont] = useState(actual.unidad_contenido || actual.unidad)  // unidad del contenido
   const [minimo, setMinimo] = useState(actual.stock_minimo != null ? String(actual.stock_minimo) : '')
+  const [objetivo, setObjetivo] = useState(actual.stock_objetivo != null ? String(actual.stock_objetivo) : '')
   const [enviando, setEnviando] = useState(false)
   const [sel, setSel] = useState([finca.id])
   const otras = (fincas || []).filter(f => f.id !== finca.id)
@@ -712,7 +718,8 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
     const { error } = await supabase.schema('produccion').from('insumo_finca')
       .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: presentacion.trim(),
                 contenido: numDec(contenido), unidad_contenido: uCont, factor,
-                stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null }, { onConflict: 'insumo_id,finca_id' })
+                stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
+                stock_objetivo: numDec(objetivo) > 0 ? numDec(objetivo) : null }, { onConflict: 'insumo_id,finca_id' })
     return error
   }
 
@@ -771,11 +778,17 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
         </div>
       )}
 
-      <div style={{ marginTop: '10px' }}>
-        <Campo label={`Mínimo para alerta de inventario (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '160px', textAlign: 'right' }} />
+      <div style={{ marginTop: '10px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+        <Campo label={`Mínimo para alerta (${UNIDAD[unidad] || unidad})`}>
+          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label={`Objetivo / inventario ideal (${UNIDAD[unidad] || unidad})`}>
+          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
         </Campo>
       </div>
+      {numDec(minimo) > 0 && numDec(objetivo) > 0 && numDec(objetivo) < numDec(minimo) && (
+        <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El objetivo debería ser mayor o igual que el mínimo.</div>
+      )}
 
       {otras.length > 0 && (
         <div style={{ marginTop: '10px' }}>
