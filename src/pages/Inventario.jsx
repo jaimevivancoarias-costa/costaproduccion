@@ -38,6 +38,7 @@ const ANCHOS_SALDO_JEFE = '1fr 110px 120px 140px 150px 110px'
 const ANCHOS_SALDO_BOD  = '1fr 110px 120px'   // bodeguero: sin dolares
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
+const ANCHOS_MOV2       = '1.2fr 1.7fr 1fr 1fr 1fr 1fr'   // vista simple: llega/se aplica + 4 movimientos
 
 export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
@@ -619,53 +620,39 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ) : vista === 'movimientos' ? (
         <>
           <Tabla
-            caja min={esJefe ? '940px' : '820px'}
-            columnas={['Insumo', 'Unidad', 'Inicial', 'Ingresos', 'Consumo',
-                       'Ajustes', 'Conteo', 'Final', ...(esJefe ? ['Costo $'] : [])]}
-            anchos={esJefe ? ANCHOS_MOV : ANCHOS_MOV_BOD}
+            caja min="900px"
+            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Queda']}
+            anchos={ANCHOS_MOV2}
           >
-            {movs.map(m => (
-              <Fila key={m.insumo_id} anchos={esJefe ? ANCHOS_MOV : ANCHOS_MOV_BOD}>
+            {movs.map(m => {
+              const fac = factores[m.insumo_id]
+              const conv = fac && (fac.factor || 1) !== 1
+              const eq = v => conv ? <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {UNIDAD[fac.uApp] || fac.uApp}</div> : null
+              return (
+              <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
                 <Celda>{m.insumo}</Celda>
-                <Celda gris>{UNIDAD[m.unidad] || m.unidad}</Celda>
-                <Celda derecha gris>{limpio(m.saldo_inicial)}</Celda>
+                <Celda gris>
+                  <span style={{ color: NAVY, fontWeight: 500 }}>{UNIDAD[m.unidad] || m.unidad}</span>
+                  {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {UNIDAD[fac.uApp] || fac.uApp}</>}
+                </Celda>
+                <Celda derecha gris>{limpio(m.saldo_inicial)}{eq(m.saldo_inicial)}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
-                  {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}
+                  {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}{Number(m.ingresos) ? eq(m.ingresos) : null}
                 </Celda>
-                <Celda derecha color={Number(m.consumo) ? NAVY : '#c3d0db'}>
-                  {Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}
-                </Celda>
-                <Celda derecha color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>
-                  {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}
-                </Celda>
-                {/* Si hubo conteo en el rango, el saldo final no es la
-                    suma de los movimientos: el conteo lo fija. */}
-                <Celda derecha color={m.conteo === null ? '#c3d0db' : AZUL}>
-                  {m.conteo === null ? '—' : limpio(m.conteo)}
+                <Celda derecha color={Number(m.consumo) ? ROJO : '#c3d0db'}>
+                  {Number(m.consumo) ? '−' + limpio(m.consumo) : '—'}{Number(m.consumo) ? eq(m.consumo) : null}
                 </Celda>
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
-                  {limpio(m.saldo_final)}
-                </Celda>
-                {esJefe && <Celda derecha>{dinero(Number(m.consumo_dolares))}</Celda>}
-              </Fila>
-            ))}
-            {esJefe && (
-              <Fila anchos={ANCHOS_MOV} total>
-                <Celda fuerte>Total</Celda>
-                <Celda /><Celda /><Celda /><Celda /><Celda /><Celda /><Celda />
-                <Celda derecha fuerte>
-                  {dinero(movs.reduce((t, m) => t + Number(m.consumo_dolares || 0), 0))}
+                  {limpio(m.saldo_final)}{eq(m.saldo_final)}
                 </Celda>
               </Fila>
-            )}
+            )})}
           </Tabla>
 
           {movs.some(m => m.conteo !== null) && (
             <Nota color={AZUL} fondo="#E6F1FB">
-              En este rango se contó la bodega. Cuando eso pasa, el saldo final no es
-              saldo inicial más ingresos menos consumo: el conteo lo fija. Por eso la
-              columna Conteo se muestra aparte, para que la diferencia se vea en vez de
-              parecer un error de cuentas.
+              En este rango se contó la bodega físicamente; ese conteo fija el "Queda"
+              (por eso puede no ser exactamente inicial + entró − aplicado).
             </Nota>
           )}
         </>
@@ -691,8 +678,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           <Tabla
             caja min={esJefe ? '760px' : '420px'}
             columnas={esJefe
-              ? ['Insumo', 'Unidad', 'Saldo', 'Precio', 'Valor', '']
-              : ['Insumo', 'Unidad', 'Saldo']}
+              ? ['Insumo', 'Llega / se aplica', 'Saldo (a contar)', 'Precio', 'Valor', '']
+              : ['Insumo', 'Llega / se aplica', 'Saldo (a contar)']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
             {filas.map(f => {
@@ -712,7 +699,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       </button>
                     ) : f.insumo}
                   </Celda>
-                  <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
+                  <Celda gris>
+                    {(() => {
+                      const fac = factores[f.insumo_id]
+                      const conv = fac && (fac.factor || 1) !== 1
+                      return (
+                        <span>
+                          <span style={{ color: NAVY, fontWeight: 500 }}>{UNIDAD[f.unidad] || f.unidad}</span>
+                          {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {UNIDAD[fac.uApp] || fac.uApp}
+                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {UNIDAD[f.unidad] || f.unidad} = {fac.factor} {UNIDAD[fac.uApp] || fac.uApp}</span></>}
+                        </span>
+                      )
+                    })()}
+                  </Celda>
                   {edit ? (
                     <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f6f9fb' }}>
                       <input autoFocus inputMode="decimal" value={nuevoSaldo}
@@ -733,7 +732,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <>{dinero(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{UNIDAD[f.unidad] || f.unidad}</span></> : 'sin precio'}</Celda>}
                   {esJefe && <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
