@@ -301,12 +301,17 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
       )}
 
-      {/* Resumen de la semana. */}
-      <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', marginBottom: '12px',
-                    background: '#f6f9fb', borderRadius: '12px', padding: '12px 16px' }}>
-        <DatoIns k="Insumos distintos" v={String(resumen.insumos)} />
-        <DatoIns k="Piscinas con movimiento" v={String(resumen.piscinas)} />
-        {esJefe && <DatoIns k="Gasto de la semana" v={dinero(resumen.gasto)} />}
+      {/* Resumen de la semana · mismas tarjetas que el registro de balanceado */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
+                    gap: '11px', marginBottom: '14px' }}>
+        {esJefe && (
+          <div style={{ background: NAVY, borderRadius: '12px', padding: '14px 16px' }}>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>Gasto de la semana</div>
+            <div style={{ fontSize: '22px', fontWeight: 500, color: 'white' }}>{dinero(resumen.gasto)}</div>
+          </div>
+        )}
+        <TarjetaIns k="Insumos distintos" v={String(resumen.insumos)} />
+        <TarjetaIns k="Piscinas con movimiento" v={String(resumen.piscinas)} />
       </div>
 
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
@@ -594,6 +599,15 @@ function DatoIns({ k, v }) {
     <div>
       <div style={{ fontSize: '11px', color: GRIS }}>{k}</div>
       <div style={{ fontSize: '18px', fontWeight: 500 }}>{v}</div>
+    </div>
+  )
+}
+// Tarjeta clara, mismo diseño que el registro de balanceado.
+function TarjetaIns({ k, v }) {
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '12px', color: GRIS }}>{k}</div>
+      <div style={{ fontSize: '22px', fontWeight: 500 }}>{v}</div>
     </div>
   )
 }
