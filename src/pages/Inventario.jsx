@@ -40,7 +40,7 @@ const ANCHOS_SALDO_BOD  = '1.3fr 200px 130px'   // bodeguero: sin dolares
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
-const ANCHOS_MOV2       = '1.2fr 1.7fr 1fr 1fr 1fr 1fr'   // vista simple: llega/se aplica + 4 movimientos
+const ANCHOS_MOV2       = '1.2fr 1.6fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr'   // llega/se aplica + inicial, entró, aplicó, devuelto, queda
 
 export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
   // Dos secciones: la bodega (saldo y conteos) y el movimiento de
@@ -555,14 +555,23 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
           <Tabla
             columnas={(primeraVez || editToma)
-              ? ['Insumo', 'Unidad', '', editToma ? 'Contado' : 'Inventario inicial', '']
-              : ['Insumo', 'Unidad', 'El sistema dice', 'Contado', 'Diferencia']}
-            anchos="1fr 110px 130px 130px 150px"
+              ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
+              : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Contado', 'Diferencia']}
+            anchos="1fr 210px 120px 130px 140px"
           >
-            {filas.map(f => (
-              <Fila key={f.insumo_id} anchos="1fr 110px 130px 130px 150px">
+            {filas.map(f => {
+              const facF = factores[f.insumo_id]
+              const convF = facF && (facF.factor || 1) !== 1
+              return (
+              <Fila key={f.insumo_id} anchos="1fr 210px 120px 130px 140px">
                 <Celda>{f.insumo}</Celda>
-                <Celda gris>{cap1(UNIDAD[f.unidad] || f.unidad)}</Celda>
+                <Celda gris>
+                  <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[f.unidad] || f.unidad)}</span>
+                  {convF && <>
+                    {' '}<span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[facF.uApp] || facF.uApp)}
+                    <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.factor)} {cap1(UNIDAD[facF.uApp] || facF.uApp)}</div>
+                  </>}
+                </Celda>
                 <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                   <input
@@ -603,7 +612,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
                 </Celda>
               </Fila>
-            ))}
+            )})}
           </Tabla>
 
           <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
@@ -623,7 +632,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         <>
           <Tabla
             caja min="900px"
-            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Queda']}
+            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
             {movs.map(m => {
@@ -643,6 +652,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </Celda>
                 <Celda derecha color={Number(m.consumo) ? ROJO : '#c3d0db'}>
                   {Number(m.consumo) ? '−' + limpio(m.consumo) : '—'}{Number(m.consumo) ? eq(m.consumo) : null}
+                </Celda>
+                <Celda derecha color={Number(m.devuelto) ? ROJO : '#c3d0db'}>
+                  {Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}{Number(m.devuelto) ? eq(m.devuelto) : null}
                 </Celda>
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {limpio(m.saldo_final)}{eq(m.saldo_final)}
