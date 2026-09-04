@@ -39,7 +39,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [cosechas, setCosechas] = useState([])
   const [proceso, setProceso] = useState([])
   const [valor, setValor] = useState([])   // valorización de bodega
-  const [valFinca, setValFinca] = useState(finca.id)   // finca del reporte de valorización
+  const [valFinca, setValFinca] = useState(finca.id)   // finca del reporte de valorización ('todas' = todas)
+  const [valFincas, setValFincas] = useState([])       // total por finca (gráfica, modo Todas)
+  const [estado, setEstado] = useState([])             // estado / reponer
+  const [estFinca, setEstFinca] = useState(finca.id)   // finca del reporte de estado ('todas' = todas)
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -79,16 +82,32 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Al cambiar la finca global, el reporte de valorización la sigue.
-  useEffect(() => { setValFinca(finca.id) }, [finca.id])
+  // Al cambiar la finca global, los reportes "ahora" la siguen.
+  useEffect(() => { setValFinca(finca.id); setEstFinca(finca.id) }, [finca.id])
 
-  // Valorización: es "ahora" y por finca (su propia finca elegida).
+  // Valorización: es "ahora". Por finca, o sumada en "Todas las fincas".
   useEffect(() => {
     let vivo = true
-    supabase.schema('produccion').rpc('fn_reporte_valorizacion', { p_finca: valFinca })
-      .then(({ data }) => { if (vivo) setValor(data || []) })
+    if (valFinca === 'todas') {
+      Promise.all([
+        supabase.schema('produccion').rpc('fn_reporte_valorizacion_todas'),
+        supabase.schema('produccion').rpc('fn_valorizacion_por_finca'),
+      ]).then(([a, b]) => { if (vivo) { setValor(a.data || []); setValFincas(b.data || []) } })
+    } else {
+      supabase.schema('produccion').rpc('fn_reporte_valorizacion', { p_finca: valFinca })
+        .then(({ data }) => { if (vivo) { setValor(data || []); setValFincas([]) } })
+    }
     return () => { vivo = false }
   }, [valFinca])
+
+  // Estado / reponer: es "ahora". Por finca, o todas (p_finca null).
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').rpc('fn_reporte_estado',
+      { p_finca: estFinca === 'todas' ? null : estFinca })
+      .then(({ data }) => { if (vivo) setEstado(data || []) })
+    return () => { vivo = false }
+  }, [estFinca])
 
   // Ciclos de la finca, para el atajo "por ciclo".
   useEffect(() => {
@@ -149,13 +168,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <div style={{ display: 'flex', gap: '7px' }}>
           <Chip on={kind === 'consumo'} onClick={() => setKind('consumo')}>Consumo</Chip>
           {esJefe && <Chip on={kind === 'valorizacion'} onClick={() => setKind('valorizacion')}>Valorización de bodega total</Chip>}
+          <Chip on={kind === 'estado'} onClick={() => setKind('estado')}>Estado / Reponer</Chip>
           <Chip on={kind === 'proceso'} onClick={() => setKind('proceso')}>En proceso</Chip>
           <Chip on={kind === 'cosechas'} onClick={() => setKind('cosechas')}>Cosechas</Chip>
         </div>
       </div>
 
-      {/* Filtros (la valorización es "ahora", no usa rango de fechas) */}
-      {kind !== 'valorizacion' && (
+      {/* Filtros (valorización y estado son "ahora", no usan rango de fechas) */}
+      {kind !== 'valorizacion' && kind !== 'estado' && (
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                     padding: '14px 16px', marginBottom: '16px', display: 'flex',
                     gap: '18px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -217,8 +237,13 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       )}
 
       {kind === 'valorizacion' && (
-        <ReporteValorizacion valor={valor} fincas={fincas}
+        <ReporteValorizacion valor={valor} valFincas={valFincas} fincas={fincas}
                              fincaSel={valFinca} onFinca={setValFinca} />
+      )}
+
+      {kind === 'estado' && (
+        <ReporteEstado estado={estado} fincas={fincas}
+                       fincaSel={estFinca} onFinca={setEstFinca} />
       )}
 
       {kind === 'consumo' && <>
@@ -516,17 +541,23 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
 // ---------------------------------------------------------------------
 // Valorización de bodega: cuánto vale hoy el inventario, por insumo.
 // ---------------------------------------------------------------------
-function ReporteValorizacion({ valor, fincas, fincaSel, onFinca }) {
-  const VGRID = '1fr 130px 120px 130px'
+function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca }) {
+  const esTodas = fincaSel === 'todas'
+  const VGRID = esTodas ? '1fr 190px 150px' : '1fr 150px 120px 130px'
   const conValor = valor.filter(v => Number(v.valor) > 0 || Number(v.saldo) > 0)
   const total = valor.reduce((t, v) => t + (Number(v.valor) || 0), 0)
   const sinPrecio = conValor.filter(v => !Number(v.precio)).length
+  const top = [...conValor].sort((a, b) => Number(b.valor) - Number(a.valor)).slice(0, 6)
+    .map(v => ({ label: v.insumo, valor: Number(v.valor) || 0 }))
+  const fincasBar = (valFincas || []).filter(f => Number(f.valor) > 0)
+    .map(f => ({ label: f.finca, valor: Number(f.valor) || 0 }))
   return (
     <>
       {fincas && fincas.length > 1 && (
         <div style={{ marginBottom: '14px' }}>
           <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
           <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
+            <option value="todas">Todas las fincas</option>
             {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
           </select>
         </div>
@@ -538,14 +569,24 @@ function ReporteValorizacion({ valor, fincas, fincaSel, onFinca }) {
       <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <Kpi titulo="Valor de la bodega" valor={dinero(total)} />
         <Kpi titulo="Insumos con saldo" valor={String(conValor.length)} />
-        {sinPrecio > 0 && <Kpi titulo="Sin precio" valor={String(sinPrecio)} />}
+        {!esTodas && sinPrecio > 0 && <Kpi titulo="Sin precio" valor={String(sinPrecio)} />}
       </div>
+
+      {/* Gráficas */}
+      <div style={{ display: 'grid', gridTemplateColumns: esTodas ? '1fr 1fr' : '1fr',
+                    gap: '14px', marginBottom: '14px' }}>
+        {esTodas && fincasBar.length > 0 && (
+          <CajaGrafica titulo="Valor por finca"><BarrasH items={fincasBar} money /></CajaGrafica>
+        )}
+        <CajaGrafica titulo="Dónde está la plata (top insumos)"><BarrasH items={top} money /></CajaGrafica>
+      </div>
+
       <Caja>
         <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px', padding: '11px 16px',
                       fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
           <span>Insumo</span>
-          <span style={{ textAlign: 'right' }}>Saldo</span>
-          <span style={{ textAlign: 'right' }}>Precio</span>
+          <span style={{ textAlign: 'right' }}>{esTodas ? 'Saldo (todas las fincas)' : 'Saldo'}</span>
+          {!esTodas && <span style={{ textAlign: 'right' }}>Precio</span>}
           <span style={{ textAlign: 'right' }}>Valor</span>
         </div>
         {conValor.map(v => {
@@ -562,10 +603,12 @@ function ReporteValorizacion({ valor, fincas, fincaSel, onFinca }) {
                 </div>
               )}
             </span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
-                           color: Number(v.precio) ? NAVY : AMBAR }}>
-              {Number(v.precio) ? dinero(v.precio) : 'sin precio'}
-            </span>
+            {!esTodas && (
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                             color: Number(v.precio) ? NAVY : AMBAR }}>
+                {Number(v.precio) ? dinero(v.precio) : 'sin precio'}
+              </span>
+            )}
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
               {dinero(v.valor)}
             </span>
@@ -574,13 +617,200 @@ function ReporteValorizacion({ valor, fincas, fincaSel, onFinca }) {
         })}
         <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px', padding: '12px 16px',
                       alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
-          <span>Total</span><span /><span />
+          <span>Total</span><span />{!esTodas && <span />}
           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(total)}</span>
         </div>
       </Caja>
       </>
       )}
     </>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Estado / Reponer: nivel de cada insumo vs. mínimo y objetivo.
+// ---------------------------------------------------------------------
+const EST_COLOR = { bajo: '#c0504d', medio: '#c98a1e', suficiente: '#0F6E56', sin_minimo: '#c3d0db' }
+const EST_LBL = { bajo: 'Bajo', medio: 'Medio', suficiente: 'Suficiente', sin_minimo: 'Sin mínimo' }
+const EST_BG = { bajo: '#FBEAEA', medio: '#FAEEDA', suficiente: '#E1F5EE', sin_minimo: '#eef3f7' }
+
+function ReporteEstado({ estado, fincas, fincaSel, onFinca }) {
+  const esTodas = fincaSel === 'todas'
+  const EGRID = esTodas
+    ? '1.1fr 120px 150px 100px 100px 120px'
+    : '1.2fr 160px 150px 100px 100px 120px'
+  const bajos = estado.filter(e => e.estado === 'bajo')
+  const medios = estado.filter(e => e.estado === 'medio')
+  const sufic = estado.filter(e => e.estado === 'suficiente')
+  const conMin = estado.filter(e => e.estado !== 'sin_minimo')
+  // Barras: qué tan lleno está cada insumo (saldo_app / objetivo). Primero los que faltan.
+  const barras = [...conMin].sort((a, b) => nivelPct(a) - nivelPct(b)).slice(0, 8)
+  return (
+    <>
+      {fincas && fincas.length > 1 && (
+        <div style={{ marginBottom: '14px' }}>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
+          <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
+            {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+            <option value="todas">Todas las fincas</option>
+          </select>
+        </div>
+      )}
+      {!estado.length ? (
+        <Caja><Centro>No hay insumos para mostrar.</Centro></Caja>
+      ) : (
+      <>
+      {/* Resumen: donut + barras de nivel */}
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: '14px', marginBottom: '14px' }}>
+        <CajaGrafica titulo="Cómo está la bodega">
+          <Donut segmentos={[
+            { valor: sufic.length, color: EST_COLOR.suficiente },
+            { valor: medios.length, color: EST_COLOR.medio },
+            { valor: bajos.length, color: EST_COLOR.bajo },
+          ]} centro={String(conMin.length)} sub="insumos" />
+          <div style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
+            <Leyenda color={EST_COLOR.bajo} txt={`Bajos · ${bajos.length}`} />
+            <Leyenda color={EST_COLOR.medio} txt={`Medios · ${medios.length}`} />
+            <Leyenda color={EST_COLOR.suficiente} txt={`Suficientes · ${sufic.length}`} />
+          </div>
+        </CajaGrafica>
+        <CajaGrafica titulo="Qué tan lleno está cada insumo (saldo vs. objetivo)">
+          {barras.map((e, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 92px', gap: '12px',
+                    alignItems: 'center', marginBottom: '11px', fontSize: '12px' }}>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {e.insumo}{esTodas && <span style={{ color: GRIS }}> · {e.finca}</span>}
+              </span>
+              <div style={{ position: 'relative', height: '16px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', borderRadius: '20px',
+                              width: Math.min(100, nivelPct(e)) + '%', background: EST_COLOR[e.estado] }} />
+              </div>
+              <span style={{ textAlign: 'right' }}><Badge estado={e.estado} /></span>
+            </div>
+          ))}
+          {!barras.length && <div style={{ fontSize: '12px', color: GRIS }}>Carga mínimo y objetivo en el Catálogo para ver los niveles.</div>}
+          <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '4px' }}>La barra llena hasta el objetivo. Rojo = bajo el mínimo.</div>
+        </CajaGrafica>
+      </div>
+
+      <Caja>
+        <div style={{ display: 'grid', gridTemplateColumns: EGRID, gap: '12px', padding: '11px 16px',
+                      fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+          <span>Insumo</span>
+          {esTodas ? <span>Finca</span> : <span>Llega / se aplica</span>}
+          <span style={{ textAlign: 'right' }}>Saldo</span>
+          <span style={{ textAlign: 'right' }}>Mínimo</span>
+          <span style={{ textAlign: 'right' }}>Objetivo</span>
+          <span style={{ textAlign: 'right' }}>Estado</span>
+        </div>
+        {estado.map((e, i) => {
+          const conv = Number(e.factor) && Number(e.factor) !== 1
+          const uApp = cap1(e.unidad_app)
+          return (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: EGRID, gap: '12px',
+                  padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
+            <span>{e.insumo}</span>
+            {esTodas
+              ? <span style={{ color: GRIS }}>{e.finca}</span>
+              : <span style={{ color: GRIS }}>{cap1(e.unidad)}{conv && <> → {uApp}</>}</span>}
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+              {miles(e.saldo)} {cap1(e.unidad)}
+              {conv && <div style={{ fontSize: '10.5px', color: '#a7b4c1' }}>{miles(e.saldo_app)} {uApp}</div>}
+            </span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+              {e.minimo != null ? `${miles(e.minimo)} ${uApp}` : '—'}
+            </span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+              {e.objetivo != null ? `${miles(e.objetivo)} ${uApp}` : '—'}
+            </span>
+            <span style={{ textAlign: 'right' }}><Badge estado={e.estado} /></span>
+          </div>
+          )
+        })}
+      </Caja>
+      <p style={{ fontSize: '12px', color: GRIS, marginTop: '12px', maxWidth: '760px' }}>
+        Los niveles salen del <b>Catálogo</b> (Mínimo + Objetivo por insumo/finca). Es solo alerta;
+        el pedido se hace en Ingresos &gt; Pedidos.
+      </p>
+      </>
+      )}
+    </>
+  )
+}
+
+// % de llenado saldo vs objetivo (o vs mínimo si no hay objetivo).
+function nivelPct(e) {
+  const meta = Number(e.objetivo) || Number(e.minimo) || 0
+  if (!meta) return 100
+  return (Number(e.saldo_app) / meta) * 100
+}
+
+function Badge({ estado }) {
+  return (
+    <span style={{ fontSize: '11px', fontWeight: 600, borderRadius: '20px', padding: '3px 11px',
+                   background: EST_BG[estado], color: estado === 'sin_minimo' ? GRIS : EST_COLOR[estado] }}>
+      {EST_LBL[estado]}
+    </span>
+  )
+}
+
+function Leyenda({ color, txt }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+      <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: color, display: 'inline-block' }} />
+      {txt}
+    </div>
+  )
+}
+
+function CajaGrafica({ titulo, children }) {
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px' }}>
+      <div style={{ fontSize: '12px', color: GRIS, margin: '0 0 12px', letterSpacing: '.03em', textTransform: 'uppercase' }}>{titulo}</div>
+      {children}
+    </div>
+  )
+}
+
+// Barras horizontales simples (CSS), escaladas al máximo.
+function BarrasH({ items, money }) {
+  const max = Math.max(1, ...items.map(i => i.valor))
+  const cols = ['#0D6CB0', '#3f8fce', '#7bb0dd', '#0D6CB0', '#3f8fce', '#7bb0dd']
+  if (!items.length) return <div style={{ fontSize: '12px', color: GRIS }}>Sin datos.</div>
+  return (
+    <div>
+      {items.map((it, i) => (
+        <div key={i} style={{ display: 'grid', gridTemplateColumns: '130px 1fr 110px', gap: '12px',
+                alignItems: 'center', marginBottom: '9px', fontSize: '12px' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
+          <div style={{ height: '14px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
+            <div style={{ height: '100%', borderRadius: '20px', width: (it.valor / max * 100) + '%', background: cols[i % cols.length] }} />
+          </div>
+          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money ? dinero(it.valor) : miles(it.valor)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Donut de segmentos (SVG). segmentos = [{valor, color}], centro/sub textos.
+function Donut({ segmentos, centro, sub }) {
+  const total = segmentos.reduce((t, s) => t + s.valor, 0) || 1
+  let off = 25   // arranca arriba
+  const arcos = segmentos.map((s, i) => {
+    const len = (s.valor / total) * 100
+    const el = <circle key={i} cx="21" cy="21" r="15.9" fill="none" stroke={s.color} strokeWidth="6"
+                       strokeDasharray={`${len} ${100 - len}`} strokeDashoffset={off} />
+    off -= len
+    return el
+  })
+  return (
+    <svg width="120" height="120" viewBox="0 0 42 42">
+      <circle cx="21" cy="21" r="15.9" fill="none" stroke="#eef3f7" strokeWidth="6" />
+      {arcos}
+      <text x="21" y="20.5" textAnchor="middle" fontSize="7" fontWeight="600" fill={NAVY}>{centro}</text>
+      <text x="21" y="26" textAnchor="middle" fontSize="3.2" fill={GRIS}>{sub}</text>
+    </svg>
   )
 }
 
