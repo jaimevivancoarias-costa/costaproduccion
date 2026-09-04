@@ -28,7 +28,7 @@ const UNIDAD = {
   tambor: 'tambores', botella: 'botellas',
 }
 
-export default function Ingresos({ finca, esJefe, onCorreccion }) {
+export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [modo, setModo] = useState('ingresos')   // 'ingresos' | 'pedidos'
   const [insumos, setInsumos] = useState([])
   const [ingresos, setIngresos] = useState([])
@@ -77,14 +77,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
       const { data: dev } = await supabase.schema('produccion').from('devolucion_insumo')
         .select('id, fecha, insumo_id, cantidad, motivo')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40)
-      // Fusiona por id: si una devolución recién creada aún no aparece en la
-      // lectura del servidor (lag), no la borramos.
-      setDevoluciones(prev => {
-        const srv = dev || []
-        const ids = new Set(srv.map(x => x.id))
-        const faltantes = prev.filter(x => !ids.has(x.id))
-        return [...faltantes, ...srv]
-      })
+      setDevoluciones(dev || [])
       setSolicitudes(sol || [])
       setUserId(auth?.user?.id || null)
       const pp = {}
@@ -146,10 +139,10 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
           onGuardado={async () => {
             const t = nuevo
             setNuevo(null)
-            // La devolución ya se agregó de forma optimista; recargamos en
-            // segundo plano sin bloquear ni pisar la lista si hay lag.
-            if (t === 'devolucion') { cargar() }
-            else { await cargar() }
+            // La devolución ya se agregó de forma optimista a la lista; no
+            // recargamos para evitar pisarla si el servidor tiene lag.
+            if (t !== 'devolucion') await cargar()
+            if (onCambio && t !== 'pedido') onCambio()   // ingresos y devoluciones mueven el saldo
             setAviso({ tipo: 'ok', texto: t === 'ingreso' ? 'Ingreso registrado.' : t === 'pedido' ? 'Pedido registrado.' : 'Devolución registrada.' }) }}
           setAviso={setAviso}
         />
@@ -290,7 +283,11 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
     if (!window.confirm('¿Borrar esta devolución? Vuelve a sumar al saldo de la bodega.')) return
     const { error } = await supabase.schema('produccion').from('devolucion_insumo').delete().eq('id', d.id)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Devolución borrada.' }); await cargar()
+    // Se quita de la lista al instante (no recargamos para evitar el lag de
+    // lectura del servidor, que la volvería a mostrar).
+    setDevoluciones(prev => prev.filter(x => x.id !== d.id))
+    if (onCambio) onCambio()
+    setAviso({ tipo: 'ok', texto: 'Devolución borrada.' })
   }
 
   async function borrarIngresoJefe(g) {
@@ -298,6 +295,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
     const { error } = await supabase.schema('produccion').from('ingreso_insumo').delete().eq('id', g.id)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Ingreso borrado.' }); await cargar()
+    if (onCambio) onCambio()
   }
 
   async function resolver(sol, aprobar) {
