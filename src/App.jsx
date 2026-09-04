@@ -129,10 +129,17 @@ export default function App() {
       g[k].n++
     })
     setCorrPend(Object.values(g))
+  }, [esJefe])
+  useEffect(() => { cargarCorr() }, [cargarCorr, modulo, fincaId])
+
+  // "Por reponer" recorre todas las fincas: es pesado, así que se calcula
+  // aparte y NO en cada cambio de menú. Solo al entrar (y si cambia el rol).
+  const cargarReponer = useCallback(async () => {
+    if (!esJefe) { setReponer([]); return }
     const { data: rep } = await supabase.schema('produccion').rpc('fn_por_reponer', {})
     setReponer(rep || [])
   }, [esJefe])
-  useEffect(() => { cargarCorr() }, [cargarCorr, modulo, fincaId])
+  useEffect(() => { cargarReponer() }, [cargarReponer])
 
   function irACorreccion(c) {
     setFincaId(c.finca_id)
