@@ -95,10 +95,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       Promise.all([
         supabase.schema('produccion').rpc(bal ? 'fn_reporte_valorizacion_bal_todas' : 'fn_reporte_valorizacion_todas'),
         supabase.schema('produccion').rpc(bal ? 'fn_valorizacion_bal_por_finca' : 'fn_valorizacion_por_finca'),
-      ]).then(([a, b]) => { if (vivo) { setValor(a.data || []); setValFincas(b.data || []) } })
+      ]).then(([a, b]) => { if (!vivo) return; if (a.error) setAviso({ tipo: 'error', texto: a.error.message }); setValor(a.data || []); setValFincas(b.data || []) })
     } else {
       supabase.schema('produccion').rpc(bal ? 'fn_reporte_valorizacion_bal' : 'fn_reporte_valorizacion', { p_finca: valFinca })
-        .then(({ data }) => { if (vivo) { setValor(data || []); setValFincas([]) } })
+        .then(({ data, error }) => { if (!vivo) return; if (error) setAviso({ tipo: 'error', texto: error.message }); setValor(data || []); setValFincas([]) })
     }
     return () => { vivo = false }
   }, [valFinca, valTipo])
@@ -108,7 +108,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     let vivo = true
     supabase.schema('produccion').rpc(estTipo === 'balanceado' ? 'fn_reporte_estado_bal' : 'fn_reporte_estado',
       { p_finca: estFinca === 'todas' ? null : estFinca })
-      .then(({ data }) => { if (vivo) setEstado(data || []) })
+      .then(({ data, error }) => { if (!vivo) return; if (error) setAviso({ tipo: 'error', texto: error.message }); setEstado(data || []) })
     return () => { vivo = false }
   }, [estFinca, estTipo])
 
