@@ -37,6 +37,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [pendientes, setPendientes] = useState({})   // pedidoId -> lineas pendientes
   const [solicitudes, setSolicitudes] = useState([]) // correcciones de ingresos
   const [userId, setUserId] = useState(null)
+  const [usuarios, setUsuarios] = useState({})   // id -> nombre
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [nuevo, setNuevo] = useState(null)   // 'ingreso' | 'pedido' | null
@@ -57,10 +58,10 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
               : i) }
           }),
         supabase.schema('produccion').from('ingreso_insumo')
-          .select('id, fecha, numero_guia, proveedor, observacion, ingreso_insumo_linea(insumo_id, cantidad, plazo)')
+          .select('id, fecha, numero_guia, proveedor, observacion, creado_por, creado_en, ingreso_insumo_linea(insumo_id, cantidad, plazo)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
         supabase.schema('produccion').from('pedido_insumo')
-          .select('id, fecha, fecha_esperada, proveedor, estado, pedido_insumo_linea(insumo_id, cantidad)')
+          .select('id, fecha, fecha_esperada, proveedor, estado, creado_por, creado_en, pedido_insumo_linea(insumo_id, cantidad)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
         supabase.schema('produccion').from('vw_pedido_pendiente')
           .select('pedido_id, insumo_id, insumo, unidad, pedida, recibida, pendiente')
@@ -75,9 +76,13 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
       setIngresos(g || [])
       setPedidos(pd || [])
       const { data: dev } = await supabase.schema('produccion').from('devolucion_insumo')
-        .select('id, fecha, insumo_id, cantidad, motivo')
+        .select('id, fecha, insumo_id, cantidad, motivo, creado_por, creado_en')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40)
       setDevoluciones(dev || [])
+      // Mapa id -> nombre para mostrar "quién" registró cada cosa.
+      const { data: us } = await supabase.schema('produccion').from('vw_usuario').select('id, nombre')
+      const um = {}; (us || []).forEach(u => { um[u.id] = u.nombre })
+      setUsuarios(um)
       setSolicitudes(sol || [])
       setUserId(auth?.user?.id || null)
       const pp = {}
@@ -93,6 +98,15 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   useEffect(() => { cargar() }, [cargar])
 
   const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
+  // "Registrado por Nombre · dd/mm/aa hh:mm" — quién y cuándo.
+  const autoria = row => {
+    const n = row?.creado_por ? usuarios[row.creado_por] : null
+    const cuando = row?.creado_en
+      ? new Date(row.creado_en).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : ''
+    if (!n && !cuando) return null
+    return (n ? 'Registrado por ' + n : 'Registrado') + (cuando ? ' · ' + cuando : '')
+  }
   // Los ingresos y pedidos se llevan en unidad de COMPRA (tambor,
   // botella, saco), que es como llega el producto a bodega.
   const unidadInsumo = id => {
@@ -172,6 +186,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
                   {g.numero_guia ? `Guía ${g.numero_guia}` : 'Sin guía'}
                   {g.proveedor ? ` · ${g.proveedor}` : ''}
                 </div>
+                {autoria(g) && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '2px' }}>{autoria(g)}</div>}
               </div>
               <div style={{ display: 'flex', gap: '7px', alignItems: 'flex-start' }}>
                 {solPend ? (
@@ -222,6 +237,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
                     {p.proveedor || 'Sin proveedor'}
                     {p.fecha_esperada ? ` · esperado ${corta(p.fecha_esperada)}` : ''}
                   </div>
+                  {autoria(p) && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '2px' }}>{autoria(p)}</div>}
                 </div>
                 <Estado estado={p.estado} completo={todoLlego} />
               </div>
@@ -268,6 +284,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
                   {nombreInsumo(d.insumo_id)}: <b style={{ fontWeight: 600 }}>−{miles(num(d.cantidad))}</b> {unidadInsumo(d.insumo_id)}
                 </div>
                 {d.motivo && <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '2px' }}>{d.motivo}</div>}
+                {autoria(d) && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '2px' }}>{autoria(d)}</div>}
               </div>
               {esJefe && (
                 <MiniBtn rojo onClick={() => borrarDevolucion(d)}>Borrar</MiniBtn>
@@ -375,7 +392,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         const { data: nuevas, error } = await supabase.schema('produccion').from('devolucion_insumo')
           .insert(validas.map(l => ({ finca_id: finca.id, fecha, insumo_id: l.insumoId,
                                       cantidad: cantidadEnCompra(l), motivo: obs || null })))
-          .select('id, fecha, insumo_id, cantidad, motivo')
+          .select('id, fecha, insumo_id, cantidad, motivo, creado_por, creado_en')
         if (error) throw error
         if (onDevolucion && nuevas) onDevolucion(nuevas)
       } else {
