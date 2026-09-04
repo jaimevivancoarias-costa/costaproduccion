@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles } from '../lib/fechas'
 
+const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
+
 const PLAZOS = [0, 30, 60, 90, 120]
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 
@@ -31,6 +33,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
   const [insumos, setInsumos] = useState([])
   const [ingresos, setIngresos] = useState([])
   const [pedidos, setPedidos] = useState([])
+  const [devoluciones, setDevoluciones] = useState([])
   const [pendientes, setPendientes] = useState({})   // pedidoId -> lineas pendientes
   const [solicitudes, setSolicitudes] = useState([]) // correcciones de ingresos
   const [userId, setUserId] = useState(null)
@@ -71,6 +74,10 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
       setInsumos(ins || [])
       setIngresos(g || [])
       setPedidos(pd || [])
+      const { data: dev } = await supabase.schema('produccion').from('devolucion_insumo')
+        .select('id, fecha, insumo_id, cantidad, motivo')
+        .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40)
+      setDevoluciones(dev || [])
       setSolicitudes(sol || [])
       setUserId(auth?.user?.id || null)
       const pp = {}
@@ -90,7 +97,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
   // botella, saco), que es como llega el producto a bodega.
   const unidadInsumo = id => {
     const i = insumos.find(x => x.id === id)
-    return i ? (UNIDAD[i.unidad_compra] || i.unidad_compra) : ''
+    return i ? (UNIDAD[i.unidad_compra] || cap1(i.unidad_compra)) : ''
   }
 
   return (
@@ -104,10 +111,13 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
         <Chip on={modo === 'pedidos'} onClick={() => { setModo('pedidos'); setNuevo(null) }}>
           Pedidos
         </Chip>
+        <Chip on={modo === 'devoluciones'} onClick={() => { setModo('devoluciones'); setNuevo(null) }}>
+          Devoluciones
+        </Chip>
         <div style={{ marginLeft: 'auto' }}>
           {!nuevo && (
-            <Btn primario onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : 'pedido')}>
-              {modo === 'ingresos' ? 'Registrar ingreso' : 'Registrar pedido'}
+            <Btn primario onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}>
+              {modo === 'ingresos' ? 'Registrar ingreso' : modo === 'pedidos' ? 'Registrar pedido' : 'Registrar devolución'}
             </Btn>
           )}
         </div>
@@ -126,7 +136,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
           pendientes={pendientes}
           onCancelar={() => setNuevo(null)}
           onGuardado={async () => { setNuevo(null); await cargar()
-            setAviso({ tipo: 'ok', texto: nuevo === 'ingreso' ? 'Ingreso registrado.' : 'Pedido registrado.' }) }}
+            setAviso({ tipo: 'ok', texto: nuevo === 'ingreso' ? 'Ingreso registrado.' : nuevo === 'pedido' ? 'Pedido registrado.' : 'Devolución registrada.' }) }}
           setAviso={setAviso}
         />
       )}
@@ -190,7 +200,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
           )
         })
 
-      ) : (
+      ) : modo === 'pedidos' ? (
         !pedidos.length ? (
           <Vacio>Todavía no hay pedidos. Un pedido no suma al saldo: solo sirve para seguir lo que pediste y ver cuánto ha llegado.</Vacio>
         ) : pedidos.map(p => {
@@ -239,9 +249,35 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
             </Tarjeta>
           )
         })
+      ) : (
+        !devoluciones.length ? (
+          <Vacio>Todavía no hay devoluciones. Una devolución a CostaMarket resta del saldo de la bodega.</Vacio>
+        ) : devoluciones.map(d => (
+          <Tarjeta key={d.id}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontWeight: 500 }}>{corta(d.fecha)}</div>
+                <div style={{ fontSize: '13px', color: NAVY, marginTop: '3px' }}>
+                  {nombreInsumo(d.insumo_id)}: <b style={{ fontWeight: 600 }}>−{miles(num(d.cantidad))}</b> {unidadInsumo(d.insumo_id)}
+                </div>
+                {d.motivo && <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '2px' }}>{d.motivo}</div>}
+              </div>
+              {esJefe && (
+                <MiniBtn rojo onClick={() => borrarDevolucion(d)}>Borrar</MiniBtn>
+              )}
+            </div>
+          </Tarjeta>
+        ))
       )}
     </div>
   )
+
+  async function borrarDevolucion(d) {
+    if (!window.confirm('¿Borrar esta devolución? Vuelve a sumar al saldo de la bodega.')) return
+    const { error } = await supabase.schema('produccion').from('devolucion_insumo').delete().eq('id', d.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Devolución borrada.' }); await cargar()
+  }
 
   async function borrarIngresoJefe(g) {
     if (!window.confirm('¿Borrar este ingreso? Se resta de la bodega.')) return
@@ -273,6 +309,8 @@ export default function Ingresos({ finca, esJefe, onCorreccion }) {
 // ---------------------------------------------------------------------
 function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCancelar, onGuardado, setAviso }) {
   const esIngreso = tipo === 'ingreso'
+  const esDevolucion = tipo === 'devolucion'
+  const esPedido = tipo === 'pedido'
   const [fecha, setFecha] = useState(hoyISO())
   const [guia, setGuia] = useState('')
   const [proveedor, setProveedor] = useState('')
@@ -321,6 +359,11 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
           .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) })))
         if (e2) throw e2
+      } else if (esDevolucion) {
+        const { error } = await supabase.schema('produccion').from('devolucion_insumo')
+          .insert(validas.map(l => ({ finca_id: finca.id, fecha, insumo_id: l.insumoId,
+                                      cantidad: cantidadEnCompra(l), motivo: obs || null })))
+        if (error) throw error
       } else {
         const { data: p, error } = await supabase.schema('produccion').from('pedido_insumo')
           .insert({ finca_id: finca.id, fecha, fecha_esperada: esperada || null,
@@ -328,7 +371,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
           .select('id').single()
         if (error) throw error
         const { error: e2 } = await supabase.schema('produccion').from('pedido_insumo_linea')
-          .insert(validas.map(l => ({ pedido_id: p.id, insumo_id: l.insumoId, cantidad: num(l.cantidad) })))
+          .insert(validas.map(l => ({ pedido_id: p.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) })))
         if (e2) throw e2
       }
       await onGuardado()
@@ -343,7 +386,9 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
     <div style={{ background: 'white', border: '0.5px solid ' + AZUL, borderRadius: '12px',
                   padding: '18px', marginBottom: '14px' }}>
       <h3 style={{ fontSize: '16px', fontWeight: 500, margin: '0 0 14px' }}>
-        {esIngreso ? 'Registrar ingreso a bodega' : 'Registrar pedido'}
+        {esIngreso ? 'Registrar ingreso a bodega'
+          : esDevolucion ? 'Registrar devolución a CostaMarket'
+          : 'Registrar pedido'}
       </h3>
 
       <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
@@ -367,16 +412,23 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
               </Campo>
             )}
           </>
+        ) : esDevolucion ? (
+          <Campo label="Motivo / observación">
+            <input value={obs} placeholder="Por qué se devuelve"
+                   onChange={e => setObs(e.target.value)} style={{ ...entrada, width: '260px' }} />
+          </Campo>
         ) : (
           <Campo label="Fecha esperada">
             <input type="date" value={esperada} min={fecha}
                    onChange={e => setEsperada(e.target.value)} style={entrada} />
           </Campo>
         )}
-        <Campo label="Proveedor">
-          <input value={proveedor} placeholder="Opcional"
-                 onChange={e => setProveedor(e.target.value)} style={entrada} />
-        </Campo>
+        {!esDevolucion && (
+          <Campo label="Proveedor">
+            <input value={proveedor} placeholder="Opcional"
+                   onChange={e => setProveedor(e.target.value)} style={entrada} />
+          </Campo>
+        )}
       </div>
 
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
@@ -388,8 +440,8 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         // Unidades en que puede cargar: la de compra (saco) y la de conteo (kg), si difieren.
         const unidades = ins ? [...new Set([uCompra, uCons])] : []
         const uElegida = l.unidad || uCompra
-        const enCompra = esIngreso && ins && num(l.cantidad) ? cantidadEnCompra(l) : null
-        const mostrarEquiv = esIngreso && ins && uElegida !== uCompra && enCompra != null
+        const enCompra = ins && num(l.cantidad) ? cantidadEnCompra(l) : null
+        const mostrarEquiv = ins && uElegida !== uCompra && enCompra != null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
             <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', ''); setLinea(i, 'sobrante', ''); setLinea(i, 'sobranteOn', false) }}
@@ -401,34 +453,34 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
               placeholder="Cantidad"
               onChange={e => setLinea(i, 'cantidad', e.target.value)}
               style={{ ...entrada, width: '110px' }} />
-            {esIngreso && unidades.length > 1 ? (
+            {unidades.length > 1 ? (
               <select value={uElegida} onChange={e => setLinea(i, 'unidad', e.target.value)} style={{ ...entrada, width: '110px' }}>
-                {unidades.map(u => <option key={u} value={u}>{UNI[u] || u}</option>)}
+                {unidades.map(u => <option key={u} value={u}>{UNI[u] || cap1(u)}</option>)}
               </select>
             ) : ins ? (
-              <span style={{ fontSize: '13px', color: GRIS, width: '110px' }}>{UNI[uCompra] || uCompra}</span>
+              <span style={{ fontSize: '13px', color: GRIS, width: '110px' }}>{UNI[uCompra] || cap1(uCompra)}</span>
             ) : null}
             {mostrarEquiv && (
-              <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(enCompra * 100) / 100)} {UNI[uCompra] || uCompra}</span>
+              <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(enCompra * 100) / 100)} {UNI[uCompra] || cap1(uCompra)}</span>
             )}
             {lineas.length > 1 && (
               <button onClick={() => quitarLinea(i)} style={{ border: 'none', background: 'none',
                 cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
             )}
             {/* + sobrante: solo si hay conversión y el principal está en la presentación */}
-            {esIngreso && ins && uCompra !== uCons && uElegida === uCompra && (
+            {ins && uCompra !== uCons && uElegida === uCompra && (
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '2px' }}>
                 {l.sobranteOn ? (
                   <>
-                    <input inputMode="decimal" value={l.sobrante ?? ''} placeholder={'+ sobrante en ' + (UNI[uCons] || uCons)}
+                    <input inputMode="decimal" value={l.sobrante ?? ''} placeholder={'+ sobrante en ' + (UNI[uCons] || cap1(uCons))}
                       onChange={e => setLinea(i, 'sobrante', e.target.value)} style={{ ...entrada, width: '150px' }} />
-                    <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(cantidadEnCompra(l) * 100) / 100)} {UNI[uCompra] || uCompra}</span>
+                    <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(cantidadEnCompra(l) * 100) / 100)} {UNI[uCompra] || cap1(uCompra)}</span>
                     <button onClick={() => { setLinea(i, 'sobranteOn', false); setLinea(i, 'sobrante', '') }}
                       style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontFamily: 'inherit', fontSize: '11px' }}>quitar sobrante</button>
                   </>
                 ) : (
                   <button onClick={() => setLinea(i, 'sobranteOn', true)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px', padding: 0 }}>+ sobrante ({UNI[uCons] || uCons})</button>
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px', padding: 0 }}>+ sobrante ({UNI[uCons] || cap1(uCons)})</button>
                 )}
               </div>
             )}
@@ -443,7 +495,10 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
       <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px' }}>
         <Btn onClick={onCancelar}>Cancelar</Btn>
         <Btn primario onClick={guardar} disabled={guardando || !validas.length}>
-          {guardando ? 'Guardando...' : esIngreso ? 'Guardar ingreso' : 'Guardar pedido'}
+          {guardando ? 'Guardando...'
+            : esIngreso ? 'Guardar ingreso'
+            : esDevolucion ? 'Guardar devolución'
+            : 'Guardar pedido'}
         </Btn>
       </div>
     </div>
