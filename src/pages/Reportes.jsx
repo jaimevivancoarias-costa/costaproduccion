@@ -36,6 +36,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [filas, setFilas] = useState([])
   const [cosechas, setCosechas] = useState([])
   const [proceso, setProceso] = useState([])
+  const [valor, setValor] = useState([])   // valorización de bodega
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -66,6 +67,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       setFilas(cons || [])
       setCosechas(cos || [])
       setProceso(proc || [])
+      // Valorización: es "ahora", por finca (no aplica comparar todas).
+      if (todasFincas) {
+        setValor([])
+      } else {
+        const { data: val } = await supabase.schema('produccion')
+          .rpc('fn_reporte_valorizacion', { p_finca: finca.id })
+        setValor(val || [])
+      }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -133,12 +142,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 10px' }}>Reportes</h2>
         <div style={{ display: 'flex', gap: '7px' }}>
           <Chip on={kind === 'consumo'} onClick={() => setKind('consumo')}>Consumo</Chip>
+          {esJefe && <Chip on={kind === 'valorizacion'} onClick={() => setKind('valorizacion')}>Valorización</Chip>}
           <Chip on={kind === 'proceso'} onClick={() => setKind('proceso')}>En proceso</Chip>
           <Chip on={kind === 'cosechas'} onClick={() => setKind('cosechas')}>Cosechas</Chip>
         </div>
       </div>
 
-      {/* Filtros */}
+      {/* Filtros (la valorización es "ahora", no usa rango de fechas) */}
+      {kind !== 'valorizacion' && (
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                     padding: '14px 16px', marginBottom: '16px', display: 'flex',
                     gap: '18px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -182,6 +193,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           </label>
         )}
       </div>
+      )}
 
       {aviso && (
         <div style={{ borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginBottom: '12px',
@@ -196,6 +208,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       {kind === 'proceso' && (
         <ReporteEnProceso proceso={proceso} cargando={cargando} esJefe={esJefe}
                           todasFincas={todasFincas} />
+      )}
+
+      {kind === 'valorizacion' && (
+        <ReporteValorizacion valor={valor} cargando={cargando} todasFincas={todasFincas} />
       )}
 
       {kind === 'consumo' && <>
@@ -487,6 +503,60 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
         })}
       </div>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Valorización de bodega: cuánto vale hoy el inventario, por insumo.
+// ---------------------------------------------------------------------
+function ReporteValorizacion({ valor, cargando, todasFincas }) {
+  const VGRID = '1fr 130px 120px 130px'
+  if (todasFincas) {
+    return <Caja><Centro>La valorización se ve por finca. Desmarca "comparar todas las fincas".</Centro></Caja>
+  }
+  if (cargando) return <Caja><Centro>Cargando...</Centro></Caja>
+  const conValor = valor.filter(v => Number(v.valor) > 0 || Number(v.saldo) > 0)
+  if (!conValor.length) return <Caja><Centro>No hay saldo en bodega para valorizar.</Centro></Caja>
+  const total = valor.reduce((t, v) => t + (Number(v.valor) || 0), 0)
+  const sinPrecio = conValor.filter(v => !Number(v.precio)).length
+  return (
+    <>
+      <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <Kpi titulo="Valor de la bodega" valor={dinero(total)} />
+        <Kpi titulo="Insumos con saldo" valor={String(conValor.length)} />
+        {sinPrecio > 0 && <Kpi titulo="Sin precio" valor={String(sinPrecio)} />}
+      </div>
+      <Caja>
+        <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px', padding: '11px 16px',
+                      fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+          <span>Insumo</span>
+          <span style={{ textAlign: 'right' }}>Saldo</span>
+          <span style={{ textAlign: 'right' }}>Precio</span>
+          <span style={{ textAlign: 'right' }}>Valor</span>
+        </div>
+        {conValor.map(v => (
+          <div key={v.insumo_id} style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px',
+                  padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
+            <span>{v.insumo}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
+              {miles(v.saldo)} {UNIDAD[v.unidad] || v.unidad || ''}
+            </span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                           color: Number(v.precio) ? NAVY : AMBAR }}>
+              {Number(v.precio) ? dinero(v.precio) : 'sin precio'}
+            </span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+              {dinero(v.valor)}
+            </span>
+          </div>
+        ))}
+        <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px', padding: '12px 16px',
+                      alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
+          <span>Total</span><span /><span />
+          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(total)}</span>
+        </div>
+      </Caja>
+    </>
   )
 }
 
