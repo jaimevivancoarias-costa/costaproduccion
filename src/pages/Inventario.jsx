@@ -33,9 +33,11 @@ const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días'
 // Primer dia del mes de una fecha, para el atajo "este mes".
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
-const ANCHOS_SALDO      = '1fr 110px 120px 140px 150px'
-const ANCHOS_SALDO_JEFE = '1fr 110px 120px 140px 150px 110px'
-const ANCHOS_SALDO_BOD  = '1fr 110px 120px'   // bodeguero: sin dolares
+const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
+const ANCHOS_SALDO_JEFE = '1.3fr 200px 130px 120px 130px 110px'
+const ANCHOS_SALDO_BOD  = '1.3fr 200px 130px'   // bodeguero: sin dolares
+// Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
+const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
 const ANCHOS_MOV2       = '1.2fr 1.7fr 1fr 1fr 1fr 1fr'   // vista simple: llega/se aplica + 4 movimientos
@@ -560,7 +562,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             {filas.map(f => (
               <Fila key={f.insumo_id} anchos="1fr 110px 130px 130px 150px">
                 <Celda>{f.insumo}</Celda>
-                <Celda gris>{UNIDAD[f.unidad] || f.unidad}</Celda>
+                <Celda gris>{cap1(UNIDAD[f.unidad] || f.unidad)}</Celda>
                 <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                   <input
@@ -572,7 +574,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {(() => {
                     const fac = factores[f.insumo_id]
                     if (!fac || (fac.factor || 1) === 1) return null   // sin conversión, no aplica sobrante
-                    const uApp = UNIDAD[fac.uApp] || fac.uApp
+                    const uApp = cap1(UNIDAD[fac.uApp] || fac.uApp)
                     if (sobranteOn[f.insumo_id]) return (
                       <div style={{ marginTop: '5px' }}>
                         <input inputMode="decimal" value={sobrante[f.insumo_id] ?? ''} placeholder={'+ sobrante en ' + uApp}
@@ -627,13 +629,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             {movs.map(m => {
               const fac = factores[m.insumo_id]
               const conv = fac && (fac.factor || 1) !== 1
-              const eq = v => conv ? <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {UNIDAD[fac.uApp] || fac.uApp}</div> : null
+              const eq = v => conv ? <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div> : null
               return (
               <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
                 <Celda>{m.insumo}</Celda>
                 <Celda gris>
-                  <span style={{ color: NAVY, fontWeight: 500 }}>{UNIDAD[m.unidad] || m.unidad}</span>
-                  {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {UNIDAD[fac.uApp] || fac.uApp}</>}
+                  <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
+                  {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
                 </Celda>
                 <Celda derecha gris>{limpio(m.saldo_inicial)}{eq(m.saldo_inicial)}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
@@ -703,11 +705,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     {(() => {
                       const fac = factores[f.insumo_id]
                       const conv = fac && (fac.factor || 1) !== 1
+                      const pres = cap1(UNIDAD[f.unidad] || f.unidad)
+                      const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
                       return (
                         <span>
-                          <span style={{ color: NAVY, fontWeight: 500 }}>{UNIDAD[f.unidad] || f.unidad}</span>
-                          {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {UNIDAD[fac.uApp] || fac.uApp}
-                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {UNIDAD[f.unidad] || f.unidad} = {fac.factor} {UNIDAD[fac.uApp] || fac.uApp}</span></>}
+                          <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
+                          {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {app}
+                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {pres} = {fac.factor} {app}</span></>}
                         </span>
                       )
                     })()}
@@ -726,13 +730,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       {(() => {
                         const fac = factores[f.insumo_id]
                         if (!fac || (fac.factor || 1) === 1) return null
-                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * fac.factor)} {UNIDAD[fac.uApp] || fac.uApp})</span>
+                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)})</span>
                       })()}
                       {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <>{dinero(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{UNIDAD[f.unidad] || f.unidad}</span></> : 'sin precio'}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <>{dinero(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'sin precio'}</Celda>}
                   {esJefe && <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
@@ -777,7 +781,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                             padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
                         <span>{PLAZO_LBL[d.plazo]}</span>
                         <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
-                          <span>{limpio(d.cantidad)} {UNIDAD[f.unidad] || f.unidad}</span>
+                          <span>{limpio(d.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
                           {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(d.valor)}</span>}
                         </span>
                       </div>
@@ -786,7 +790,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                   padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
                       <span>Total</span>
                       <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
-                        <span>{limpio(f.saldo)} {UNIDAD[f.unidad] || f.unidad}</span>
+                        <span>{limpio(f.saldo)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
                         {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(valorFifo[f.insumo_id] || 0)}</span>}
                       </span>
                     </div>
