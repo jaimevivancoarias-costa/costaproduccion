@@ -487,36 +487,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </Nota>
           )}
 
-          {/* Reporte de insumos sin precio: su costo no se está valorizando. */}
-          {esJefe && (() => {
-            const sp = filas.filter(f => !Number(precios[f.insumo_id]))
-            if (!sp.length) return null
-            return (
-              <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
-                            padding: '14px 16px', marginBottom: '14px' }}>
-                <div style={{ fontWeight: 500, marginBottom: '2px' }}>
-                  {sp.length} {sp.length === 1 ? 'insumo sin precio' : 'insumos sin precio'}
-                </div>
-                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
-                  No tienen precio vigente en esta finca, así que su consumo y su saldo valen $0.
-                  Cárgales el precio en <b>Precios</b> para que la valorización cuadre.
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px' }}>
-                  {sp.map(f => (
-                    <span key={f.insumo_id} style={{ fontSize: '12px', background: 'white',
-                          border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '4px 10px' }}>
-                      {f.insumo}
-                      {Number(f.saldo) > 0 && (
-                        <b style={{ fontWeight: 600, color: AMBAR, marginLeft: '6px' }}>
-                          saldo {limpio(f.saldo)}
-                        </b>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )
-          })()}
+          {esJefe && sinPrecio > 0 && (
+            <Nota color={AMBAR} fondo="#FBF5E9">
+              Hay {sinPrecio} {sinPrecio === 1 ? 'insumo' : 'insumos'} sin precio: su saldo y su consumo
+              valen $0. Cárgales el precio en <b>Catálogo</b> para que la valorización cuadre.
+            </Nota>
+          )}
         </>
       )}
 
@@ -608,13 +584,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             columnas={(primeraVez || editToma)
               ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
               : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Contado', 'Diferencia']}
-            anchos="1fr 210px 120px 130px 140px"
+            anchos="1fr 185px 95px 250px 115px"
           >
             {filas.map(f => {
               const facF = factores[f.insumo_id]
               const convF = facF && (facF.factor || 1) !== 1
               return (
-              <Fila key={f.insumo_id} anchos="1fr 210px 120px 130px 140px">
+              <Fila key={f.insumo_id} anchos="1fr 185px 95px 250px 115px">
                 <Celda>{f.insumo}</Celda>
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[f.unidad] || f.unidad)}</span>
@@ -625,30 +601,34 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </Celda>
                 <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
-                  <input
-                    inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="—"
-                    onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
-                    style={{ ...entrada, width: '100%', textAlign: 'right',
-                             fontVariantNumeric: 'tabular-nums' }}
-                  />
-                  {(() => {
-                    const fac = factores[f.insumo_id]
-                    if (!fac || (fac.factor || 1) === 1) return null   // sin conversión, no aplica sobrante
-                    const uApp = cap1(UNIDAD[fac.uApp] || fac.uApp)
-                    if (sobranteOn[f.insumo_id]) return (
-                      <div style={{ marginTop: '5px' }}>
-                        <input inputMode="decimal" value={sobrante[f.insumo_id] ?? ''} placeholder={'+ sobrante en ' + uApp}
-                          onChange={e => setSobrante(s => ({ ...s, [f.insumo_id]: e.target.value }))}
-                          style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
-                        <button onClick={() => { setSobranteOn(o => ({ ...o, [f.insumo_id]: false })); setSobrante(s => ({ ...s, [f.insumo_id]: '' })) }}
-                          style={{ background: 'none', border: 'none', color: GRIS, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: '2px 0 0' }}>quitar sobrante</button>
+                  {convF ? (
+                    <>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[f.unidad] || f.unidad)} completas</span>
+                          <input inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
+                            style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                        </div>
+                        <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[facF.uApp] || facF.uApp)} sueltos</span>
+                          <input inputMode="decimal" value={sobrante[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={e => setSobrante(s => ({ ...s, [f.insumo_id]: e.target.value }))}
+                            style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                        </div>
                       </div>
-                    )
-                    return (
-                      <button onClick={() => setSobranteOn(o => ({ ...o, [f.insumo_id]: true }))}
-                        style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: '3px 0 0' }}>+ sobrante ({uApp})</button>
-                    )
-                  })()}
+                      {f.contado !== null && (
+                        <div style={{ fontSize: '10.5px', color: VERDE, marginTop: '4px', textAlign: 'right' }}>
+                          = {limpio(f.contado)} {cap1(UNIDAD[f.unidad] || f.unidad)} · {limpio(f.contado * (facF.factor || 1))} {cap1(UNIDAD[facF.uApp] || facF.uApp)}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <input inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="—"
+                      onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
+                      style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                  )}
                 </div>
                 {/* La primera vez no hay contra que comparar: es la carga
                     inicial. La diferencia aparece de la segunda en adelante. */}
