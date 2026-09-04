@@ -41,8 +41,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [valor, setValor] = useState([])   // valorización de bodega
   const [valFinca, setValFinca] = useState(finca.id)   // finca del reporte de valorización ('todas' = todas)
   const [valFincas, setValFincas] = useState([])       // total por finca (gráfica, modo Todas)
+  const [valTipo, setValTipo] = useState('insumo')     // 'insumo' | 'balanceado'
   const [estado, setEstado] = useState([])             // estado / reponer
   const [estFinca, setEstFinca] = useState(finca.id)   // finca del reporte de estado ('todas' = todas)
+  const [estTipo, setEstTipo] = useState('insumo')     // 'insumo' | 'balanceado'
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -85,29 +87,30 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // Al cambiar la finca global, los reportes "ahora" la siguen.
   useEffect(() => { setValFinca(finca.id); setEstFinca(finca.id) }, [finca.id])
 
-  // Valorización: es "ahora". Por finca, o sumada en "Todas las fincas".
+  // Valorización: es "ahora". Por finca o sumada; insumos o balanceados.
   useEffect(() => {
     let vivo = true
+    const bal = valTipo === 'balanceado'
     if (valFinca === 'todas') {
       Promise.all([
-        supabase.schema('produccion').rpc('fn_reporte_valorizacion_todas'),
-        supabase.schema('produccion').rpc('fn_valorizacion_por_finca'),
+        supabase.schema('produccion').rpc(bal ? 'fn_reporte_valorizacion_bal_todas' : 'fn_reporte_valorizacion_todas'),
+        supabase.schema('produccion').rpc(bal ? 'fn_valorizacion_bal_por_finca' : 'fn_valorizacion_por_finca'),
       ]).then(([a, b]) => { if (vivo) { setValor(a.data || []); setValFincas(b.data || []) } })
     } else {
-      supabase.schema('produccion').rpc('fn_reporte_valorizacion', { p_finca: valFinca })
+      supabase.schema('produccion').rpc(bal ? 'fn_reporte_valorizacion_bal' : 'fn_reporte_valorizacion', { p_finca: valFinca })
         .then(({ data }) => { if (vivo) { setValor(data || []); setValFincas([]) } })
     }
     return () => { vivo = false }
-  }, [valFinca])
+  }, [valFinca, valTipo])
 
-  // Estado / reponer: es "ahora". Por finca, o todas (p_finca null).
+  // Estado / reponer: es "ahora". Por finca o todas; insumos o balanceados.
   useEffect(() => {
     let vivo = true
-    supabase.schema('produccion').rpc('fn_reporte_estado',
+    supabase.schema('produccion').rpc(estTipo === 'balanceado' ? 'fn_reporte_estado_bal' : 'fn_reporte_estado',
       { p_finca: estFinca === 'todas' ? null : estFinca })
       .then(({ data }) => { if (vivo) setEstado(data || []) })
     return () => { vivo = false }
-  }, [estFinca])
+  }, [estFinca, estTipo])
 
   // Ciclos de la finca, para el atajo "por ciclo".
   useEffect(() => {
@@ -238,12 +241,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
       {kind === 'valorizacion' && (
         <ReporteValorizacion valor={valor} valFincas={valFincas} fincas={fincas}
-                             fincaSel={valFinca} onFinca={setValFinca} />
+                             fincaSel={valFinca} onFinca={setValFinca}
+                             tipo={valTipo} onTipo={setValTipo} />
       )}
 
       {kind === 'estado' && (
         <ReporteEstado estado={estado} fincas={fincas}
-                       fincaSel={estFinca} onFinca={setEstFinca} />
+                       fincaSel={estFinca} onFinca={setEstFinca}
+                       tipo={estTipo} onTipo={setEstTipo} />
       )}
 
       {kind === 'consumo' && <>
@@ -541,8 +546,9 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
 // ---------------------------------------------------------------------
 // Valorización de bodega: cuánto vale hoy el inventario, por insumo.
 // ---------------------------------------------------------------------
-function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca }) {
+function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo, onTipo }) {
   const esTodas = fincaSel === 'todas'
+  const etq = tipo === 'balanceado' ? 'Balanceado' : 'Insumo'
   const VGRID = esTodas ? '1fr 190px 150px' : '1fr 150px 120px 130px'
   const conValor = valor.filter(v => Number(v.valor) > 0 || Number(v.saldo) > 0)
   const total = valor.reduce((t, v) => t + (Number(v.valor) || 0), 0)
@@ -553,15 +559,24 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca }) {
     .map(f => ({ label: f.finca, valor: Number(f.valor) || 0 }))
   return (
     <>
-      {fincas && fincas.length > 1 && (
-        <div style={{ marginBottom: '14px' }}>
-          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
-          <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
-            <option value="todas">Todas las fincas</option>
-            {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-          </select>
+      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '14px' }}>
+        <div>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Mostrar</div>
+          <div style={{ display: 'flex', gap: '7px' }}>
+            <Chip on={tipo === 'insumo'} onClick={() => onTipo('insumo')}>Insumos</Chip>
+            <Chip on={tipo === 'balanceado'} onClick={() => onTipo('balanceado')}>Balanceados</Chip>
+          </div>
         </div>
-      )}
+        {fincas && fincas.length > 1 && (
+          <div>
+            <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
+            <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
+              <option value="todas">Todas las fincas</option>
+              {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+            </select>
+          </div>
+        )}
+      </div>
       {!conValor.length ? (
         <Caja><Centro>No hay saldo en bodega para valorizar.</Centro></Caja>
       ) : (
@@ -584,7 +599,7 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca }) {
       <Caja>
         <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px', padding: '11px 16px',
                       fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
-          <span>Insumo</span>
+          <span>{etq}</span>
           <span style={{ textAlign: 'right' }}>{esTodas ? 'Saldo (todas las fincas)' : 'Saldo'}</span>
           {!esTodas && <span style={{ textAlign: 'right' }}>Precio</span>}
           <span style={{ textAlign: 'right' }}>Valor</span>
@@ -634,8 +649,9 @@ const EST_COLOR = { bajo: '#c0504d', medio: '#c98a1e', suficiente: '#0F6E56', si
 const EST_LBL = { bajo: 'Bajo', medio: 'Medio', suficiente: 'Suficiente', sin_minimo: 'Sin mínimo' }
 const EST_BG = { bajo: '#FBEAEA', medio: '#FAEEDA', suficiente: '#E1F5EE', sin_minimo: '#eef3f7' }
 
-function ReporteEstado({ estado, fincas, fincaSel, onFinca }) {
+function ReporteEstado({ estado, fincas, fincaSel, onFinca, tipo, onTipo }) {
   const esTodas = fincaSel === 'todas'
+  const etq = tipo === 'balanceado' ? 'Balanceado' : 'Insumo'
   const EGRID = esTodas
     ? '1.1fr 120px 150px 100px 100px 120px'
     : '1.2fr 160px 150px 100px 100px 120px'
@@ -647,15 +663,24 @@ function ReporteEstado({ estado, fincas, fincaSel, onFinca }) {
   const barras = [...conMin].sort((a, b) => nivelPct(a) - nivelPct(b)).slice(0, 8)
   return (
     <>
-      {fincas && fincas.length > 1 && (
-        <div style={{ marginBottom: '14px' }}>
-          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
-          <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
-            {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-            <option value="todas">Todas las fincas</option>
-          </select>
+      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '14px' }}>
+        <div>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Mostrar</div>
+          <div style={{ display: 'flex', gap: '7px' }}>
+            <Chip on={tipo === 'insumo'} onClick={() => onTipo('insumo')}>Insumos</Chip>
+            <Chip on={tipo === 'balanceado'} onClick={() => onTipo('balanceado')}>Balanceados</Chip>
+          </div>
         </div>
-      )}
+        {fincas && fincas.length > 1 && (
+          <div>
+            <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
+            <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
+              {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+              <option value="todas">Todas las fincas</option>
+            </select>
+          </div>
+        )}
+      </div>
       {!estado.length ? (
         <Caja><Centro>No hay insumos para mostrar.</Centro></Caja>
       ) : (
@@ -696,7 +721,7 @@ function ReporteEstado({ estado, fincas, fincaSel, onFinca }) {
       <Caja>
         <div style={{ display: 'grid', gridTemplateColumns: EGRID, gap: '12px', padding: '11px 16px',
                       fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
-          <span>Insumo</span>
+          <span>{etq}</span>
           {esTodas ? <span>Finca</span> : <span>Llega / se aplica</span>}
           <span style={{ textAlign: 'right' }}>Saldo</span>
           <span style={{ textAlign: 'right' }}>Mínimo</span>
