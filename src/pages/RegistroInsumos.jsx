@@ -270,7 +270,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }) }
   }
 
-  const COLS = `160px 84px repeat(7, minmax(190px, 1fr))`
+  const COLS = `180px repeat(7, minmax(190px, 1fr))`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -324,7 +324,6 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
             <div style={{ display: 'grid', gridTemplateColumns: COLS, borderBottom: '0.5px solid ' + BORDE,
                           background: '#f6f9fb', position: 'sticky', top: 0 }}>
               <Th pegado>Piscina</Th>
-              <Th>Hectáreas</Th>
               {fechas.map(f => (
                 <Th key={f} hoy={situacionDia(f, hoy) === 'hoy'}>
                   <div style={{ textTransform: 'capitalize' }}>{nombreDia(f)}</div>
@@ -340,11 +339,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                               borderRight: '0.5px solid #f1f6f9' }}>
                   <div style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</div>
                   <div style={{ fontSize: '11px', color: GRIS }}>
-                    {p.esReservorio ? 'Reservorio · solo insumos' : (p.tipo === 'precria' ? 'Precría' : (p.cicloId ? 'Con ciclo' : 'Vacía · Preparación'))}
+                    {p.esReservorio ? 'Reservorio · solo insumos' : `${p.hectareas.toFixed(2)} ha · ${p.tipo === 'precria' ? 'precría' : (p.cicloId ? 'con ciclo' : 'preparación')}`}
                   </div>
-                </div>
-                <div style={{ padding: '10px 12px', fontSize: '13px', color: GRIS }}>
-                  {p.hectareas.toFixed(2)}
                 </div>
                 {fechas.map(f => {
                   const k = `${p.piscinaId}|${f}`
