@@ -20,6 +20,8 @@ const UNIDAD = {
   libras: 'lb', kg: 'kg', unidad: 'u',
 }
 
+const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
+
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 // Lunes y domingo de la semana pasada, para el reporte de los lunes.
@@ -534,12 +536,19 @@ function ReporteValorizacion({ valor, cargando, todasFincas }) {
           <span style={{ textAlign: 'right' }}>Precio</span>
           <span style={{ textAlign: 'right' }}>Valor</span>
         </div>
-        {conValor.map(v => (
+        {conValor.map(v => {
+          const conv = Number(v.factor) && Number(v.factor) !== 1
+          return (
           <div key={v.insumo_id} style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px',
                   padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
             <span>{v.insumo}</span>
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-              {miles(v.saldo)} {UNIDAD[v.unidad] || v.unidad || ''}
+              {miles(v.saldo)} {cap1(v.unidad)}
+              {conv && (
+                <div style={{ fontSize: '10.5px', color: '#a7b4c1' }}>
+                  {miles(Number(v.saldo) * Number(v.factor))} {cap1(v.unidad_app)}
+                </div>
+              )}
             </span>
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
                            color: Number(v.precio) ? NAVY : AMBAR }}>
@@ -549,7 +558,8 @@ function ReporteValorizacion({ valor, cargando, todasFincas }) {
               {dinero(v.valor)}
             </span>
           </div>
-        ))}
+          )
+        })}
         <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px', padding: '12px 16px',
                       alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
           <span>Total</span><span /><span />
