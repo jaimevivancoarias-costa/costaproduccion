@@ -314,7 +314,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   })
                   return (
                     <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones}
-                      actual={o ? { ...o, precios: preciosAct } : { precios: preciosAct }}
+                      actual={{ ...(o || {}), precios: preciosAct, plazoActivo: plz[k(p.id, f0)]?.plazo ?? 0 }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onCancelar={() => setEditConfig(null)} />
@@ -949,6 +949,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
     const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * 10000) / 10000) }); return p
   })
   const [precioPor, setPrecioPor] = useState((a.precios && Object.values(a.precios).some(v => v != null)) ? 'aplicacion' : 'presentacion')
+  const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)   // qué plazo rige ahora
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
 
@@ -979,28 +980,59 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
     if (!listo) { onError('Revisa la presentación y el contenido (factor).'); return }
     setEnviando(true)
     try {
-      const excMap = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excMap[e.fincaId] = e.unidad })
+      const excUnit = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excUnit[e.fincaId] = e.unidad })
+      const facMap = {}; const ids = []; const filas = []
       for (const f of activas) {
-        const uFinca = excMap[f.id] || uStd
-        const facFinca = excMap[f.id] ? factorFinca(excMap[f.id]) : factor
+        const uFinca = excUnit[f.id] || uStd
+        const facFinca = excUnit[f.id] ? factorFinca(excUnit[f.id]) : factor
         if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
-        const { error } = await supabase.schema('produccion').from('insumo_finca')
-          .upsert({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
-                    contenido: esComp ? 1 : numDec(contenido), unidad_contenido: esComp ? 'unidad' : uCont, factor: facFinca,
-                    stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-                    stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null }, { onConflict: 'insumo_id,finca_id' })
+        facMap[f.id] = facFinca; ids.push(f.id)
+        filas.push({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
+          contenido: esComp ? 1 : numDec(contenido), unidad_contenido: esComp ? 'unidad' : uCont, factor: facFinca,
+          stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
+          stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })
+      }
+      // 1) Unidades/mínimos: un solo upsert en bloque.
+      const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filas, { onConflict: 'insumo_id,finca_id' })
+      if (e1) throw e1
+
+      // Cierra el precio anterior y abre el nuevo, en bloque por plazo.
+      const cerrarYAbrir = async (fincaIds, pz, rows) => {
+        if (!fincaIds.length) return
+        await supabase.schema('produccion').from('precio_insumo').delete()
+          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', desde)
+        await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
+          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', desde)
+        const { error } = await supabase.schema('produccion').from('precio_insumo').insert(rows)
         if (error) throw error
-        for (const pz of PLAZOS) {
-          const precioApp = precioAppDe(pz, facFinca)
-          if (precioApp == null) continue
-          await supabase.schema('produccion').from('precio_insumo').delete()
-            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', pz).gte('vigente_desde', desde)
-          await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', pz).is('vigente_hasta', null).lt('vigente_desde', desde)
-          const { error: ep } = await supabase.schema('produccion').from('precio_insumo')
-            .insert({ insumo_id: insumo.id, finca_id: f.id, plazo: pz, precio_unitario: precioApp, vigente_desde: desde })
-          if (ep) throw ep
-        }
+      }
+
+      // 2) Precios estándar por plazo (una tanda por plazo lleno).
+      for (const pz of PLAZOS) {
+        const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
+        const rows = ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz,
+          precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desde }))
+        await cerrarYAbrir(ids, pz, rows)
+      }
+
+      // 3) Excepciones de precio/plazo por finca (pisan el estándar).
+      for (const e of exc) {
+        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
+        const fac = facMap[e.fincaId]; if (!fac) continue
+        const raw = numDec(e.precio), pz = Number(e.plazo) || 0
+        const precioApp = precioPor === 'presentacion' ? raw / fac : raw
+        await cerrarYAbrir([e.fincaId], pz, [{ insumo_id: insumo.id, finca_id: e.fincaId, plazo: pz, precio_unitario: precioApp, vigente_desde: desde }])
+      }
+
+      // 4) Plazo que rige ahora (bloque).
+      if (plazoActivo != null) {
+        await supabase.schema('produccion').from('plazo_insumo').delete()
+          .eq('insumo_id', insumo.id).in('finca_id', ids).gte('vigente_desde', desde)
+        await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
+          .eq('insumo_id', insumo.id).in('finca_id', ids).is('vigente_hasta', null).lt('vigente_desde', desde)
+        const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
+          .insert(ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: plazoActivo, vigente_desde: desde })))
+        if (e4) throw e4
       }
       onHecho(`Configurado en ${activas.length} fincas.`)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
@@ -1052,20 +1084,29 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
       <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
         <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca aplica distinto?</div>
         <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '11px' }}>
-          El estándar va a todas. Agrega solo la finca que difiere y en qué unidad la aplica — el factor se calcula solo.
+          El estándar va a todas. Agrega solo la finca que difiere: en qué unidad la aplica, o su precio/plazo propio. Todo es opcional — lo que dejes vacío usa el estándar.
         </div>
+        {exc.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 0.9fr 1fr auto', gap: '10px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+            <span>Finca</span><span>Se aplica en (opc.)</span><span style={{ textAlign: 'right' }}>Precio (opc.)</span><span>Plazo</span><span></span>
+          </div>
+        )}
         {exc.map((e, i) => {
           const facF = e.unidad ? factorFinca(e.unidad) : null
           return (
           <div key={i} style={{ marginBottom: '8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1.3fr auto', gap: '10px', alignItems: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 0.9fr 1fr auto', gap: '10px', alignItems: 'center' }}>
               <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
                 <option value="">Elegir finca</option>
                 {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
               </select>
               <select value={e.unidad} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, unidad: ev.target.value } : r))} style={inp}>
-                <option value="">En qué se aplica</option>
+                <option value="">(igual al estándar)</option>
                 {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+              </select>
+              <input inputMode="decimal" value={e.precio ?? ''} placeholder="—" onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precio: ev.target.value } : r))} style={{ ...inp, textAlign: 'right' }} />
+              <select value={e.plazo ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazo: Number(ev.target.value) } : r))} style={inp}>
+                {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
               </select>
               <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
             </div>
@@ -1077,7 +1118,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
           </div>
           )
         })}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', unidad: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
+        <button onClick={() => setExc(x => [...x, { fincaId: '', unidad: '', precio: '', plazo: 0 }])} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
       {/* 3. Precio */}
@@ -1088,6 +1129,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
             <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '210px' }}>
               <option value="presentacion">Envase entero ({cap1(presentacion)})</option>
               <option value="aplicacion">Unidad menor ({UNIDAD[uStd] || uStd})</option>
+            </select>
+          </Campo>
+          <Campo label="Plazo que rige ahora">
+            <select value={plazoActivo} onChange={e => setPlazoActivo(Number(e.target.value))} style={{ ...inp, width: '140px' }}>
+              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
             </select>
           </Campo>
           <Campo label="Desde cuándo rige">
