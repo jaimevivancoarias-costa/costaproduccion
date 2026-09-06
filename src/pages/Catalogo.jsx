@@ -11,7 +11,7 @@ import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
 // Jefe global: crea/edita/quita productos y define presentación y unidad
 // por finca. Precio: jefe (todas sus fincas) y contadora (las suyas).
 
-const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', ROJO = '#8A2F2E', VERDE = '#0F6E56'
+const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#9a6a12'
 const UNIDAD = { sacos: 'Sacos', litros: 'L', ml: 'mL', cl: 'cL', m3: 'm³', gal: 'gal', floz: 'fl oz',
                  gramos: 'g', mg: 'mg', kg: 'kg', t: 't', libras: 'lb', unidad: 'unidad' }
 const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
@@ -464,6 +464,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 }
 
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
+const cap1 = s => s ? String(s).charAt(0).toUpperCase() + String(s).slice(1).toLowerCase() : s
 
 async function crearInsumo({ nombre, unidad, unidadCompra, factor, proveedor }, setAviso) {
   const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1, proveedor: (proveedor || '').trim() || null })
@@ -921,128 +922,200 @@ function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCan
   )
 }
 
-// Configurar TODO de una: presentación, unidad, factor, mínimo, objetivo
-// y precio (contado), aplicado a TODAS las fincas de un golpe.
+// Configurar TODO de una: presentación, unidad, factor, mínimo, cantidad
+// deseable y precio. Se aplica a TODAS las fincas activas; las excepciones
+// ajustan la unidad de las que difieren (el factor se calcula solo).
+const APP_UNIDADES = ['masa','liquido','conteo']
+const famLbl = fam => fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'
+
 function EditorConfigTodo({ insumo, fincas, presentaciones, onHecho, onError, onCancelar }) {
-  const [presentacion, setPresentacion] = useState(insumo.unidad_compra || 'Saco')
+  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+  const [presentacion, setPresentacion] = useState(cap1(insumo.unidad_compra) || 'Saco')
+  const [presLista, setPresLista] = useState([...new Set((presentaciones || []).map(cap1))])
   const [contenido, setContenido] = useState(insumo.factor != null ? String(insumo.factor) : '')
   const [uCont, setUCont] = useState(insumo.unidad)
-  const [unidad, setUnidad] = useState(insumo.unidad)
+  const [unidad, setUnidad] = useState(insumo.unidad)   // estándar; '__completo' = envase entero
+  const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
   const [minimo, setMinimo] = useState('')
-  const [objetivo, setObjetivo] = useState('')
+  const [deseable, setDeseable] = useState('')
   const [precio, setPrecio] = useState('')
-  const [precioPor, setPrecioPor] = useState('presentacion')  // 'presentacion' | 'aplicacion'
+  const [precioPor, setPrecioPor] = useState('presentacion')
+  const [plazo, setPlazo] = useState(0)
   const [desde, setDesde] = useState(hoyISO())
-  const [sel, setSel] = useState((fincas || []).map(f => f.id))
   const [enviando, setEnviando] = useState(false)
-  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-  const factor = factorDe(contenido, uCont, unidad)
-  const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
-  const precioApp = (Number(precio) > 0 && factor) ? (precioPor === 'presentacion' ? Number(precio) / factor : Number(precio)) : null
+
+  const esComp = unidad === '__completo'
+  const uStd = esComp ? 'unidad' : unidad
+  const factor = esComp ? 1 : factorDe(contenido, uCont, unidad)
+  const listo = presentacion.trim() && factor != null && factor > 0
+  const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u)
+
+  async function crearPresentacion() {
+    const nom = window.prompt('Nueva presentación (ej. Galonera):')
+    if (!nom || !nom.trim()) return
+    const limpio = cap1(nom.trim())
+    await supabase.schema('produccion').from('presentacion').insert({ nombre: limpio })
+    setPresLista(ps => [...new Set([...ps, limpio])].sort())
+    setPresentacion(limpio)
+  }
+
+  function precioAppDe(fac) {
+    if (!(Number(precio) > 0) || !fac) return null
+    return precioPor === 'presentacion' ? Number(precio) / fac : Number(precio)
+  }
 
   async function guardar() {
     if (!listo) { onError('Revisa la presentación y el contenido (factor).'); return }
     setEnviando(true)
     try {
-      for (const fid of sel) {
+      const excMap = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excMap[e.fincaId] = e.unidad })
+      for (const f of activas) {
+        const uFinca = excMap[f.id] || uStd
+        const facFinca = excMap[f.id] ? factorFinca(excMap[f.id]) : factor
+        if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
         const { error } = await supabase.schema('produccion').from('insumo_finca')
-          .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: presentacion.trim(),
-                    contenido: numDec(contenido), unidad_contenido: uCont, factor,
+          .upsert({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
+                    contenido: esComp ? 1 : numDec(contenido), unidad_contenido: esComp ? 'unidad' : uCont, factor: facFinca,
                     stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-                    stock_objetivo: numDec(objetivo) > 0 ? numDec(objetivo) : null }, { onConflict: 'insumo_id,finca_id' })
+                    stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null }, { onConflict: 'insumo_id,finca_id' })
         if (error) throw error
+        const precioApp = precioAppDe(facFinca)
         if (precioApp != null) {
           await supabase.schema('produccion').from('precio_insumo').delete()
-            .eq('insumo_id', insumo.id).eq('finca_id', fid).eq('plazo', 0).gte('vigente_desde', desde)
+            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', plazo).gte('vigente_desde', desde)
           await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-            .eq('insumo_id', insumo.id).eq('finca_id', fid).eq('plazo', 0).is('vigente_hasta', null).lt('vigente_desde', desde)
+            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', plazo).is('vigente_hasta', null).lt('vigente_desde', desde)
           const { error: ep } = await supabase.schema('produccion').from('precio_insumo')
-            .insert({ insumo_id: insumo.id, finca_id: fid, plazo: 0, precio_unitario: precioApp, vigente_desde: desde })
+            .insert({ insumo_id: insumo.id, finca_id: f.id, plazo, precio_unitario: precioApp, vigente_desde: desde })
           if (ep) throw ep
         }
       }
-      onHecho(`Configurado en ${sel.length} ${sel.length === 1 ? 'finca' : 'fincas'}.`)
+      onHecho(`Configurado en ${activas.length} fincas.`)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
     finally { setEnviando(false) }
   }
 
+  const seccion = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '15px 16px', marginBottom: '12px' }
+  const tit = { fontSize: '11px', letterSpacing: '.05em', textTransform: 'uppercase', color: GRIS, margin: '0 0 13px', fontWeight: 600 }
+  const usados = [...new Set([presentacion, ...presLista])].filter(Boolean)
+
   return (
-    <div style={{ background: '#f0f6f2', padding: '14px 16px', borderBottom: '0.5px solid #e6edf3' }}>
-      <div style={{ fontSize: '13px', fontWeight: 600, color: VERDE, marginBottom: '10px' }}>Configurar {insumo.nombre} — se aplica a todas las fincas</div>
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <Campo label="Llega en (envase)">
-          <select value={presentacion} onChange={e => setPresentacion(e.target.value)} style={{ ...inp, width: '150px' }}>
-            {[...new Set([presentacion, ...(presentaciones || [])])].filter(Boolean).map(pn => <option key={pn} value={pn}>{pn}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Cada envase trae">
-          <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label="Unidad del contenido">
-          <select value={uCont} onChange={e => { setUCont(e.target.value); if (U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '180px' }}>
-            {['masa','liquido','conteo'].map(fam => (
-              <optgroup key={fam} label={fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'}>
-                {UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}
-              </optgroup>
+    <div style={{ background: '#f0f6f2', padding: '16px 18px', borderBottom: '0.5px solid #e6edf3' }}>
+      <div style={{ fontSize: '14px', fontWeight: 600, color: VERDE, marginBottom: '14px' }}>Configurar {insumo.nombre}</div>
+
+      {/* 1. Unidades */}
+      <div style={seccion}>
+        <div style={tit}>1 · Unidades y conversión</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <Campo label="Llega en (envase)">
+            <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '160px' }}>
+              {usados.map(pn => <option key={pn} value={pn}>{pn}</option>)}
+              <option value="__nueva">＋ Agregar presentación…</option>
+            </select>
+          </Campo>
+          <Campo label="Cada envase trae">
+            <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" disabled={esComp} style={{ ...inp, width: '90px', textAlign: 'right', opacity: esComp ? 0.5 : 1 }} />
+          </Campo>
+          <Campo label="Unidad del contenido">
+            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} disabled={esComp} style={{ ...inp, width: '175px', opacity: esComp ? 0.5 : 1 }}>
+              {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+            </select>
+          </Campo>
+          <Campo label="Se aplica en (estándar)">
+            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '190px' }}>
+              <optgroup label="Por envase entero"><option value="__completo">Envase completo ({cap1(presentacion)})</option></optgroup>
+              {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+            </select>
+          </Campo>
+        </div>
+        {factor != null && (contenido || esComp) && (
+          <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
+            1 {cap1(presentacion)} = {esComp ? '1 envase' : `${contenido} ${UNIDAD[uCont] || uCont} = `}<b>{esComp ? '' : `${Math.round(factor * 10000) / 10000} ${UNIDAD[uStd] || uStd}`}</b>
+          </div>
+        )}
+        {contenido && !esComp && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
+      </div>
+
+      {/* 2. Excepciones */}
+      <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
+        <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca aplica distinto?</div>
+        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '11px' }}>
+          El estándar va a todas. Agrega solo la finca que difiere y en qué unidad la aplica — el factor se calcula solo.
+        </div>
+        {exc.map((e, i) => {
+          const facF = e.unidad ? factorFinca(e.unidad) : null
+          return (
+          <div key={i} style={{ marginBottom: '8px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1.3fr auto', gap: '10px', alignItems: 'center' }}>
+              <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
+                <option value="">Elegir finca</option>
+                {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+              </select>
+              <select value={e.unidad} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, unidad: ev.target.value } : r))} style={inp}>
+                <option value="">En qué se aplica</option>
+                {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+              </select>
+              <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
+            </div>
+            {e.unidad && (facF ? (
+              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '5px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
+            ) : (
+              <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '5px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
             ))}
-          </select>
-        </Campo>
-        <Campo label="Se aplica en">
-          <select value={unidad} onChange={e => { setUnidad(e.target.value); if (U_FAMILIA(uCont) !== U_FAMILIA(e.target.value)) setUCont(e.target.value) }} style={{ ...inp, width: '180px' }}>
-            {['masa','liquido','conteo'].map(fam => (
-              <optgroup key={fam} label={fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'}>
-                {UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </Campo>
+          </div>
+          )
+        })}
+        <button onClick={() => setExc(x => [...x, { fincaId: '', unidad: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
-      {factor != null && contenido && (
-        <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 11px', marginTop: '10px', display: 'inline-block' }}>
-          1 {cap(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[unidad] || unidad}</b>
+
+      {/* 3. Precio */}
+      <div style={seccion}>
+        <div style={tit}>3 · Precio</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <Campo label="Precio (número)">
+            <input inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="opcional" style={{ ...inp, width: '110px', textAlign: 'right' }} />
+          </Campo>
+          <Campo label="¿Ese precio es por…?">
+            <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '180px' }}>
+              <option value="presentacion">Envase entero ({cap1(presentacion)})</option>
+              <option value="aplicacion">Unidad menor</option>
+            </select>
+          </Campo>
+          <Campo label="Plazo">
+            <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={{ ...inp, width: '130px' }}>
+              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Desde cuándo rige">
+            <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
+          </Campo>
         </div>
-      )}
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '12px' }}>
-        <Campo label={`Mínimo (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '120px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label={`Objetivo (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '120px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label="Precio (número)">
-          <input inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="opcional" style={{ ...inp, width: '110px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label="¿Ese precio es por…?">
-          <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '170px' }}>
-            <option value="presentacion">Envase entero ({cap(presentacion)})</option>
-            <option value="aplicacion">Unidad menor ({UNIDAD[unidad] || unidad})</option>
-          </select>
-        </Campo>
-        <Campo label="Desde cuándo rige">
-          <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
-        </Campo>
+        {Number(precio) > 0 && factor && (
+          <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '6px' }}>
+            Se guarda convertido a precio por unidad menor. El precio anterior de ese plazo queda en el histórico; el nuevo rige desde la fecha (puede ser una fecha pasada).
+          </div>
+        )}
       </div>
-      {precioApp != null && (
-        <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '6px' }}>
-          Se guardará como {dinero(precioApp)} por {UNIDAD[unidad] || unidad} ({dinero(precioApp * factor)} por {cap(presentacion)}).
+
+      {/* 4. Alertas */}
+      <div style={seccion}>
+        <div style={tit}>4 · Alertas de inventario</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <Campo label={`Mínimo (${UNIDAD[uStd] || uStd})`}>
+            <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} />
+          </Campo>
+          <Campo label={`Cantidad deseable (${UNIDAD[uStd] || uStd})`}>
+            <input inputMode="decimal" value={deseable} onChange={e => setDeseable(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+          </Campo>
         </div>
-      )}
-      <div style={{ marginTop: '12px' }}>
-        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar a:</div>
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          {(fincas || []).map(f => {
-            const on = sel.includes(f.id)
-            return <button key={f.id} onClick={() => toggle(f.id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}</button>
-          })}
-          <button onClick={() => setSel((fincas || []).map(f => f.id))} style={miniLink}>Todas</button>
-          <button onClick={() => setSel([])} style={miniLink}>Ninguna</button>
-        </div>
+        <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '8px' }}>Bajo el mínimo = “Bajo”. En o sobre la cantidad deseable = “Suficiente”. En medio = “Medio”.</div>
       </div>
-      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-        <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar en ' + sel.length + ' fincas'}</button>
+
+      <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
         <button onClick={onCancelar} style={btn}>Cancelar</button>
+        <span style={{ fontSize: '12px', color: GRIS, marginLeft: 'auto' }}>Se guardará en las {activas.length} fincas activas</span>
       </div>
-      {contenido && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
     </div>
   )
 }
