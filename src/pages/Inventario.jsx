@@ -40,7 +40,7 @@ const ANCHOS_SALDO_BOD  = '1.3fr 200px 130px'   // bodeguero: sin dolares
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
-const ANCHOS_MOV2       = '1.2fr 1.6fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr'   // llega/se aplica + inicial, entró, aplicó, devuelto, queda
+const ANCHOS_MOV2       = '1.2fr 1.5fr 0.85fr 0.85fr 0.85fr 0.85fr 0.9fr 0.9fr'   // + conteo antes de queda
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 
 export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
@@ -698,7 +698,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         <>
           <Tabla
             caja min="900px"
-            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Queda']}
+            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Conteo', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
             {movs.map(m => {
@@ -721,6 +721,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </Celda>
                 <Celda derecha color={Number(m.devuelto) ? ROJO : '#c3d0db'}>
                   {Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}{Number(m.devuelto) ? eq(m.devuelto) : null}
+                </Celda>
+                <Celda derecha color={m.conteo === null || m.conteo === undefined ? '#c3d0db' : AZUL}>
+                  {m.conteo === null || m.conteo === undefined ? '—' : <>{limpio(m.conteo)}{eq(m.conteo)}</>}
                 </Celda>
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {limpio(m.saldo_final)}{eq(m.saldo_final)}
