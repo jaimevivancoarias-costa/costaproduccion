@@ -49,6 +49,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [motivoDesc, setMotivoDesc] = useState({})   // motivo del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})
   const [lps, setLps] = useState(55)                 // libras por saco
+  const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
+  const [detLineas, setDetLineas] = useState({})
   const [guardando, setGuardando] = useState(false)
   const [nuevos, setNuevos] = useState([])
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
@@ -179,6 +181,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       setContando(false); setEditToma(null); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setObs(''); await cargar()
     } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') }) }
     finally { setGuardando(false) }
+  }
+
+  const nombreProducto = id => saldos.find(s => s.producto_id === id)?.producto || ''
+
+  async function verDescuadres(t) {
+    if (detToma === t.id) { setDetToma(null); return }
+    setDetToma(t.id)
+    if (!detLineas[t.id]) {
+      const { data } = await supabase.schema('produccion').from('toma_balanceado_linea')
+        .select('producto_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').eq('toma_id', t.id)
+      const desc = (data || []).filter(l => Math.abs(Number(l.diferencia) || 0) > 0.001)
+      setDetLineas(m => ({ ...m, [t.id]: desc }))
+    }
   }
 
   async function borrarToma(t) {
@@ -459,9 +474,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 8px' }}>Conteos anteriores</h3>
               <Caja>
                 {tomas.map(t => (
-                  <Fila key={t.id} gtc={esJefe ? '150px 1fr 160px' : G_DOS}>
+                  <div key={t.id}>
+                  <Fila gtc={esJefe ? '150px 1fr 160px' : G_DOS}>
                     <Cel fuerte>{corta(t.fecha)}</Cel>
-                    <Cel gris>{t.observacion || 'Sin observación'}</Cel>
+                    <Cel gris>
+                      {t.observacion || 'Sin observación'}
+                      <button onClick={() => verDescuadres(t)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL, marginLeft: '8px', padding: 0 }}>
+                        {detToma === t.id ? 'ocultar descuadres' : 'ver descuadres'}
+                      </button>
+                    </Cel>
                     {esJefe && (
                       <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
                         <button onClick={() => editarToma(t)} style={{ ...btn, padding: '5px 11px', fontSize: '12px' }}>Editar</button>
@@ -470,6 +491,27 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       </div>
                     )}
                   </Fila>
+                  {detToma === t.id && (
+                    <div style={{ padding: '8px 16px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      {!detLineas[t.id] ? (
+                        <div style={{ fontSize: '12px', color: GRIS }}>Cargando...</div>
+                      ) : !detLineas[t.id].length ? (
+                        <div style={{ fontSize: '12px', color: VERDE }}>Todo cuadró en este conteo.</div>
+                      ) : detLineas[t.id].map((l, i) => {
+                        const dif = Number(l.diferencia)
+                        return (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px', fontSize: '12.5px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                            <span>{nombreProducto(l.producto_id)}</span>
+                            <span style={{ color: GRIS }}>sistema {limpio(l.cantidad_sistema)} · contó {limpio(l.cantidad_contada)}</span>
+                            <span style={{ textAlign: 'right', color: dif < 0 ? ROJO : AMBAR }}>
+                              {(dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}{l.motivo_descuadre ? ` · ${l.motivo_descuadre}` : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  </div>
                 ))}
               </Caja>
             </div>
