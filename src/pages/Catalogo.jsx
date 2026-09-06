@@ -303,12 +303,23 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   </div>
                 )}
 
-                {editConfig === p.id && tab === 'insumos' && (
-                  <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones}
-                    onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
-                    onError={t => setAviso({ tipo: 'error', texto: t })}
-                    onCancelar={() => setEditConfig(null)} />
-                )}
+                {editConfig === p.id && tab === 'insumos' && (() => {
+                  // Precarga: config y precios actuales de una finca representativa.
+                  const f0 = (fincas || []).find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || (fincas || [])[0]?.id
+                  const o = over[k(p.id, f0)]
+                  const preciosAct = {}
+                  PLAZOS.forEach(pz => {
+                    const vg = vigente(preIns, p.id, f0, pz)
+                    preciosAct[pz] = vg ? Number(vg.precio_unitario) : (preInsGen[p.id]?.[pz] ?? null)
+                  })
+                  return (
+                    <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones}
+                      actual={o ? { ...o, precios: preciosAct } : { precios: preciosAct }}
+                      onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                      onError={t => setAviso({ tipo: 'error', texto: t })}
+                      onCancelar={() => setEditConfig(null)} />
+                  )
+                })()}
 
                 {ab && (
                   <div style={{ background: 'white', padding: '0 20px 8px' }}>
@@ -620,18 +631,7 @@ function EditorPrecioPlazo({ tab, fincas, fincaActual, uCons, uCompra, factor, p
   )
   return (
     <div style={{ background: '#eef3f7', padding: '14px 16px', borderBottom: '0.5px solid #eef3f7' }}>
-      {/* Plazo activo */}
-      <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: AZUL, marginBottom: '8px' }}>Plazo activo</div>
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <Campo label="Se compra a"><select value={plazoSel} onChange={e => setPlazoSel(Number(e.target.value))} style={{ ...inp, width: '130px' }}>{PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}</select></Campo>
-        <Campo label="Rige desde"><input type="date" value={desdePz} onChange={e => setDesdePz(e.target.value)} style={inp} /></Campo>
-        <button disabled={selPz.length === 0 || envPz} onClick={async () => { setEnvPz(true); await onGuardarPlazo(plazoSel, desdePz, selPz); setEnvPz(false) }} style={{ ...btnPri, opacity: (selPz.length === 0 || envPz) ? 0.5 : 1 }}>{envPz ? 'Guardando...' : 'Fijar'}</button>
-      </div>
-      <div style={{ fontSize: '11px', color: GRIS, marginTop: '5px' }}>Desde esa fecha, todo lo que ingrese se costea a ese plazo. El bodeguero no lo ve.</div>
-      {chips(selPz, setSelPz)}
-
       {/* Precios guardados */}
-      <div style={{ borderTop: '0.5px solid #d9e2ea', margin: '14px 0 10px' }} />
       <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: AZUL, marginBottom: '8px' }}>Precios guardados (por {cap(uCompra)})</div>
       <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'center' }}>
         {PLAZOS.map(pz => {
@@ -928,19 +928,23 @@ function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCan
 const APP_UNIDADES = ['masa','liquido','conteo']
 const famLbl = fam => fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'
 
-function EditorConfigTodo({ insumo, fincas, presentaciones, onHecho, onError, onCancelar }) {
+function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onError, onCancelar }) {
+  const a = actual || {}
   const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
-  const [presentacion, setPresentacion] = useState(cap1(insumo.unidad_compra) || 'Saco')
+  const [presentacion, setPresentacion] = useState(cap1(a.unidad_compra || insumo.unidad_compra) || 'Saco')
   const [presLista, setPresLista] = useState([...new Set((presentaciones || []).map(cap1))])
-  const [contenido, setContenido] = useState(insumo.factor != null ? String(insumo.factor) : '')
-  const [uCont, setUCont] = useState(insumo.unidad)
-  const [unidad, setUnidad] = useState(insumo.unidad)   // estándar; '__completo' = envase entero
+  const [contenido, setContenido] = useState(
+    a.contenido != null ? String(a.contenido) : (a.factor != null ? String(a.factor) : (insumo.factor != null ? String(insumo.factor) : '')))
+  const [uCont, setUCont] = useState(a.unidad_contenido || a.unidad || insumo.unidad)
+  const [unidad, setUnidad] = useState(a.unidad || insumo.unidad)   // estándar; '__completo' = envase entero
   const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
-  const [minimo, setMinimo] = useState('')
-  const [deseable, setDeseable] = useState('')
-  const [precio, setPrecio] = useState('')
-  const [precioPor, setPrecioPor] = useState('presentacion')
-  const [plazo, setPlazo] = useState(0)
+  const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
+  const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
+  // Los precios guardados están por unidad de aplicación → precargamos así.
+  const [precios, setPrecios] = useState(() => {
+    const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * 10000) / 10000) }); return p
+  })
+  const [precioPor, setPrecioPor] = useState((a.precios && Object.values(a.precios).some(v => v != null)) ? 'aplicacion' : 'presentacion')
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
 
@@ -959,10 +963,13 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, onHecho, onError, on
     setPresentacion(limpio)
   }
 
-  function precioAppDe(fac) {
-    if (!(Number(precio) > 0) || !fac) return null
-    return precioPor === 'presentacion' ? Number(precio) / fac : Number(precio)
+  // Precio por aplicación para un plazo dado y el factor de la finca.
+  function precioAppDe(pz, fac) {
+    const raw = numDec(precios[pz] || '')
+    if (!(raw > 0) || !fac) return null
+    return precioPor === 'presentacion' ? raw / fac : raw
   }
+  const hayAlgunPrecio = PLAZOS.some(pz => numDec(precios[pz] || '') > 0)
 
   async function guardar() {
     if (!listo) { onError('Revisa la presentación y el contenido (factor).'); return }
@@ -979,14 +986,15 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, onHecho, onError, on
                     stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
                     stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null }, { onConflict: 'insumo_id,finca_id' })
         if (error) throw error
-        const precioApp = precioAppDe(facFinca)
-        if (precioApp != null) {
+        for (const pz of PLAZOS) {
+          const precioApp = precioAppDe(pz, facFinca)
+          if (precioApp == null) continue
           await supabase.schema('produccion').from('precio_insumo').delete()
-            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', plazo).gte('vigente_desde', desde)
+            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', pz).gte('vigente_desde', desde)
           await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', plazo).is('vigente_hasta', null).lt('vigente_desde', desde)
+            .eq('insumo_id', insumo.id).eq('finca_id', f.id).eq('plazo', pz).is('vigente_hasta', null).lt('vigente_desde', desde)
           const { error: ep } = await supabase.schema('produccion').from('precio_insumo')
-            .insert({ insumo_id: insumo.id, finca_id: f.id, plazo, precio_unitario: precioApp, vigente_desde: desde })
+            .insert({ insumo_id: insumo.id, finca_id: f.id, plazo: pz, precio_unitario: precioApp, vigente_desde: desde })
           if (ep) throw ep
         }
       }
@@ -1071,28 +1079,30 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, onHecho, onError, on
       {/* 3. Precio */}
       <div style={seccion}>
         <div style={tit}>3 · Precio</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label="Precio (número)">
-            <input inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="opcional" style={{ ...inp, width: '110px', textAlign: 'right' }} />
-          </Campo>
-          <Campo label="¿Ese precio es por…?">
-            <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '180px' }}>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
+          <Campo label="¿El precio es por…?">
+            <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '210px' }}>
               <option value="presentacion">Envase entero ({cap1(presentacion)})</option>
-              <option value="aplicacion">Unidad menor</option>
-            </select>
-          </Campo>
-          <Campo label="Plazo">
-            <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={{ ...inp, width: '130px' }}>
-              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+              <option value="aplicacion">Unidad menor ({UNIDAD[uStd] || uStd})</option>
             </select>
           </Campo>
           <Campo label="Desde cuándo rige">
             <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
           </Campo>
         </div>
-        {Number(precio) > 0 && factor && (
-          <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '6px' }}>
-            Se guarda convertido a precio por unidad menor. El precio anterior de ese plazo queda en el histórico; el nuevo rige desde la fecha (puede ser una fecha pasada).
+        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Precio por plazo (llena solo los que apliquen):</div>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {PLAZOS.map(pz => (
+            <Campo key={pz} label={PLAZO_LBL[pz]}>
+              <input inputMode="decimal" value={precios[pz] ?? ''} placeholder="—"
+                onChange={e => setPrecios(p => ({ ...p, [pz]: e.target.value }))}
+                style={{ ...inp, width: '95px', textAlign: 'right' }} />
+            </Campo>
+          ))}
+        </div>
+        {hayAlgunPrecio && factor && (
+          <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '8px' }}>
+            Se guarda convertido a precio por unidad menor. El precio anterior de cada plazo queda en el histórico; el nuevo rige desde la fecha (puede ser pasada).
           </div>
         )}
       </div>
