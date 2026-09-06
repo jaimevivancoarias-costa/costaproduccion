@@ -59,6 +59,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [editU, setEditU] = useState(null)         // clave de unidad en edición
   const [nuevo, setNuevo] = useState(false)
   const [editProd, setEditProd] = useState(null)   // id de producto en edición (nombre)
+  const [editConfig, setEditConfig] = useState(null)  // id de insumo en "Configurar todo de una"
   const [presentaciones, setPresentaciones] = useState([])
 
   const fincaIds = (fincas || []).map(f => f.id)
@@ -261,6 +262,14 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {lista.map(p => {
             const ab = abierto === p.id
+            // Badges de "pendiente" (solo insumos).
+            const tienePrecio = tab === 'insumos'
+              ? ((preInsGen[p.id] && Object.values(preInsGen[p.id]).some(v => Number(v) > 0)) ||
+                 (fincas || []).some(f => (preIns[k(p.id, f.id)] || []).length > 0))
+              : true
+            const tieneMin = tab === 'insumos'
+              ? (fincas || []).some(f => over[k(p.id, f.id)]?.stock_minimo != null)
+              : true
             return (
               <div key={p.id} style={{ background: 'white', border: '1px solid #e6edf3', borderRadius: '14px',
                                        boxShadow: '0 1px 2px rgba(16,40,71,0.04)', overflow: 'hidden' }}>
@@ -274,9 +283,12 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       {tab === 'insumos' ? ` · Se aplica en ${UNIDAD[p.unidad] || p.unidad}` : (p.marca ? ` · ${p.marca}` : '')}
                       {p.proveedor ? ` · Proveedor ${p.proveedor}` : ''}
                     </span>
+                    {tab === 'insumos' && !tienePrecio && <Insignia color="#A23A38" bg="#FBEAEA">Sin precio</Insignia>}
+                    {tab === 'insumos' && tienePrecio && !tieneMin && <Insignia color="#9a6a12" bg="#FAEEDA">Sin mínimo</Insignia>}
                   </span>
                   {esJefeGlobal && (
                     <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
+                      {tab === 'insumos' && <button onClick={() => { setAbierto(p.id); setEditConfig(editConfig === p.id ? null : p.id) }} style={linkAccion(VERDE)}>{editConfig === p.id ? 'Cerrar' : 'Configurar'}</button>}
                       <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={linkAccion(AZUL)}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>
                       <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={linkAccion(ROJO)}>Quitar</button>
                     </span>
@@ -289,6 +301,13 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       ? <FormaInsumo actual={p} onGuardar={async d => { const ok = await editarInsumo(p, d, setAviso); if (ok) { setEditProd(null); await cargar() } }} onCancelar={() => setEditProd(null)} />
                       : <FormaProducto actual={p} onGuardar={async d => { const ok = await editarProducto(p, d, setAviso); if (ok) { setEditProd(null); await cargar() } }} onCancelar={() => setEditProd(null)} />}
                   </div>
+                )}
+
+                {editConfig === p.id && tab === 'insumos' && (
+                  <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones}
+                    onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                    onError={t => setAviso({ tipo: 'error', texto: t })}
+                    onCancelar={() => setEditConfig(null)} />
                 )}
 
                 {ab && (
@@ -900,6 +919,136 @@ function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCan
       </div>
     </div>
   )
+}
+
+// Configurar TODO de una: presentación, unidad, factor, mínimo, objetivo
+// y precio (contado), aplicado a TODAS las fincas de un golpe.
+function EditorConfigTodo({ insumo, fincas, presentaciones, onHecho, onError, onCancelar }) {
+  const [presentacion, setPresentacion] = useState(insumo.unidad_compra || 'Saco')
+  const [contenido, setContenido] = useState(insumo.factor != null ? String(insumo.factor) : '')
+  const [uCont, setUCont] = useState(insumo.unidad)
+  const [unidad, setUnidad] = useState(insumo.unidad)
+  const [minimo, setMinimo] = useState('')
+  const [objetivo, setObjetivo] = useState('')
+  const [precio, setPrecio] = useState('')
+  const [precioPor, setPrecioPor] = useState('presentacion')  // 'presentacion' | 'aplicacion'
+  const [desde, setDesde] = useState(hoyISO())
+  const [sel, setSel] = useState((fincas || []).map(f => f.id))
+  const [enviando, setEnviando] = useState(false)
+  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
+  const factor = factorDe(contenido, uCont, unidad)
+  const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
+  const precioApp = (Number(precio) > 0 && factor) ? (precioPor === 'presentacion' ? Number(precio) / factor : Number(precio)) : null
+
+  async function guardar() {
+    if (!listo) { onError('Revisa la presentación y el contenido (factor).'); return }
+    setEnviando(true)
+    try {
+      for (const fid of sel) {
+        const { error } = await supabase.schema('produccion').from('insumo_finca')
+          .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: presentacion.trim(),
+                    contenido: numDec(contenido), unidad_contenido: uCont, factor,
+                    stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
+                    stock_objetivo: numDec(objetivo) > 0 ? numDec(objetivo) : null }, { onConflict: 'insumo_id,finca_id' })
+        if (error) throw error
+        if (precioApp != null) {
+          await supabase.schema('produccion').from('precio_insumo').delete()
+            .eq('insumo_id', insumo.id).eq('finca_id', fid).eq('plazo', 0).gte('vigente_desde', desde)
+          await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
+            .eq('insumo_id', insumo.id).eq('finca_id', fid).eq('plazo', 0).is('vigente_hasta', null).lt('vigente_desde', desde)
+          const { error: ep } = await supabase.schema('produccion').from('precio_insumo')
+            .insert({ insumo_id: insumo.id, finca_id: fid, plazo: 0, precio_unitario: precioApp, vigente_desde: desde })
+          if (ep) throw ep
+        }
+      }
+      onHecho(`Configurado en ${sel.length} ${sel.length === 1 ? 'finca' : 'fincas'}.`)
+    } catch (err) { onError(err.message || 'No se pudo guardar.') }
+    finally { setEnviando(false) }
+  }
+
+  return (
+    <div style={{ background: '#f0f6f2', padding: '14px 16px', borderBottom: '0.5px solid #e6edf3' }}>
+      <div style={{ fontSize: '13px', fontWeight: 600, color: VERDE, marginBottom: '10px' }}>Configurar {insumo.nombre} — se aplica a todas las fincas</div>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <Campo label="Llega en (envase)">
+          <select value={presentacion} onChange={e => setPresentacion(e.target.value)} style={{ ...inp, width: '150px' }}>
+            {[...new Set([presentacion, ...(presentaciones || [])])].filter(Boolean).map(pn => <option key={pn} value={pn}>{pn}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Cada envase trae">
+          <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label="Unidad del contenido">
+          <select value={uCont} onChange={e => { setUCont(e.target.value); if (U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '180px' }}>
+            {['masa','liquido','conteo'].map(fam => (
+              <optgroup key={fam} label={fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'}>
+                {UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </Campo>
+        <Campo label="Se aplica en">
+          <select value={unidad} onChange={e => { setUnidad(e.target.value); if (U_FAMILIA(uCont) !== U_FAMILIA(e.target.value)) setUCont(e.target.value) }} style={{ ...inp, width: '180px' }}>
+            {['masa','liquido','conteo'].map(fam => (
+              <optgroup key={fam} label={fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'}>
+                {UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}
+              </optgroup>
+            ))}
+          </select>
+        </Campo>
+      </div>
+      {factor != null && contenido && (
+        <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 11px', marginTop: '10px', display: 'inline-block' }}>
+          1 {cap(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[unidad] || unidad}</b>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginTop: '12px' }}>
+        <Campo label={`Mínimo (${UNIDAD[unidad] || unidad})`}>
+          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '120px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label={`Objetivo (${UNIDAD[unidad] || unidad})`}>
+          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '120px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label="Precio (número)">
+          <input inputMode="decimal" value={precio} onChange={e => setPrecio(e.target.value)} placeholder="opcional" style={{ ...inp, width: '110px', textAlign: 'right' }} />
+        </Campo>
+        <Campo label="¿Ese precio es por…?">
+          <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '170px' }}>
+            <option value="presentacion">Envase entero ({cap(presentacion)})</option>
+            <option value="aplicacion">Unidad menor ({UNIDAD[unidad] || unidad})</option>
+          </select>
+        </Campo>
+        <Campo label="Desde cuándo rige">
+          <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
+        </Campo>
+      </div>
+      {precioApp != null && (
+        <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '6px' }}>
+          Se guardará como {dinero(precioApp)} por {UNIDAD[unidad] || unidad} ({dinero(precioApp * factor)} por {cap(presentacion)}).
+        </div>
+      )}
+      <div style={{ marginTop: '12px' }}>
+        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar a:</div>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {(fincas || []).map(f => {
+            const on = sel.includes(f.id)
+            return <button key={f.id} onClick={() => toggle(f.id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}</button>
+          })}
+          <button onClick={() => setSel((fincas || []).map(f => f.id))} style={miniLink}>Todas</button>
+          <button onClick={() => setSel([])} style={miniLink}>Ninguna</button>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+        <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar en ' + sel.length + ' fincas'}</button>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+      </div>
+      {contenido && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
+    </div>
+  )
+}
+
+function Insignia({ children, color, bg }) {
+  return <span style={{ fontSize: '10.5px', fontWeight: 600, background: bg, color, borderRadius: '6px', padding: '2px 8px', marginLeft: '8px' }}>{children}</span>
 }
 
 function FormaInsumo({ actual, onGuardar, onCancelar }) {
