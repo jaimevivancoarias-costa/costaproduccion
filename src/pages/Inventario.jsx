@@ -79,6 +79,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
   const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
+  const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
+  const [detLineas, setDetLineas] = useState({})     // toma_id -> líneas con descuadre
   const [factores, setFactores] = useState({})       // insumoId -> { factor, uApp }
   const [guardando, setGuardando] = useState(false)
 
@@ -174,6 +176,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
   const negativos = saldos.filter(s => Number(s.saldo) < 0).length
   const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
+  const nombreInsumo = id => saldos.find(s => s.insumo_id === id)?.insumo || ''
 
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.insumo_id]
@@ -284,6 +287,17 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
     setEditToma(c); setContando(true); setAviso(null)
+  }
+
+  async function verDescuadres(c) {
+    if (detToma === c.id) { setDetToma(null); return }
+    setDetToma(c.id)
+    if (!detLineas[c.id]) {
+      const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
+        .select('insumo_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').eq('toma_id', c.id)
+      const desc = (data || []).filter(l => Math.abs(Number(l.diferencia) || 0) > 0.0001)
+      setDetLineas(m => ({ ...m, [c.id]: desc }))
+    }
   }
 
   async function borrarConteo(c) {
@@ -881,9 +895,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               <Tabla caja columnas={esJefe ? ['Fecha', 'Observación', ''] : ['Fecha', 'Observación']}
                      anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
                 {conteos.map(c => (
-                  <Fila key={c.id} anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
+                  <div key={c.id}>
+                  <Fila anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
                     <Celda fuerte>{corta(c.fecha)}{c.es_inicial && <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 500, background: '#E6F1FB', color: AZUL, borderRadius: '6px', padding: '2px 7px' }}>Inventario inicial</span>}</Celda>
-                    <Celda gris>{c.observacion || 'Sin observación'}</Celda>
+                    <Celda gris>
+                      {c.observacion || 'Sin observación'}
+                      <button onClick={() => verDescuadres(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL, marginLeft: '8px', padding: 0 }}>
+                        {detToma === c.id ? 'ocultar descuadres' : 'ver descuadres'}
+                      </button>
+                    </Celda>
                     {esJefe && (
                       <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
                         <button onClick={() => editarConteo(c)}
@@ -897,6 +917,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       </div>
                     )}
                   </Fila>
+                  {detToma === c.id && (
+                    <div style={{ padding: '8px 16px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      {!detLineas[c.id] ? (
+                        <div style={{ fontSize: '12px', color: GRIS }}>Cargando...</div>
+                      ) : !detLineas[c.id].length ? (
+                        <div style={{ fontSize: '12px', color: VERDE }}>Todo cuadró en este conteo.</div>
+                      ) : detLineas[c.id].map((l, i) => {
+                        const dif = Number(l.diferencia)
+                        return (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px', fontSize: '12.5px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                            <span>{nombreInsumo(l.insumo_id)}</span>
+                            <span style={{ color: GRIS }}>sistema {limpio(l.cantidad_sistema)} · contó {limpio(l.cantidad_contada)}</span>
+                            <span style={{ textAlign: 'right', color: dif < 0 ? ROJO : AMBAR }}>
+                              {(dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}{l.motivo_descuadre ? ` · ${l.motivo_descuadre}` : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  </div>
                 ))}
               </Tabla>
             </div>
