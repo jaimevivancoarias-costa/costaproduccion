@@ -45,6 +45,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [estado, setEstado] = useState([])             // estado / reponer
   const [estFinca, setEstFinca] = useState(finca.id)   // finca del reporte de estado ('todas' = todas)
   const [estTipo, setEstTipo] = useState('insumo')     // 'insumo' | 'balanceado'
+  const [descs, setDescs] = useState([])               // descuadres (control de conteos)
+  const [descTipo, setDescTipo] = useState('insumo')
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -112,6 +114,15 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     return () => { vivo = false }
   }, [estFinca, estTipo])
 
+  // Descuadres (control de conteos): usa el rango de fechas y la finca.
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').rpc(descTipo === 'balanceado' ? 'fn_reporte_descuadres_bal' : 'fn_reporte_descuadres',
+      { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta })
+      .then(({ data, error }) => { if (!vivo) return; if (error) setAviso({ tipo: 'error', texto: error.message }); setDescs(data || []) })
+    return () => { vivo = false }
+  }, [finca.id, desde, hasta, todasFincas, descTipo])
+
   // Ciclos de la finca, para el atajo "por ciclo".
   useEffect(() => {
     if (todasFincas) { setCiclos([]); return }
@@ -172,6 +183,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           <Chip on={kind === 'consumo'} onClick={() => setKind('consumo')}>Consumo</Chip>
           {esJefe && <Chip on={kind === 'valorizacion'} onClick={() => setKind('valorizacion')}>Valorización de bodega total</Chip>}
           <Chip on={kind === 'estado'} onClick={() => setKind('estado')}>Estado / Reponer</Chip>
+          <Chip on={kind === 'descuadres'} onClick={() => setKind('descuadres')}>Descuadres</Chip>
           <Chip on={kind === 'proceso'} onClick={() => setKind('proceso')}>En proceso</Chip>
           <Chip on={kind === 'cosechas'} onClick={() => setKind('cosechas')}>Cosechas</Chip>
         </div>
@@ -249,6 +261,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <ReporteEstado estado={estado} fincas={fincas}
                        fincaSel={estFinca} onFinca={setEstFinca}
                        tipo={estTipo} onTipo={setEstTipo} />
+      )}
+
+      {kind === 'descuadres' && (
+        <ReporteDescuadres descs={descs} tipo={descTipo} onTipo={setDescTipo} todasFincas={todasFincas} />
       )}
 
       {kind === 'consumo' && <>
@@ -836,6 +852,71 @@ function Donut({ segmentos, centro, sub }) {
       <text x="21" y="20.5" textAnchor="middle" fontSize="7" fontWeight="600" fill={NAVY}>{centro}</text>
       <text x="21" y="26" textAnchor="middle" fontSize="3.2" fill={GRIS}>{sub}</text>
     </svg>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Descuadres: control de conteos. Qué no cuadró en cada conteo físico.
+// ---------------------------------------------------------------------
+function ReporteDescuadres({ descs, tipo, onTipo, todasFincas }) {
+  const etq = tipo === 'balanceado' ? 'Balanceado' : 'Insumo'
+  const DGRID = todasFincas
+    ? '120px 90px 1.2fr 90px 90px 100px 1fr 130px'
+    : '90px 1.3fr 90px 90px 100px 1fr 130px'
+  const faltan = descs.filter(d => Number(d.diferencia) < 0).length
+  const sobran = descs.filter(d => Number(d.diferencia) > 0).length
+  return (
+    <>
+      <div style={{ marginBottom: '14px' }}>
+        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Mostrar</div>
+        <div style={{ display: 'flex', gap: '7px' }}>
+          <Chip on={tipo === 'insumo'} onClick={() => onTipo('insumo')}>Insumos</Chip>
+          <Chip on={tipo === 'balanceado'} onClick={() => onTipo('balanceado')}>Balanceados</Chip>
+        </div>
+      </div>
+      {!descs.length ? (
+        <Caja><Centro>Sin descuadres en este rango. Todo cuadró (o aún no hay conteos).</Centro></Caja>
+      ) : (
+      <>
+      <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <Kpi titulo="Descuadres" valor={String(descs.length)} />
+        <Kpi titulo="Faltaron" valor={String(faltan)} />
+        <Kpi titulo="Sobraron" valor={String(sobran)} />
+      </div>
+      <Caja>
+        <div style={{ display: 'grid', gridTemplateColumns: DGRID, gap: '12px', padding: '11px 16px',
+                      fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+          {todasFincas && <span>Finca</span>}
+          <span>Fecha</span>
+          <span>{etq}</span>
+          <span style={{ textAlign: 'right' }}>Sistema</span>
+          <span style={{ textAlign: 'right' }}>Contado</span>
+          <span style={{ textAlign: 'right' }}>Diferencia</span>
+          <span>Motivo</span>
+          <span>Contó</span>
+        </div>
+        {descs.map((d, i) => {
+          const dif = Number(d.diferencia)
+          return (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: DGRID, gap: '12px',
+                  padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
+            {todasFincas && <span style={{ color: GRIS }}>{d.finca}</span>}
+            <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{corta(d.fecha)}</span>
+            <span>{d.insumo}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(d.sistema)} {cap1(d.unidad)}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{miles(d.contado)} {cap1(d.unidad)}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500, color: dif < 0 ? '#c0504d' : '#9a6a12' }}>
+              {(dif < 0 ? 'Faltó ' : 'Sobró ') + miles(Math.abs(dif))}
+            </span>
+            <span style={{ color: d.motivo ? NAVY : '#c3d0db' }}>{d.motivo || 'sin motivo'}</span>
+            <span style={{ color: GRIS, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.autor || '—'}</span>
+          </div>
+          )
+        })}
+      </Caja>
+      </>
+      )}
+    </>
   )
 }
 
