@@ -406,9 +406,13 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               {(() => {
                                 const activo = precioPlazo(plz[claveP]?.plazo ?? 0)   // precio del plazo activo
+                                const conv2 = tab === 'insumos' && factor && factor !== 1 && uCons !== uCompra
                                 const contenidoP = activo.val == null
                                   ? 'Sin precio'
-                                  : <>{dinero(aCompra(activo.val))}<span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap1(uCompra)}{activo.heredado ? ' · general' : ''}</span></>
+                                  : <>{dinero(aCompra(activo.val))}
+                                      <span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap1(uCompra)}{activo.heredado ? ' · general' : ''}</span>
+                                      {conv2 && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>= {dinero(activo.val)} /{UNIDAD[uCons] || uCons}</span>}
+                                    </>
                                 const estilo = { border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }
                                 // Insumos: solo lectura (se edita en Configurar). Balanceados: editable.
                                 return tab === 'balanceados'
