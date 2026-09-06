@@ -323,6 +323,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
                 {ab && (
                   <div style={{ background: 'white', padding: '0 20px 8px' }}>
+                    {tab === 'insumos' && esJefe && (
+                      <div style={{ fontSize: '11.5px', color: GRIS, padding: '8px 0 2px' }}>
+                        Vista de solo lectura. Para cambiar unidades, precios, mínimo o cantidad deseable, usa <b style={{ color: VERDE }}>Configurar</b> (arriba). El reloj muestra el historial de precios.
+                      </div>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
                                   padding: '10px 0', fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #f0f4f8' }}>
                       <span>Finca</span>
@@ -369,8 +374,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
                             {tab === 'insumos' && (
                               <span style={{ color: NAVY }}>
-                                {cap(uCompra)} <span style={{ color: GRIS, fontSize: '11.5px' }}>(1 = {contenido} {UNIDAD[uCont] || uCont})</span>
-                                {esJefe && <button onClick={() => setEditU(editU === claveP ? null : claveP)} style={miniLink}>{editU === claveP ? ' cerrar' : ' editar'}</button>}
+                                {cap1(uCompra)} <span style={{ color: GRIS, fontSize: '11.5px' }}>(1 = {contenido} {UNIDAD[uCont] || uCont})</span>
                               </span>
                             )}
                             {tab === 'insumos' && (
@@ -397,19 +401,19 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                             })()}
                             <span style={{ color: GRIS }}>
                               <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[plz[claveP]?.plazo ?? 0]}</span>
-                              {esJefe && <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={miniLink}>{editP === claveP ? 'cerrar' : 'editar'}</button>}
+                              {esJefe && tab === 'balanceados' && <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={miniLink}>{editP === claveP ? 'cerrar' : 'editar'}</button>}
                             </span>
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               {(() => {
                                 const activo = precioPlazo(plz[claveP]?.plazo ?? 0)   // precio del plazo activo
-                                return (
-                                  <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }}
-                                    style={{ border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white',
-                                             fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, cursor: 'pointer', fontVariantNumeric: 'tabular-nums', textAlign: 'right',
-                                             color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }}>
-                                    {activo.val == null ? 'Sin precio' : <>{dinero(aCompra(activo.val))}<span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap(uCompra)}{activo.heredado ? ' · general' : ''}</span></>}
-                                  </button>
-                                )
+                                const contenidoP = activo.val == null
+                                  ? 'Sin precio'
+                                  : <>{dinero(aCompra(activo.val))}<span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap1(uCompra)}{activo.heredado ? ' · general' : ''}</span></>
+                                const estilo = { border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }
+                                // Insumos: solo lectura (se edita en Configurar). Balanceados: editable.
+                                return tab === 'balanceados'
+                                  ? <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={{ ...estilo, cursor: 'pointer' }}>{contenidoP}</button>
+                                  : <span style={{ ...estilo, display: 'inline-block' }}>{contenidoP}</span>
                               })()}
                               <button onClick={() => { setHist(hist === claveP ? null : claveP); setEditP(null) }} title="Historial de precios"
                                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, padding: 0, lineHeight: 1 }}>
