@@ -1073,7 +1073,7 @@ function Btn({ children, primario, ...props }) {
 function limpio(n) {
   const v = Number(n)
   if (!isFinite(v)) return '—'
-  const s = v.toFixed(4).replace(/\.?0+$/, '')
+  const s = v.toFixed(2).replace(/\.?0+$/, '')
   return s === '' || s === '-' ? '0' : s
 }
 
