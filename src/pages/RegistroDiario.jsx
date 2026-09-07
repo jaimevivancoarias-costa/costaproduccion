@@ -985,6 +985,30 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               </div>
             )}
 
+            {/* Reabrir CUALQUIER día cerrado de la semana (aunque esté
+                completo), para poder corregir. Independiente de si tiene
+                celdas sin registrar. */}
+            {!soloLectura && !semanaCerrada && modo === 'registrar' && (() => {
+              const yaArriba = new Set(atrasadas.map(a => a.f))
+              const cerrados = fechas.filter(f => dias[f] === 'cerrado' && !yaArriba.has(f))
+              if (cerrados.length === 0) return null
+              return (
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
+                              padding: '9px 16px', background: '#F4F7FA', color: GRIS, borderTop: '0.5px solid ' + BORDE }}>
+                  <span>¿Necesitas corregir un día ya cerrado?</span>
+                  {cerrados.map(f => (
+                    <span key={f}>
+                      {esJefe
+                        ? <button onClick={() => reabrirDia(f)} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>
+                        : solReapertura.some(x => x.registro_id === diasId[f])
+                          ? <span style={{ fontSize: '12px' }}>Pedido de {nombreDia(f).slice(0, 3)} enviado</span>
+                          : <button onClick={() => pedirReabrir(f)} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>Pedir reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>}
+                    </span>
+                  ))}
+                </div>
+              )
+            })()}
+
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                           gap: '16px', flexWrap: 'wrap', padding: '14px 16px',
                           borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
