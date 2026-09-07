@@ -948,7 +948,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   const uIni = a.unidad || insumo.unidad
   const uContIni = a.unidad_contenido || a.unidad || insumo.unidad
   const [uCont, setUCont] = useState(UNIDADES_APP.includes(uContIni) ? uContIni : 'kg')
-  const [unidad, setUnidad] = useState(UNIDADES_APP.includes(uIni) ? uIni : '')   // '' = elegir; '__completo' = envase entero
+  // Si la unidad guardada no es de aplicación (ej. "saco"), es "envase entero".
+  const [unidad, setUnidad] = useState(UNIDADES_APP.includes(uIni) ? uIni : '__completo')   // '__completo' = envase entero
   const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
@@ -967,7 +968,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   const [enviando, setEnviando] = useState(false)
 
   const esComp = unidad === '__completo'
-  const uStd = esComp ? 'unidad' : unidad
+  // En "envase entero" se cuenta por la presentación (ej. Saco). Factor 1.
+  const uStd = esComp ? (presentacion.trim().toLowerCase() || 'unidad') : unidad
   const factor = esComp ? 1 : factorDe(contenido, uCont, unidad)
   const listo = presentacion.trim() && factor != null && factor > 0
   const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u)
@@ -1001,7 +1003,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
         if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
         facMap[f.id] = facFinca; ids.push(f.id)
         filas.push({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
-          contenido: esComp ? 1 : numDec(contenido), unidad_contenido: esComp ? 'unidad' : uCont, factor: facFinca,
+          contenido: numDec(contenido) > 0 ? numDec(contenido) : 1, unidad_contenido: uCont, factor: facFinca,
           stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
           stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })
       }
@@ -1070,11 +1072,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
               <option value="__nueva">＋ Agregar presentación…</option>
             </select>
           </Campo>
-          <Campo label="Cada envase trae">
-            <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" disabled={esComp} style={{ ...inp, width: '90px', textAlign: 'right', opacity: esComp ? 0.5 : 1 }} />
+          <Campo label={esComp ? 'Peso del envase (ref.)' : 'Cada envase trae'}>
+            <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 45" style={{ ...inp, width: '90px', textAlign: 'right' }} />
           </Campo>
-          <Campo label="Unidad del contenido">
-            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} disabled={esComp} style={{ ...inp, width: '175px', opacity: esComp ? 0.5 : 1 }}>
+          <Campo label={esComp ? 'Unidad del peso' : 'Unidad del contenido'}>
+            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '175px' }}>
               {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
             </select>
           </Campo>
@@ -1086,11 +1088,15 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
             </select>
           </Campo>
         </div>
-        {factor != null && (contenido || esComp) && (
+        {esComp ? (
           <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
-            1 {cap1(presentacion)} = {esComp ? '1 envase' : `${contenido} ${UNIDAD[uCont] || uCont} = `}<b>{esComp ? '' : `${Math.round(factor * 10000) / 10000} ${UNIDAD[uStd] || uStd}`}</b>
+            Se cuenta y consume por <b>{cap1(presentacion)}</b> entero{numDec(contenido) > 0 ? <> · 1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} (referencia)</> : null}
           </div>
-        )}
+        ) : factor != null && contenido ? (
+          <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
+            1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[uStd] || uStd}</b>
+          </div>
+        ) : null}
         {contenido && !esComp && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
       </div>
 
