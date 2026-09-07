@@ -291,7 +291,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   </span>
                   {esJefeGlobal && (
                     <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
-                      {tab === 'insumos' && <button onClick={() => { setAbierto(p.id); setEditConfig(editConfig === p.id ? null : p.id) }} style={linkAccion(VERDE)}>{editConfig === p.id ? 'Cerrar' : 'Configurar'}</button>}
+                      <button onClick={() => { setAbierto(p.id); setEditConfig(editConfig === p.id ? null : p.id) }} style={linkAccion(VERDE)}>{editConfig === p.id ? 'Cerrar' : 'Configurar'}</button>
                       <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={linkAccion(AZUL)}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>
                       <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={linkAccion(ROJO)}>Quitar</button>
                     </span>
@@ -329,11 +329,32 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   )
                 })()}
 
+                {editConfig === p.id && tab === 'balanceados' && (() => {
+                  const f0 = (fincas || []).find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || (fincas || [])[0]?.id
+                  const preciosAct = {}
+                  let desdeAct = null
+                  PLAZOS.forEach(pz => {
+                    const vg = vigente(preBal, p.id, f0, pz)
+                    preciosAct[pz] = vg ? Number(vg.precio_saco) : (preBalGen[p.id]?.[pz] ?? null)
+                    if (vg && !desdeAct) desdeAct = vg.vigente_desde
+                  })
+                  const pzAct = plz[k(p.id, f0)]?.plazo ?? 0
+                  const vgAct = vigente(preBal, p.id, f0, pzAct)
+                  if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
+                  return (
+                    <EditorConfigBal producto={p} fincas={fincas}
+                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
+                      onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                      onError={t => setAviso({ tipo: 'error', texto: t })}
+                      onCancelar={() => setEditConfig(null)} />
+                  )
+                })()}
+
                 {ab && (
                   <div style={{ background: 'white', padding: '0 20px 8px' }}>
-                    {tab === 'insumos' && esJefe && (
+                    {esJefe && (
                       <div style={{ fontSize: '11.5px', color: GRIS, padding: '8px 0 2px' }}>
-                        Vista de solo lectura. Para cambiar unidades, precios, mínimo o cantidad deseable, usa <b style={{ color: VERDE }}>Configurar</b> (arriba). El reloj muestra el historial de precios.
+                        Vista de solo lectura. Para cambiar {tab === 'insumos' ? 'unidades, precios' : 'precios'}, mínimo o cantidad deseable, usa <b style={{ color: VERDE }}>Configurar</b> (arriba). El reloj muestra el historial de precios.
                       </div>
                     )}
                     <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
@@ -402,14 +423,12 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                               return <>
                                 <span style={{ color: mn != null ? '#BA7517' : '#c3d0db' }}>
                                   {mn != null ? `${mn} sacos` : '—'}
-                                  {esJefe && <button onClick={() => setEditMinB(editMinB === claveP ? null : claveP)} style={miniLink}>{editMinB === claveP ? ' cerrar' : ' editar'}</button>}
                                 </span>
                                 <span style={{ color: oj != null ? VERDE : '#c3d0db' }}>{oj != null ? `${oj} sacos` : '—'}</span>
                               </>
                             })()}
                             <span style={{ color: GRIS }}>
                               <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[plz[claveP]?.plazo ?? 0]}</span>
-                              {esJefe && tab === 'balanceados' && <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={miniLink}>{editP === claveP ? 'cerrar' : 'editar'}</button>}
                             </span>
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               {(() => {
@@ -422,10 +441,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                                       {conv2 && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>= {dineroPrec(activo.val)} /{UNIDAD[uCons] || uCons}</span>}
                                     </>
                                 const estilo = { border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }
-                                // Insumos: solo lectura (se edita en Configurar). Balanceados: editable.
-                                return tab === 'balanceados'
-                                  ? <button onClick={() => { setEditP(editP === claveP ? null : claveP); setHist(null) }} style={{ ...estilo, cursor: 'pointer' }}>{contenidoP}</button>
-                                  : <span style={{ ...estilo, display: 'inline-block' }}>{contenidoP}</span>
+                                // Solo lectura (se edita en Configurar) para insumos y balanceados.
+                                return <span style={{ ...estilo, display: 'inline-block' }}>{contenidoP}</span>
                               })()}
                               <button onClick={() => { setHist(hist === claveP ? null : claveP); setEditP(null) }} title="Historial de precios"
                                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, padding: 0, lineHeight: 1 }}>
@@ -1211,6 +1228,143 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
 
       <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
         <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+        <span style={{ fontSize: '12px', color: GRIS, marginLeft: 'auto' }}>Se guardará en las {activas.length} fincas activas</span>
+      </div>
+    </div>
+  )
+}
+
+// Configurar balanceado: precio por plazo (por saco), plazo activo,
+// mínimo y objetivo. A todas las fincas de un golpe (con excepciones).
+function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancelar }) {
+  const a = actual || {}
+  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+  const [precios, setPrecios] = useState(() => {
+    const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * 10000) / 10000) }); return p
+  })
+  const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)
+  const [desde, setDesde] = useState(a.desde || hoyISO())
+  const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
+  const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
+  const [exc, setExc] = useState([])   // [{fincaId, precio, plazo, desde}]
+  const [enviando, setEnviando] = useState(false)
+
+  async function guardar() {
+    setEnviando(true)
+    try {
+      const ids = activas.map(f => f.id)
+      // 1) Mínimo/objetivo (si la tabla existe; si no, no rompe).
+      try {
+        await supabase.schema('produccion').from('producto_finca').upsert(
+          ids.map(fid => ({ producto_id: producto.id, finca_id: fid,
+            stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
+            stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })), { onConflict: 'producto_id,finca_id' })
+      } catch { /* falta correr el SQL de producto_finca */ }
+
+      const cerrarYAbrir = async (fincaIds, pz, rows, dfe) => {
+        if (!fincaIds.length) return
+        await supabase.schema('produccion').from('precio_producto').delete()
+          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfe)
+        await supabase.schema('produccion').from('precio_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
+          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfe)
+        const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
+        if (error) throw error
+      }
+      // 2) Precios estándar (por saco) por plazo.
+      for (const pz of PLAZOS) {
+        const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
+        await cerrarYAbrir(ids, pz, ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
+      }
+      // 3) Excepciones por finca.
+      for (const e of exc) {
+        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
+        const pz = Number(e.plazo) || 0, dfe = e.desde || desde
+        await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: numDec(e.precio), vigente_desde: dfe }], dfe)
+      }
+      // 4) Plazo que rige ahora.
+      await supabase.schema('produccion').from('plazo_producto').delete()
+        .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
+      await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
+        .eq('producto_id', producto.id).in('finca_id', ids).is('vigente_hasta', null).lt('vigente_desde', desde)
+      const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
+        .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: plazoActivo, vigente_desde: desde })))
+      if (e4) throw e4
+
+      onHecho(`Configurado en ${activas.length} fincas.`)
+    } catch (err) { onError(err.message || 'No se pudo guardar.') }
+    finally { setEnviando(false) }
+  }
+
+  const seccion = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '15px 16px', marginBottom: '12px' }
+  const tit = { fontSize: '11px', letterSpacing: '.05em', textTransform: 'uppercase', color: GRIS, margin: '0 0 13px', fontWeight: 600 }
+
+  return (
+    <div style={{ background: '#f0f6f2', padding: '16px 18px', borderBottom: '0.5px solid #e6edf3' }}>
+      <div style={{ fontSize: '14px', fontWeight: 600, color: VERDE, marginBottom: '14px' }}>Configurar {producto.nombre} <span style={{ fontWeight: 400, color: GRIS, fontSize: '12px' }}>· se compra y consume en sacos</span></div>
+
+      {/* Precio */}
+      <div style={seccion}>
+        <div style={tit}>1 · Precio (por saco)</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
+          <Campo label="Plazo que rige ahora">
+            <select value={plazoActivo} onChange={e => setPlazoActivo(Number(e.target.value))} style={{ ...inp, width: '140px' }}>
+              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+            </select>
+          </Campo>
+          <Campo label="Desde cuándo rige">
+            <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
+          </Campo>
+        </div>
+        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Precio por saco, por plazo (llena solo los que apliquen):</div>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+          {PLAZOS.map(pz => (
+            <Campo key={pz} label={PLAZO_LBL[pz]}>
+              <input inputMode="decimal" value={precios[pz] ?? ''} placeholder="—"
+                onChange={e => setPrecios(p => ({ ...p, [pz]: e.target.value }))} style={{ ...inp, width: '95px', textAlign: 'right' }} />
+            </Campo>
+          ))}
+        </div>
+      </div>
+
+      {/* Excepciones */}
+      <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
+        <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca con precio distinto?</div>
+        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '11px' }}>Agrega solo la finca que negocia otro precio/plazo/fecha. Lo vacío usa el estándar.</div>
+        {exc.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr 1fr 1.1fr auto', gap: '9px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase' }}>
+            <span>Finca</span><span style={{ textAlign: 'right' }}>Precio/saco</span><span>Plazo</span><span>Rige desde</span><span></span>
+          </div>
+        )}
+        {exc.map((e, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr 1fr 1.1fr auto', gap: '9px', alignItems: 'center', marginBottom: '8px' }}>
+            <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
+              <option value="">Elegir finca</option>
+              {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+            </select>
+            <input inputMode="decimal" value={e.precio ?? ''} placeholder="—" onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precio: ev.target.value } : r))} style={{ ...inp, textAlign: 'right' }} />
+            <select value={e.plazo ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazo: Number(ev.target.value) } : r))} style={inp}>
+              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+            </select>
+            <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
+            <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
+          </div>
+        ))}
+        <button onClick={() => setExc(x => [...x, { fincaId: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
+      </div>
+
+      {/* Alertas */}
+      <div style={seccion}>
+        <div style={tit}>3 · Alertas de inventario (sacos)</div>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <Campo label="Mínimo (sacos)"><input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} /></Campo>
+          <Campo label="Cantidad deseable (sacos)"><input inputMode="decimal" value={deseable} onChange={e => setDeseable(e.target.value)} placeholder="opcional" style={{ ...inp, width: '160px', textAlign: 'right' }} /></Campo>
+        </div>
+        <div style={{ fontSize: '11px', color: GRIS, marginTop: '7px' }}>Requiere haber corrido el SQL de balanceado (producto_finca). Si no, el mínimo/objetivo no se guarda (el precio sí).</div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <button disabled={enviando} onClick={guardar} style={{ ...btnPri, opacity: enviando ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
         <button onClick={onCancelar} style={btn}>Cancelar</button>
         <span style={{ fontSize: '12px', color: GRIS, marginLeft: 'auto' }}>Se guardará en las {activas.length} fincas activas</span>
       </div>
