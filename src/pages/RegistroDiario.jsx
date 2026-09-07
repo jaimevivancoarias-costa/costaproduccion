@@ -460,9 +460,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           if (!c) continue
           const keptIds = new Set()
           if (c.sinAlimentacion) {
-            if (c.id) keptIds.add(c.id)
-            else insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                                 fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
+            // Se conserva UNA sola fila (la primera que hubiera) y se
+            // reescribe como "sin alimentación". Las demás filas de ese
+            // día (p. ej. un balanceado extra viejo) caen en 'borrar'
+            // porque no entran en keptIds.
+            const idBase = c.id || (c._ids || [])[0] || null
+            if (idBase) {
+              keptIds.add(idBase)
+              actualizar.push({ id: idBase, producto_id: null, libras: 0, sin_alimentacion: true })
+            } else {
+              insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+                              fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
+            }
           } else {
             const rows = []
             if (c.productoId && num(c.libras)) rows.push({ id: c.id, productoId: c.productoId, libras: num(c.libras) })
