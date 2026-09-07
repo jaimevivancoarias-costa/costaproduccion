@@ -448,54 +448,43 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   async function guardar(cerrarDia) {
     setGuardando(true); setAviso(null)
     try {
-      // Con varios productos por piscina/día ya no se puede usar upsert por
-      // (piscina, fecha). Se reconcilia fila por fila: insertar las nuevas,
-      // actualizar las que ya tienen id, y borrar las que se quitaron.
-      const insertar = [], actualizar = [], borrar = []
+      // Con varios productos por piscina/día no se puede usar upsert por
+      // (piscina, fecha). Por cada celda TOCADA: se borran sus filas viejas
+      // y se insertan las deseadas. Así nunca choca con el índice único
+      // (piscina, fecha, producto) aunque se intercambien o repitan productos.
+      const insertar = [], borrar = []
       for (const p of piscinas) {
         if (!p.cicloId) continue
         for (const f of fechas) {
           if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
           const c = cel(p, f)
           if (!c) continue
-          const keptIds = new Set()
+          // Todas las filas viejas de esta celda se borran y se reinsertan.
+          for (const id of (c._ids || [])) borrar.push(id)
+          if (c.id && !(c._ids || []).includes(c.id)) borrar.push(c.id)
+
           if (c.sinAlimentacion) {
-            // Se conserva UNA sola fila (la primera que hubiera) y se
-            // reescribe como "sin alimentación". Las demás filas de ese
-            // día (p. ej. un balanceado extra viejo) caen en 'borrar'
-            // porque no entran en keptIds.
-            const idBase = c.id || (c._ids || [])[0] || null
-            if (idBase) {
-              keptIds.add(idBase)
-              actualizar.push({ id: idBase, producto_id: null, libras: 0, sin_alimentacion: true })
-            } else {
-              insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                              fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
-            }
+            insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+                            fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
           } else {
-            const rows = []
-            if (c.productoId && num(c.libras)) rows.push({ id: c.id, productoId: c.productoId, libras: num(c.libras) })
-            for (const e of (c.extras || [])) {
-              if (e.productoId && num(e.libras)) rows.push({ id: e.id, productoId: e.productoId, libras: num(e.libras) })
-            }
-            for (const r of rows) {
-              if (r.id) { keptIds.add(r.id); actualizar.push({ id: r.id, producto_id: r.productoId, libras: r.libras, sin_alimentacion: false }) }
-              else insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                                   fecha: f, producto_id: r.productoId, libras: r.libras, sin_alimentacion: false })
+            // Se juntan main + extras y se suma si un mismo producto aparece
+            // dos veces (evita el duplicado en el índice único).
+            const porProducto = new Map()
+            const acum = (pid, lb) => { if (pid && lb) porProducto.set(pid, (porProducto.get(pid) || 0) + lb) }
+            acum(c.productoId, num(c.libras))
+            for (const e of (c.extras || [])) acum(e.productoId, num(e.libras))
+            for (const [pid, lb] of porProducto) {
+              insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+                              fecha: f, producto_id: pid, libras: lb, sin_alimentacion: false })
             }
           }
-          for (const id of (c._ids || [])) { if (!keptIds.has(id)) borrar.push(id) }
         }
       }
 
+      // Primero se borra TODO lo tocado, después se inserta: nunca coexisten
+      // la fila vieja y la nueva del mismo producto.
       if (borrar.length) {
         const { error } = await supabase.schema('produccion').from('alimentacion').delete().in('id', borrar)
-        if (error) throw error
-      }
-      for (const u of actualizar) {
-        const { error } = await supabase.schema('produccion').from('alimentacion')
-          .update({ producto_id: u.producto_id, libras: u.libras, sin_alimentacion: u.sin_alimentacion, actualizado_en: new Date().toISOString() })
-          .eq('id', u.id)
         if (error) throw error
       }
       if (insertar.length) {
