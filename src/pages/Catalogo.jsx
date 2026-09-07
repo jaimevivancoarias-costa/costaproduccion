@@ -943,8 +943,12 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   const [presLista, setPresLista] = useState([...new Set((presentaciones || []).map(cap1))])
   const [contenido, setContenido] = useState(
     a.contenido != null ? String(a.contenido) : (a.factor != null ? String(a.factor) : (insumo.factor != null ? String(insumo.factor) : '')))
-  const [uCont, setUCont] = useState(a.unidad_contenido || a.unidad || insumo.unidad)
-  const [unidad, setUnidad] = useState(a.unidad || insumo.unidad)   // estándar; '__completo' = envase entero
+  // Solo aceptamos unidades de aplicación válidas; si la guardada es una
+  // presentación (ej. "sacos"), dejamos en blanco para que elija bien.
+  const uIni = a.unidad || insumo.unidad
+  const uContIni = a.unidad_contenido || a.unidad || insumo.unidad
+  const [uCont, setUCont] = useState(UNIDADES_APP.includes(uContIni) ? uContIni : 'kg')
+  const [unidad, setUnidad] = useState(UNIDADES_APP.includes(uIni) ? uIni : '')   // '' = elegir; '__completo' = envase entero
   const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
@@ -1075,7 +1079,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
             </select>
           </Campo>
           <Campo label="Se aplica en (estándar)">
-            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '190px' }}>
+            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v && v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '190px', borderColor: unidad ? BORDE : '#e0b64a' }}>
+              <option value="">Elige la unidad…</option>
               <optgroup label="Por envase entero"><option value="__completo">Envase completo ({cap1(presentacion)})</option></optgroup>
               {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
             </select>
