@@ -414,7 +414,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                                   ? 'Sin precio'
                                   : <>{dinero(aCompra(activo.val))}
                                       <span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap1(uCompra)}{activo.heredado ? ' · general' : ''}</span>
-                                      {conv2 && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>= {dinero(activo.val)} /{UNIDAD[uCons] || uCons}</span>}
+                                      {conv2 && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>= {dineroPrec(activo.val)} /{UNIDAD[uCons] || uCons}</span>}
                                     </>
                                 const estilo = { border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }
                                 // Insumos: solo lectura (se edita en Configurar). Balanceados: editable.
@@ -487,6 +487,12 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
 const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 const cap1 = s => s ? String(s).charAt(0).toUpperCase() + String(s).slice(1).toLowerCase() : s
+// Dinero con precisión para valores chicos (ej. $0,0050 por mL).
+const dineroPrec = v => {
+  const n = Number(v) || 0
+  const dec = Math.abs(n) > 0 && Math.abs(n) < 1 ? 4 : 2
+  return '$' + n.toLocaleString('es-EC', { minimumFractionDigits: dec, maximumFractionDigits: 4 })
+}
 
 async function crearInsumo({ nombre, unidad, unidadCompra, factor, proveedor }, setAviso) {
   const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1, proveedor: (proveedor || '').trim() || null })
