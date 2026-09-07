@@ -35,12 +35,12 @@ const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
 const ANCHOS_SALDO_JEFE = '1.3fr 200px 130px 120px 130px 110px'
-const ANCHOS_SALDO_BOD  = '1.3fr 200px 130px'   // bodeguero: sin dolares
+const ANCHOS_SALDO_BOD  = '1.2fr 210px 170px'   // bodeguero: sin dolares
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
-const ANCHOS_MOV2       = '1.2fr 1.5fr 0.85fr 0.85fr 0.85fr 0.85fr 0.9fr 0.9fr'   // + conteo antes de queda
+const ANCHOS_MOV2       = '1.3fr 190px 95px 95px 95px 95px 100px 105px'   // inicial, entró, aplicó, devuelto, conteo, queda
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 
 export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
@@ -697,7 +697,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ) : vista === 'movimientos' ? (
         <>
           <Tabla
-            caja min="900px"
+            caja min="960px"
             columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Conteo', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
@@ -759,10 +759,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </div>
           )}
           <Tabla
-            caja min={esJefe ? '760px' : '420px'}
+            caja min={esJefe ? '760px' : '620px'}
             columnas={esJefe
-              ? ['Insumo', 'Llega / se aplica', 'Saldo (a contar)', 'Precio', 'Valor', '']
-              : ['Insumo', 'Llega / se aplica', 'Saldo (a contar)']}
+              ? ['Insumo', 'Llega / se aplica', 'Saldo', 'Precio', 'Valor', '']
+              : ['Insumo', 'Llega / se aplica', 'Saldo']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
             {filas.map(f => {
