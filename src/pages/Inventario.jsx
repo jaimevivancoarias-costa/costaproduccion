@@ -705,6 +705,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const fac = factores[m.insumo_id]
               const conv = fac && (fac.factor || 1) !== 1
               const eq = v => conv ? <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div> : null
+              // Si el saldo inicial es 0 y hay un conteo (el inicial), ese conteo
+              // ES el inventario inicial: se muestra en "Inicial", no en "Conteo".
+              const contInicial = Math.abs(Number(m.saldo_inicial)) < 0.0001 && m.conteo !== null && m.conteo !== undefined
+              const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
+              const conteoMostrar = contInicial ? null : m.conteo
               return (
               <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
                 <Celda>{m.insumo}</Celda>
@@ -712,7 +717,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
                 </Celda>
-                <Celda derecha gris>{limpio(m.saldo_inicial)}{eq(m.saldo_inicial)}</Celda>
+                <Celda derecha gris>{iniMostrar === null ? '—' : <>{limpio(iniMostrar)}{eq(iniMostrar)}</>}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
                   {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}{Number(m.ingresos) ? eq(m.ingresos) : null}
                 </Celda>
@@ -722,8 +727,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda derecha color={Number(m.devuelto) ? ROJO : '#c3d0db'}>
                   {Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}{Number(m.devuelto) ? eq(m.devuelto) : null}
                 </Celda>
-                <Celda derecha color={m.conteo === null || m.conteo === undefined ? '#c3d0db' : AZUL}>
-                  {m.conteo === null || m.conteo === undefined ? '—' : <>{limpio(m.conteo)}{eq(m.conteo)}</>}
+                <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
+                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{limpio(conteoMostrar)}{eq(conteoMostrar)}</>}
                 </Celda>
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {limpio(m.saldo_final)}{eq(m.saldo_final)}
