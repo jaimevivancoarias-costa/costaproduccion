@@ -1005,13 +1005,13 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
       const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filas, { onConflict: 'insumo_id,finca_id' })
       if (e1) throw e1
 
-      // Cierra el precio anterior y abre el nuevo, en bloque por plazo.
-      const cerrarYAbrir = async (fincaIds, pz, rows) => {
+      // Cierra el precio anterior y abre el nuevo (con su fecha de vigencia).
+      const cerrarYAbrir = async (fincaIds, pz, rows, dfecha) => {
         if (!fincaIds.length) return
         await supabase.schema('produccion').from('precio_insumo').delete()
-          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', desde)
-        await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', desde)
+          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
+        await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) })
+          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfecha)
         const { error } = await supabase.schema('produccion').from('precio_insumo').insert(rows)
         if (error) throw error
       }
@@ -1021,16 +1021,16 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
         const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
         const rows = ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz,
           precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desde }))
-        await cerrarYAbrir(ids, pz, rows)
+        await cerrarYAbrir(ids, pz, rows, desde)
       }
 
-      // 3) Excepciones de precio/plazo por finca (pisan el estándar).
+      // 3) Excepciones de precio/plazo/fecha por finca (pisan el estándar).
       for (const e of exc) {
         if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
         const fac = facMap[e.fincaId]; if (!fac) continue
-        const raw = numDec(e.precio), pz = Number(e.plazo) || 0
+        const raw = numDec(e.precio), pz = Number(e.plazo) || 0, dfe = e.desde || desde
         const precioApp = precioPor === 'presentacion' ? raw / fac : raw
-        await cerrarYAbrir([e.fincaId], pz, [{ insumo_id: insumo.id, finca_id: e.fincaId, plazo: pz, precio_unitario: precioApp, vigente_desde: desde }])
+        await cerrarYAbrir([e.fincaId], pz, [{ insumo_id: insumo.id, finca_id: e.fincaId, plazo: pz, precio_unitario: precioApp, vigente_desde: dfe }], dfe)
       }
 
       // 4) Plazo que rige ahora (bloque).
@@ -1096,15 +1096,15 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
           El estándar va a todas. Agrega solo la finca que difiere: en qué unidad la aplica, o su precio/plazo propio. Todo es opcional — lo que dejes vacío usa el estándar.
         </div>
         {exc.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 0.9fr 1fr auto', gap: '10px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-            <span>Finca</span><span>Se aplica en (opc.)</span><span style={{ textAlign: 'right' }}>Precio (opc.)</span><span>Plazo</span><span></span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.1fr 0.8fr 0.9fr 1fr auto', gap: '9px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase', letterSpacing: '.04em' }}>
+            <span>Finca</span><span>Se aplica en (opc.)</span><span style={{ textAlign: 'right' }}>Precio (opc.)</span><span>Plazo</span><span>Rige desde (opc.)</span><span></span>
           </div>
         )}
         {exc.map((e, i) => {
           const facF = e.unidad ? factorFinca(e.unidad) : null
           return (
           <div key={i} style={{ marginBottom: '8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.2fr 0.9fr 1fr auto', gap: '10px', alignItems: 'center' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.1fr 0.8fr 0.9fr 1fr auto', gap: '9px', alignItems: 'center' }}>
               <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
                 <option value="">Elegir finca</option>
                 {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
@@ -1117,6 +1117,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
               <select value={e.plazo ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazo: Number(ev.target.value) } : r))} style={inp}>
                 {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
               </select>
+              <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
               <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
             </div>
             {e.unidad && (facF ? (
@@ -1127,7 +1128,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
           </div>
           )
         })}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', unidad: '', precio: '', plazo: 0 }])} style={miniLink}>＋ Agregar finca distinta</button>
+        <button onClick={() => setExc(x => [...x, { fincaId: '', unidad: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
       {/* 3. Precio */}
