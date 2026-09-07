@@ -320,8 +320,31 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   const pzAct = plz[k(p.id, f0)]?.plazo ?? 0
                   const vgAct = vigente(preIns, p.id, f0, pzAct)
                   if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
+                  // Historial de excepciones ya guardadas: qué finca aplica
+                  // distinto (unidad y/o precio/plazo) frente al estándar (f0).
+                  const stdU = o?.unidad || p.unidad
+                  const excIni = []
+                  ;(fincas || []).forEach(f => {
+                    if (f.id === f0 || String(f.nombre).toUpperCase() === 'PRUEBA') return
+                    const of = over[k(p.id, f.id)]
+                    let unidadExc = ''
+                    if (of?.unidad && of.unidad !== stdU) {
+                      const isComp = of.unidad === 'unidad' && of.unidad_contenido && of.unidad_contenido !== 'unidad'
+                      unidadExc = isComp ? '__completo' : of.unidad
+                    }
+                    const pzF = plz[k(p.id, f.id)]?.plazo ?? 0
+                    const vgF = vigente(preIns, p.id, f.id, pzF)
+                    const vg0 = vigente(preIns, p.id, f0, pzF)
+                    let precioExc = '', plazoExc = 0, desdeExc = ''
+                    if (vgF && (!vg0 || Number(vgF.precio_unitario) !== Number(vg0.precio_unitario) || pzF !== pzAct)) {
+                      const facF = Number(of?.factor) || 1
+                      precioExc = String(Math.round(Number(vgF.precio_unitario) * facF * 10000) / 10000)
+                      plazoExc = pzF; desdeExc = vgF.vigente_desde || ''
+                    }
+                    if (unidadExc || precioExc) excIni.push({ fincaId: f.id, unidad: unidadExc, precio: precioExc, plazo: plazoExc, desde: desdeExc })
+                  })
                   return (
-                    <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones}
+                    <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
                       actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
@@ -967,7 +990,7 @@ function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCan
 const APP_UNIDADES = ['masa','liquido','conteo']
 const famLbl = fam => fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'
 
-function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onError, onCancelar }) {
+function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar }) {
   const a = actual || {}
   const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
   const [presentacion, setPresentacion] = useState(cap1(a.unidad_compra || insumo.unidad_compra) || 'Saco')
@@ -983,7 +1006,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   // con un peso de referencia en otra unidad (ej. 1 saco = 45 kg).
   const compIni = !UNIDADES_APP.includes(uIni) || (uIni === 'unidad' && uContIni && uContIni !== 'unidad')
   const [unidad, setUnidad] = useState(compIni ? '__completo' : uIni)   // '__completo' = envase entero
-  const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
+  // Precarga las excepciones ya guardadas (qué finca aplica distinto), para
+  // que al abrir Configurar veas lo que pusiste antes.
+  const [exc, setExc] = useState(() => (excIni || []).map(e => ({ fincaId: e.fincaId, unidad: e.unidad || '', precio: e.precio ?? '', plazo: e.plazo ?? 0, desde: e.desde || '' })))
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
   // Los precios guardados están por unidad de aplicación. Los precargamos
