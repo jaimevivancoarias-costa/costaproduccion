@@ -1141,29 +1141,30 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
       />
       {extras.map((e, i) => (
         <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '4px',
-             borderTop: '0.5px dashed ' + BORDE, paddingTop: '4px' }}>
-          {selBal(e.productoId, v => onExtra(i, 'productoId', v))}
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <input
-              inputMode="numeric" placeholder="0"
-              value={e.libras || ''}
-              onChange={ev => onExtra(i, 'libras', ev.target.value)}
-              style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', flex: 1,
-                       textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
-                       fontVariantNumeric: 'tabular-nums' }}
-            />
+             borderTop: '0.5px dashed ' + BORDE, paddingTop: '5px', marginTop: '1px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '10px', color: GRIS }}>Balanceado extra</span>
             <button
               onClick={() => onRemoveExtra(i)}
               title="Quitar este balanceado"
-              style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
-                       fontFamily: 'inherit', fontSize: '13px', color: GRIS, padding: '0 8px',
-                       borderRadius: '6px' }}>
-              ×
+              style={{ border: 'none', background: 'none', cursor: 'pointer',
+                       fontFamily: 'inherit', fontSize: '11px', color: '#c0392b',
+                       padding: '2px 4px', textDecoration: 'underline' }}>
+              Quitar
             </button>
           </div>
+          {selBal(e.productoId, v => onExtra(i, 'productoId', v))}
+          <input
+            inputMode="numeric" placeholder="0"
+            value={e.libras || ''}
+            onChange={ev => onExtra(i, 'libras', ev.target.value)}
+            style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', width: '100%',
+                     textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
+                     fontVariantNumeric: 'tabular-nums' }}
+          />
         </div>
       ))}
-      {num(c?.libras) && c?.productoId ? (
+      {num(c?.libras) && c?.productoId && extras.every(e => num(e.libras) && e.productoId) ? (
         <button
           onClick={onAddExtra}
           title="Registrar otro balanceado en esta misma piscina y día"
