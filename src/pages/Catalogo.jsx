@@ -311,13 +311,18 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   const f0 = (fincas || []).find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || (fincas || [])[0]?.id
                   const o = over[k(p.id, f0)]
                   const preciosAct = {}
+                  let desdeAct = null
                   PLAZOS.forEach(pz => {
                     const vg = vigente(preIns, p.id, f0, pz)
                     preciosAct[pz] = vg ? Number(vg.precio_unitario) : (preInsGen[p.id]?.[pz] ?? null)
+                    if (vg && !desdeAct) desdeAct = vg.vigente_desde
                   })
+                  const pzAct = plz[k(p.id, f0)]?.plazo ?? 0
+                  const vgAct = vigente(preIns, p.id, f0, pzAct)
+                  if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
                   return (
                     <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones}
-                      actual={{ ...(o || {}), precios: preciosAct, plazoActivo: plz[k(p.id, f0)]?.plazo ?? 0 }}
+                      actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onCancelar={() => setEditConfig(null)} />
@@ -381,7 +386,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                               </span>
                             )}
                             {tab === 'insumos' && (
-                              <span style={{ color: GRIS, textAlign: 'center', fontWeight: 500 }}>{(UNIDAD[uCons] || uCons).toUpperCase()}</span>
+                              <span style={{ color: GRIS, textAlign: 'center', fontWeight: 500 }}>{(uCons === 'unidad' ? cap1(uCompra) : (UNIDAD[uCons] || uCons)).toUpperCase()}</span>
                             )}
                             {tab === 'insumos' && (
                               <span style={{ color: minimo != null ? '#BA7517' : '#c3d0db' }}>{minimo != null ? `${minimo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
@@ -957,8 +962,10 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   const uIni = a.unidad || insumo.unidad
   const uContIni = a.unidad_contenido || a.unidad || insumo.unidad
   const [uCont, setUCont] = useState(UNIDADES_APP.includes(uContIni) ? uContIni : 'kg')
-  // Si la unidad guardada no es de aplicación (ej. "saco"), es "envase entero".
-  const [unidad, setUnidad] = useState(UNIDADES_APP.includes(uIni) ? uIni : '__completo')   // '__completo' = envase entero
+  // "Envase entero" si la unidad no es de aplicación, o si es 'unidad' pero
+  // con un peso de referencia en otra unidad (ej. 1 saco = 45 kg).
+  const compIni = !UNIDADES_APP.includes(uIni) || (uIni === 'unidad' && uContIni && uContIni !== 'unidad')
+  const [unidad, setUnidad] = useState(compIni ? '__completo' : uIni)   // '__completo' = envase entero
   const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
@@ -973,12 +980,13 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   })
   const [precioPor, setPrecioPor] = useState('presentacion')
   const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)   // qué plazo rige ahora
-  const [desde, setDesde] = useState(hoyISO())
+  const [desde, setDesde] = useState(a.desde || hoyISO())   // precarga la fecha del precio actual
   const [enviando, setEnviando] = useState(false)
 
   const esComp = unidad === '__completo'
-  // En "envase entero" se cuenta por la presentación (ej. Saco). Factor 1.
-  const uStd = esComp ? (presentacion.trim().toLowerCase() || 'unidad') : unidad
+  // En "envase entero" se cuenta por la presentación. Se guarda como
+  // 'unidad' (enum válido) y factor 1; la presentación se muestra aparte.
+  const uStd = esComp ? 'unidad' : unidad
   const factor = esComp ? 1 : factorDe(contenido, uCont, unidad)
   const listo = presentacion.trim() && factor != null && factor > 0
   const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u)
