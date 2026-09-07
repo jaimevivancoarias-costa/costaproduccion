@@ -948,11 +948,16 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
   const [exc, setExc] = useState([])                    // [{fincaId, unidad}]
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
-  // Los precios guardados están por unidad de aplicación → precargamos así.
+  // Los precios guardados están por unidad de aplicación. Los precargamos
+  // POR ENVASE (× factor), que es como los ingresaste, para que veas el
+  // mismo número que pusiste.
+  const facPre = Number(a.factor) || factorDe(
+    a.contenido != null ? a.contenido : (a.factor != null ? a.factor : insumo.factor),
+    a.unidad_contenido || a.unidad || insumo.unidad, a.unidad || insumo.unidad) || 1
   const [precios, setPrecios] = useState(() => {
-    const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * 10000) / 10000) }); return p
+    const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * facPre * 10000) / 10000) }); return p
   })
-  const [precioPor, setPrecioPor] = useState((a.precios && Object.values(a.precios).some(v => v != null)) ? 'aplicacion' : 'presentacion')
+  const [precioPor, setPrecioPor] = useState('presentacion')
   const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)   // qué plazo rige ahora
   const [desde, setDesde] = useState(hoyISO())
   const [enviando, setEnviando] = useState(false)
