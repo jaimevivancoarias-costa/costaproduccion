@@ -103,11 +103,14 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     setPreIns(pim)
     const pbm = {}; (pb || []).forEach(x => { (pbm[k(x.producto_id, x.finca_id)] = pbm[k(x.producto_id, x.finca_id)] || []).push(x) }); setPreBal(pbm)
     setSolIns(si || []); setSolBal(sb || [])
-    // Mínimo/objetivo por producto/finca (balanceado).
-    const { data: ovb } = await supabase.schema('produccion').from('producto_finca')
-      .select('producto_id, finca_id, stock_minimo, stock_objetivo')
-      .in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000'])
-    const obm = {}; (ovb || []).forEach(x => { obm[k(x.producto_id, x.finca_id)] = x }); setOverB(obm)
+    // Mínimo/objetivo por producto/finca (balanceado). Si la tabla aún no
+    // existe (falta correr su SQL), no rompemos el catálogo.
+    try {
+      const { data: ovb, error: eovb } = await supabase.schema('produccion').from('producto_finca')
+        .select('producto_id, finca_id, stock_minimo, stock_objetivo')
+        .in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000'])
+      if (!eovb) { const obm = {}; (ovb || []).forEach(x => { obm[k(x.producto_id, x.finca_id)] = x }); setOverB(obm) }
+    } catch { /* tabla producto_finca aún no creada */ }
     setCargando(false)
   }, [esJefeGlobal, tab, JSON.stringify(fincaIds)])
   useEffect(() => { cargar() }, [cargar])
