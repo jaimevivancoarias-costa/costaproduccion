@@ -1032,7 +1032,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
       const excUnit = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excUnit[e.fincaId] = e.unidad })
       const facMap = {}; const ids = []; const filas = []
       for (const f of activas) {
-        const uFinca = excUnit[f.id] || uStd
+        // '__completo' es "envase entero": se guarda como 'unidad' (enum
+        // válido) con factor 1, igual que el estándar.
+        const uFinca = excUnit[f.id] ? (excUnit[f.id] === '__completo' ? 'unidad' : excUnit[f.id]) : uStd
         const facFinca = excUnit[f.id] ? factorFinca(excUnit[f.id]) : factor
         if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
         facMap[f.id] = facFinca; ids.push(f.id)
@@ -1156,6 +1158,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
               </select>
               <select value={e.unidad} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, unidad: ev.target.value } : r))} style={inp}>
                 <option value="">(igual al estándar)</option>
+                <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
                 {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
               </select>
               <input inputMode="decimal" value={e.precio ?? ''} placeholder="—" onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precio: ev.target.value } : r))} style={{ ...inp, textAlign: 'right' }} />
@@ -1165,7 +1168,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, onHecho, onE
               <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
               <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
             </div>
-            {e.unidad && (facF ? (
+            {e.unidad && (e.unidad === '__completo' ? (
+              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '5px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
+            ) : facF ? (
               <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '5px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
             ) : (
               <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '5px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
