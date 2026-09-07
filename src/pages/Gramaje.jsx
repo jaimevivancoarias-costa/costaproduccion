@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, nombreDia,
-  esDiaDeMuestreo, diasCultivo, situacionDia, num, miles,
+  esDiaDeMuestreo, diasCultivo, situacionDia, num, numDec, miles,
 } from '../lib/fechas'
 
 // Gramaje · peso promedio del camaron
@@ -133,14 +133,14 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   // Peso anterior a una fecha dada, mirando primero dentro de la semana.
   function anterior(fila, fecha) {
     const dentro = muestreos
-      .filter(f => f < fecha && num(valores[`${fila.piscinaId}|${f}`]))
-      .map(f => ({ fecha: f, peso: num(valores[`${fila.piscinaId}|${f}`]) }))
+      .filter(f => f < fecha && numDec(valores[`${fila.piscinaId}|${f}`]))
+      .map(f => ({ fecha: f, peso: numDec(valores[`${fila.piscinaId}|${f}`]) }))
     if (dentro.length) return dentro[dentro.length - 1]
     return previos[fila.cicloId] || null
   }
 
   function calculo(fila, fecha) {
-    const actual = num(valores[`${fila.piscinaId}|${fecha}`])
+    const actual = numDec(valores[`${fila.piscinaId}|${fecha}`])
     const ant = anterior(fila, fecha)
     if (actual === null || !ant) return { actual, ant: null }
     const inc = actual - ant.peso
@@ -164,7 +164,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
           if (!editable(fe)) continue
           if (f.fechaCierre && fe > f.fechaCierre) continue
           if (fe < f.fechaSiembra) continue
-          const p = num(valores[`${f.piscinaId}|${fe}`])
+          const p = numDec(valores[`${f.piscinaId}|${fe}`])
           if (p === null) { borrar.push({ piscina: f.piscinaId, fecha: fe }); continue }
           nuevos.push({ ciclo_id: f.cicloId, piscina_id: f.piscinaId, fecha: fe, peso_gramos: p })
         }
