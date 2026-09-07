@@ -234,11 +234,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
       const mapa = {}
       ;(alim || []).forEach(a => {
-        mapa[`${a.piscina_id}|${a.fecha}`] = {
-          id: a.id,
-          productoId: a.producto_id || '',
-          libras: a.sin_alimentacion ? '' : String(a.libras),
-          sinAlimentacion: a.sin_alimentacion,
+        const key = `${a.piscina_id}|${a.fecha}`
+        if (a.sin_alimentacion) { mapa[key] = { sinAlimentacion: true, id: a.id, libras: '', productoId: '', extras: [], _ids: [a.id] }; return }
+        const fila = { id: a.id, productoId: a.producto_id || '', libras: String(a.libras) }
+        if (!mapa[key] || mapa[key].sinAlimentacion) {
+          mapa[key] = { ...fila, sinAlimentacion: false, extras: [], _ids: [a.id] }
+        } else {
+          mapa[key].extras = [...(mapa[key].extras || []), fila]
+          mapa[key]._ids = [...(mapa[key]._ids || []), a.id]
         }
       })
       setCeldas(mapa)
@@ -332,6 +335,30 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     setSucio(true)
   }
 
+  // --- Balanceados extra (además del principal) en la misma piscina/día ---
+  function addExtra(p, f) {
+    const k = clave(p, f)
+    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), sinAlimentacion: false,
+      extras: [...((c[k] || {}).extras || []), { productoId: '', libras: '' }] } }))
+    setSucio(true)
+  }
+  function setExtra(p, f, i, campo, valor) {
+    const k = clave(p, f)
+    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}),
+      extras: ((c[k] || {}).extras || []).map((e, j) => j === i ? { ...e, [campo]: valor } : e) } }))
+    setSucio(true)
+  }
+  function removeExtra(p, f, i) {
+    const k = clave(p, f)
+    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}),
+      extras: ((c[k] || {}).extras || []).filter((_, j) => j !== i) } }))
+    setSucio(true)
+  }
+  // Libras totales de una celda (principal + extras).
+  const librasCelda = c => c && !c.sinAlimentacion
+    ? (num(c.libras) || 0) + (c.extras || []).reduce((s, e) => s + (num(e.libras) || 0), 0)
+    : 0
+
   function copiarDiaAnterior(f) {
     const previo = sumarDias(f, -1)
     const nuevo = { ...celdas }
@@ -347,9 +374,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
   // ---- totales, todos calculados (regla P1) ----
   const totalPiscina = p =>
-    fechas.reduce((s, f) => s + (cel(p, f)?.sinAlimentacion ? 0 : (num(cel(p, f)?.libras) || 0)), 0)
+    fechas.reduce((s, f) => s + librasCelda(cel(p, f)), 0)
   const totalDia = f =>
-    piscinas.reduce((s, p) => s + (cel(p, f)?.sinAlimentacion ? 0 : (num(cel(p, f)?.libras) || 0)), 0)
+    piscinas.reduce((s, p) => s + librasCelda(cel(p, f)), 0)
   async function reabrirDia(fecha) {
     const id = diasId[fecha]
     if (!id) return
@@ -421,28 +448,34 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   async function guardar(cerrarDia) {
     setGuardando(true); setAviso(null)
     try {
-      const filas = []
-      const borrar = []
+      // Con varios productos por piscina/día ya no se puede usar upsert por
+      // (piscina, fecha). Se reconcilia fila por fila: insertar las nuevas,
+      // actualizar las que ya tienen id, y borrar las que se quitaron.
+      const insertar = [], actualizar = [], borrar = []
       for (const p of piscinas) {
         if (!p.cicloId) continue
         for (const f of fechas) {
           if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
           const c = cel(p, f)
           if (!c) continue
-          // No se manda el id: el on conflict (piscina_id, fecha) resuelve
-          // si toca insertar o actualizar. Si se mezclan filas con id y sin
-          // id, PostgREST le pone null a las que no lo traen y la base lo
-          // rechaza, porque el id tiene default y no acepta nulos.
+          const keptIds = new Set()
           if (c.sinAlimentacion) {
-            filas.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                         fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
+            if (c.id) keptIds.add(c.id)
+            else insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+                                 fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
           } else {
-            const lb = num(c.libras)
-            if (lb === null || lb === 0) { if (c.id) borrar.push(c.id); continue }
-            if (!c.productoId) continue
-            filas.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                         fecha: f, producto_id: c.productoId, libras: lb, sin_alimentacion: false })
+            const rows = []
+            if (c.productoId && num(c.libras)) rows.push({ id: c.id, productoId: c.productoId, libras: num(c.libras) })
+            for (const e of (c.extras || [])) {
+              if (e.productoId && num(e.libras)) rows.push({ id: e.id, productoId: e.productoId, libras: num(e.libras) })
+            }
+            for (const r of rows) {
+              if (r.id) { keptIds.add(r.id); actualizar.push({ id: r.id, producto_id: r.productoId, libras: r.libras, sin_alimentacion: false }) }
+              else insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
+                                   fecha: f, producto_id: r.productoId, libras: r.libras, sin_alimentacion: false })
+            }
           }
+          for (const id of (c._ids || [])) { if (!keptIds.has(id)) borrar.push(id) }
         }
       }
 
@@ -450,9 +483,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         const { error } = await supabase.schema('produccion').from('alimentacion').delete().in('id', borrar)
         if (error) throw error
       }
-      if (filas.length) {
+      for (const u of actualizar) {
         const { error } = await supabase.schema('produccion').from('alimentacion')
-          .upsert(filas, { onConflict: 'piscina_id,fecha' })
+          .update({ producto_id: u.producto_id, libras: u.libras, sin_alimentacion: u.sin_alimentacion, actualizado_en: new Date().toISOString() })
+          .eq('id', u.id)
+        if (error) throw error
+      }
+      if (insertar.length) {
+        const { error } = await supabase.schema('produccion').from('alimentacion').insert(insertar)
         if (error) throw error
       }
 
@@ -827,6 +865,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           editable={editable(f)} situacion={situacionDia(f, hoy)}
                           onProducto={v => set(p, f, 'productoId', v)}
                           onLibras={v => set(p, f, 'libras', v)}
+                          onAddExtra={() => addExtra(p, f)}
+                          onExtra={(i, campo, v) => setExtra(p, f, i, campo, v)}
+                          onRemoveExtra={i => removeExtra(p, f, i)}
                           onSin={() => marcarSin(p, f)}
                           onLimpiar={() => limpiar(p, f)}
                           inputRef={el => { refs.current[`${i}|${j}`] = el }}
@@ -1020,7 +1061,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 // ---------------------------------------------------------------------
 // Celda: las tres situaciones de la regla 2.3
 // ---------------------------------------------------------------------
-function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, onSin, onLimpiar, inputRef, onKeyDown }) {
+function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
   if (!p.cicloId) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
@@ -1043,29 +1084,51 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
     )
   }
 
+  const extras = (c?.extras || [])
+
   if (!editable) {
-    if (!c || !num(c.libras)) return <div style={cajaVacia}>sin registrar</div>
-    const pr = productos.find(x => x.id === c.productoId)
+    const conExtras = extras.filter(e => num(e.libras) && e.productoId)
+    if ((!c || !num(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>sin registrar</div>
+    const filas = []
+    if (num(c?.libras)) filas.push({ productoId: c.productoId, libras: c.libras })
+    conExtras.forEach(e => filas.push(e))
+    const total = filas.reduce((s, x) => s + (num(x.libras) || 0), 0)
     return (
-      <div>
-        <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
-        <div style={{ fontSize: '15px' }}>{miles(num(c.libras))}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+        {filas.map((x, i) => {
+          const pr = productos.find(y => y.id === x.productoId)
+          return (
+            <div key={i}>
+              <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
+              <div style={{ fontSize: '15px' }}>{miles(num(x.libras))}</div>
+            </div>
+          )
+        })}
+        {filas.length > 1 && (
+          <div style={{ fontSize: '11px', color: GRIS, borderTop: '0.5px solid ' + BORDE, paddingTop: '2px' }}>
+            Total {miles(total)}
+          </div>
+        )}
       </div>
     )
   }
 
+  const selBal = (valor, onChange, key, ref, kd) => (
+    <select
+      value={valor || ''}
+      onChange={e => onChange(e.target.value)}
+      title={productos.find(x => x.id === valor)?.nombre || 'Elegir balanceado'}
+      style={{ fontFamily: 'inherit', fontSize: '11px', padding: '5px', width: '100%',
+               border: '0.5px solid ' + BORDE, borderRadius: '7px', background: 'white' }}
+    >
+      <option value="">Elegir balanceado</option>
+      {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
+    </select>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      <select
-        value={c?.productoId || ''}
-        onChange={e => onProducto(e.target.value)}
-        title={productos.find(x => x.id === c?.productoId)?.nombre || 'Elegir balanceado'}
-        style={{ fontFamily: 'inherit', fontSize: '11px', padding: '5px', width: '100%',
-                 border: '0.5px solid ' + BORDE, borderRadius: '7px', background: 'white' }}
-      >
-        <option value="">Elegir balanceado</option>
-        {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
-      </select>
+      {selBal(c?.productoId, onProducto)}
       <input
         inputMode="numeric" placeholder="0"
         value={c?.libras || ''}
@@ -1076,7 +1139,41 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
                  textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
                  fontVariantNumeric: 'tabular-nums' }}
       />
-      {!num(c?.libras) && (
+      {extras.map((e, i) => (
+        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '4px',
+             borderTop: '0.5px dashed ' + BORDE, paddingTop: '4px' }}>
+          {selBal(e.productoId, v => onExtra(i, 'productoId', v))}
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <input
+              inputMode="numeric" placeholder="0"
+              value={e.libras || ''}
+              onChange={ev => onExtra(i, 'libras', ev.target.value)}
+              style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', flex: 1,
+                       textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
+                       fontVariantNumeric: 'tabular-nums' }}
+            />
+            <button
+              onClick={() => onRemoveExtra(i)}
+              title="Quitar este balanceado"
+              style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
+                       fontFamily: 'inherit', fontSize: '13px', color: GRIS, padding: '0 8px',
+                       borderRadius: '6px' }}>
+              ×
+            </button>
+          </div>
+        </div>
+      ))}
+      {num(c?.libras) && c?.productoId ? (
+        <button
+          onClick={onAddExtra}
+          title="Registrar otro balanceado en esta misma piscina y día"
+          style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
+                   fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '4px 6px',
+                   borderRadius: '6px', width: '100%' }}>
+          + Otro balanceado
+        </button>
+      ) : null}
+      {!num(c?.libras) && extras.length === 0 && (
         <button
           onClick={onSin}
           title="Declarar que esta piscina no comió ese día"
