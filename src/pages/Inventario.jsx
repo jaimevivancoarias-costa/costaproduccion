@@ -114,7 +114,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('insumo_finca')
-          .select('insumo_id, factor, stock_minimo, unidad').eq('finca_id', finca.id),
+          .select('insumo_id, factor, stock_minimo, unidad, contenido, unidad_contenido').eq('finca_id', finca.id),
         supabase.schema('produccion').rpc('fn_saldo_insumo_plazo',
           { p_finca: finca.id, p_hasta: alDia }),
       ])
@@ -129,7 +129,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       // Factor + unidad de aplicación por insumo (para el "sobrante" del conteo).
       const facMap = {}
       ;(ins || []).forEach(x => { facMap[x.id] = { factor: Number(x.factor) || 1, uApp: x.unidad } })
-      ;(ovFactor || []).forEach(x => { facMap[x.insumo_id] = { factor: Number(x.factor) || 1, uApp: x.unidad || facMap[x.insumo_id]?.uApp } })
+      ;(ovFactor || []).forEach(x => { facMap[x.insumo_id] = { factor: Number(x.factor) || 1, uApp: x.unidad || facMap[x.insumo_id]?.uApp,
+        contenido: Number(x.contenido) || null, uCont: x.unidad_contenido || null } })
       setFactores(facMap)
 
       // Mínimo por insumo (en unidad de aplicación). Guardamos el min en
@@ -603,6 +604,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             {filas.map(f => {
               const facF = factores[f.insumo_id]
               const convF = facF && (facF.factor || 1) !== 1
+              const conPesoF = !convF && facF && facF.contenido && facF.contenido !== 1 && facF.uCont
               return (
               <Fila key={f.insumo_id} anchos="1fr 185px 95px 250px 115px">
                 <Celda>{f.insumo}</Celda>
@@ -612,6 +614,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     {' '}<span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[facF.uApp] || facF.uApp)}
                     <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.factor)} {cap1(UNIDAD[facF.uApp] || facF.uApp)}</div>
                   </>}
+                  {conPesoF && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.contenido)} {cap1(UNIDAD[facF.uCont] || facF.uCont)}</div>}
                 </Celda>
                 <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
@@ -704,7 +707,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             {movs.map(m => {
               const fac = factores[m.insumo_id]
               const conv = fac && (fac.factor || 1) !== 1
-              const eq = v => conv ? <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div> : null
+              // Segunda unidad: si se aplica en otra unidad (factor≠1), la de
+              // aplicación; si no, el peso del envase (contenido, ej. saco = 45 kg).
+              const conPeso = !conv && fac && fac.contenido && fac.contenido !== 1 && fac.uCont
+              const eq = v => {
+                if (conv) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div>
+                if (conPeso) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>
+                return null
+              }
               // Si el saldo inicial es 0 y hay un conteo (el inicial), ese conteo
               // ES el inventario inicial: se muestra en "Inicial", no en "Conteo".
               const contInicial = Math.abs(Number(m.saldo_inicial)) < 0.0001 && m.conteo !== null && m.conteo !== undefined
@@ -716,6 +726,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
+                  {conPeso && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {limpio(fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>}
                 </Celda>
                 <Celda derecha gris>{iniMostrar === null ? '—' : <>{limpio(iniMostrar)}{eq(iniMostrar)}</>}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
