@@ -51,6 +51,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [editSiembra, setEditSiembra] = useState(null)  // piscinaId en edicion de larva/gramaje
   const [abierta, setAbierta] = useState(null)          // piscinaId con detalle del ciclo abierto
   const refs = useRef({})
+  // Celdas que el usuario tocó (para guardar solo esas, no toda la semana).
+  const tocadas = useRef(new Set())
+  // Ids que tenía cada celda al cargar, para borrarlos aunque la celda se vacíe.
+  const idsOriginales = useRef({})
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -255,6 +259,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         }
       })
       setCeldas(mapa)
+      // Línea base: qué ids tenía cada celda y ninguna tocada todavía.
+      idsOriginales.current = Object.fromEntries(Object.entries(mapa).map(([k, v]) => [k, v._ids || []]))
+      tocadas.current = new Set()
 
       setSucio(false)
       setValidaciones(null)
@@ -330,18 +337,21 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
   function set(p, f, campo, valor) {
     const k = clave(p, f)
+    tocadas.current.add(k)
     setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), [campo]: valor, sinAlimentacion: false } }))
     setSucio(true)
   }
 
   function marcarSin(p, f) {
     const k = clave(p, f)
+    tocadas.current.add(k)
     setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), sinAlimentacion: true, libras: '', productoId: '' } }))
     setSucio(true)
   }
 
   function limpiar(p, f) {
     const k = clave(p, f)
+    tocadas.current.add(k)
     setCeldas(c => { const n = { ...c }; delete n[k]; return n })
     setSucio(true)
   }
@@ -349,18 +359,21 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   // --- Balanceados extra (además del principal) en la misma piscina/día ---
   function addExtra(p, f) {
     const k = clave(p, f)
+    tocadas.current.add(k)
     setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), sinAlimentacion: false,
       extras: [...((c[k] || {}).extras || []), { productoId: '', libras: '' }] } }))
     setSucio(true)
   }
   function setExtra(p, f, i, campo, valor) {
     const k = clave(p, f)
+    tocadas.current.add(k)
     setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}),
       extras: ((c[k] || {}).extras || []).map((e, j) => j === i ? { ...e, [campo]: valor } : e) } }))
     setSucio(true)
   }
   function removeExtra(p, f, i) {
     const k = clave(p, f)
+    tocadas.current.add(k)
     setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}),
       extras: ((c[k] || {}).extras || []).filter((_, j) => j !== i) } }))
     setSucio(true)
@@ -376,6 +389,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     piscinas.forEach(p => {
       const src = celdas[clave(p, previo)]
       if (src && !src.sinAlimentacion && src.libras) {
+        tocadas.current.add(clave(p, f))
         nuevo[clave(p, f)] = { ...nuevo[clave(p, f)], productoId: src.productoId, libras: src.libras, sinAlimentacion: false }
       }
     })
@@ -472,12 +486,16 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       for (const p of piscinas) {
         if (!p.cicloId) continue
         for (const f of fechas) {
+          const k = clave(p, f)
+          // Solo se guardan las celdas que el usuario cambió. Así el guardado
+          // no reescribe toda la semana (evita el timeout) ni toca lo ajeno.
+          if (!tocadas.current.has(k)) continue
           if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
           const c = cel(p, f)
+          // Las filas viejas de esta celda (capturadas al cargar) se borran,
+          // aunque la celda se haya vaciado por completo.
+          for (const id of (idsOriginales.current[k] || [])) borrar.push(id)
           if (!c) continue
-          // Todas las filas viejas de esta celda se borran y se reinsertan.
-          for (const id of (c._ids || [])) borrar.push(id)
-          if (c.id && !(c._ids || []).includes(c.id)) borrar.push(c.id)
 
           if (c.sinAlimentacion) {
             insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
