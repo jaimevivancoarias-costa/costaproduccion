@@ -232,16 +232,26 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       })
       setAcumulado(acum); setRaleado(ral); setPesos(pes)
 
+      // Se agrupan TODAS las filas por piscina|fecha primero, y _ids junta
+      // cada id de la base para esa celda. Así, si por una inconsistencia
+      // vieja coexisten una fila "sin alimentación" y una de producto, no se
+      // pierde ningún id: al guardar se borran todos y se reinserta limpio.
+      const byKey = {}
+      ;(alim || []).forEach(a => { (byKey[`${a.piscina_id}|${a.fecha}`] ||= []).push(a) })
       const mapa = {}
-      ;(alim || []).forEach(a => {
-        const key = `${a.piscina_id}|${a.fecha}`
-        if (a.sin_alimentacion) { mapa[key] = { sinAlimentacion: true, id: a.id, libras: '', productoId: '', extras: [], _ids: [a.id] }; return }
-        const fila = { id: a.id, productoId: a.producto_id || '', libras: String(a.libras) }
-        if (!mapa[key] || mapa[key].sinAlimentacion) {
-          mapa[key] = { ...fila, sinAlimentacion: false, extras: [], _ids: [a.id] }
+      Object.entries(byKey).forEach(([key, rows]) => {
+        const ids = rows.map(r => r.id)
+        const prods = rows.filter(r => !r.sin_alimentacion && r.producto_id)
+        if (prods.length === 0) {
+          const sinRow = rows.find(r => r.sin_alimentacion)
+          mapa[key] = { sinAlimentacion: !!sinRow, id: ids[0], productoId: '', libras: '', extras: [], _ids: ids }
         } else {
-          mapa[key].extras = [...(mapa[key].extras || []), fila]
-          mapa[key]._ids = [...(mapa[key]._ids || []), a.id]
+          const [first, ...rest] = prods
+          mapa[key] = {
+            sinAlimentacion: false, id: first.id, productoId: first.producto_id, libras: String(first.libras),
+            extras: rest.map(r => ({ id: r.id, productoId: r.producto_id, libras: String(r.libras) })),
+            _ids: ids,
+          }
         }
       })
       setCeldas(mapa)
@@ -444,6 +454,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       if (!c || (!c.sinAlimentacion && !num(c.libras))) atrasadas.push({ p, f })
     })
   })
+  // Celdas por llenar (para resaltarlas en la cuadrícula y poder cerrar).
+  const faltantesKeys = new Set([
+    ...atrasadas.map(a => `${a.p.piscinaId}|${a.f}`),
+    ...pendientesHoy.map(p => `${p.piscinaId}|${hoy}`),
+  ])
 
   async function guardar(cerrarDia) {
     setGuardando(true); setAviso(null)
@@ -854,8 +869,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         onDeshacer={ev => borrarEvento(p, ev)}
                       />
                     </Td>
-                    {fechas.map((f, j) => (
-                      <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB
+                    {fechas.map((f, j) => {
+                      const falta = faltantesKeys.has(`${p.piscinaId}|${f}`)
+                      return (
+                      <Td key={f} fondo={falta ? '#FCEBC8'
+                                        : situacionDia(f, hoy) === 'hoy' ? HOYB
                                         : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : undefined}
                           borde={situacionDia(f, hoy) === 'hoy'}>
                         <Celda
@@ -872,7 +890,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           onKeyDown={e => alTeclear(e, i, j)}
                         />
                       </Td>
-                    ))}
+                      )
+                    })}
                     <Td>{totalPiscina(p) ? (
                       <>
                         <span style={{ fontWeight: 500 }}>{miles(totalPiscina(p))}</span>
