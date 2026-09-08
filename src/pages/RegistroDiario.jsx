@@ -276,10 +276,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     // Un día cerrado queda bloqueado hasta que se reabra. Reabierto vuelve a editarse.
     if (dias[fecha] === 'cerrado') return false
     if (esJefe) return true
-    // El bodeguero trabaja su semana entera, no solo el dia de hoy. Si
-    // se le paso cerrar el viernes, el lunes tiene que poder volver.
-    // Semanas anteriores siguen siendo cosa del jefe.
-    return semanaDeHoy
+    // El bodeguero edita su semana actual, y también una semana anterior
+    // SI el jefe la reabrió. Como las semanas viejas están cerradas, llegar
+    // aquí (no cerrada, no futura, día no cerrado) ya significa que es la
+    // semana en curso o una que el jefe reabrió a propósito.
+    return true
   }
 
   // Registrar un evento recarga la pantalla desde la base, y eso se
