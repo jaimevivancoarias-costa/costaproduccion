@@ -52,8 +52,11 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const semanaDeHoy = lunesDe(hoy) === lunes
   const domingo = fechas[6]
 
+  // El bodeguero edita su semana actual, y también una anterior si el jefe
+  // la reabrió (semana no cerrada). Como las viejas están cerradas, no
+  // cerrada + no futura + día no cerrado ya significa eso.
   const puedeEditar = f =>
-    !soloLectura && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado' && (esJefe || semanaDeHoy)
+    !soloLectura && !semanaCerrada && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado'
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
