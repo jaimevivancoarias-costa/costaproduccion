@@ -1060,8 +1060,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                 <Dato k="Sacos de la semana" v={(totalSemana / LIBRAS_POR_SACO).toFixed(1)} />
                 <Dato k="Total de la semana" v={miles(totalSemana)} />
               </div>
-              {!soloLectura && modo === 'registrar' && !semanaCerrada && (semanaDeHoy || esJefe) && (
-                dias[hoy] === 'cerrado' ? (
+              {!soloLectura && modo === 'registrar' && !semanaCerrada && (
+                (semanaDeHoy && dias[hoy] === 'cerrado') ? (
                   <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
                     <span style={{ fontSize: '13px', color: GRIS }}>El día de hoy está cerrado.</span>
                     {esJefe
@@ -1075,7 +1075,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                   <Btn onClick={() => guardar(false)} disabled={guardando}>
                     {guardando ? 'Guardando...' : (semanaDeHoy ? 'Guardar borrador' : 'Guardar cambios')}
                   </Btn>
-                  {semanaDeHoy && (
+                  {semanaDeHoy && dias[hoy] !== 'cerrado' && (
                     <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
                   )}
                 </div>
