@@ -202,6 +202,17 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     await cargar()
   }
 
+  // Reabrir la semana de insumos. Solo jefe/contadora (esJefe).
+  async function reabrirSemana() {
+    const { anio, semana } = semanaISO(lunes)
+    if (!window.confirm('¿Reabrir los insumos de toda la semana? Vuelve a quedar editable para la finca.')) return
+    const { error } = await supabase.schema('produccion').from('semana_cerrada')
+      .delete().eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).eq('ambito', 'insumos')
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Semana reabierta' })
+    await cargar()
+  }
+
   // Consumo de la semana por insumo, para la pregunta directa "cuánto
   // se gastó de cada cosa esta semana".
   const consumoSemana = useMemo(() => {
@@ -494,8 +505,10 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           validaciones={validaciones}
           cerrada={semanaCerrada}
           puedeCerrar={esJefe && !semanaCerrada}
+          puedeReabrir={esJefe && !soloLectura}
           onRevisar={revisarSemana}
           onCerrar={cerrarSemana}
+          onReabrir={reabrirSemana}
         />
       )}
     </div>
@@ -505,7 +518,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 // Mismo panel que en balanceado: cerrar la semana corre las OCHO
 // validaciones, insumos incluidos. Se puede hacer desde cualquiera de
 // las dos pestanas porque es una sola accion para la finca-semana.
-function Cierre({ validaciones, cerrada, puedeCerrar, onRevisar, onCerrar }) {
+function Cierre({ validaciones, cerrada, puedeCerrar, puedeReabrir, onRevisar, onCerrar, onReabrir }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
@@ -519,7 +532,9 @@ function Cierre({ validaciones, cerrada, puedeCerrar, onRevisar, onCerrar }) {
               : 'Cierra solo los insumos. El balanceado se cierra aparte, en su pestaña.'}
           </p>
         </div>
-        {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
+        {!cerrada
+          ? <Btn onClick={onRevisar}>Revisar cuadres</Btn>
+          : puedeReabrir && <Btn onClick={onReabrir}>Reabrir semana</Btn>}
       </div>
 
       {validaciones === 'cargando' && (
