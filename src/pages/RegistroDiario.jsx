@@ -636,6 +636,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     await cargar(true)
   }
 
+  // Reabrir la semana entera. Solo jefe/contadora (esJefe). Quita el cierre
+  // y la semana vuelve a quedar editable para todos (bodegueros incluidos).
+  async function reabrirSemana() {
+    const { anio, semana } = semanaISO(lunes)
+    if (!window.confirm('¿Reabrir toda la semana? Vuelve a quedar editable para la finca (también para el bodeguero).')) return
+    const { error } = await supabase.schema('produccion').from('semana_cerrada')
+      .delete().eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).eq('ambito', 'balanceado')
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Semana reabierta' })
+    await cargar(true)
+  }
+
   function alTeclear(e, iFila, iDia) {
     if (e.key !== 'Enter') return
     e.preventDefault()
@@ -779,9 +791,20 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       )}
 
       {semanaCerrada && (
-        <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap',
+                      padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
                       background: '#FAEEDA', color: '#854F0B' }}>
-          Esta semana ya está cerrada. Para corregir algo, pide a tu jefe que la reabra.
+          <span>
+            Esta semana ya está cerrada.{' '}
+            {esJefe ? 'Puedes reabrirla para corregir.' : 'Para corregir algo, pide a tu jefe que la reabra.'}
+          </span>
+          {esJefe && !soloLectura && (
+            <button onClick={reabrirSemana}
+              style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px',
+                       padding: '6px 14px', fontFamily: 'inherit', fontSize: '13px', color: '#854F0B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              Reabrir semana
+            </button>
+          )}
         </div>
       )}
 
