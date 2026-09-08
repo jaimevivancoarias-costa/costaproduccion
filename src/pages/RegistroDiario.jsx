@@ -1,676 +1,290 @@
-import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento } from './DialogoEvento'
 import {
-  LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
-  nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, miles,
+  hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
+  nombreDia, semanaISO, situacionDia, num, miles, dinero,
 } from '../lib/fechas'
 
-// Registro diario · modulo Produccion
+// Registro diario de insumos · modulo Produccion
 //
-// Aplica PRODUCCION_Reglas_v2.md:
-//   2.1  estados de dia: borrador, cerrado, reabierto
-//   2.3  vacio, sin alimentacion y registrado son tres cosas distintas
-//   2.4  un dia futuro no se evalua nunca
-//   3.1  Registrar escribe, Revisar es solo lectura
-//   4    ningun total se guarda, todos se calculan aqui
-//   5.1  la semana no cierra si fn_validar_semana falla
+// Se parece al de balanceado, pero con una diferencia que manda en el
+// diseno: una piscina puede recibir VARIOS insumos el mismo dia. Por
+// eso la celda de un dia no es un dato, es una lista de lineas.
+//
+// Vacio significa vacio: que una piscina no reciba insumos un dia es
+// lo normal, no un olvido. No hay "no aplico" ni bloquea el cierre.
 
 const NAVY = '#022847'
 const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
-const HOYB = '#E6F1FB'
-const miniLink = { display: 'block', margin: '3px auto 0', background: 'none', border: 'none',
-                   padding: 0, cursor: 'pointer', color: '#0D6CB0', fontFamily: 'inherit', fontSize: '9px' }
-const HOYL = '#85B7EB'
+const HOYB = '#F3F8FD'
 
-export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setLunes }) {
+const UNIDAD = {
+  sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
+  libras: 'lb', kg: 'kg', unidad: 'u',
+}
+
+const ordenar = (a, b) => {
+  const na = parseInt(String(a.codigo).replace(/\D/g, '')) || 0
+  const nb = parseInt(String(b.codigo).replace(/\D/g, '')) || 0
+  if (a.tipo !== b.tipo) return a.tipo === 'precria' ? 1 : -1
+  return na - nb
+}
+
+export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [piscinas, setPiscinas] = useState([])
-  const [productos, setProductos] = useState([])
-  const [celdas, setCeldas] = useState({})       // clave `${piscinaId}|${fecha}`
-  const [dias, setDias] = useState({})           // estado por fecha
-  const [diasId, setDiasId] = useState({})       // id de la fila dia_registro por fecha
-  const [solReapertura, setSolReapertura] = useState([])  // solicitudes de reabrir día
-  const [semanaCerrada, setSemanaCerrada] = useState(false)
-  const [modo, setModo] = useState('registrar')
-  const [soloPendientes, setSoloPendientes] = useState(false)
-  const [sucio, setSucio] = useState(false)
+  const [insumos, setInsumos] = useState([])
+  const [lineas, setLineas] = useState({})   // `${piscinaId}|${fecha}` -> [{id, insumoId, cantidad}]
   const [cargando, setCargando] = useState(true)
-  const [refrescando, setRefrescando] = useState(false)
-  const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
+  const [abierta, setAbierta] = useState(null)  // celda con el agregador abierto
+  const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [validaciones, setValidaciones] = useState(null)
-  const [eventos, setEventos] = useState({})     // clave piscinaId -> evento de la semana
-  const [laboratorios, setLaboratorios] = useState([])
-  const [dialogo, setDialogo] = useState(null)   // { tipo, fila }
-  const [verIndicadores, setVerIndicadores] = useState(false)
-  const [acumulado, setAcumulado] = useState({})   // cicloId -> libras desde la siembra
-  const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
-  const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
-  const [editSiembra, setEditSiembra] = useState(null)  // piscinaId en edicion de larva/gramaje
-  const [abierta, setAbierta] = useState(null)          // piscinaId con detalle del ciclo abierto
-  const refs = useRef({})
+  const [dias, setDias] = useState({})   // fecha -> estado del dia (cerrado/borrador/reabierto)
+  const [diasId, setDiasId] = useState({})
+  const [solReapertura, setSolReapertura] = useState([])
+  const [userId, setUserId] = useState(null)
+  const [cerrandoDia, setCerrandoDia] = useState(false)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
   const semanaDeHoy = lunesDe(hoy) === lunes
-  // Los dias de cultivo se cuentan hasta el final de la semana que se
-  // esta mirando, pero nunca mas alla de hoy: una piscina sembrada
-  // ayer no lleva seis dias porque el domingo quede lejos.
-  const corteDias = fechas[6] > hoy ? hoy : fechas[6]
+  const domingo = fechas[6]
 
-  const cargar = useCallback(async (silencioso) => {
-    // Al recargar despues de guardar no se vacia la pantalla: la
-    // cuadricula se queda donde esta y solo aparece un indicador. Ver
-    // todo desaparecer y volver da la sensacion de que algo se perdio.
-    if (!silencioso) setCargando(true)
-    setRefrescando(true); setAviso(null)
+  // El bodeguero edita su semana actual, y también una anterior si el jefe
+  // la reabrió (semana no cerrada). Como las viejas están cerradas, no
+  // cerrada + no futura + día no cerrado ya significa eso.
+  const puedeEditar = f =>
+    !soloLectura && !semanaCerrada && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado'
+
+  const cargar = useCallback(async () => {
+    setCargando(true); setAviso(null)
     try {
-      const domingo = fechas[6]
-
-      // Las consultas que no dependen unas de otras van juntas. Antes
-      // iban en fila y cada una esperaba a la anterior.
-      const [
-        { data: todas, error },
-        { data: ciclos, error: eCiclos },
-        { data: labs },
-        { data: prods },
-        { data: dr },
-        { data: sc },
-      ] = await Promise.all([
+      const [{ data: ps, error: eP }, { data: ins }, { data: cs }, { data: ov }] = await Promise.all([
         supabase.schema('produccion').from('piscina')
-          .select('id, codigo, nombre, hectareas, tipo')
-          .eq('finca_id', finca.id).eq('activa', true).eq('es_reservorio', false),
+          .select('id, codigo, nombre, hectareas, tipo, es_reservorio')
+          .eq('finca_id', finca.id).eq('activa', true),
+        supabase.schema('produccion').from('insumo')
+          .select('id, nombre, unidad').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('ciclo')
-          .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
+          .select('id, piscina_origen_id, fecha_siembra, fecha_cierre')
           .eq('finca_id', finca.id),
-        supabase.schema('produccion').from('laboratorio')
-          .select('id, nombre').eq('activo', true).order('nombre'),
-        supabase.schema('produccion').from('producto')
-          .select('id, nombre, nombre_corto').eq('activo', true).order('nombre'),
-        supabase.schema('produccion').from('dia_registro')
-          .select('id, fecha, estado').eq('finca_id', finca.id).eq('ambito', 'balanceado')
-          .gte('fecha', lunes).lte('fecha', domingo),
-        supabase.schema('produccion').from('semana_cerrada')
-          .select('id').eq('finca_id', finca.id)
-          .eq('anio', semanaISO(lunes).anio).eq('semana', semanaISO(lunes).semana)
-          .eq('ambito', 'balanceado').maybeSingle(),
+        supabase.schema('produccion').from('insumo_finca')
+          .select('insumo_id, unidad').eq('finca_id', finca.id),
       ])
-      if (error) throw error
-      if (eCiclos) throw new Error('No se pudieron leer los ciclos. ' + eCiclos.message)
+      if (eP) throw eP
+      // Unidad por finca: si esta finca tiene override, se usa esa.
+      const over = {}; (ov || []).forEach(x => { over[x.insumo_id] = x.unidad })
+      const insFinca = (ins || []).map(i => ({ ...i, unidad: over[i.id] || i.unidad }))
 
-      // Los ciclos vienen sin filtrar por fecha porque hacen falta dos
-      // cosas distintas: el ciclo que cubria esta semana, y si la
-      // piscina fue sembrada DESPUES de esta semana. Sin lo segundo, al
-      // mirar junio una piscina sembrada en julio se veia vacia y
-      // ofrecia Sembrar.
-      //
-      // El ciclo que cubria ESA semana, no el que esta abierto hoy. Si
-      // hubo dos en la misma semana se queda el que empezo despues: es
-      // el que sigue vivo al final de la semana.
-      const porPiscina = {}
-      // La siembra mas cercana posterior a esta semana, si existe.
-      const posterior = {}
-      ;(ciclos || []).forEach(c => {
-        const pid = c.piscina_origen_id
-        if (c.fecha_siembra > domingo) {
-          if (!posterior[pid] || c.fecha_siembra < posterior[pid]) posterior[pid] = c.fecha_siembra
-          return
-        }
-        if (c.fecha_cierre && c.fecha_cierre < lunes) return
-        const previo = porPiscina[pid]
-        // Si hay dos en la semana se queda el que ocupo la piscina
-        // despues: un ciclo transferido ocupa su piscina el dia de la
-        // transferencia, aunque su fecha de siembra sea la del padre.
-        const ocupa = c.fecha_ocupacion || c.fecha_siembra
-        const ocupaPrevio = previo && (previo.fecha_ocupacion || previo.fecha_siembra)
-        if (!previo || ocupa > ocupaPrevio) porPiscina[pid] = c
-      })
-
-      const lista = (todas || []).map(p => {
-        const c = porPiscina[p.id]
-        return {
-          cicloId: c?.id || null, piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
-          hectareas: Number(p.hectareas), tipo: p.tipo,
-          fechaSiembra: c?.fecha_siembra || null, larva: c?.cantidad_larva || null,
-          // Desde cuando come en ESTA piscina. Para un ciclo normal es la
-          // siembra; para uno transferido, el dia que llego aqui.
-          fechaOcupacion: c?.fecha_ocupacion || c?.fecha_siembra || null,
-          fechaCierre: c?.fecha_cierre || null,
-          laboratorioId: c?.laboratorio_id || '',
-          // Un ciclo esta cerrado PARA ESTA SEMANA solo si termino antes
-          // del lunes. Mirar estado seria mirar la foto de hoy: la P2
-          // cosecho el 18 de junio, y en la semana del 15 al 21 todavia
-          // estaba viva y hay que poder registrarle esa cosecha.
-          cicloCerrado: !!(c?.fecha_cierre && c.fecha_cierre < lunes),
-          // Cosechada DENTRO de esta semana: el ciclo cerro entre lunes y
-          // domingo. La piscina quedo vacia y debe poder sembrarse de
-          // nuevo la misma semana.
-          cosechadaEstaSemana: !!(c?.fecha_cierre && c.fecha_cierre >= lunes && c.fecha_cierre <= domingo),
-          // Vacia esta semana, pero ya sembrada mas adelante. No se puede
-          // volver a sembrar: la base solo admite un ciclo abierto por
-          // piscina, y con razon.
-          siembraPosterior: posterior[p.id] || null,
-          laboratorio: c?.laboratorio?.nombre || null,
-          gramajePrecria: c?.gramaje_precria ?? null,
-        }
-      }).sort(ordenar)
+      const lista = (ps || []).map(p => ({
+        piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
+        hectareas: Number(p.hectareas), tipo: p.tipo, esReservorio: p.es_reservorio,
+        // El ciclo que cubre la semana, para colgarle el consumo. Si no
+        // hay (piscina en preparacion), va null y el trigger lo pega a
+        // la siembra siguiente.
+        cicloId: (cs || []).find(c => c.piscina_origen_id === p.id
+          && c.fecha_siembra <= domingo
+          && (!c.fecha_cierre || c.fecha_cierre >= lunes))?.id || null,
+      })).sort((a, b) => (a.esReservorio ? 1 : 0) - (b.esReservorio ? 1 : 0) || ordenar(a, b))
       setPiscinas(lista)
+      setInsumos(insFinca)
 
-      setLaboratorios(labs || [])
-      setProductos(prods || [])
+      const ids = lista.map(p => p.piscinaId)
+      const mapa = {}
+      if (ids.length) {
+        const { data: co, error: eC } = await supabase.schema('produccion')
+          .from('consumo_insumo')
+          .select('id, piscina_id, fecha, insumo_id, cantidad, precio_unitario')
+          .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
+        if (eC) throw eC
+        ;(co || []).forEach(r => {
+          const k = `${r.piscina_id}|${r.fecha}`
+          ;(mapa[k] = mapa[k] || []).push(
+            { id: r.id, insumoId: r.insumo_id, cantidad: r.cantidad, precio: r.precio_unitario })
+        })
+      }
+      setLineas(mapa)
 
-      const md = {}, mid = {}
-      ;(dr || []).forEach(d => { md[d.fecha] = d.estado; mid[d.fecha] = d.id })
-      setDias(md); setDiasId(mid)
-      setSemanaCerrada(!!sc)
+      const { data: dr } = await supabase.schema('produccion').from('dia_registro')
+        .select('id, fecha, estado').eq('finca_id', finca.id).eq('ambito', 'insumos')
+        .gte('fecha', lunes).lte('fecha', domingo)
+      const de = {}, di = {}; (dr || []).forEach(r => { de[r.fecha] = r.estado; di[r.fecha] = r.id })
+      setDias(de); setDiasId(di)
 
-      // Solicitudes de reapertura de día pendientes (para el panel del jefe).
-      const idsDia = Object.values(mid).filter(Boolean)
+      const idsDia = Object.values(di).filter(Boolean)
       if (idsDia.length) {
         const { data: sr } = await supabase.schema('produccion').from('solicitud_correccion')
-          .select('id, registro_id, valor_propuesto, motivo, estado, solicitado_en')
+          .select('id, registro_id, valor_propuesto, motivo, estado')
           .eq('finca_id', finca.id).eq('tabla', 'dia_registro').eq('estado', 'pendiente')
           .in('registro_id', idsDia)
         setSolReapertura(sr || [])
       } else { setSolReapertura([]) }
+      const { data: au } = await supabase.auth.getUser()
+      setUserId(au?.user?.id || null)
 
-      const ids = lista.map(p => p.piscinaId)
-      const ciclosIds = lista.filter(x => x.cicloId).map(x => x.cicloId)
-
-      // Segunda tanda: todo lo que necesitaba saber las piscinas. El
-      // acumulado del ciclo se pide sumado por la base. Antes se traian
-      // todas las filas de alimentacion desde la siembra y se sumaban
-      // aqui: en un ciclo de tres meses son cientos de filas por
-      // piscina, en cada carga, solo para mostrar un total.
-      const [
-        { data: evs1 },
-        { data: acums },
-        { data: rals },
-        { data: ms },
-        { data: alim, error: eAlim },
-      ] = await Promise.all([
-        ids.length ? supabase.schema('produccion').from('evento')
-          .select('id, tipo, fecha, libras, piscina_origen_id, ciclo_id')
-          .in('piscina_origen_id', ids).gte('fecha', lunes).lte('fecha', domingo)
-          .order('fecha')
-          : Promise.resolve({ data: [] }),
-        ciclosIds.length ? supabase.schema('produccion')
-          .rpc('fn_acumulado_ciclos', { p_ciclos: ciclosIds, p_hasta: domingo })
-          : Promise.resolve({ data: [] }),
-        ciclosIds.length ? supabase.schema('produccion').from('evento')
-          .select('ciclo_id, libras').in('ciclo_id', ciclosIds).eq('tipo', 'raleo')
-          : Promise.resolve({ data: [] }),
-        ids.length ? supabase.schema('produccion').from('muestreo')
-          .select('piscina_id, fecha, peso_gramos').in('piscina_id', ids)
-          .gte('fecha', lunes).lte('fecha', domingo)
-          : Promise.resolve({ data: [] }),
-        ids.length ? supabase.schema('produccion').from('alimentacion')
-          .select('id, piscina_id, fecha, producto_id, libras, sin_alimentacion')
-          .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
-          : Promise.resolve({ data: [] }),
-      ])
-
-      // Si esta consulta falla y nadie mira el error, la semana se
-      // dibuja vacia y parece que se borraron los datos. Nunca mas.
-      if (eAlim) throw new Error('No se pudo leer la alimentación de la semana. ' + eAlim.message)
-
-      // Varios eventos por piscina en la semana: puede haber una cosecha
-      // y despues una siembra nueva. Se guardan todos, en orden.
-      const evs = {}
-      ;(evs1 || []).forEach(x => { (evs[x.piscina_origen_id] = evs[x.piscina_origen_id] || []).push(x) })
-      setEventos(evs)
-
-      const acum = {}, ral = {}, pes = {}
-      ;(acums || []).forEach(r => { acum[r.ciclo_id] = Number(r.libras) })
-      ;(rals || []).forEach(r => { ral[r.ciclo_id] = (ral[r.ciclo_id] || 0) + Number(r.libras || 0) })
-      ;(ms || []).forEach(m => {
-        const d = new Date(m.fecha + 'T12:00:00').getDay()
-        pes[m.piscina_id] = { ...(pes[m.piscina_id] || {}),
-                              [d === 3 ? 'mie' : 'dom']: Number(m.peso_gramos) }
-      })
-      setAcumulado(acum); setRaleado(ral); setPesos(pes)
-
-      // Se agrupan TODAS las filas por piscina|fecha primero, y _ids junta
-      // cada id de la base para esa celda. Así, si por una inconsistencia
-      // vieja coexisten una fila "sin alimentación" y una de producto, no se
-      // pierde ningún id: al guardar se borran todos y se reinserta limpio.
-      const byKey = {}
-      ;(alim || []).forEach(a => { (byKey[`${a.piscina_id}|${a.fecha}`] ||= []).push(a) })
-      const mapa = {}
-      Object.entries(byKey).forEach(([key, rows]) => {
-        const ids = rows.map(r => r.id)
-        const prods = rows.filter(r => !r.sin_alimentacion && r.producto_id)
-        if (prods.length === 0) {
-          const sinRow = rows.find(r => r.sin_alimentacion)
-          mapa[key] = { sinAlimentacion: !!sinRow, id: ids[0], productoId: '', libras: '', extras: [], _ids: ids }
-        } else {
-          const [first, ...rest] = prods
-          mapa[key] = {
-            sinAlimentacion: false, id: first.id, productoId: first.producto_id, libras: String(first.libras),
-            extras: rest.map(r => ({ id: r.id, productoId: r.producto_id, libras: String(r.libras) })),
-            _ids: ids,
-          }
-        }
-      })
-      setCeldas(mapa)
-
-      setSucio(false)
+      const { anio, semana } = semanaISO(lunes)
+      const { data: sc } = await supabase.schema('produccion').from('semana_cerrada')
+        .select('id').eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana)
+        .eq('ambito', 'insumos').maybeSingle()
+      setSemanaCerrada(!!sc)
       setValidaciones(null)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
-      setCargando(false); setRefrescando(false)
+      setCargando(false)
     }
-  }, [finca.id, lunes, fechas])
-
-  useEffect(() => { cargar() }, [cargar])
-
-  // Regla 3.2: solo el dia de hoy es editable en modo Registrar, y solo
-  // si la semana no esta cerrada. El jefe puede tocar cualquier dia.
-  function editable(fecha) {
-    if (soloLectura || modo !== 'registrar') return false
-    if (semanaCerrada) return false
-    if (situacionDia(fecha, hoy) === 'futuro') return false
-    // Un día cerrado queda bloqueado hasta que se reabra. Reabierto vuelve a editarse.
-    if (dias[fecha] === 'cerrado') return false
-    if (esJefe) return true
-    // El bodeguero edita su semana actual, y también una semana anterior
-    // SI el jefe la reabrió. Como las semanas viejas están cerradas, llegar
-    // aquí (no cerrada, no futura, día no cerrado) ya significa que es la
-    // semana en curso o una que el jefe reabrió a propósito.
-    return true
-  }
-
-  // Registrar un evento recarga la pantalla desde la base, y eso se
-  // llevaba por delante las libras que estuvieran escritas sin guardar.
-  // Ahora se guardan primero. Si el guardado falla, el dialogo no se
-  // abre: mejor no avanzar que perder lo escrito.
-  async function abrirEvento(tipo, fila) {
-    if (sucio) {
-      const ok = await guardar(false)
-      if (!ok) return
-    }
-    setDialogo({ tipo, fila })
-  }
-
-  // Deshacer un evento ya registrado, para corregir una equivocacion.
-  async function borrarEvento(fila, evento) {
-    const nombre = TIPOS[evento.tipo]?.nombre || 'evento'
-    if (!window.confirm(`¿Deshacer ${nombre.toLowerCase()} de ${fila.nombre}? Se puede volver a registrar.`)) return
-    try {
-      if (sucio) { const ok = await guardar(false); if (!ok) return }
-      // El evento puede ser de un ciclo distinto al que la fila muestra
-      // ahora (la cosecha vieja tras resembrar), por eso su propio ciclo.
-      await eliminarEvento({ evento, cicloId: evento.ciclo_id || fila.cicloId })
-      setAviso({ tipo: 'ok', texto: `${nombre} deshecha` })
-      await cargar()
-    } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo deshacer. ' + (err.message || '') })
-    }
-  }
-
-  async function registrarEvento(datos) {
-    try {
-      await guardarEvento({
-        tipo: dialogo.tipo, fincaId: finca.id,
-        ciclo: dialogo.fila, piscina: dialogo.fila, datos,
-      })
-      setDialogo(null)
-      setAviso({ tipo: 'ok', texto: TIPOS[dialogo.tipo].nombre + ' registrada' })
-      await cargar(true)
-    } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
-    }
-  }
-
-  const clave = (p, f) => `${p.piscinaId}|${f}`
-  const cel = (p, f) => celdas[clave(p, f)]
-
-  function set(p, f, campo, valor) {
-    const k = clave(p, f)
-    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), [campo]: valor, sinAlimentacion: false } }))
-    setSucio(true)
-  }
-
-  function marcarSin(p, f) {
-    const k = clave(p, f)
-    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), sinAlimentacion: true, libras: '', productoId: '' } }))
-    setSucio(true)
-  }
-
-  function limpiar(p, f) {
-    const k = clave(p, f)
-    setCeldas(c => { const n = { ...c }; delete n[k]; return n })
-    setSucio(true)
-  }
-
-  // --- Balanceados extra (además del principal) en la misma piscina/día ---
-  function addExtra(p, f) {
-    const k = clave(p, f)
-    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}), sinAlimentacion: false,
-      extras: [...((c[k] || {}).extras || []), { productoId: '', libras: '' }] } }))
-    setSucio(true)
-  }
-  function setExtra(p, f, i, campo, valor) {
-    const k = clave(p, f)
-    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}),
-      extras: ((c[k] || {}).extras || []).map((e, j) => j === i ? { ...e, [campo]: valor } : e) } }))
-    setSucio(true)
-  }
-  function removeExtra(p, f, i) {
-    const k = clave(p, f)
-    setCeldas(c => ({ ...c, [k]: { ...(c[k] || {}),
-      extras: ((c[k] || {}).extras || []).filter((_, j) => j !== i) } }))
-    setSucio(true)
-  }
-  // Libras totales de una celda (principal + extras).
-  const librasCelda = c => c && !c.sinAlimentacion
-    ? (num(c.libras) || 0) + (c.extras || []).reduce((s, e) => s + (num(e.libras) || 0), 0)
-    : 0
-
-  function copiarDiaAnterior(f) {
-    const previo = sumarDias(f, -1)
-    const nuevo = { ...celdas }
-    piscinas.forEach(p => {
-      const src = celdas[clave(p, previo)]
-      if (src && !src.sinAlimentacion && src.libras) {
-        nuevo[clave(p, f)] = { ...nuevo[clave(p, f)], productoId: src.productoId, libras: src.libras, sinAlimentacion: false }
-      }
-    })
-    setCeldas(nuevo); setSucio(true)
-    setAviso({ tipo: 'ok', texto: `Se copió el ${nombreDia(previo).toLowerCase()}. Revisa antes de guardar.` })
-  }
-
-  // ---- totales, todos calculados (regla P1) ----
-  const totalPiscina = p =>
-    fechas.reduce((s, f) => s + librasCelda(cel(p, f)), 0)
-  const totalDia = f =>
-    piscinas.reduce((s, p) => s + librasCelda(cel(p, f)), 0)
-  async function reabrirDia(fecha) {
-    const id = diasId[fecha]
-    if (!id) return
-    if (!window.confirm(`¿Reabrir el ${nombreDia(fecha).toLowerCase()} ${corta(fecha)}? Vuelve a quedar editable.`)) return
-    const { error } = await supabase.schema('produccion').from('dia_registro')
-      .update({ estado: 'reabierto', reabierto_en: new Date().toISOString() }).eq('id', id)
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar(true)
-  }
-
-  async function pedirReabrir(fecha) {
-    const id = diasId[fecha]
-    if (!id) return
-    const motivo = window.prompt('¿Por qué necesitas reabrir este día? El jefe lo revisará.')
-    if (!motivo || !motivo.trim()) return
-    const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
-      finca_id: finca.id, tabla: 'dia_registro', registro_id: id,
-      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha, ambito: 'balanceado' },
-      motivo: motivo.trim(), solicitado_por: user?.id })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Pedido enviado. El jefe lo revisará.' }); await cargar(true)
-  }
-
-  async function resolverReapertura(sol, aprobar) {
-    const { error } = await supabase.schema('produccion')
-      .rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar(true)
-  }
-
-  async function guardarSiembra(p, larva, gramaje) {
-    const lv = larva === '' || larva == null ? null : Math.round(Number(String(larva).replace(/[.,]/g, '')))
-    const gr = gramaje === '' || gramaje == null ? null : Number(String(gramaje).replace(',', '.'))
-    if (lv !== null && !(lv > 0)) { setAviso({ tipo: 'error', texto: 'La larva debe ser un número mayor que cero.' }); return }
-    if (gr !== null && !(gr >= 0)) { setAviso({ tipo: 'error', texto: 'El gramaje no es válido.' }); return }
-    const { error } = await supabase.schema('produccion').from('ciclo')
-      .update({ cantidad_larva: lv, gramaje_precria: gr }).eq('id', p.cicloId)
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
-    setEditSiembra(null)
-    setAviso({ tipo: 'ok', texto: `Siembra de ${p.nombre} actualizada.` })
-    await cargar(true)
-  }
-
-  const totalSemana = useMemo(
-    () => piscinas.reduce((s, p) => s + totalPiscina(p), 0), [piscinas, celdas, fechas])
-  const hectareas = useMemo(
-    () => piscinas.reduce((s, p) => s + p.hectareas, 0), [piscinas])
-
-  // Regla 2.4: solo cuenta lo pendiente de hoy y lo atrasado de dias pasados.
-  const pendientesHoy = piscinas.filter(p => {
-    if (!p.cicloId) return false
-    if (p.tipo === 'precria') return false
-    const c = cel(p, hoy)
-    return !c || (!c.sinAlimentacion && !num(c.libras))
-  })
-  const atrasadas = []
-  fechas.forEach(f => {
-    if (situacionDia(f, hoy) !== 'pasado') return
-    piscinas.forEach(p => {
-      if (!p.cicloId || p.tipo === 'precria') return
-      if (p.fechaOcupacion && f < p.fechaOcupacion) return
-      if (p.fechaCierre && f > p.fechaCierre) return
-      const c = cel(p, f)
-      if (!c || (!c.sinAlimentacion && !num(c.libras))) atrasadas.push({ p, f })
-    })
-  })
-  // Celdas por llenar (para resaltarlas en la cuadrícula y poder cerrar).
-  const faltantesKeys = new Set([
-    ...atrasadas.map(a => `${a.p.piscinaId}|${a.f}`),
-    ...pendientesHoy.map(p => `${p.piscinaId}|${hoy}`),
-  ])
-
-  async function guardar(cerrarDia) {
-    setGuardando(true); setAviso(null)
-    try {
-      // Con varios productos por piscina/día no se puede usar upsert por
-      // (piscina, fecha). Por cada celda TOCADA: se borran sus filas viejas
-      // y se insertan las deseadas. Así nunca choca con el índice único
-      // (piscina, fecha, producto) aunque se intercambien o repitan productos.
-      const insertar = [], borrar = []
-      for (const p of piscinas) {
-        if (!p.cicloId) continue
-        for (const f of fechas) {
-          if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
-          const c = cel(p, f)
-          if (!c) continue
-          // Todas las filas viejas de esta celda se borran y se reinsertan.
-          for (const id of (c._ids || [])) borrar.push(id)
-          if (c.id && !(c._ids || []).includes(c.id)) borrar.push(c.id)
-
-          if (c.sinAlimentacion) {
-            insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                            fecha: f, producto_id: null, libras: 0, sin_alimentacion: true })
-          } else {
-            // Se juntan main + extras y se suma si un mismo producto aparece
-            // dos veces (evita el duplicado en el índice único).
-            const porProducto = new Map()
-            const acum = (pid, lb) => { if (pid && lb) porProducto.set(pid, (porProducto.get(pid) || 0) + lb) }
-            acum(c.productoId, num(c.libras))
-            for (const e of (c.extras || [])) acum(e.productoId, num(e.libras))
-            for (const [pid, lb] of porProducto) {
-              insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
-                              fecha: f, producto_id: pid, libras: lb, sin_alimentacion: false })
-            }
-          }
-        }
-      }
-
-      // Primero se borra TODO lo tocado, después se inserta: nunca coexisten
-      // la fila vieja y la nueva del mismo producto.
-      if (borrar.length) {
-        const { error } = await supabase.schema('produccion').from('alimentacion').delete().in('id', borrar)
-        if (error) throw error
-      }
-      if (insertar.length) {
-        const { error } = await supabase.schema('produccion').from('alimentacion').insert(insertar)
-        if (error) throw error
-      }
-
-      // Solo se toca el estado del dia cuando se esta en la semana en curso.
-      // Corregir una semana pasada no debe reabrir ni cerrar nada.
-      if (semanaDeHoy) {
-        const estado = cerrarDia ? 'cerrado' : 'borrador'
-        const { error: e2 } = await supabase.schema('produccion').from('dia_registro')
-          .upsert({ finca_id: finca.id, fecha: hoy, ambito: 'balanceado', estado,
-                    ...(cerrarDia ? { cerrado_en: new Date().toISOString() } : {}) },
-                  { onConflict: 'finca_id,fecha,ambito' })
-        if (e2) throw e2
-      }
-
-      setAviso({ tipo: 'ok',
-        texto: !semanaDeHoy ? 'Cambios guardados' : (cerrarDia ? 'Día cerrado' : 'Borrador guardado') })
-      await cargar(true)
-      return true
-    } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
-      return false
-    } finally {
-      setGuardando(false)
-    }
-  }
-
-  async function pedirCerrarDia() {
-    if (pendientesHoy.length) {
-      const nombres = pendientesHoy.slice(0, 3).map(p => p.nombre).join(', ')
-      const resto = pendientesHoy.length > 3 ? ` y ${pendientesHoy.length - 3} más` : ''
-      if (!window.confirm(
-        `Faltan ${pendientesHoy.length} piscinas por declarar: ${nombres}${resto}.\n\n` +
-        `Si no comieron, márcalas sin alimentación. ¿Cerrar el día de todos modos?`)) return
-    }
-    guardar(true)
-  }
-
-  // V5 pide que alguien haya declarado cerrado cada uno de los siete
-  // dias. Pero "Cerrar dia" solo existe en la semana en curso, asi que
-  // una semana que se carga hacia atras nunca podia cumplirlo.
-  //
-  // Aqui el jefe cierra de una vez los dias que falten. No es un atajo:
-  // es la misma firma, hecha por quien tiene la potestad de hacerla, y
-  // queda en la bitacora igual que cualquier otro cierre.
-  async function cerrarDiasPendientes() {
-    const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
-                                      && f !== hoy
-                                      && situacionDia(f, hoy) !== 'futuro')
-    if (!faltan.length) return
-    if (!window.confirm(
-      `Vas a dar por cerrados ${faltan.length} días: ${faltan.map(cortita).join(', ')}.\n\n` +
-      `Es tu firma de que ese día quedó revisado. Queda registrado en la bitácora.`)) return
-
-    const { error } = await supabase.schema('produccion').from('dia_registro')
-      .upsert(faltan.map(f => ({ finca_id: finca.id, fecha: f, ambito: 'balanceado', estado: 'cerrado',
-                                 cerrado_en: new Date().toISOString() })),
-              { onConflict: 'finca_id,fecha,ambito' })
-    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: `${faltan.length} días cerrados` })
-    await cargar(true)
-    await revisarSemana()
-  }
-
-  // El laboratorio se puede poner o corregir despues de la siembra. En
-  // la practica el bodeguero no siempre lo sabe el dia que entra la
-  // larva, y obligarlo a elegir uno en ese momento solo garantiza que
-  // ponga cualquiera.
-  async function cambiarLaboratorio(fila, id) {
-    if (!fila.cicloId) return
-    // Se pinta antes de que responda la base: es un cambio chico y
-    // esperar medio segundo por cada uno se siente pesado.
-    const antes = piscinas
-    setPiscinas(ps => ps.map(p => p.piscinaId === fila.piscinaId
-      ? { ...p, laboratorioId: id, laboratorio: laboratorios.find(l => l.id === id)?.nombre || null }
-      : p))
-
-    const { error } = await supabase.schema('produccion').from('ciclo')
-      .update({ laboratorio_id: id || null }).eq('id', fila.cicloId)
-    if (error) {
-      setPiscinas(antes)
-      setAviso({ tipo: 'error', texto: 'No se pudo cambiar el laboratorio. ' + error.message })
-    }
-  }
-
-  // Agregar un laboratorio al catalogo. Lo puede hacer tambien el
-  // bodeguero: si llega larva de uno que no esta en la lista, no puede
-  // quedarse esperando. Renombrar y desactivar siguen siendo del jefe.
-  async function nuevoLaboratorio(fila) {
-    const escrito = window.prompt('Nombre del laboratorio')
-    if (!escrito) return
-    const nombre = escrito.trim()
-    if (!nombre) return
-
-    // Si ya existe escrito de otra forma, se usa el que ya esta en vez
-    // de crear un duplicado. Asi no terminamos con ACUATECSA, Acuatecsa
-    // y Acuatecsa S.A. siendo el mismo laboratorio.
-    const ya = laboratorios.find(l => l.nombre.toLowerCase() === nombre.toLowerCase())
-    if (ya) {
-      setAviso({ tipo: 'ok', texto: `Ya existía como "${ya.nombre}". Se usó ese.` })
-      return cambiarLaboratorio(fila, ya.id)
-    }
-
-    const { data, error } = await supabase.schema('produccion').from('laboratorio')
-      .insert({ nombre }).select('id, nombre').single()
-    if (error) {
-      setAviso({ tipo: 'error', texto: 'No se pudo agregar. ' + error.message })
-      return
-    }
-    setLaboratorios(ls => [...ls, data].sort((a, b) => a.nombre.localeCompare(b.nombre)))
-    setAviso({ tipo: 'ok', texto: `${data.nombre} agregado al catálogo` })
-    await cambiarLaboratorio(fila, data.id)
-  }
+  }, [finca.id, lunes, domingo])
 
   async function revisarSemana() {
     setValidaciones('cargando')
     const { data, error } = await supabase.schema('produccion')
       .rpc('fn_validar_semana', { p_finca: finca.id, p_lunes: lunes })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); setValidaciones(null); return }
-    // Aqui solo las de balanceado. V7 y V8 (insumos) se revisan y se
-    // cierran en la pestana de Insumos.
-    setValidaciones((data || []).filter(v => v.codigo !== 'V7' && v.codigo !== 'V8'))
+    // Aqui solo cuentan las validaciones de insumos. Las de balanceado
+    // se revisan y se cierran en su propia pestana.
+    setValidaciones((data || []).filter(v => v.codigo === 'V7' || v.codigo === 'V8'))
+  }
+
+  const [guardandoBorrador, setGuardandoBorrador] = useState(false)
+  async function guardarBorrador() {
+    // Todo se guarda solo al agregar cada insumo; esto refresca y confirma.
+    setGuardandoBorrador(true)
+    await cargar()
+    setGuardandoBorrador(false)
+    setAviso({ tipo: 'ok', texto: 'Borrador guardado.' })
+  }
+
+  async function cerrarDiaHoy() {
+    setCerrandoDia(true)
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha: hoy, ambito: 'insumos', estado: 'cerrado', cerrado_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    setCerrandoDia(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo cerrar el día. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Día de insumos cerrado.' }); await cargar()
+  }
+
+  // El jefe reabre directo; el bodeguero pide y el jefe autoriza.
+  async function reabrirDiaHoy() {
+    setCerrandoDia(true)
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha: hoy, ambito: 'insumos', estado: 'reabierto', reabierto_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    setCerrandoDia(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir el día. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar()
+  }
+
+  async function pedirReabrirHoy() {
+    const id = diasId[hoy]
+    if (!id) return
+    const motivo = window.prompt('¿Por qué necesitas reabrir los insumos de hoy? El jefe lo revisará.')
+    if (!motivo || !motivo.trim()) return
+    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+      finca_id: finca.id, tabla: 'dia_registro', registro_id: id,
+      valor_anterior: { estado: 'cerrado' }, valor_propuesto: { estado: 'reabierto', fecha: hoy, ambito: 'insumos' },
+      motivo: motivo.trim(), solicitado_por: userId })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Pedido enviado. El jefe lo revisará.' }); await cargar()
+  }
+
+  async function resolverReapertura(sol, aprobar) {
+    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
   async function cerrarSemana() {
     const { anio, semana } = semanaISO(lunes)
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
-      .insert({ finca_id: finca.id, anio, semana, ambito: 'balanceado', validaciones })
+      .insert({ finca_id: finca.id, anio, semana, ambito: 'insumos', validaciones })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Balanceado de la semana cerrado' })
-    await cargar(true)
+    setAviso({ tipo: 'ok', texto: 'Insumos de la semana cerrados' })
+    await cargar()
   }
 
-  // Reabrir la semana entera. Solo jefe/contadora (esJefe). Quita el cierre
-  // y la semana vuelve a quedar editable para todos (bodegueros incluidos).
+  // Reabrir la semana de insumos. Solo jefe/contadora (esJefe).
   async function reabrirSemana() {
     const { anio, semana } = semanaISO(lunes)
-    if (!window.confirm('¿Reabrir toda la semana? Vuelve a quedar editable para la finca (también para el bodeguero).')) return
+    if (!window.confirm('¿Reabrir los insumos de toda la semana? Vuelve a quedar editable para la finca.')) return
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
-      .delete().eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).eq('ambito', 'balanceado')
+      .delete().eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).eq('ambito', 'insumos')
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Semana reabierta' })
-    await cargar(true)
+    await cargar()
   }
 
-  function alTeclear(e, iFila, iDia) {
-    if (e.key !== 'Enter') return
-    e.preventDefault()
-    refs.current[`${iFila + 1}|${iDia}`]?.focus()
+  // Consumo de la semana por insumo, para la pregunta directa "cuánto
+  // se gastó de cada cosa esta semana".
+  const consumoSemana = useMemo(() => {
+    const m = {}
+    Object.values(lineas).flat().forEach(l => {
+      m[l.insumoId] = (m[l.insumoId] || 0) + num(l.cantidad)
+    })
+    return Object.entries(m)
+      .map(([id, cant]) => ({ id, cant }))
+      .sort((a, b) => b.cant - a.cant)
+  }, [lineas])
+
+  // Resumen de la semana para las tarjetas de arriba.
+  const resumen = useMemo(() => {
+    const insumosUsados = new Set()
+    const piscinasConMov = new Set()
+    let gasto = 0
+    Object.entries(lineas).forEach(([k, arr]) => {
+      if (arr.length) piscinasConMov.add(k.split('|')[0])
+      arr.forEach(l => {
+        insumosUsados.add(l.insumoId)
+        gasto += num(l.cantidad) * Number(l.precio || 0)
+      })
+    })
+    return { insumos: insumosUsados.size, piscinas: piscinasConMov.size, gasto }
+  }, [lineas])
+
+  useEffect(() => { cargar() }, [cargar])
+
+  const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
+  const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
+  const cel = (p, f) => lineas[`${p.piscinaId}|${f}`] || []
+
+  // Se guarda linea por linea: son pocas por celda y evita el baile de
+  // diffing de todo el grid. Optimista: se pinta y si falla se revierte.
+  async function agregar(p, f, insumoId, cantidad) {
+    const cant = num(cantidad)
+    if (!insumoId || !cant) return
+    const k = `${p.piscinaId}|${f}`
+    const yaHay = (lineas[k] || []).find(l => l.insumoId === insumoId)
+    if (yaHay) {
+      setAviso({ tipo: 'error', texto: 'Ese insumo ya está en ese día. Edita la cantidad.' })
+      return
+    }
+    const fila = { piscina_id: p.piscinaId, fecha: f, insumo_id: insumoId,
+                   ciclo_id: p.cicloId, cantidad: cant }
+    const { data, error } = await supabase.schema('produccion').from('consumo_insumo')
+      .insert(fila).select('id').single()
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setLineas(m => ({ ...m, [k]: [...(m[k] || []), { id: data.id, insumoId, cantidad: cant }] }))
+    setAbierta(null)
   }
 
-  const visibles = soloPendientes
-    ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
-    : piscinas
-
-  const COLS_BASE = '230px 150px'
-  const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
-  const COLS_IND = verIndicadores ? ' 104px 96px 104px 96px 92px 92px 92px 116px 104px' : ''
-  const COLS = `${COLS_BASE} ${COLS_DIAS}${COLS_IND}`
-  const ANCHO = verIndicadores ? '1910px' : '1240px'
-  // Resumen del estado de la piscina para la etiqueta colapsada.
-  const estadoResumen = p => {
-    if (!p.cicloId || p.cosechadaEstaSemana) return { txt: 'Vacía', bg: '#e7f4ef', color: '#0F6E56' }
-    const evs = eventos[p.piscinaId] || []
-    if (evs.length) { const t = TIPOS[evs[0].tipo] || TIPOS.siembra; return { txt: t.nombre, bg: t.fondo, color: t.color } }
-    return { txt: 'Sin novedad', bg: '#f1f4f7', color: GRIS }
+  async function cambiarCantidad(k, id, valor) {
+    const cant = num(valor)
+    setLineas(m => ({ ...m, [k]: m[k].map(l => l.id === id ? { ...l, cantidad: valor } : l) }))
+    if (!cant) return
+    await supabase.schema('produccion').from('consumo_insumo')
+      .update({ cantidad: cant, actualizado_en: new Date().toISOString() }).eq('id', id)
   }
+
+  async function quitar(k, id) {
+    const antes = lineas[k]
+    setLineas(m => ({ ...m, [k]: m[k].filter(l => l.id !== id) }))
+    const { error } = await supabase.schema('produccion').from('consumo_insumo').delete().eq('id', id)
+    if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }) }
+  }
+
+  const COLS = `180px repeat(7, minmax(190px, 1fr))`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -678,82 +292,170 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Registro diario</h1>
-            {semanaCerrada
-              ? <span style={{ background: '#eef2f5', color: GRIS, fontSize: '11px', fontWeight: 500,
-                               padding: '3px 10px', borderRadius: '20px' }}>Semana cerrada</span>
-              : <span style={{ background: '#E1F5EE', color: '#0F6E56', fontSize: '11px', fontWeight: 500,
-                               padding: '3px 10px', borderRadius: '20px' }}>
-                  {semanaDeHoy ? 'Semana en curso' : 'Semana anterior'}</span>}
-          </div>
+          <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Insumos de la semana</h1>
           <div style={{ fontSize: '13px', color: GRIS }}>
-            Semana {semanaISO(lunes).semana} · del {corta(lunes)} al {corta(fechas[6])}
+            Semana {semanaISO(lunes).semana} · del {corta(lunes)} al {corta(domingo)}
             {semanaDeHoy && ` · hoy es ${nombreDia(hoy).toLowerCase()}`}
           </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-end' }}>
-          <div style={{ display: 'inline-flex', background: '#e7eef5', borderRadius: '10px', padding: '3px', gap: '3px' }}>
-            {['registrar', 'revisar'].map(m => (
-              <button key={m} onClick={() => setModo(m)} style={{
-                border: 0, background: modo === m ? 'white' : 'transparent', borderRadius: '8px',
-                padding: '8px 16px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500,
-                color: modo === m ? NAVY : GRIS, cursor: 'pointer',
-                boxShadow: modo === m ? '0 1px 2px rgba(2,40,71,.08)' : 'none',
-              }}>{m === 'registrar' ? 'Registrar' : 'Revisar'}</button>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <Btn onClick={() => setLunes(sumarDias(lunes, -7))}>‹</Btn>
-            <Btn onClick={() => setLunes(lunesDe(hoy))}>Esta semana</Btn>
-            <Btn onClick={() => setLunes(sumarDias(lunes, 7))} disabled={lunes >= lunesDe(hoy)}>›</Btn>
-            <input
-              type="date"
-              value={lunes}
-              max={hoy}
-              title="Ir a la semana de esa fecha"
-              onChange={e => { if (e.target.value) setLunes(lunesDe(e.target.value)) }}
-              style={{ padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit',
-                       border: '0.5px solid ' + BORDE, borderRadius: '9px', color: NAVY }}
-            />
-          </div>
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <Btn onClick={() => setLunes(sumarDias(lunes, -7))}>‹</Btn>
+          <Btn onClick={() => setLunes(lunesDe(hoy))}>Esta semana</Btn>
+          <Btn onClick={() => setLunes(sumarDias(lunes, 7))} disabled={lunes >= lunesDe(hoy)}>›</Btn>
+          <input type="date" value={lunes} max={hoy}
+                 onChange={e => e.target.value && setLunes(lunesDe(e.target.value))}
+                 style={{ padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit',
+                          border: '0.5px solid ' + BORDE, borderRadius: '9px', color: NAVY }} />
         </div>
       </div>
 
-      {/* Resumen de la semana en tarjetas. */}
-      {(() => {
-        const nEng = piscinas.filter(p => p.tipo !== 'precria').length
-        const hechas = nEng - pendientesHoy.length
-        const pctHoy = nEng ? Math.round(hechas / nEng * 100) : 0
-        const diasCerrados = fechas.filter(f => dias[f] === 'cerrado' || dias[f] === 'reabierto').length
-        return (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
-                      gap: '11px', marginBottom: '14px' }}>
-          <div style={{ background: NAVY, borderRadius: '12px', padding: '14px 16px' }}>
-            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>Libras de la semana</div>
-            <div style={{ fontSize: '22px', fontWeight: 500, color: 'white' }}>{miles(totalSemana)}</div>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>{(totalSemana / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
-          </div>
-          <TarjetaReg k="Piscinas activas" v={String(piscinas.filter(p => p.cicloId).length)} />
-          {semanaDeHoy && (
-            <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
-              <div style={{ fontSize: '12px', color: GRIS }}>Completadas hoy</div>
-              <div style={{ fontSize: '22px', fontWeight: 500 }}>{hechas} de {nEng}</div>
-              <div style={{ height: '6px', background: '#e7eef5', borderRadius: '20px', overflow: 'hidden', marginTop: '6px' }}>
-                <i style={{ display: 'block', height: '100%', width: pctHoy + '%', background: '#1D9E75', borderRadius: '20px' }} />
-              </div>
-            </div>
-          )}
-          <TarjetaReg k="Días cerrados" v={`${diasCerrados} de 7`} />
-        </div>
-        )
-      })()}
+      {aviso && (
+        <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
+          background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
+          color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
+      )}
 
-      {esJefe && solReapertura.length > 0 && (
+      {/* Resumen de la semana · mismas tarjetas que el registro de balanceado */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
+                    gap: '11px', marginBottom: '14px' }}>
+        {esJefe && (
+          <div style={{ background: NAVY, borderRadius: '12px', padding: '14px 16px' }}>
+            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>Gasto de la semana</div>
+            <div style={{ fontSize: '22px', fontWeight: 500, color: 'white' }}>{dinero(resumen.gasto)}</div>
+          </div>
+        )}
+        <TarjetaIns k="Insumos distintos" v={String(resumen.insumos)} />
+        <TarjetaIns k="Piscinas con movimiento" v={String(resumen.piscinas)} />
+      </div>
+
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
+        Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
+      </div>
+
+      {cargando ? (
+        <div style={{ padding: '40px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>
+          Cargando la semana...
+        </div>
+      ) : (
+        <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white' }}>
+          <div style={{ minWidth: '1500px' }}>
+            {/* Encabezado */}
+            <div style={{ display: 'grid', gridTemplateColumns: COLS, borderBottom: '0.5px solid ' + BORDE,
+                          background: '#f6f9fb', position: 'sticky', top: 0 }}>
+              <Th pegado>Piscina</Th>
+              {fechas.map(f => (
+                <Th key={f} hoy={situacionDia(f, hoy) === 'hoy'}>
+                  <div style={{ textTransform: 'capitalize' }}>{nombreDia(f)}</div>
+                  <div style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{cortita(f)}</div>
+                </Th>
+              ))}
+            </div>
+
+            {piscinas.map(p => (
+              <div key={p.piscinaId} style={{ display: 'grid', gridTemplateColumns: COLS,
+                    borderBottom: '0.5px solid #f1f6f9', alignItems: 'stretch' }}>
+                <div style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'white',
+                              borderRight: '0.5px solid #f1f6f9' }}>
+                  <div style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</div>
+                  <div style={{ fontSize: '11px', color: GRIS }}>
+                    {p.esReservorio ? 'Reservorio · solo insumos' : `${p.hectareas.toFixed(2)} ha · ${p.tipo === 'precria' ? 'precría' : (p.cicloId ? 'con ciclo' : 'preparación')}`}
+                  </div>
+                </div>
+                {fechas.map(f => {
+                  const k = `${p.piscinaId}|${f}`
+                  const ls = cel(p, f)
+                  const edit = puedeEditar(f)
+                  const abriendo = abierta === k
+                  return (
+                    <div key={f} style={{ padding: '7px 8px',
+                          background: situacionDia(f, hoy) === 'hoy' ? HOYB
+                                    : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : 'white',
+                          borderLeft: '0.5px solid #f6f9fb' }}>
+                      {ls.map(l => (
+                        <div key={l.id} style={{ background: 'white', border: '1px solid ' + BORDE,
+                              borderRadius: '9px', padding: '7px 9px', marginBottom: '6px' }}>
+                          <div style={{ fontSize: '11px', color: NAVY, fontWeight: 600,
+                                        marginBottom: edit ? '4px' : '2px', lineHeight: 1.2 }}>
+                            {nombreInsumo(l.insumoId)}
+                          </div>
+                          {edit ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                              <input inputMode="decimal" value={l.cantidad}
+                                onChange={e => cambiarCantidad(k, l.id, e.target.value)}
+                                style={{ width: '56px', fontFamily: 'inherit', fontSize: '12px',
+                                         padding: '4px 6px', textAlign: 'right', border: '0.5px solid ' + BORDE,
+                                         borderRadius: '6px', fontVariantNumeric: 'tabular-nums' }} />
+                              <span style={{ fontSize: '11px', color: GRIS, flex: 1 }}>
+                                {unidadInsumo(l.insumoId)}
+                              </span>
+                              <button onClick={() => quitar(k, l.id)} title="Quitar"
+                                style={{ border: 'none', background: 'none', cursor: 'pointer',
+                                         color: '#c3d0db', fontSize: '15px', lineHeight: 1, padding: 0 }}>×</button>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
+                              <b style={{ fontWeight: 600 }}>{miles(num(l.cantidad))}</b> {unidadInsumo(l.insumoId)}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+
+                      {edit && (abriendo ? (
+                        <Agregar
+                          insumos={insumos}
+                          usados={ls.map(l => l.insumoId)}
+                          onGuardar={(insumoId, cant) => agregar(p, f, insumoId, cant)}
+                          onCerrar={() => setAbierta(null)}
+                        />
+                      ) : (
+                        <button onClick={() => setAbierta(k)} style={{
+                          border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                          fontSize: '11px', color: AZUL, padding: '2px 0' }}>
+                          + Agregar
+                        </button>
+                      ))}
+
+                      {!ls.length && !edit && (
+                        <span style={{ fontSize: '11px', color: '#c3d0db' }}>—</span>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!cargando && consumoSemana.length > 0 && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                      padding: '16px 18px', marginTop: '14px' }}>
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 3px' }}>Consumo de la semana</h3>
+          <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 12px' }}>
+            Total de cada insumo aplicado en las piscinas del {corta(lunes)} al {corta(domingo)}.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                        gap: '9px' }}>
+            {consumoSemana.map(c => (
+              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'baseline', padding: '9px 12px', background: '#f6f9fb',
+                    borderRadius: '9px', fontSize: '13px' }}>
+                <span style={{ color: NAVY }}>{nombreInsumo(c.id)}</span>
+                <span style={{ fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                  {miles(c.cant)} <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>
+                    {unidadInsumo(c.id)}</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!cargando && esJefe && solReapertura.length > 0 && (
         <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
-                      padding: '13px 16px', marginBottom: '12px' }}>
+                      padding: '13px 16px', marginTop: '14px' }}>
           <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>
-            Reaperturas por autorizar ({solReapertura.length})
+            Reaperturas de insumos por autorizar ({solReapertura.length})
           </div>
           {solReapertura.map(s => (
             <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -771,615 +473,71 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
-        <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
-        <span style={{ ...chip, background: '#E6F1FB', borderColor: '#9cc4e8', color: AZUL, fontWeight: 500 }}>
-          Alimentación
-        </span>
-        <button onClick={() => setVerIndicadores(v => !v)} style={{
-          ...chip, cursor: 'pointer', fontFamily: 'inherit',
-          background: verIndicadores ? '#E6F1FB' : 'white',
-          borderColor: verIndicadores ? '#9cc4e8' : BORDE,
-          color: verIndicadores ? AZUL : GRIS,
-          fontWeight: verIndicadores ? 500 : 400,
-        }}>Indicadores</button>
-      </div>
-
-      {aviso && (
-        <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
-          background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
-          color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
-      )}
-
-      {semanaCerrada && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap',
-                      padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
-                      background: '#FAEEDA', color: '#854F0B' }}>
-          <span>
-            Esta semana ya está cerrada.{' '}
-            {esJefe ? 'Puedes reabrirla para corregir.' : 'Para corregir algo, pide a tu jefe que la reabra.'}
-          </span>
-          {esJefe && !soloLectura && (
-            <button onClick={reabrirSemana}
-              style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px',
-                       padding: '6px 14px', fontFamily: 'inherit', fontSize: '13px', color: '#854F0B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              Reabrir semana
-            </button>
+      {!cargando && semanaDeHoy && !soloLectura && !semanaCerrada && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: '12px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + BORDE,
+                      borderRadius: '12px', padding: '13px 16px', marginTop: '14px' }}>
+          <div style={{ fontSize: '13px', color: GRIS }}>
+            Los insumos se guardan solos al agregarlos.{' '}
+            {dias[hoy] === 'cerrado'
+              ? 'El día de hoy está cerrado.'
+              : 'Cuando termines de cargar el día, ciérralo.'}
+          </div>
+          {dias[hoy] === 'cerrado' ? (
+            esJefe
+              ? <Btn disabled={cerrandoDia} onClick={reabrirDiaHoy}>{cerrandoDia ? 'Un momento...' : 'Reabrir día de hoy'}</Btn>
+              : solReapertura.some(x => x.registro_id === diasId[hoy])
+                ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
+                : <Btn onClick={pedirReabrirHoy}>Pedir reabrir</Btn>
+          ) : (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <Btn onClick={guardarBorrador} disabled={guardandoBorrador}>{guardandoBorrador ? 'Guardando...' : 'Guardar borrador'}</Btn>
+              <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
+                padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
+                cursor: cerrandoDia ? 'default' : 'pointer', opacity: cerrandoDia ? 0.6 : 1 }}>
+                {cerrandoDia ? 'Cerrando...' : 'Guardar y cerrar día'}
+              </button>
+            </div>
           )}
         </div>
       )}
 
-      {modo === 'registrar' && !soloLectura && !semanaCerrada && !semanaDeHoy && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap',
-                      background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                      padding: '11px 14px', marginBottom: '10px' }}>
-          <span style={{ fontSize: '13px', color: '#854F0B' }}>
-            Estás editando una semana anterior. Los cambios quedan en la bitácora.
-          </span>
-        </div>
-      )}
-
-      {cargando ? (
-        <Vacio>Cargando la semana...</Vacio>
-      ) : !piscinas.length ? (
-        <Vacio>No hay piscinas sembradas en esta semana.</Vacio>
-      ) : (
-        <>
-          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
-            <div style={{ overflowX: 'auto' }}>
-              <div style={{ minWidth: ANCHO }}>
-
-                <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
-                              borderBottom: '0.5px solid ' + BORDE }}>
-                  <Th pegado>Piscina</Th>
-                  <Th>Estado</Th>
-                  {fechas.map(f => {
-                    const s = situacionDia(f, hoy)
-                    const est = dias[f]
-                    return (
-                      <Th key={f} fondo={s === 'hoy' ? HOYB : (s === 'futuro' ? '#fbfcfd' : undefined)}
-                          borde={s === 'hoy'}>
-                        <span style={{ display: 'block', fontSize: '12px', color: NAVY, fontWeight: 500 }}>
-                          {nombreDia(f)}
-                        </span>
-                        {cortita(f)}
-                        {s === 'hoy' && (
-                          <span style={{ display: 'block', fontSize: '9px', marginTop: '3px', letterSpacing: '0.04em', color: AZUL }}>Hoy</span>
-                        )}
-                      </Th>
-                    )
-                  })}
-                  <Th>Total semana</Th>
-                  {verIndicadores && (
-                    <>
-                      <Th>A la fecha</Th>
-                      <Th>Libras raleadas</Th>
-                      <Th>Consumo prom. semanal</Th>
-                      <Th>Libras por ha día</Th>
-                      <Th>Gramaje precría</Th>
-                      <Th>Peso miércoles</Th>
-                      <Th>Peso domingo</Th>
-                      <Th>Larva sembrada</Th>
-                      <Th>Densidad por ha</Th>
-                    </>
-                  )}
-                </div>
-
-                {visibles.map((p, i) => (
-                  <Fragment key={p.piscinaId}>
-                  <div style={{ display: 'grid', gridTemplateColumns: COLS,
-                        borderBottom: editSiembra === p.piscinaId ? 'none' : '0.5px solid #f1f6f9', alignItems: 'stretch' }}>
-                    <Td pegado alineado="left">
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '7px' }}>
-                        <button onClick={() => setAbierta(abierta === p.piscinaId ? null : p.piscinaId)}
-                          title="Ver detalle del ciclo"
-                          style={{ background: 'none', border: 'none', padding: '2px 0 0', cursor: 'pointer', color: GRIS, lineHeight: 1 }}>
-                          <span style={{ fontSize: '11px' }}>{abierta === p.piscinaId ? '▾' : '▸'}</span>
-                        </button>
-                        <div>
-                          <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
-                          <div style={{ fontSize: '11px', color: GRIS }}>
-                            {p.hectareas.toFixed(2)} ha{p.tipo === 'precria' ? ' · precría' : ''}
-                            {p.fechaSiembra ? ` · ${diasCultivo(p.fechaSiembra, corteDias)} días` : ''}
-                          </div>
-                        </div>
-                      </div>
-                    </Td>
-                    <Td>
-                      <Estado
-                        fila={p} eventos={eventos[p.piscinaId] || []}
-                        puede={!soloLectura && modo === 'registrar'}
-                        onElegir={tipo => abrirEvento(tipo, p)}
-                        onDeshacer={ev => borrarEvento(p, ev)}
-                      />
-                    </Td>
-                    {fechas.map((f, j) => {
-                      const falta = faltantesKeys.has(`${p.piscinaId}|${f}`)
-                      return (
-                      <Td key={f} fondo={falta ? '#FCEBC8'
-                                        : situacionDia(f, hoy) === 'hoy' ? HOYB
-                                        : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : undefined}
-                          borde={situacionDia(f, hoy) === 'hoy'}>
-                        <Celda
-                          p={p} f={f} c={cel(p, f)} productos={productos}
-                          editable={editable(f)} situacion={situacionDia(f, hoy)}
-                          onProducto={v => set(p, f, 'productoId', v)}
-                          onLibras={v => set(p, f, 'libras', v)}
-                          onAddExtra={() => addExtra(p, f)}
-                          onExtra={(i, campo, v) => setExtra(p, f, i, campo, v)}
-                          onRemoveExtra={i => removeExtra(p, f, i)}
-                          onSin={() => marcarSin(p, f)}
-                          onLimpiar={() => limpiar(p, f)}
-                          inputRef={el => { refs.current[`${i}|${j}`] = el }}
-                          onKeyDown={e => alTeclear(e, i, j)}
-                        />
-                      </Td>
-                      )
-                    })}
-                    <Td>{totalPiscina(p) ? (
-                      <>
-                        <span style={{ fontWeight: 500 }}>{miles(totalPiscina(p))}</span>
-                        <div style={{ fontSize: '11px', color: GRIS }}>{(totalPiscina(p) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
-                      </>
-                    ) : ''}</Td>
-                    {verIndicadores && (() => {
-                      const t = totalPiscina(p)
-                      const g = pesos[p.piscinaId] || {}
-                      return (
-                        <>
-                          <Td><span style={{ color: GRIS }}>{p.cicloId ? miles(acumulado[p.cicloId] || 0) : ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{raleado[p.cicloId] ? miles(raleado[p.cicloId]) : ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{t ? miles(t / 7) : ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{t && p.hectareas ? (t / p.hectareas / 7).toFixed(1) : ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{p.gramajePrecria ?? ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{g.mie ?? ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{g.dom ?? ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>{p.larva ? miles(p.larva) : ''}</span></Td>
-                          <Td><span style={{ color: GRIS }}>
-                            {p.larva && p.hectareas ? miles(p.larva / p.hectareas) : ''}
-                          </span></Td>
-                        </>
-                      )
-                    })()}
-                  </div>
-                  {abierta === p.piscinaId && (
-                    <div style={{ background: '#f7fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 14px 34px' }}>
-                      <div style={{ display: 'flex', gap: '26px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ fontSize: '11px', color: GRIS }}>Siembra</div>
-                          <div style={{ fontSize: '13px', fontWeight: 500 }}>
-                            {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
-                            {p.cicloId && !soloLectura && modo === 'registrar' && (
-                              <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
-                                style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>{editSiembra === p.piscinaId ? 'cerrar' : 'editar'}</button>
-                            )}
-                          </div>
-                          {p.cicloId && (
-                            <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px', fontVariantNumeric: 'tabular-nums' }}>
-                              <span style={{ color: NAVY }}>{p.larva ? miles(p.larva) : '—'}</span> larva · <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + ' g' : '—'}</span>
-                            </div>
-                          )}
-                        </div>
-                        <div style={{ minWidth: '160px' }}>
-                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Laboratorio</div>
-                          <Laboratorio fila={p} laboratorios={laboratorios}
-                            puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
-                            onElegir={id => cambiarLaboratorio(p, id)} onNuevo={() => nuevoLaboratorio(p)} />
-                        </div>
-                      </div>
-                      {editSiembra === p.piscinaId && (
-                        <div style={{ marginTop: '10px' }}>
-                          <EditorSiembra p={p} onGuardar={guardarSiembra} onCancelar={() => setEditSiembra(null)} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  </Fragment>
-                ))}
-
-                <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
-                              borderTop: '0.5px solid ' + BORDE, alignItems: 'center' }}>
-                  <Td pegado alineado="left" fondo="#fafcfd">
-                    <span style={{ fontWeight: 500, fontSize: '14px' }}>Total</span>
-                    <div style={{ fontSize: '11px', color: GRIS }}>{hectareas.toFixed(2)} ha · {piscinas.length} piscinas</div>
-                  </Td>
-                  <Td fondo="#fafcfd" />
-                  {fechas.map(f => (
-                    <Td key={f} fondo={situacionDia(f, hoy) === 'hoy' ? HOYB : '#fafcfd'}
-                        borde={situacionDia(f, hoy) === 'hoy'}>
-                      {situacionDia(f, hoy) === 'futuro' ? <span style={{ color: GRIS }}>—</span> : (
-                        <>
-                          <span style={{ fontWeight: 500 }}>{miles(totalDia(f)) || '0'}</span>
-                          <div style={{ fontSize: '11px', color: GRIS }}>{(totalDia(f) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
-                        </>
-                      )}
-                    </Td>
-                  ))}
-                  <Td fondo="#fafcfd">
-                    <span style={{ fontWeight: 500, fontSize: '16px' }}>{miles(totalSemana)}</span>
-                    <div style={{ fontSize: '11px', color: GRIS }}>{(totalSemana / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
-                  </Td>
-                  {verIndicadores && Array.from({ length: 9 }, (_, k) => <Td key={k} fondo="#fafcfd" />)}
-                </div>
-              </div>
-            </div>
-
-            {atrasadas.length > 0 && modo === 'registrar' && (
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
-                            padding: '9px 16px', background: '#FAEEDA', color: '#854F0B' }}>
-                <span>
-                  {atrasadas.length === 1
-                    ? `${atrasadas[0].p.nombre} quedó sin registrar el ${nombreDia(atrasadas[0].f).toLowerCase()}.`
-                    : `Hay ${atrasadas.length} celdas sin registrar en días anteriores.`}
-                  {' '}Ponles las libras o márcalas sin alimentación.
-                </span>
-                {/* Reabrir los días cerrados que tienen celdas atrasadas */}
-                {!soloLectura && !semanaCerrada && [...new Set(atrasadas.map(a => a.f))]
-                  .filter(f => dias[f] === 'cerrado')
-                  .map(f => (
-                    <span key={f} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                      {esJefe
-                        ? <button onClick={() => reabrirDia(f)} style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: '#854F0B', cursor: 'pointer' }}>Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>
-                        : solReapertura.some(x => x.registro_id === diasId[f])
-                          ? <span style={{ fontSize: '12px' }}>Pedido de {nombreDia(f).slice(0, 3)} enviado</span>
-                          : <button onClick={() => pedirReabrir(f)} style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: '#854F0B', cursor: 'pointer' }}>Pedir reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>}
-                    </span>
-                  ))}
-              </div>
-            )}
-
-            {/* Reabrir CUALQUIER día cerrado de la semana (aunque esté
-                completo), para poder corregir. Independiente de si tiene
-                celdas sin registrar. */}
-            {!soloLectura && !semanaCerrada && modo === 'registrar' && (() => {
-              const yaArriba = new Set(atrasadas.map(a => a.f))
-              const cerrados = fechas.filter(f => dias[f] === 'cerrado' && !yaArriba.has(f))
-              if (cerrados.length === 0) return null
-              return (
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
-                              padding: '9px 16px', background: '#F4F7FA', color: GRIS, borderTop: '0.5px solid ' + BORDE }}>
-                  <span>¿Necesitas corregir un día ya cerrado?</span>
-                  {cerrados.map(f => (
-                    <span key={f}>
-                      {esJefe
-                        ? <button onClick={() => reabrirDia(f)} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>
-                        : solReapertura.some(x => x.registro_id === diasId[f])
-                          ? <span style={{ fontSize: '12px' }}>Pedido de {nombreDia(f).slice(0, 3)} enviado</span>
-                          : <button onClick={() => pedirReabrir(f)} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>Pedir reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>}
-                    </span>
-                  ))}
-                </div>
-              )
-            })()}
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          gap: '16px', flexWrap: 'wrap', padding: '14px 16px',
-                          borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
-              <div style={{ display: 'flex', gap: '30px' }}>
-                {semanaDeHoy && <Dato k="Libras de hoy" v={miles(totalDia(hoy)) || '0'} />}
-                <Dato k="Sacos de la semana" v={(totalSemana / LIBRAS_POR_SACO).toFixed(1)} />
-                <Dato k="Total de la semana" v={miles(totalSemana)} />
-              </div>
-              {!soloLectura && modo === 'registrar' && !semanaCerrada && (semanaDeHoy || esJefe) && (
-                dias[hoy] === 'cerrado' ? (
-                  <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
-                    <span style={{ fontSize: '13px', color: GRIS }}>El día de hoy está cerrado.</span>
-                    {esJefe
-                      ? <Btn onClick={() => reabrirDia(hoy)}>Reabrir día</Btn>
-                      : solReapertura.some(x => x.registro_id === diasId[hoy])
-                        ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
-                        : <Btn onClick={() => pedirReabrir(hoy)}>Pedir reabrir</Btn>}
-                  </div>
-                ) : (
-                <div style={{ display: 'flex', gap: '9px' }}>
-                  <Btn onClick={() => guardar(false)} disabled={guardando}>
-                    {guardando ? 'Guardando...' : (semanaDeHoy ? 'Guardar borrador' : 'Guardar cambios')}
-                  </Btn>
-                  {semanaDeHoy && (
-                    <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
-                  )}
-                </div>
-                )
-              )}
-            </div>
-          </div>
-
-          {dialogo && (
-            <DialogoEvento
-              tipo={dialogo.tipo}
-              ciclo={dialogo.fila}
-              piscina={dialogo.fila}
-              laboratorios={laboratorios}
-              destinosPosibles={piscinas
-                .filter(x => x.piscinaId !== dialogo.fila.piscinaId && !x.siembraPosterior)
-                .map(x => ({ id: x.piscinaId, nombre: x.nombre,
-                             ocupada: !!x.cicloId && !x.cosechadaEstaSemana }))}
-              minima={dialogo.tipo === 'siembra' ? undefined : dialogo.fila.fechaSiembra}
-              onCancelar={() => setDialogo(null)}
-              onGuardar={registrarEvento}
-              onLaboratorioAgregado={l =>
-                setLaboratorios(ls => [...ls, l].sort((a, b) => a.nombre.localeCompare(b.nombre)))}
-            />
-          )}
-
-          <Cierre
-            validaciones={validaciones}
-            onRevisar={revisarSemana}
-            onCerrar={cerrarSemana}
-            onCerrarDias={cerrarDiasPendientes}
-            // El dia de hoy no cuenta aqui: para eso esta "Cerrar dia".
-            diasPendientes={fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
-                                               && f !== hoy
-                                               && situacionDia(f, hoy) !== 'futuro').length}
-            // Un bodeguero puede firmar los dias sueltos de su semana.
-            // Firmar hacia atras una semana pasada es cosa del jefe.
-            puedeFirmarDias={!soloLectura && !semanaCerrada && (esJefe || semanaDeHoy)}
-            puedeCerrar={esJefe && !semanaCerrada}
-            cerrada={semanaCerrada}
-          />
-        </>
+      {!cargando && (
+        <Cierre
+          validaciones={validaciones}
+          cerrada={semanaCerrada}
+          puedeCerrar={esJefe && !semanaCerrada}
+          puedeReabrir={esJefe && !soloLectura}
+          onRevisar={revisarSemana}
+          onCerrar={cerrarSemana}
+          onReabrir={reabrirSemana}
+        />
       )}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------
-// Celda: las tres situaciones de la regla 2.3
-// ---------------------------------------------------------------------
-function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
-  if (!p.cicloId) {
-    return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
-  }
-  // Come desde que ocupa la piscina (siembra, o transferencia si vino de
-  // otra) hasta que el ciclo cierra.
-  if (f < (p.fechaOcupacion || p.fechaSiembra) || (p.fechaCierre && f > p.fechaCierre)) {
-    return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
-  }
-  if (situacion === 'futuro') {
-    return <div style={{ color: GRIS, fontSize: '13px' }}>—</div>
-  }
-
-  if (c?.sinAlimentacion) {
-    return (
-      <div style={{ ...cajaSinAlim, cursor: editable ? 'pointer' : 'default' }}
-           onClick={() => editable && onLimpiar()}
-           title={editable ? 'Clic para volver a registrar libras' : undefined}>
-        Sin alimentación
-      </div>
-    )
-  }
-
-  const extras = (c?.extras || [])
-
-  if (!editable) {
-    const conExtras = extras.filter(e => num(e.libras) && e.productoId)
-    if ((!c || !num(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>sin registrar</div>
-    const filas = []
-    if (num(c?.libras)) filas.push({ productoId: c.productoId, libras: c.libras })
-    conExtras.forEach(e => filas.push(e))
-    const total = filas.reduce((s, x) => s + (num(x.libras) || 0), 0)
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-        {filas.map((x, i) => {
-          const pr = productos.find(y => y.id === x.productoId)
-          return (
-            <div key={i}>
-              <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
-              <div style={{ fontSize: '15px' }}>{miles(num(x.libras))}</div>
-            </div>
-          )
-        })}
-        {filas.length > 1 && (
-          <div style={{ fontSize: '11px', color: GRIS, borderTop: '0.5px solid ' + BORDE, paddingTop: '2px' }}>
-            Total {miles(total)}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const selBal = (valor, onChange, key, ref, kd) => (
-    <select
-      value={valor || ''}
-      onChange={e => onChange(e.target.value)}
-      title={productos.find(x => x.id === valor)?.nombre || 'Elegir balanceado'}
-      style={{ fontFamily: 'inherit', fontSize: '11px', padding: '5px', width: '100%',
-               border: '0.5px solid ' + BORDE, borderRadius: '7px', background: 'white' }}
-    >
-      <option value="">Elegir balanceado</option>
-      {productos.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
-    </select>
-  )
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {selBal(c?.productoId, onProducto)}
-      <input
-        inputMode="numeric" placeholder="0"
-        value={c?.libras || ''}
-        ref={inputRef}
-        onKeyDown={onKeyDown}
-        onChange={e => onLibras(e.target.value)}
-        style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', width: '100%',
-                 textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
-                 fontVariantNumeric: 'tabular-nums' }}
-      />
-      {extras.map((e, i) => (
-        <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '4px',
-             borderTop: '0.5px dashed ' + BORDE, paddingTop: '5px', marginTop: '1px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '10px', color: GRIS }}>Balanceado extra</span>
-            <button
-              onClick={() => onRemoveExtra(i)}
-              title="Quitar este balanceado"
-              style={{ border: 'none', background: 'none', cursor: 'pointer',
-                       fontFamily: 'inherit', fontSize: '11px', color: '#c0392b',
-                       padding: '2px 4px', textDecoration: 'underline' }}>
-              Quitar
-            </button>
-          </div>
-          {selBal(e.productoId, v => onExtra(i, 'productoId', v))}
-          <input
-            inputMode="numeric" placeholder="0"
-            value={e.libras || ''}
-            onChange={ev => onExtra(i, 'libras', ev.target.value)}
-            style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', width: '100%',
-                     textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
-                     fontVariantNumeric: 'tabular-nums' }}
-          />
-        </div>
-      ))}
-      {num(c?.libras) && c?.productoId && extras.every(e => num(e.libras) && e.productoId) ? (
-        <button
-          onClick={onAddExtra}
-          title="Registrar otro balanceado en esta misma piscina y día"
-          style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
-                   fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '4px 6px',
-                   borderRadius: '6px', width: '100%' }}>
-          + Otro balanceado
-        </button>
-      ) : null}
-      {!num(c?.libras) && extras.length === 0 && (
-        <button
-          onClick={onSin}
-          title="Declarar que esta piscina no comió ese día"
-          style={{ border: '0.5px solid ' + BORDE, background: '#f7fafc', cursor: 'pointer',
-                   fontFamily: 'inherit', fontSize: '10px', color: GRIS, padding: '4px 6px',
-                   borderRadius: '6px', width: '100%' }}>
-          No comió
-        </button>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------
-// Columna de laboratorio. Se puede llenar o corregir en cualquier
-// momento del ciclo, no solo al sembrar.
-// ---------------------------------------------------------------------
-function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
-  if (!fila.cicloId) return <span />
-  if (!puede) {
-    return <span style={{ color: GRIS, fontSize: '12px' }}>{fila.laboratorio || '—'}</span>
-  }
-  const vacio = !fila.laboratorioId
-  return (
-    <select
-      value={fila.laboratorioId || ''}
-      onChange={e => e.target.value === '__nuevo' ? onNuevo() : onElegir(e.target.value)}
-      title={fila.laboratorio || 'Elegir laboratorio'}
-      style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
-               borderRadius: '7px', background: 'white',
-               border: '0.5px solid ' + (vacio ? '#e8d5b0' : BORDE),
-               color: vacio ? '#BA7517' : GRIS }}
-    >
-      <option value="">{vacio ? 'Sin laboratorio' : 'Quitar'}</option>
-      {laboratorios.map(l => <option key={l.id} value={l.id}>{l.nombre}</option>)}
-      {/* Agregar lo puede hacer cualquiera: si llega larva de un
-          laboratorio que no esta en la lista, el bodeguero no puede
-          quedarse esperando a que le contesten. Renombrar y desactivar
-          siguen siendo del jefe, porque el catalogo es de las nueve
-          fincas. */}
-      <option value="__nuevo">+ Agregar laboratorio nuevo</option>
-    </select>
-  )
-}
-
-// ---------------------------------------------------------------------
-// Columna de estado: es la columna ESTADO PISCINA del Excel.
-// Si la piscina no tiene ciclo, lo unico posible es sembrarla.
-// ---------------------------------------------------------------------
-function Estado({ fila, eventos, puede, onElegir, onDeshacer }) {
-  // Tras cosechar o transferir, la piscina queda vacia y puede volver a
-  // sembrarse esta misma semana.
-  const vacia = !fila.cicloId || fila.cosechadaEstaSemana
-
-  // Todos los eventos de la piscina esta semana, cada uno con su pill y
-  // su Deshacer. Puede haber cosecha y luego siembra el mismo periodo.
-  const pills = eventos.length > 0 && (
-    <div style={{ marginBottom: puede ? '6px' : 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
-      {eventos.map(ev => {
-        const t = TIPOS[ev.tipo] || TIPOS.siembra
-        return (
-          <div key={ev.id}>
-            <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 9px', borderRadius: '20px',
-                           background: t.fondo, color: t.color }}>{t.nombre}</span>
-            <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
-              {corta(ev.fecha)}{ev.libras ? ` · ${miles(ev.libras)} lb` : ''}
-              {puede && onDeshacer && (
-                <button onClick={() => onDeshacer(ev)} title="Deshacer, me equivoqué"
-                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                           fontSize: '11px', color: '#A32D2D', padding: '0 0 0 7px' }}>
-                  Deshacer
-                </button>
-              )}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-
-  if (!puede) return pills || <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
-
-  if (fila.cicloCerrado) {
-    return pills || <span style={{ color: GRIS, fontSize: '12px' }}>Ciclo cerrado</span>
-  }
-
-  // Vacia esta semana pero sembrada mas adelante: no se puede sembrar
-  // otra vez. Antes se ofrecia Sembrar y la base lo rechazaba.
-  if (vacia && fila.siembraPosterior) {
-    return (
-      <div>
-        {pills}
-        <span style={{ color: GRIS, fontSize: '12px' }}>
-          Vacía · se siembra el {corta(fila.siembraPosterior)}
-        </span>
-      </div>
-    )
-  }
-
-  const opciones = vacia
-    ? [['siembra', 'Sembrar']]
-    : [['raleo', 'Raleo'], ['transferencia', 'Transferencia'], ['cosecha', 'Cosecha']]
-
-  return (
-    <div>
-      {pills}
-      <select
-        value=""
-        onChange={e => { if (e.target.value) onElegir(e.target.value) }}
-        style={{ fontFamily: 'inherit', fontSize: '12px', padding: '6px 8px', width: '100%',
-                 borderRadius: '7px', background: vacia ? '#E1F5EE' : 'white',
-                 border: '0.5px solid ' + (vacia ? '#9fe1cb' : BORDE),
-                 color: vacia ? '#0F6E56' : GRIS,
-                 fontWeight: vacia ? 500 : 400 }}
-      >
-        <option value="">{vacia ? (fila.cosechadaEstaSemana ? 'Sembrar de nuevo' : 'Vacía') : 'Sin novedad'}</option>
-        {opciones.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
-      </select>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------
-// Panel de cierre de semana (regla 5.1)
-// ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendientes,
-                  puedeFirmarDias, puedeCerrar, cerrada }) {
+// Mismo panel que en balanceado: cerrar la semana corre las OCHO
+// validaciones, insumos incluidos. Se puede hacer desde cualquiera de
+// las dos pestanas porque es una sola accion para la finca-semana.
+function Cierre({ validaciones, cerrada, puedeCerrar, puedeReabrir, onRevisar, onCerrar, onReabrir }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                  padding: '16px 18px', marginTop: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
+                  padding: '16px 18px', marginTop: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                    gap: '14px', flexWrap: 'wrap' }}>
         <div>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar la semana</h3>
-          <p style={{ fontSize: '13px', color: GRIS, margin: 0, maxWidth: '620px' }}>
-            {cerrada ? 'Esta semana ya está cerrada.'
-              : 'Esto se cierra al final de la semana (domingo). Durante la semana solo cierras cada día con “Cerrar día”; cuando estén los 7, se puede cerrar la semana. Cada validación dice qué revisar.'}
+          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar los insumos de la semana</h3>
+          <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
+            {cerrada ? 'Los insumos de esta semana ya están cerrados.'
+              : 'Cierra solo los insumos. El balanceado se cierra aparte, en su pestaña.'}
           </p>
         </div>
-        {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
+        {!cerrada
+          ? <Btn onClick={onRevisar}>Revisar cuadres</Btn>
+          : puedeReabrir && <Btn onClick={onReabrir}>Reabrir semana</Btn>}
       </div>
 
       {validaciones === 'cargando' && (
@@ -1400,24 +558,16 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
               <span style={{ color: GRIS }}>{v.detalle}</span>
             </div>
           ))}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
-                        gap: '9px', marginTop: '14px', flexWrap: 'wrap' }}>
-            {/* V5 pide la firma de los siete dias. En una semana pasada
-                no hay boton de "Cerrar dia", asi que el jefe los firma
-                aqui. Solo aparece cuando de verdad falta alguno. */}
-            {puedeFirmarDias && diasPendientes > 0 && (
-              <>
-                <span style={{ fontSize: '12px', color: GRIS, marginRight: 'auto' }}>
-                  Faltan {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'} por dar por cerrados.
-                </span>
-                <Btn onClick={onCerrarDias}>
-                  Cerrar los {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'}
-                </Btn>
-              </>
-            )}
-            <Btn primario disabled={!todas || !puedeCerrar} onClick={onCerrar}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '14px' }}>
+            <button onClick={onCerrar} disabled={!todas || !puedeCerrar} style={{
+              padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+              border: '0.5px solid ' + AZUL, borderRadius: '9px',
+              background: (todas && puedeCerrar) ? AZUL : 'white',
+              color: (todas && puedeCerrar) ? 'white' : GRIS,
+              cursor: (todas && puedeCerrar) ? 'pointer' : 'default',
+              opacity: (todas && puedeCerrar) ? 1 : 0.5 }}>
               {puedeCerrar ? 'Cerrar semana' : 'Solo un jefe puede cerrar'}
-            </Btn>
+            </button>
           </div>
         </div>
       )}
@@ -1425,103 +575,44 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
   )
 }
 
-// ---------------------------------------------------------------------
-// Piezas sueltas
-// ---------------------------------------------------------------------
-const chip = { border: '0.5px solid ' + BORDE, borderRadius: '20px', padding: '7px 14px',
-               fontSize: '13px', background: 'white' }
-const cajaVacia = { border: '1px dashed #c9d8e5', borderRadius: '7px', padding: '9px 6px',
-                    color: '#adbccb', fontSize: '12px' }
-const cajaSuave = { border: '1px dashed #e3ebf2', borderRadius: '7px', padding: '9px 6px',
-                    color: '#c3d0db', fontSize: '12px' }
-const cajaSinAlim = { background: '#f2f5f8', borderRadius: '7px', padding: '9px 6px',
-                      color: GRIS, fontSize: '13px' }
-
-function Th({ children, pegado, fondo, borde }) {
+// El agregador de una celda: elegir insumo y poner cantidad.
+function Agregar({ insumos, usados, onGuardar, onCerrar }) {
+  const [insumoId, setInsumoId] = useState('')
+  const [cant, setCant] = useState('')
+  const libres = insumos.filter(i => !usados.includes(i.id))
+  const elegido = insumos.find(i => i.id === insumoId)
   return (
-    <div style={{
-      padding: '10px 9px', fontSize: '11px', color: GRIS, fontWeight: 500, textAlign: 'center',
-      background: fondo || '#fafcfd',
-      ...(pegado ? { position: 'sticky', left: 0, zIndex: 3, textAlign: 'left',
-                     paddingLeft: '16px', borderRight: '0.5px solid ' + BORDE } : {}),
-      ...(borde ? { boxShadow: `inset 2px 0 0 ${HOYL}, inset -2px 0 0 ${HOYL}` } : {}),
-    }}>{children}</div>
-  )
-}
-
-function Td({ children, pegado, fondo, borde, alineado }) {
-  return (
-    <div style={{
-      padding: '9px', textAlign: alineado || 'center', fontSize: '13px',
-      fontVariantNumeric: 'tabular-nums',
-      background: fondo || 'white',
-      ...(pegado ? { position: 'sticky', left: 0, zIndex: 2, paddingLeft: '16px',
-                     borderRight: '0.5px solid ' + BORDE } : {}),
-      ...(borde ? { boxShadow: `inset 2px 0 0 ${HOYL}, inset -2px 0 0 ${HOYL}` } : {}),
-    }}>{children}</div>
-  )
-}
-
-function Btn({ children, onClick, primario, fantasma, disabled }) {
-  return (
-    <button onClick={onClick} disabled={disabled} style={{
-      background: primario ? AZUL : (fantasma ? 'transparent' : 'white'),
-      color: primario ? 'white' : (fantasma ? GRIS : NAVY),
-      border: '0.5px solid ' + (primario ? AZUL : (fantasma ? 'transparent' : BORDE)),
-      borderRadius: '9px', padding: '9px 14px', fontFamily: 'inherit', fontSize: '13px',
-      fontWeight: primario ? 500 : 400,
-      cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-    }}>{children}</button>
-  )
-}
-
-const Sep = () => <span style={{ width: '1px', height: '22px', background: BORDE }} />
-
-// Editor en línea de larva y gramaje de siembra de un ciclo abierto.
-function EditorSiembra({ p, onGuardar, onCancelar }) {
-  const [larva, setLarva] = useState(p.larva != null ? String(p.larva) : '')
-  const [gramaje, setGramaje] = useState(p.gramajePrecria != null ? String(p.gramajePrecria) : '')
-  const [enviando, setEnviando] = useState(false)
-  return (
-    <div style={{ background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9',
-                  padding: '12px 16px', display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-      <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500, alignSelf: 'center' }}>
-        Siembra de {p.nombre}
+    <div style={{ marginTop: '4px', padding: '6px', background: '#f6f9fb', borderRadius: '7px' }}>
+      <select value={insumoId} onChange={e => setInsumoId(e.target.value)}
+        style={{ width: '100%', fontFamily: 'inherit', fontSize: '11px', padding: '4px',
+                 border: '0.5px solid ' + BORDE, borderRadius: '6px', marginBottom: '4px' }}>
+        <option value="">Elegir insumo</option>
+        {libres.map(i => (
+          <option key={i.id} value={i.id}>{i.nombre} — {UNIDAD[i.unidad] || i.unidad}</option>
+        ))}
+      </select>
+      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+        <input inputMode="decimal" value={cant}
+          placeholder={elegido ? `Cantidad en ${UNIDAD[elegido.unidad] || elegido.unidad}` : 'Cantidad'}
+          autoFocus
+          onChange={e => setCant(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (onGuardar(insumoId, cant))}
+          style={{ flex: 1, fontFamily: 'inherit', fontSize: '11px', padding: '4px',
+                   border: '0.5px solid ' + BORDE, borderRadius: '6px', minWidth: 0 }} />
+        <button onClick={() => onGuardar(insumoId, cant)} disabled={!insumoId || !num(cant)}
+          style={{ border: 'none', background: AZUL, color: 'white', borderRadius: '6px',
+                   fontFamily: 'inherit', fontSize: '11px', padding: '4px 8px',
+                   cursor: 'pointer', opacity: (!insumoId || !num(cant)) ? 0.4 : 1 }}>ok</button>
+        <button onClick={onCerrar}
+          style={{ border: '0.5px solid ' + BORDE, background: 'white', borderRadius: '6px',
+                   fontFamily: 'inherit', fontSize: '11px', padding: '4px 7px', cursor: 'pointer',
+                   color: GRIS }}>×</button>
       </div>
-      <div>
-        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Larva sembrada</div>
-        <input inputMode="numeric" value={larva} onChange={e => setLarva(e.target.value)} placeholder="ej. 850000"
-          style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit', width: '150px',
-                   border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
-      </div>
-      <div>
-        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Gramaje de siembra (g)</div>
-        <input inputMode="decimal" value={gramaje} onChange={e => setGramaje(e.target.value)} placeholder="ej. 0.02"
-          style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit', width: '130px',
-                   border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
-      </div>
-      <button disabled={enviando}
-        onClick={async () => { setEnviando(true); await onGuardar(p, larva, gramaje); setEnviando(false) }}
-        style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '9px 18px',
-                 fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer', opacity: enviando ? 0.5 : 1 }}>
-        {enviando ? 'Guardando...' : 'Guardar'}
-      </button>
-      <button onClick={onCancelar}
-        style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '9px 16px',
-                 fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }}>Cancelar</button>
     </div>
   )
 }
 
-function TarjetaReg({ k, v }) {
-  return (
-    <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
-      <div style={{ fontSize: '12px', color: GRIS }}>{k}</div>
-      <div style={{ fontSize: '22px', fontWeight: 500 }}>{v}</div>
-    </div>
-  )
-}
-function Dato({ k, v }) {
+function DatoIns({ k, v }) {
   return (
     <div>
       <div style={{ fontSize: '11px', color: GRIS }}>{k}</div>
@@ -1529,17 +620,33 @@ function Dato({ k, v }) {
     </div>
   )
 }
-
-function Vacio({ children }) {
+// Tarjeta clara, mismo diseño que el registro de balanceado.
+function TarjetaIns({ k, v }) {
   return (
-    <div style={{ padding: '3rem 1rem', textAlign: 'center', border: '0.5px dashed ' + BORDE,
-                  borderRadius: '12px', color: GRIS, fontSize: '14px', background: 'white' }}>
+    <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '12px', color: GRIS }}>{k}</div>
+      <div style={{ fontSize: '22px', fontWeight: 500 }}>{v}</div>
+    </div>
+  )
+}
+function Th({ children, pegado, hoy }) {
+  return (
+    <div style={{ padding: '9px 12px', fontSize: '11px', fontWeight: 500, color: GRIS,
+                  textTransform: 'uppercase', letterSpacing: '0.03em',
+                  position: pegado ? 'sticky' : 'static', left: pegado ? 0 : undefined,
+                  background: hoy ? '#E6F1FB' : '#f6f9fb',
+                  borderRight: pegado ? '0.5px solid ' + BORDE : 'none' }}>
       {children}
     </div>
   )
 }
 
-function ordenar(a, b) {
-  if (a.tipo !== b.tipo) return a.tipo === 'precria' ? 1 : -1
-  return (parseInt(a.codigo.replace(/\D/g, ''), 10) || 0) - (parseInt(b.codigo.replace(/\D/g, ''), 10) || 0)
+function Btn({ children, disabled, onClick }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding: '8px 13px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+      border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY,
+      cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
+    }}>{children}</button>
+  )
 }
