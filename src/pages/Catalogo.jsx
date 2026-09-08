@@ -321,7 +321,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   const vgAct = vigente(preIns, p.id, f0, pzAct)
                   if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
                   // Historial de excepciones ya guardadas: qué finca aplica
-                  // distinto (unidad y/o precio/plazo) frente al estándar (f0).
+                  // distinto (unidad y/o precios por plazo) frente al estándar (f0).
                   const stdU = o?.unidad || p.unidad
                   const excIni = []
                   ;(fincas || []).forEach(f => {
@@ -332,16 +332,22 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const isComp = of.unidad === 'unidad' && of.unidad_contenido && of.unidad_contenido !== 'unidad'
                       unidadExc = isComp ? '__completo' : of.unidad
                     }
-                    const pzF = plz[k(p.id, f.id)]?.plazo ?? 0
-                    const vgF = vigente(preIns, p.id, f.id, pzF)
-                    const vg0 = vigente(preIns, p.id, f0, pzF)
-                    let precioExc = '', plazoExc = 0, desdeExc = ''
-                    if (vgF && (!vg0 || Number(vgF.precio_unitario) !== Number(vg0.precio_unitario) || pzF !== pzAct)) {
-                      const facF = Number(of?.factor) || 1
-                      precioExc = String(Math.round(Number(vgF.precio_unitario) * facF * 10000) / 10000)
-                      plazoExc = pzF; desdeExc = vgF.vigente_desde || ''
-                    }
-                    if (unidadExc || precioExc) excIni.push({ fincaId: f.id, unidad: unidadExc, precio: precioExc, plazo: plazoExc, desde: desdeExc })
+                    // Precios propios por plazo (los que difieren del estándar).
+                    const facF = Number(of?.factor) || 1
+                    const precios = {}
+                    let hayPrecio = false, desdeExc = ''
+                    PLAZOS.forEach(pz => {
+                      const vgF = vigente(preIns, p.id, f.id, pz)
+                      const vg0 = vigente(preIns, p.id, f0, pz)
+                      if (vgF && (!vg0 || Number(vgF.precio_unitario) !== Number(vg0.precio_unitario))) {
+                        precios[pz] = String(Math.round(Number(vgF.precio_unitario) * facF * 10000) / 10000)
+                        hayPrecio = true
+                        if (!desdeExc) desdeExc = vgF.vigente_desde || ''
+                      }
+                    })
+                    const pzF = plz[k(p.id, f.id)]?.plazo ?? null
+                    const plazoRige = (hayPrecio || (pzF != null && pzF !== pzAct)) ? (pzF ?? 0) : null
+                    if (unidadExc || hayPrecio) excIni.push({ fincaId: f.id, unidad: unidadExc, desde: desdeExc, precios, plazoRige, abierto: hayPrecio })
                   })
                   return (
                     <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
@@ -990,6 +996,52 @@ function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCan
 const APP_UNIDADES = ['masa','liquido','conteo']
 const famLbl = fam => fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'
 
+// Popover "Copiar a otras fincas" — sirve para unidad y para precio.
+function PopCopia({ tipo, origen, valor, otras, copia, setCopia, onAplicar, yaTiene }) {
+  const esU = tipo === 'unidad'
+  const acento = esU ? '#9a6a1b' : '#3f7d4e'
+  const fondoTag = esU ? '#f6eddb' : '#eaf3ee'
+  const bordeTag = esU ? '#e6d5ac' : '#cfe6d6'
+  const sel = copia.sel || {}
+  const marcadas = otras.filter(f => sel[f.id])
+  const chocan = marcadas.filter(f => yaTiene(f.id))
+  const toggle = fid => setCopia(c => ({ ...c, sel: { ...c.sel, [fid]: !c.sel[fid] } }))
+  return (
+    <div style={{ position: 'absolute', zIndex: 20, top: esU ? '66px' : '40px', [esU ? 'left' : 'right']: 0,
+      minWidth: '240px', background: 'white', border: '0.5px solid #dfe7ee', borderRadius: '12px',
+      boxShadow: '0 12px 32px rgba(20,50,75,.15)', padding: '13px 14px' }}>
+      <span style={{ display: 'inline-block', fontSize: '10.5px', fontWeight: 700, color: acento,
+        background: fondoTag, border: '0.5px solid ' + bordeTag, borderRadius: '6px', padding: '2px 7px', marginBottom: '9px' }}>
+        {esU ? '◆ Unidad' : '● Precio'}
+      </span>
+      <div style={{ fontSize: '11.5px', color: '#7c8a97', margin: '0 0 9px' }}>
+        Copiar {esU ? <>la unidad <b>{valor}</b></> : <>los precios de <b>{origen}</b></>} a:
+      </div>
+      <div style={{ maxHeight: '190px', overflowY: 'auto' }}>
+        {otras.filter(f => f.id).map(f => (
+          <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13.5px', padding: '5px 2px', cursor: 'pointer', color: '#173a55' }}>
+            <input type="checkbox" checked={!!sel[f.id]} onChange={() => toggle(f.id)} /> {f.nombre}
+          </label>
+        ))}
+      </div>
+      {chocan.length > 0 && (
+        <div style={{ fontSize: '11.5px', color: '#b5462f', marginTop: '6px' }}>
+          {chocan.length === 1
+            ? `${chocan[0].nombre} ya tiene ${esU ? 'unidad' : 'precio'}, ¿Reemplazar?`
+            : `${chocan.map(f => f.nombre).join(', ')} ya tienen ${esU ? 'unidad' : 'precio'}, ¿Reemplazar?`}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '11px', borderTop: '0.5px solid #eef3f7', paddingTop: '11px' }}>
+        <button disabled={marcadas.length === 0} onClick={onAplicar}
+          style={{ background: marcadas.length ? '#173a55' : '#c3d0db', color: 'white', border: 'none', borderRadius: '8px', padding: '7px 14px', fontSize: '12.5px', fontFamily: 'inherit', cursor: marcadas.length ? 'pointer' : 'default' }}>
+          Copiar {esU ? 'unidad' : 'precio'} a {marcadas.length}
+        </button>
+        <button onClick={() => setCopia(null)} style={{ background: 'none', border: 'none', color: '#7c8a97', fontSize: '12.5px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
+      </div>
+    </div>
+  )
+}
+
 function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar }) {
   const a = actual || {}
   const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
@@ -1008,7 +1060,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
   const [unidad, setUnidad] = useState(compIni ? '__completo' : uIni)   // '__completo' = envase entero
   // Precarga las excepciones ya guardadas (qué finca aplica distinto), para
   // que al abrir Configurar veas lo que pusiste antes.
-  const [exc, setExc] = useState(() => (excIni || []).map(e => ({ fincaId: e.fincaId, unidad: e.unidad || '', precio: e.precio ?? '', plazo: e.plazo ?? 0, desde: e.desde || '' })))
+  const [exc, setExc] = useState(() => (excIni || []).map(e => ({
+    fincaId: e.fincaId, unidad: e.unidad || '', desde: e.desde || '',
+    precios: e.precios || {}, plazoRige: e.plazoRige ?? null, abierto: !!e.abierto })))
+  // Popover de copiar: { tipo:'unidad'|'precio', idx, sel:{fincaId:true} }
+  const [copia, setCopia] = useState(null)
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
   // Los precios guardados están por unidad de aplicación. Los precargamos
@@ -1032,6 +1088,39 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
   const factor = esComp ? 1 : factorDe(contenido, uCont, unidad)
   const listo = presentacion.trim() && factor != null && factor > 0
   const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u)
+
+  // --- helpers de la sección "aplica distinto" ---
+  const setRow = (i, campo, valor) => setExc(x => x.map((r, j) => j === i ? { ...r, [campo]: valor } : r))
+  const setRowPrecio = (i, pz, valor) => setExc(x => x.map((r, j) => {
+    if (j !== i) return r
+    // El primer precio que escribe marca ese plazo como "el que rige".
+    const plazoRige = (r.plazoRige == null && numDec(valor) > 0) ? pz : r.plazoRige
+    return { ...r, precios: { ...r.precios, [pz]: valor }, plazoRige }
+  }))
+  const addExc = () => setExc(x => [...x, { fincaId: '', unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }])
+  const rmExc = i => setExc(x => x.filter((_, j) => j !== i))
+  const fincaNom = id => (activas.find(f => f.id === id)?.nombre) || 'esa finca'
+  const rowTienePrecio = r => PLAZOS.some(pz => numDec(r.precios?.[pz] || '') > 0)
+  // Abre el popover de copiar (unidad o precio) preseleccionando ninguna.
+  const abrirCopia = (tipo, idx) => setCopia({ tipo, idx, sel: {} })
+  // Aplica la copia: pega la unidad o los precios de la fila origen a las
+  // fincas destino, creando su fila si no existe.
+  const aplicarCopia = () => {
+    if (!copia) return
+    const origen = exc[copia.idx]; if (!origen) return
+    const destinos = Object.keys(copia.sel).filter(fid => copia.sel[fid])
+    setExc(x => {
+      const arr = [...x]
+      destinos.forEach(fid => {
+        let j = arr.findIndex(r => r.fincaId === fid)
+        if (j === -1) { arr.push({ fincaId: fid, unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }); j = arr.length - 1 }
+        if (copia.tipo === 'unidad') arr[j] = { ...arr[j], unidad: origen.unidad }
+        else arr[j] = { ...arr[j], precios: { ...origen.precios }, plazoRige: origen.plazoRige, desde: origen.desde || arr[j].desde, abierto: true }
+      })
+      return arr
+    })
+    setCopia(null)
+  }
 
   async function crearPresentacion() {
     const nom = window.prompt('Nueva presentación (ej. Galonera):')
@@ -1091,24 +1180,43 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         await cerrarYAbrir(ids, pz, rows, desde)
       }
 
-      // 3) Excepciones de precio/plazo/fecha por finca (pisan el estándar).
+      // 3) Excepciones de precio por finca (pisan el estándar). Cada finca
+      //    puede tener precio propio en varios plazos, con su fecha.
       for (const e of exc) {
-        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
+        if (!e.fincaId) continue
         const fac = facMap[e.fincaId]; if (!fac) continue
-        const raw = numDec(e.precio), pz = Number(e.plazo) || 0, dfe = e.desde || desde
-        const precioApp = precioPor === 'presentacion' ? raw / fac : raw
-        await cerrarYAbrir([e.fincaId], pz, [{ insumo_id: insumo.id, finca_id: e.fincaId, plazo: pz, precio_unitario: precioApp, vigente_desde: dfe }], dfe)
+        const dfe = e.desde || desde
+        for (const pz of PLAZOS) {
+          const raw = numDec(e.precios?.[pz] || ''); if (!(raw > 0)) continue
+          const precioApp = precioPor === 'presentacion' ? raw / fac : raw
+          await cerrarYAbrir([e.fincaId], pz, [{ insumo_id: insumo.id, finca_id: e.fincaId, plazo: pz, precio_unitario: precioApp, vigente_desde: dfe }], dfe)
+        }
       }
 
-      // 4) Plazo que rige ahora (bloque).
+      // 4) Plazo que rige ahora. Estándar para todas; luego cada excepción
+      //    con su propio "rige" pisa a su finca.
+      const plazoRigeFinca = {}   // fincaId -> plazo, con su fecha
+      exc.forEach(e => { if (e.fincaId && e.plazoRige != null) plazoRigeFinca[e.fincaId] = { pz: e.plazoRige, dfe: e.desde || desde } })
       if (plazoActivo != null) {
+        const stdIds = ids.filter(fid => !(fid in plazoRigeFinca))
+        if (stdIds.length) {
+          await supabase.schema('produccion').from('plazo_insumo').delete()
+            .eq('insumo_id', insumo.id).in('finca_id', stdIds).gte('vigente_desde', desde)
+          await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
+            .eq('insumo_id', insumo.id).in('finca_id', stdIds).is('vigente_hasta', null).lt('vigente_desde', desde)
+          const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
+            .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: plazoActivo, vigente_desde: desde })))
+          if (e4) throw e4
+        }
+      }
+      for (const [fid, { pz, dfe }] of Object.entries(plazoRigeFinca)) {
         await supabase.schema('produccion').from('plazo_insumo').delete()
-          .eq('insumo_id', insumo.id).in('finca_id', ids).gte('vigente_desde', desde)
-        await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-          .eq('insumo_id', insumo.id).in('finca_id', ids).is('vigente_hasta', null).lt('vigente_desde', desde)
-        const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
-          .insert(ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: plazoActivo, vigente_desde: desde })))
-        if (e4) throw e4
+          .eq('insumo_id', insumo.id).eq('finca_id', fid).gte('vigente_desde', dfe)
+        await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(dfe, -1) })
+          .eq('insumo_id', insumo.id).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', dfe)
+        const { error: e5 } = await supabase.schema('produccion').from('plazo_insumo')
+          .insert([{ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfe }])
+        if (e5) throw e5
       }
       onHecho(`Configurado en ${activas.length} fincas.`)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
@@ -1164,46 +1272,90 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       {/* 2. Excepciones */}
       <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
         <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca aplica distinto?</div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '11px' }}>
-          El estándar va a todas. Agrega solo la finca que difiere: en qué unidad la aplica, o su precio/plazo propio. Todo es opcional — lo que dejes vacío usa el estándar.
+        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>
+          Llenas una finca y la copias a las que quieras. La unidad y el precio se copian por separado. Lo que dejes vacío usa el estándar.
         </div>
-        {exc.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.1fr 0.8fr 0.9fr 1fr auto', gap: '9px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-            <span>Finca</span><span>Se aplica en (opc.)</span><span style={{ textAlign: 'right' }}>Precio (opc.)</span><span>Plazo</span><span>Rige desde (opc.)</span><span></span>
-          </div>
-        )}
         {exc.map((e, i) => {
-          const facF = e.unidad ? factorFinca(e.unidad) : null
+          const facF = e.unidad && e.unidad !== '__completo' ? factorFinca(e.unidad) : null
+          const enlace = { background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: '#8a5a12', fontSize: '11.5px', padding: 0 }
+          const otras = activas.filter(f => f.id !== e.fincaId)
           return (
-          <div key={i} style={{ marginBottom: '8px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.1fr 0.8fr 0.9fr 1fr auto', gap: '9px', alignItems: 'center' }}>
-              <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
-                <option value="">Elegir finca</option>
-                {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-              </select>
-              <select value={e.unidad} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, unidad: ev.target.value } : r))} style={inp}>
-                <option value="">(igual al estándar)</option>
-                <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
-                {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-              </select>
-              <input inputMode="decimal" value={e.precio ?? ''} placeholder="—" onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precio: ev.target.value } : r))} style={{ ...inp, textAlign: 'right' }} />
-              <select value={e.plazo ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazo: Number(ev.target.value) } : r))} style={inp}>
-                {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-              </select>
-              <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
-              <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
+          <div key={i} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '11px', padding: '13px 14px', marginBottom: '11px', position: 'relative' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.2fr 150px auto', gap: '11px', alignItems: 'start' }}>
+              <Campo label="Finca">
+                <select value={e.fincaId} onChange={ev => setRow(i, 'fincaId', ev.target.value)} style={inp}>
+                  <option value="">Elegir finca</option>
+                  {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+                </select>
+              </Campo>
+              <div style={{ position: 'relative' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <label style={{ fontSize: '11.5px', color: GRIS }}>Se aplica en</label>
+                  {e.fincaId && e.unidad && <button style={enlace} onClick={() => abrirCopia('unidad', i)}>Copiar unidad a…</button>}
+                </div>
+                <select value={e.unidad} onChange={ev => setRow(i, 'unidad', ev.target.value)} style={{ ...inp, marginTop: '5px' }}>
+                  <option value="">(igual al estándar)</option>
+                  <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
+                  {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+                </select>
+                {copia && copia.tipo === 'unidad' && copia.idx === i && (
+                  <PopCopia tipo="unidad" origen={fincaNom(e.fincaId)} valor={e.unidad === '__completo' ? `Envase entero (${cap1(presentacion)})` : (UNIDAD[e.unidad] || e.unidad)}
+                    otras={otras} copia={copia} setCopia={setCopia} onAplicar={aplicarCopia}
+                    yaTiene={fid => { const r = exc.find(x => x.fincaId === fid); return !!(r && r.unidad) }} />
+                )}
+              </div>
+              <Campo label="Rige desde">
+                <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setRow(i, 'desde', ev.target.value)} style={inp} />
+              </Campo>
+              <button onClick={() => rmExc(i)} title="Quitar" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c7ccd2', fontSize: '17px', marginTop: '22px' }}>✕</button>
             </div>
+
             {e.unidad && (e.unidad === '__completo' ? (
-              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '5px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
+              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
             ) : facF ? (
-              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '5px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
+              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
             ) : (
-              <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '5px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
+              <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '7px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
             ))}
+
+            {/* Precio propio por plazo */}
+            {!e.abierto ? (
+              <div style={{ marginTop: '9px' }}>
+                <button style={enlace} onClick={() => setRow(i, 'abierto', true)}>＋ Precio propio</button>
+                <span style={{ color: '#c3d0db', fontSize: '11.5px', marginLeft: '8px' }}>— usa el precio estándar</span>
+              </div>
+            ) : (
+              <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '11px 12px', marginTop: '9px', position: 'relative' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '9px' }}>
+                  <span style={{ fontSize: '11.5px', color: GRIS }}>Precio propio · por {precioPor === 'presentacion' ? `envase (${cap1(presentacion)})` : `${UNIDAD[uStd] || uStd}`}</span>
+                  {e.fincaId && rowTienePrecio(e) && <button style={enlace} onClick={() => abrirCopia('precio', i)}>Copiar precio a…</button>}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
+                  {PLAZOS.map(pz => {
+                    const on = e.plazoRige === pz
+                    return (
+                    <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
+                      <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
+                      <input inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—" onChange={ev => setRowPrecio(i, pz, ev.target.value)} style={{ ...inp, textAlign: 'right', padding: '6px' }} />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
+                        <input type="radio" name={`rige-${i}`} checked={on} onChange={() => setRow(i, 'plazoRige', pz)} /> Rige
+                      </label>
+                    </div>
+                    )
+                  })}
+                </div>
+                <div style={{ fontSize: '11px', color: AMBAR, marginTop: '8px' }}>Marca cuál plazo se cobra hoy en {e.fincaId ? fincaNom(e.fincaId) : 'esta finca'}. Los demás quedan guardados.</div>
+                {copia && copia.tipo === 'precio' && copia.idx === i && (
+                  <PopCopia tipo="precio" origen={fincaNom(e.fincaId)}
+                    otras={otras} copia={copia} setCopia={setCopia} onAplicar={aplicarCopia}
+                    yaTiene={fid => { const r = exc.find(x => x.fincaId === fid); return !!(r && rowTienePrecio(r)) }} />
+                )}
+              </div>
+            )}
           </div>
           )
         })}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', unidad: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
+        <button onClick={addExc} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
       {/* 3. Precio */}
