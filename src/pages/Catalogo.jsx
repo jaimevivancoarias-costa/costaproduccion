@@ -425,6 +425,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const contado = precioPlazo(0)
                       const otros = PLAZOS.filter(pz => pz !== 0).map(pz => ({ pz, ...precioPlazo(pz) })).filter(x => x.val != null)
                       const claveP = k(p.id, f.id)
+                      // Plazo a mostrar: el que rige; si ese no tiene precio,
+                      // el primer plazo que sí tenga (para no decir "Sin precio"
+                      // cuando en realidad hay precio en otro plazo).
+                      const pzRige = plz[claveP]?.plazo ?? 0
+                      const pzMostrar = precioPlazo(pzRige).val != null ? pzRige : (PLAZOS.find(pz => precioPlazo(pz).val != null) ?? pzRige)
                       return (
                         <Fragment key={f.id}>
                           <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
@@ -457,11 +462,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                               </>
                             })()}
                             <span style={{ color: GRIS }}>
-                              <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[plz[claveP]?.plazo ?? 0]}</span>
+                              <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[pzMostrar]}</span>
                             </span>
                             <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
                               {(() => {
-                                const activo = precioPlazo(plz[claveP]?.plazo ?? 0)   // precio del plazo activo
+                                const activo = precioPlazo(pzMostrar)   // precio del plazo que rige (o el que tenga precio)
                                 const conv2 = tab === 'insumos' && factor && factor !== 1 && uCons !== uCompra
                                 const contenidoP = activo.val == null
                                   ? 'Sin precio'
@@ -1220,9 +1225,16 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
 
       // 4) Plazo que rige ahora. Estándar para todas; luego cada excepción
       //    con su propio "rige" pisa a su finca.
+      // Si el plazo elegido para regir no tiene precio pero otro sí, se apunta
+      // al primero con precio (así el catálogo muestra precio y el costeo funciona).
+      let rigeStd = plazoActivo
+      if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
+        const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
+        if (conP != null) rigeStd = conP
+      }
       const plazoRigeFinca = {}   // fincaId -> plazo, con su fecha
       exc.forEach(e => { if (e.fincaId && e.plazoRige != null) plazoRigeFinca[e.fincaId] = { pz: e.plazoRige, dfe: e.desde || desde } })
-      if (plazoActivo != null) {
+      if (rigeStd != null) {
         const stdIds = ids.filter(fid => !(fid in plazoRigeFinca))
         if (stdIds.length) {
           await supabase.schema('produccion').from('plazo_insumo').delete()
@@ -1230,7 +1242,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
             .eq('insumo_id', insumo.id).in('finca_id', stdIds).is('vigente_hasta', null).lt('vigente_desde', desde)
           const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
-            .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: plazoActivo, vigente_desde: desde })))
+            .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
           if (e4) throw e4
         }
       }
@@ -1572,13 +1584,19 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         const pz = Number(e.plazo) || 0, dfe = e.desde || desde
         await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: numDec(e.precio), vigente_desde: dfe }], dfe)
       }
-      // 4) Plazo que rige ahora.
+      // 4) Plazo que rige ahora. Si el elegido no tiene precio pero otro sí,
+      //    se apunta al primero con precio (para que el catálogo lo muestre).
+      let rigeStd = plazoActivo
+      if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
+        const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
+        if (conP != null) rigeStd = conP
+      }
       await supabase.schema('produccion').from('plazo_producto').delete()
         .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
       await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
         .eq('producto_id', producto.id).in('finca_id', ids).is('vigente_hasta', null).lt('vigente_desde', desde)
       const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
-        .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: plazoActivo, vigente_desde: desde })))
+        .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
       if (e4) throw e4
 
       onHecho(`Configurado en ${activas.length} fincas.`)
