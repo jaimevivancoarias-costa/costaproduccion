@@ -55,6 +55,19 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [aviso, setAviso] = useState(null)
   const [abierto, setAbierto] = useState(null)     // producto expandido
   const [hist, setHist] = useState(null)           // clave de historial abierto
+  const [histRows, setHistRows] = useState([])     // filas del historial (se traen al abrir)
+
+  // Trae el historial completo de precios de un producto/finca solo cuando
+  // se abre el reloj (para no cargar miles de filas viejas al inicio).
+  async function abrirHist(prodId, fincaId, claveP) {
+    if (hist === claveP) { setHist(null); return }
+    setEditP(null); setHist(claveP); setHistRows([])
+    const tabla = tab === 'insumos' ? 'precio_insumo' : 'precio_producto'
+    const colId = tab === 'insumos' ? 'insumo_id' : 'producto_id'
+    const { data } = await supabase.schema('produccion').from(tabla)
+      .select('*').eq(colId, prodId).eq('finca_id', fincaId)
+    setHistRows(data || [])
+  }
   const [editP, setEditP] = useState(null)         // clave de precio en edición
   const [editU, setEditU] = useState(null)         // clave de unidad en edición
   const [nuevo, setNuevo] = useState(false)
@@ -66,12 +79,26 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
+    const fIds = fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']
+    // Trae TODOS los precios vigentes por tandas de 1000 (PostgREST corta en
+    // 1000 por consulta; sin esto, insumos con muchas fincas no cargaban).
+    const allVigente = async (tabla, cols) => {
+      const out = []; const size = 1000
+      for (let from = 0; ; from += size) {
+        const { data, error } = await supabase.schema('produccion').from(tabla)
+          .select(cols).is('vigente_hasta', null).in('finca_id', fIds).range(from, from + size - 1)
+        if (error || !data) break
+        out.push(...data)
+        if (data.length < size) break
+      }
+      return { data: out }
+    }
     const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
       supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo, stock_objetivo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
-      supabase.schema('produccion').from('precio_insumo').select('id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
-      supabase.schema('produccion').from('precio_producto').select('id, producto_id, finca_id, precio_saco, plazo, vigente_desde, vigente_hasta').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
+      allVigente('precio_insumo', 'id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta'),
+      allVigente('precio_producto', 'id, producto_id, finca_id, precio_saco, plazo, vigente_desde, vigente_hasta'),
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_insumo').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
       esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_producto').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
       supabase.schema('produccion').from('presentacion').select('nombre').eq('activo', true).order('nombre'),
@@ -478,7 +505,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                                 // Solo lectura (se edita en Configurar) para insumos y balanceados.
                                 return <span style={{ ...estilo, display: 'inline-block' }}>{contenidoP}</span>
                               })()}
-                              <button onClick={() => { setHist(hist === claveP ? null : claveP); setEditP(null) }} title="Historial de precios"
+                              <button onClick={() => abrirHist(p.id, f.id, claveP)} title="Historial de precios"
                                 style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, padding: 0, lineHeight: 1 }}>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
                               </button>
@@ -497,7 +524,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                           {hist === claveP && (
                             <div style={{ padding: '6px 0 10px 10px', fontSize: '12px', color: GRIS, borderBottom: '0.5px solid #eef3f7' }}>
                               {PLAZOS.map(pz => {
-                                const h = historial(map, p.id, f.id, pz)
+                                const h = histRows.filter(x => Number(x.plazo) === pz).slice().sort((a, b) => (a.vigente_desde < b.vigente_desde ? 1 : -1))
                                 if (!h.length) return null
                                 return (
                                   <div key={pz} style={{ marginBottom: '4px' }}>
@@ -506,7 +533,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                                   </div>
                                 )
                               })}
-                              {PLAZOS.every(pz => historial(map, p.id, f.id, pz).length === 0) && 'Sin historial.'}
+                              {histRows.length === 0 && 'Sin historial.'}
                             </div>
                           )}
                           {editU === claveP && tab === 'insumos' && (
