@@ -1065,6 +1065,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
     precios: e.precios || {}, plazoRige: e.plazoRige ?? null, abierto: !!e.abierto })))
   // Popover de copiar: { tipo:'unidad'|'precio', idx, sel:{fincaId:true} }
   const [copia, setCopia] = useState(null)
+  // Panel "Aplicar a varias fincas" a la vez.
+  const bulkVacio = { open: false, fincas: {}, usarUnidad: false, unidad: '', usarPrecio: false, precios: {}, plazoRige: null, desde: '' }
+  const [bulk, setBulk] = useState(bulkVacio)
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
   // Los precios guardados están por unidad de aplicación. Los precargamos
@@ -1120,6 +1123,28 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       return arr
     })
     setCopia(null)
+  }
+
+  // Aplica el cambio a TODAS las fincas marcadas de una sola vez.
+  const bulkFincas = () => Object.keys(bulk.fincas).filter(id => bulk.fincas[id])
+  const bulkPuede = bulkFincas().length > 0 && (bulk.usarUnidad || bulk.usarPrecio)
+  function aplicarBulk() {
+    const destinos = bulkFincas()
+    if (!destinos.length) return
+    setExc(x => {
+      const arr = [...x]
+      destinos.forEach(fid => {
+        let j = arr.findIndex(r => r.fincaId === fid)
+        if (j === -1) { arr.push({ fincaId: fid, unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }); j = arr.length - 1 }
+        const upd = { ...arr[j] }
+        if (bulk.usarUnidad) upd.unidad = bulk.unidad
+        if (bulk.usarPrecio) { upd.precios = { ...bulk.precios }; upd.plazoRige = bulk.plazoRige; upd.abierto = true }
+        if (bulk.desde) upd.desde = bulk.desde
+        arr[j] = upd
+      })
+      return arr
+    })
+    setBulk(bulkVacio)
   }
 
   async function crearPresentacion() {
@@ -1273,8 +1298,91 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
         <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca aplica distinto?</div>
         <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>
-          Llenas una finca y la copias a las que quieras. La unidad y el precio se copian por separado. Lo que dejes vacío usa el estándar.
+          Aplica el mismo cambio a varias fincas de una vez, o agrégalas una por una abajo. Lo que dejes vacío usa el estándar.
         </div>
+
+        {/* Aplicar a varias fincas a la vez */}
+        {!bulk.open ? (
+          <button onClick={() => setBulk({ ...bulkVacio, open: true })}
+            style={{ border: '0.5px solid #d8c48f', background: '#fdf8ec', color: '#8a5a12', borderRadius: '9px',
+                     padding: '9px 14px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer', marginBottom: '13px' }}>
+            ＋ Aplicar a varias fincas
+          </button>
+        ) : (
+          <div style={{ border: '0.5px solid #d8c48f', background: '#fffdf7', borderRadius: '12px', padding: '15px 16px', marginBottom: '14px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: AMBAR, marginBottom: '10px' }}>Aplicar el mismo cambio a varias fincas</div>
+
+            <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 6px' }}>Fincas</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px', marginBottom: '14px' }}>
+              {activas.map(f => {
+                const on = !!bulk.fincas[f.id]
+                return (
+                  <button key={f.id} onClick={() => setBulk(b => ({ ...b, fincas: { ...b.fincas, [f.id]: !b.fincas[f.id] } }))}
+                    style={{ border: '0.5px solid ' + (on ? NAVY : BORDE), background: on ? NAVY : 'white', color: on ? 'white' : NAVY,
+                             borderRadius: '999px', padding: '6px 13px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer' }}>
+                    {f.nombre}{on ? ' ✓' : ''}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Unidad */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarUnidad ? '8px' : '12px' }}>
+              <input type="checkbox" checked={bulk.usarUnidad} onChange={e => setBulk(b => ({ ...b, usarUnidad: e.target.checked }))} />
+              Cambiar la unidad
+            </label>
+            {bulk.usarUnidad && (
+              <select value={bulk.unidad} onChange={e => setBulk(b => ({ ...b, unidad: e.target.value }))} style={{ ...inp, width: '260px', marginBottom: '14px' }}>
+                <option value="">(igual al estándar)</option>
+                <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
+                {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+              </select>
+            )}
+
+            {/* Precios */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarPrecio ? '10px' : '12px' }}>
+              <input type="checkbox" checked={bulk.usarPrecio} onChange={e => setBulk(b => ({ ...b, usarPrecio: e.target.checked }))} />
+              Cambiar el precio
+            </label>
+            {bulk.usarPrecio && (
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '7px' }}>Precio por envase ({cap1(presentacion)}) — llena los que apliquen y marca cuál rige</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
+                  {PLAZOS.map(pz => {
+                    const on = bulk.plazoRige === pz
+                    return (
+                      <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
+                        <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
+                        <input inputMode="decimal" value={bulk.precios[pz] ?? ''} placeholder="—"
+                          onChange={e => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: e.target.value }, plazoRige: b.plazoRige == null && numDec(e.target.value) > 0 ? pz : b.plazoRige }))}
+                          style={{ ...inp, textAlign: 'right', padding: '6px' }} />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
+                          <input type="radio" name="bulk-rige" checked={on} onChange={() => setBulk(b => ({ ...b, plazoRige: pz }))} /> Rige
+                        </label>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'end', gap: '16px', flexWrap: 'wrap' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 5px' }}>Rige desde</label>
+                <input type="date" value={bulk.desde || ''} max={hoyISO()} onChange={e => setBulk(b => ({ ...b, desde: e.target.value }))} style={{ ...inp, width: '170px' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '9px', marginLeft: 'auto' }}>
+                <button onClick={() => setBulk(bulkVacio)} style={{ background: 'none', border: 'none', color: GRIS, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
+                <button onClick={aplicarBulk} disabled={!bulkPuede}
+                  style={{ background: bulkPuede ? NAVY : '#c3d0db', color: 'white', border: 'none', borderRadius: '9px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit', cursor: bulkPuede ? 'pointer' : 'default' }}>
+                  Aplicar a {bulkFincas().length} finca{bulkFincas().length === 1 ? '' : 's'}
+                </button>
+              </div>
+            </div>
+            <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>Se crea/actualiza la fila de cada finca marcada. Luego puedes ajustar alguna por separado abajo.</div>
+          </div>
+        )}
+
         {exc.map((e, i) => {
           const facF = e.unidad && e.unidad !== '__completo' ? factorFinca(e.unidad) : null
           const enlace = { background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: '#8a5a12', fontSize: '11.5px', padding: 0 }
