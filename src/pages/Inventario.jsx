@@ -730,9 +730,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           >
             {movs.filter(m => coincide(m.insumo)).map(m => {
               const fac = factores[m.insumo_id]
-              const conv = fac && (fac.factor || 1) !== 1
-              // Segunda unidad: si se aplica en otra unidad (factor≠1), la de
-              // aplicación; si no, el peso del envase (contenido, ej. saco = 45 kg).
+              // Se muestra la unidad de aplicación cuando difiere del envase,
+              // aunque el factor sea 1 (ej. Funda que se aplica en kg, 1 Funda = 1 kg).
+              const distintaU = fac && fac.uApp && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[m.unidad] || m.unidad)
+              const conv = fac && ((fac.factor || 1) !== 1 || distintaU)
+              // Si no aplica lo anterior, la segunda unidad es el peso del envase
+              // (contenido, ej. saco = 45 kg).
               const conPeso = !conv && fac && fac.contenido && fac.contenido !== 1 && fac.uCont
               const eq = v => {
                 if (conv) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div>
@@ -828,9 +831,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   <Celda gris>
                     {(() => {
                       const fac = factores[f.insumo_id]
-                      const conv = fac && (fac.factor || 1) !== 1
                       const pres = cap1(UNIDAD[f.unidad] || f.unidad)
                       const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
+                      // Muestra la unidad de aplicación si difiere del envase,
+                      // aunque el factor sea 1 (ej. Funda → Kg, 1 Funda = 1 Kg).
+                      const conv = fac && ((fac.factor || 1) !== 1 || (fac.uApp && app !== pres))
                       return (
                         <span>
                           <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
@@ -853,8 +858,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       {limpio(f.saldo)}
                       {(() => {
                         const fac = factores[f.insumo_id]
-                        if (!fac || (fac.factor || 1) === 1) return null
-                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)})</span>
+                        if (!fac || !fac.uApp) return null
+                        const app = cap1(UNIDAD[fac.uApp] || fac.uApp)
+                        const pres = cap1(UNIDAD[f.unidad] || f.unidad)
+                        if ((fac.factor || 1) === 1 && app === pres) return null
+                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * (fac.factor || 1))} {app})</span>
                       })()}
                       {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
