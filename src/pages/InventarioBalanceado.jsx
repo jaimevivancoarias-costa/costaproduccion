@@ -518,7 +518,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {negativos > 0 && (
             <Nota color={ROJO} bg="#FBEAEA">
-              Hay {negativos} {negativos === 1 ? 'producto' : 'productos'} con saldo negativo: se aplicó más de lo que entró. Falta cargar un ingreso o contar la bodega.
+              Hay {negativos} {negativos === 1 ? 'producto' : 'productos'} con saldo negativo: {' '}
+              <b>{saldos.filter(s => Number(s.saldo) < -0.001).map(s => `${s.producto} (${limpio(s.saldo)})`).join(', ')}</b>.
+              {' '}Se aplicó más de lo que entró. Falta cargar un ingreso o contar la bodega.
             </Nota>
           )}
 
