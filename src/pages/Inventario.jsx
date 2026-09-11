@@ -66,8 +66,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
-  const [busq, setBusq] = useState('')            // filtro por nombre de insumo
-  const coincide = nom => !busq.trim() || String(nom || '').toLowerCase().includes(busq.trim().toLowerCase())
+  const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
+  const coincide = nom => !busq || nom === busq
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -476,8 +476,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               </Chip>
             </>
           )}
-          <input value={busq} onChange={e => setBusq(e.target.value)} placeholder="Buscar insumo…"
-                 style={{ ...entrada, marginLeft: 'auto', minWidth: '200px' }} />
+          <select value={busq} onChange={e => setBusq(e.target.value)}
+                  style={{ ...entrada, marginLeft: 'auto', minWidth: '220px' }}>
+            <option value="">Todos los insumos</option>
+            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
         </div>
       )}
 
@@ -622,7 +625,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Contado', 'Diferencia']}
             anchos="1fr 185px 95px 250px 115px"
           >
-            {(primeraVez || editToma ? filas : filas.filter(f => coincide(f.insumo))).map(f => {
+            {filas.map(f => {
               const facF = factores[f.insumo_id]
               const convF = facF && (facF.factor || 1) !== 1
               const conPesoF = !convF && facF && facF.contenido && facF.contenido !== 1 && facF.uCont
@@ -805,7 +808,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               : ['Insumo', 'Llega / se aplica', 'Saldo']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
-            {filas.map(f => {
+            {filas.filter(f => coincide(f.insumo)).map(f => {
               const edit = editando === f.insumo_id
               const dg = desglose[f.insumo_id] || []
               const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
@@ -1018,7 +1021,9 @@ function Tabla({ columnas, anchos, children, caja, min }) {
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                   overflow: 'hidden' }}>
-      <div style={{ overflowX: 'auto' }}>{cuerpo}</div>
+      {/* Scroll propio (horizontal y vertical) para que el encabezado
+          sticky quede congelado al bajar dentro de la tabla. */}
+      <div style={{ overflow: 'auto', maxHeight: '68vh' }}>{cuerpo}</div>
     </div>
   )
 }
