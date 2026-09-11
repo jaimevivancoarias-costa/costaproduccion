@@ -471,37 +471,48 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           ) : (
             <Caja>
               <Encabezado gtc={esJefe ? G_MOV_J : G_MOV_B} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', 'Conteo', 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
-              {movs.filter(m => coincide(m.producto)).map(m => (
+              {movs.filter(m => coincide(m.producto)).map(m => {
+                const cq = conteoQuien[m.producto_id]
+                // Si el conteo es el inventario inicial y no había saldo antes,
+                // se muestra en "Saldo Ini." (no en Conteo), como en insumos.
+                const contInicial = cq?.esInicial && m.conteo !== null && Math.abs(Number(m.saldo_inicial)) < 0.0001
+                const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
+                const conteoMostrar = contInicial ? null : m.conteo
+                const detalle = cq && (
+                  <>
+                    <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
+                      title="Ver quién contó y cuándo"
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontSize: '10px', padding: '0 0 0 5px', lineHeight: 1 }}>
+                      {conteoDet === m.producto_id ? '▾' : '▸'}</button>
+                    {conteoDet === m.producto_id && (
+                      <div style={{ fontSize: '9.5px', color: GRIS, marginTop: '2px', fontWeight: 400 }}>
+                        {cq.autor || 'desconocido'} · {corta(cq.fecha)}
+                      </div>
+                    )}
+                  </>
+                )
+                return (
                 <Fila gtc={esJefe ? G_MOV_J : G_MOV_B} key={m.producto_id}>
                   <Cel>{m.producto}</Cel>
-                  <Cel der gris>{limpio(m.saldo_inicial)}</Cel>
+                  <Cel der gris>
+                    {limpio(iniMostrar)}
+                    {contInicial && <>
+                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Inventario inicial</span>
+                      {detalle}
+                    </>}
+                  </Cel>
                   <Cel der color={Number(m.ingresos) ? VERDE : '#c3d0db'}>{Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}</Cel>
                   <Cel der>{Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}</Cel>
                   <Cel der color={Number(m.devuelto) ? ROJO : '#c3d0db'}>{Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}</Cel>
                   <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
-                  <Cel der color={m.conteo === null ? '#c3d0db' : AZUL}>
-                    {m.conteo === null ? '—' : limpio(m.conteo)}
-                    {m.conteo !== null && conteoQuien[m.producto_id]?.esInicial && (
-                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Inventario inicial</span>
-                    )}
-                    {m.conteo !== null && conteoQuien[m.producto_id] && (
-                      <>
-                        <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
-                          title="Ver quién contó y cuándo"
-                          style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontSize: '10px', padding: '0 0 0 5px', lineHeight: 1 }}>
-                          {conteoDet === m.producto_id ? '▾' : '▸'}</button>
-                        {conteoDet === m.producto_id && (
-                          <div style={{ fontSize: '9.5px', color: GRIS, marginTop: '2px', fontWeight: 400 }}>
-                            {conteoQuien[m.producto_id].autor || 'desconocido'} · {corta(conteoQuien[m.producto_id].fecha)}
-                          </div>
-                        )}
-                      </>
-                    )}
+                  <Cel der color={conteoMostrar === null ? '#c3d0db' : AZUL}>
+                    {conteoMostrar === null ? '—' : <>{limpio(conteoMostrar)}{detalle}</>}
                   </Cel>
                   <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
                   {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
                 </Fila>
-              ))}
+                )
+              })}
             </Caja>
           )}
 
