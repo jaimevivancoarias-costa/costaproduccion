@@ -538,9 +538,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
           {negativos > 0 && (
             <Nota color={ROJO} fondo="#FBEAEA">
-              Hay {negativos} {negativos === 1 ? 'insumo' : 'insumos'} con saldo negativo. Eso significa
-              que se registró más consumo del que entró a bodega: falta cargar un ingreso, o hay que
-              volver a contar.
+              Hay {negativos} {negativos === 1 ? 'insumo' : 'insumos'} con saldo negativo: {' '}
+              <b>{saldos.filter(s => Number(s.saldo) < 0).map(s => `${s.insumo} (${limpio(s.saldo)})`).join(', ')}</b>.
+              {' '}Se registró más consumo del que entró a bodega: falta cargar un ingreso, o hay que volver a contar.
             </Nota>
           )}
 
