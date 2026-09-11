@@ -55,6 +55,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const tocadas = useRef(new Set())
   // Ids que tenía cada celda al cargar, para borrarlos aunque la celda se vacíe.
   const idsOriginales = useRef({})
+  // Celdas tal como se cargaron, para saber cuánto consumo se AGREGA al guardar.
+  const celdasOriginales = useRef({})
+  // Saldo disponible por producto (en sacos), para no dejar consumir sin stock.
+  const [saldoBal, setSaldoBal] = useState({})
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -194,6 +198,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         { data: rals },
         { data: ms },
         { data: alim, error: eAlim },
+        { data: saldosB },
       ] = await Promise.all([
         ids.length ? supabase.schema('produccion').from('evento')
           .select('id, tipo, fecha, libras, piscina_origen_id, ciclo_id')
@@ -214,7 +219,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           .select('id, piscina_id, fecha, producto_id, libras, sin_alimentacion')
           .in('piscina_id', ids).gte('fecha', lunes).lte('fecha', domingo)
           : Promise.resolve({ data: [] }),
+        supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: domingo }),
       ])
+
+      // Saldo disponible por producto (en sacos), para el chequeo de stock.
+      const sb = {}
+      ;(saldosB || []).forEach(r => { sb[r.producto_id] = Number(r.saldo) })
+      setSaldoBal(sb)
 
       // Si esta consulta falla y nadie mira el error, la semana se
       // dibuja vacia y parece que se borraron los datos. Nunca mas.
@@ -261,6 +272,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       setCeldas(mapa)
       // Línea base: qué ids tenía cada celda y ninguna tocada todavía.
       idsOriginales.current = Object.fromEntries(Object.entries(mapa).map(([k, v]) => [k, v._ids || []]))
+      celdasOriginales.current = mapa
       tocadas.current = new Set()
 
       setSucio(false)
@@ -475,9 +487,50 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     ...pendientesHoy.map(p => `${p.piscinaId}|${hoy}`),
   ])
 
+  // Libras por producto de una celda (principal + extras).
+  const librasPorProducto = c => {
+    const m = {}
+    if (!c || c.sinAlimentacion) return m
+    const add = (pid, lb) => { if (pid && num(lb)) m[pid] = (m[pid] || 0) + num(lb) }
+    add(c.productoId, c.libras)
+    for (const e of (c.extras || [])) add(e.productoId, e.libras)
+    return m
+  }
+
   async function guardar(cerrarDia) {
     setGuardando(true); setAviso(null)
     try {
+      // Chequeo de STOCK: lo que se agrega no puede superar lo disponible en
+      // bodega. Se mira solo el consumo NUEVO (nuevo − lo que ya estaba) de
+      // cada producto, contra su saldo. Sin stock => no se guarda.
+      const deltaProd = {}
+      for (const p of piscinas) {
+        if (!p.cicloId) continue
+        for (const f of fechas) {
+          const k = clave(p, f)
+          if (!tocadas.current.has(k)) continue
+          const vieja = librasPorProducto(celdasOriginales.current[k])
+          const nueva = librasPorProducto(cel(p, f))
+          new Set([...Object.keys(vieja), ...Object.keys(nueva)]).forEach(pid => {
+            deltaProd[pid] = (deltaProd[pid] || 0) + ((nueva[pid] || 0) - (vieja[pid] || 0))
+          })
+        }
+      }
+      const faltan = []
+      for (const [pid, delta] of Object.entries(deltaProd)) {
+        if (delta <= 0.0001) continue
+        const dispLibras = (saldoBal[pid] || 0) * LIBRAS_POR_SACO
+        if (delta > dispLibras + 0.001) {
+          const nom = productos.find(x => x.id === pid)?.nombre || 'balanceado'
+          faltan.push(`${nom}: hay ${(dispLibras / LIBRAS_POR_SACO).toFixed(1)} sacos (${miles(Math.round(dispLibras))} lb), quieres consumir ${miles(Math.round(delta))} lb`)
+        }
+      }
+      if (faltan.length) {
+        setAviso({ tipo: 'error', texto: 'Sin stock suficiente, ingresa balanceado a bodega antes de registrar. ' + faltan.join(' · ') })
+        setGuardando(false)
+        return false
+      }
+
       // Con varios productos por piscina/día no se puede usar upsert por
       // (piscina, fecha). Por cada celda TOCADA: se borran sus filas viejas
       // y se insertan las deseadas. Así nunca choca con el índice único
@@ -663,7 +716,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
       .delete().eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).eq('ambito', 'balanceado')
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Semana reabierta' })
+    // Reabrir también los días cerrados de la semana, para poder editar los
+    // que sí tuvieron alimentación (no solo los vacíos).
+    const { error: eDias } = await supabase.schema('produccion').from('dia_registro')
+      .update({ estado: 'reabierto' })
+      .eq('finca_id', finca.id).eq('ambito', 'balanceado').eq('estado', 'cerrado')
+      .gte('fecha', lunes).lte('fecha', fechas[6])
+    if (eDias) { setAviso({ tipo: 'error', texto: 'Semana reabierta, pero no los días. ' + eDias.message }); await cargar(true); return }
+    setAviso({ tipo: 'ok', texto: 'Semana y días reabiertos' })
     await cargar(true)
   }
 
