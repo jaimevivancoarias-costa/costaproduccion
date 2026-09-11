@@ -1237,12 +1237,19 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         if (error) throw error
       }
 
-      // 2) Precios estándar por plazo (una tanda por plazo lleno).
+      // 2) Precios estándar por plazo. Si el plazo tiene precio, se abre;
+      //    si quedó vacío/0, se BORRA el precio vigente de ese plazo.
       for (const pz of PLAZOS) {
-        const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
-        const rows = ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz,
-          precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desde }))
-        await cerrarYAbrir(ids, pz, rows, desde)
+        const raw = numDec(precios[pz] || '')
+        if (raw > 0) {
+          const rows = ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz,
+            precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desde }))
+          await cerrarYAbrir(ids, pz, rows, desde)
+        } else {
+          const { error: eDel } = await supabase.schema('produccion').from('precio_insumo').delete()
+            .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', ids).is('vigente_hasta', null)
+          if (eDel) throw eDel
+        }
       }
 
       // 3) Excepciones de precio por finca (pisan el estándar). Cada finca
@@ -1608,10 +1615,16 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
         if (error) throw error
       }
-      // 2) Precios estándar (por saco) por plazo.
+      // 2) Precios estándar (por saco) por plazo. Vacío/0 => borra el vigente.
       for (const pz of PLAZOS) {
-        const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
-        await cerrarYAbrir(ids, pz, ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
+        const raw = numDec(precios[pz] || '')
+        if (raw > 0) {
+          await cerrarYAbrir(ids, pz, ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
+        } else {
+          const { error: eDel } = await supabase.schema('produccion').from('precio_producto').delete()
+            .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', ids).is('vigente_hasta', null)
+          if (eDel) throw eDel
+        }
       }
       // 3) Excepciones por finca.
       for (const e of exc) {
