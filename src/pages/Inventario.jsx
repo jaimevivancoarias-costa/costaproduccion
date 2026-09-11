@@ -40,7 +40,7 @@ const ANCHOS_SALDO_BOD  = '1.2fr 210px 170px'   // bodeguero: sin dolares
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
 const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
-const ANCHOS_MOV2       = '1.3fr 190px 95px 95px 95px 95px 100px 105px'   // inicial, entró, aplicó, devuelto, conteo, queda
+const ANCHOS_MOV2       = '1.3fr 180px 90px 90px 90px 90px 95px 95px 100px'   // inicial, entró, aplicó, devuelto, ajuste, conteo, queda
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 
 export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
@@ -717,8 +717,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ) : vista === 'movimientos' ? (
         <>
           <Tabla
-            caja min="960px"
-            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Conteo', 'Queda']}
+            caja min="1040px"
+            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
             {movs.map(m => {
@@ -754,6 +754,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </Celda>
                 <Celda derecha color={Number(m.devuelto) ? ROJO : '#c3d0db'}>
                   {Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}{Number(m.devuelto) ? eq(m.devuelto) : null}
+                </Celda>
+                <Celda derecha color={Number(m.ajustes) ? (Number(m.ajustes) < 0 ? ROJO : VERDE) : '#c3d0db'}>
+                  {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + limpio(Math.abs(Number(m.ajustes))) : '—'}{Number(m.ajustes) ? eq(Math.abs(Number(m.ajustes))) : null}
                 </Celda>
                 <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
                   {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{limpio(conteoMostrar)}{eq(conteoMostrar)}</>}
