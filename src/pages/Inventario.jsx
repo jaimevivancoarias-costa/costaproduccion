@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, dinero } from '../lib/fechas'
+import { hoyISO, corta, dinero, dineroExacto } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 
@@ -900,7 +900,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <>{dinero(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'sin precio'}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'sin precio'}</Celda>}
                   {esJefe && <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
