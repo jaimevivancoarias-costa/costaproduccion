@@ -66,6 +66,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
+  const [busq, setBusq] = useState('')            // filtro por nombre de insumo
+  const coincide = nom => !busq.trim() || String(nom || '').toLowerCase().includes(busq.trim().toLowerCase())
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -474,6 +476,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               </Chip>
             </>
           )}
+          <input value={busq} onChange={e => setBusq(e.target.value)} placeholder="Buscar insumo…"
+                 style={{ ...entrada, marginLeft: 'auto', minWidth: '200px' }} />
         </div>
       )}
 
@@ -618,7 +622,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Contado', 'Diferencia']}
             anchos="1fr 185px 95px 250px 115px"
           >
-            {filas.map(f => {
+            {(primeraVez || editToma ? filas : filas.filter(f => coincide(f.insumo))).map(f => {
               const facF = factores[f.insumo_id]
               const convF = facF && (facF.factor || 1) !== 1
               const conPesoF = !convF && facF && facF.contenido && facF.contenido !== 1 && facF.uCont
@@ -721,7 +725,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
-            {movs.map(m => {
+            {movs.filter(m => coincide(m.insumo)).map(m => {
               const fac = factores[m.insumo_id]
               const conv = fac && (fac.factor || 1) !== 1
               // Segunda unidad: si se aplica en otra unidad (factor≠1), la de
@@ -996,7 +1000,8 @@ function Tabla({ columnas, anchos, children, caja, min }) {
   const cuerpo = (
     <div style={{ minWidth: min || 'auto' }}>
       <div style={{ display: 'grid', gridTemplateColumns: anchos,
-                    background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE }}>
+                    background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE,
+                    position: 'sticky', top: 0, zIndex: 3 }}>
         {columnas.map((c, i) => (
           <div key={c} style={{ padding: '10px 12px', fontSize: '11px', fontWeight: 500,
                   color: GRIS, letterSpacing: '0.02em', textTransform: 'uppercase',
