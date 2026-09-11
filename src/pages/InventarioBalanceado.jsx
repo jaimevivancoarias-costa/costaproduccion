@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, miles, dinero } from '../lib/fechas'
+import { hoyISO, corta, num, miles, dinero, dineroExacto } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
@@ -437,7 +437,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       ) : f.producto}
                     </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></Cel>
-                    {esJefe && <Cel der gris>{f.precio ? dinero(f.precio) : 'sin precio'}</Cel>}
+                    {esJefe && <Cel der gris>{f.precio ? dineroExacto(f.precio) : 'sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(valorFifo[f.producto_id] || 0)}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       <button onClick={() => corregir(f)} style={{ ...btn, padding: '5px 11px', fontSize: '12px', color: GRIS }}>Corregir</button>
