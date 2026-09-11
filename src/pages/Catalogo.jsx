@@ -1,1777 +1,1112 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
+import { hoyISO, corta, dinero } from '../lib/fechas'
+import Ingresos from './Ingresos'
+import PreciosInsumos from './PreciosInsumos'
 
-// Catálogo · maestro de productos + detalle por finca.
+// Inventario de insumos · modulo Produccion
 //
-// Lista todos los insumos/balanceados (compartidos). Cada uno se expande
-// y muestra, por finca: cómo entra (presentación), en qué se cuenta
-// (unidad) y el precio, con su historial (ícono de reloj).
-//
-// Jefe global: crea/edita/quita productos y define presentación y unidad
-// por finca. Precio: jefe (todas sus fincas) y contadora (las suyas).
+// Contar la bodega no suma ni resta: FIJA el saldo. Y la diferencia
+// contra lo que el sistema tenia calculado no se esconde: se muestra
+// antes de guardar y queda en la bitacora. Si el sistema decia 40 sacos
+// de cal y hay 33, el dato util no es "ahora hay 33", es que faltan 7.
 
-const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#9a6a12'
-const UNIDAD = { sacos: 'Sacos', litros: 'L', ml: 'mL', cl: 'cL', m3: 'm³', gal: 'gal', floz: 'fl oz',
-                 gramos: 'g', mg: 'mg', kg: 'kg', t: 't', libras: 'lb', unidad: 'unidad' }
-const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
-// Unidades de aplicación (se cuenta/consume), por familia. Sacos NO va aquí: eso es presentación.
-const UNIDADES_APP = ['mg', 'gramos', 'kg', 't', 'libras', 'ml', 'cl', 'litros', 'm3', 'gal', 'floz', 'unidad']
-const U_POR = { mg: 0.001, gramos: 1, kg: 1000, t: 1000000, libras: 453.592,
-                ml: 1, cl: 10, litros: 1000, m3: 1000000, gal: 3785.41, floz: 29.5735, unidad: 1, sacos: 1 }
-const U_FAMILIA = u => ['mg', 'gramos', 'kg', 't', 'libras'].includes(u) ? 'masa'
-                     : ['ml', 'cl', 'litros', 'm3', 'gal', 'floz'].includes(u) ? 'liquido' : 'conteo'
-const U_LABEL = { mg: 'Miligramos (mg)', gramos: 'Gramos (g)', kg: 'Kilos (kg)', t: 'Toneladas (t)', libras: 'Libras (lb)',
-                  ml: 'Mililitros (mL)', cl: 'Centilitros (cL)', litros: 'Litros (L)', m3: 'Metros cúbicos (m³)',
-                  gal: 'Galones (gal)', floz: 'Onzas líquidas (fl oz)', unidad: 'Unidades' }
-// Factor: cuánto trae 1 presentación, expresado en la unidad de aplicación.
-const factorDe = (contenido, uCont, uApp) => {
-  const c = numDec(String(contenido))
-  if (!(c > 0)) return null
-  if (U_FAMILIA(uCont) !== U_FAMILIA(uApp)) return null
-  return c * (U_POR[uCont] / U_POR[uApp])
+const NAVY = '#022847'
+const AZUL = '#0D6CB0'
+const BORDE = '#dce6ef'
+const GRIS = '#7d8fa0'
+const ROJO = '#8A2F2E'
+const VERDE = '#0F6E56'
+const AMBAR = '#854F0B'
+
+// Sin abreviaturas: el bodeguero no tiene por que descifrar "lt".
+// El inventario se muestra en unidad de compra (tambores, botellas,
+// sacos), que es lo que devuelven las funciones de saldo.
+const UNIDAD = {
+  sacos: 'Sacos', litros: 'Litros', ml: 'Mililitros', gramos: 'Gramos',
+  libras: 'Libras', kg: 'Kilos', unidad: 'Unidades',
+  tambor: 'Tambores', botella: 'Botellas',
 }
-const PLAZOS = [0, 30, 60, 90, 120]
+const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
-const k = (a, b) => a + '|' + b
-const sumarDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 
-export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
-  const [tab, setTab] = useState(tabInicial === 'balanceados' ? 'balanceados' : 'insumos')
-  const [insumos, setInsumos] = useState([])
-  const [productos, setProductos] = useState([])
-  const [over, setOver] = useState({})        // insumo_id|finca_id -> {unidad, unidad_compra, factor}
-  const [overB, setOverB] = useState({})      // producto_id|finca_id -> {stock_minimo, stock_objetivo}
-  const [editMinB, setEditMinB] = useState(null)  // clave en edición de mínimo/objetivo (balanceado)
-  const [preIns, setPreIns] = useState({})     // insumo_id|finca_id -> [rows precio]
-  const [preInsGen, setPreInsGen] = useState({}) // insumo_id -> {plazo: precio general vigente}
-  const [preBal, setPreBal] = useState({})     // producto_id|finca_id -> [rows precio]
-  const [preBalGen, setPreBalGen] = useState({}) // producto_id -> {plazo: precio general vigente}
-  const [plz, setPlz] = useState({})           // prod|finca -> {plazo, vigente_desde} vigente
-  const [editPz, setEditPz] = useState(null)   // clave de plazo en edición
-  const [solIns, setSolIns] = useState([])
-  const [solBal, setSolBal] = useState([])
+// Primer dia del mes de una fecha, para el atajo "este mes".
+const primeroDelMes = iso => iso.slice(0, 8) + '01'
+
+const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
+const ANCHOS_SALDO_JEFE = '1.3fr 200px 130px 120px 130px 110px'
+const ANCHOS_SALDO_BOD  = '1.2fr 210px 170px'   // bodeguero: sin dolares
+// Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
+const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
+const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
+const ANCHOS_MOV_BOD    = '1fr 100px 110px 100px 100px 100px 100px 110px'   // sin Consumo $
+const ANCHOS_MOV2       = '1.3fr 190px 95px 95px 95px 95px 100px 105px'   // inicial, entró, aplicó, devuelto, conteo, queda
+const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
+
+export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos, abrirPrecios, onCorreccion }) {
+  // Dos secciones: la bodega (saldo y conteos) y el movimiento de
+  // producto (ingresos y pedidos).
+  const [seccion, setSeccion] = useState('bodega')
+
+  // Cuando el jefe entra desde el aviso de "correcciones por aprobar",
+  // abrimos directo la seccion de ingresos.
+  useEffect(() => {
+    if (abrirIngresos) setSeccion('movimiento')
+  }, [abrirIngresos])
+  const [saldos, setSaldos] = useState([])
+  const [movs, setMovs] = useState([])
+  const [precios, setPrecios] = useState({})
+  const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
+  const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
+  const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
+  const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
+  const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
-  const [abierto, setAbierto] = useState(null)     // producto expandido
-  const [hist, setHist] = useState(null)           // clave de historial abierto
-  const [histRows, setHistRows] = useState([])     // filas del historial (se traen al abrir)
 
-  // Trae el historial completo de precios de un producto/finca solo cuando
-  // se abre el reloj (para no cargar miles de filas viejas al inicio).
-  async function abrirHist(prodId, fincaId, claveP) {
-    if (hist === claveP) { setHist(null); return }
-    setEditP(null); setHist(claveP); setHistRows([])
-    const tabla = tab === 'insumos' ? 'precio_insumo' : 'precio_producto'
-    const colId = tab === 'insumos' ? 'insumo_id' : 'producto_id'
-    const { data } = await supabase.schema('produccion').from(tabla)
-      .select('*').eq(colId, prodId).eq('finca_id', fincaId)
-    setHistRows(data || [])
-  }
-  const [editP, setEditP] = useState(null)         // clave de precio en edición
-  const [editU, setEditU] = useState(null)         // clave de unidad en edición
-  const [nuevo, setNuevo] = useState(false)
-  const [editProd, setEditProd] = useState(null)   // id de producto en edición (nombre)
-  const [editConfig, setEditConfig] = useState(null)  // id de insumo en "Configurar todo de una"
-  const [presentaciones, setPresentaciones] = useState([])
+  // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
+  const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
+  const [alDia, setAlDia] = useState(hoyISO())
+  const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
+  const [hasta, setHasta] = useState(hoyISO())
 
-  const fincaIds = (fincas || []).map(f => f.id)
+  const [contando, setContando] = useState(false)
+  const [editToma, setEditToma] = useState(null)   // conteo que se está editando
+  const [fecha, setFecha] = useState(hoyISO())
+  const [obs, setObs] = useState('')
+  const [contado, setContado] = useState({})
+  const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
+  const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
+  const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
+  const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
+  const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
+  const [detLineas, setDetLineas] = useState({})     // toma_id -> líneas con descuadre
+  const [factores, setFactores] = useState({})       // insumoId -> { factor, uApp }
+  const [guardando, setGuardando] = useState(false)
+
+  // Agregar insumos que faltan, varios a la vez, sin salir del conteo.
+  const [nuevos, setNuevos] = useState([])
+  const [guardandoNuevos, setGuardandoNuevos] = useState(false)
+
+  // Correccion en linea del jefe: que insumo se esta editando, el saldo
+  // nuevo y el motivo. Todo dentro de la fila, sin ventanas.
+  const [editando, setEditando] = useState(null)
+  const [nuevoSaldo, setNuevoSaldo] = useState('')
+  const [motivo, setMotivo] = useState('')
+  const [guardandoAj, setGuardandoAj] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const fIds = fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']
-    // Trae TODOS los precios vigentes por tandas de 1000 (PostgREST corta en
-    // 1000 por consulta; sin esto, insumos con muchas fincas no cargaban).
-    const allVigente = async (tabla, cols) => {
-      const out = []; const size = 1000
-      for (let from = 0; ; from += size) {
-        const { data, error } = await supabase.schema('produccion').from(tabla)
-          .select(cols).is('vigente_hasta', null).in('finca_id', fIds).range(from, from + size - 1)
-        if (error || !data) break
-        out.push(...data)
-        if (data.length < size) break
-      }
-      return { data: out }
-    }
-    const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
-      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo, stock_objetivo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
-      allVigente('precio_insumo', 'id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta'),
-      allVigente('precio_producto', 'id, producto_id, finca_id, precio_saco, plazo, vigente_desde, vigente_hasta'),
-      esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_insumo').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
-      esJefeGlobal ? supabase.schema('produccion').from('solicitud_correccion').select('id, valor_propuesto, finca:finca_id (nombre)').eq('tabla', 'nuevo_producto').eq('estado', 'pendiente') : Promise.resolve({ data: [] }),
-      supabase.schema('produccion').from('presentacion').select('nombre').eq('activo', true).order('nombre'),
-    ])
-    setPresentaciones((pres || []).map(x => x.nombre))
-    // Precios generales (finca nula) vigentes, por plazo, como respaldo.
-    const [{ data: pg }, { data: pgb }] = await Promise.all([
-      supabase.schema('produccion').from('precio_insumo')
-        .select('insumo_id, precio_unitario, plazo').is('finca_id', null).is('vigente_hasta', null),
-      supabase.schema('produccion').from('precio_producto')
-        .select('producto_id, precio_saco, plazo').is('finca_id', null).is('vigente_hasta', null),
-    ])
-    const pig2 = {}; (pg || []).forEach(x => { (pig2[x.insumo_id] = pig2[x.insumo_id] || {})[x.plazo] = Number(x.precio_unitario) })
-    setPreInsGen(pig2)
-    const pbg2 = {}; (pgb || []).forEach(x => { (pbg2[x.producto_id] = pbg2[x.producto_id] || {})[x.plazo] = Number(x.precio_saco) })
-    setPreBalGen(pbg2)
-    // Plazo de compra vigente por producto y finca.
-    const tablaPz = tab === 'insumos' ? 'plazo_insumo' : 'plazo_producto'
-    const colPz = tab === 'insumos' ? 'insumo_id' : 'producto_id'
-    const { data: pz } = await supabase.schema('produccion').from(tablaPz)
-      .select(`${colPz}, finca_id, plazo, vigente_desde`).is('vigente_hasta', null)
-      .in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000'])
-    const pzm = {}; (pz || []).forEach(x => { pzm[k(x[colPz], x.finca_id)] = { plazo: Number(x.plazo), vigente_desde: x.vigente_desde } })
-    setPlz(pzm)
-    setInsumos(ins || []); setProductos(prod || [])
-    const om = {}; (ov || []).forEach(x => { om[k(x.insumo_id, x.finca_id)] = x }); setOver(om)
-    const pim = {}
-    ;(pi || []).forEach(x => { if (x.finca_id) { (pim[k(x.insumo_id, x.finca_id)] = pim[k(x.insumo_id, x.finca_id)] || []).push(x) } })
-    setPreIns(pim)
-    const pbm = {}; (pb || []).forEach(x => { (pbm[k(x.producto_id, x.finca_id)] = pbm[k(x.producto_id, x.finca_id)] || []).push(x) }); setPreBal(pbm)
-    setSolIns(si || []); setSolBal(sb || [])
-    // Mínimo/objetivo por producto/finca (balanceado). Si la tabla aún no
-    // existe (falta correr su SQL), no rompemos el catálogo.
     try {
-      const { data: ovb, error: eovb } = await supabase.schema('produccion').from('producto_finca')
-        .select('producto_id, finca_id, stock_minimo, stock_objetivo')
-        .in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000'])
-      if (!eovb) { const obm = {}; (ovb || []).forEach(x => { obm[k(x.producto_id, x.finca_id)] = x }); setOverB(obm) }
-    } catch { /* tabla producto_finca aún no creada */ }
-    setCargando(false)
-  }, [esJefeGlobal, tab, JSON.stringify(fincaIds)])
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }, { data: plzAct }] = await Promise.all([
+        supabase.schema('produccion').rpc('fn_saldo_insumo',
+          { p_finca: finca.id, p_hasta: alDia }),
+        supabase.schema('produccion').rpc('fn_movimiento_insumo',
+          { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').from('precio_insumo')
+          .select('insumo_id, finca_id, precio_unitario, plazo')
+          .is('vigente_hasta', null)
+          .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
+        supabase.schema('produccion').from('toma_inventario')
+          .select('id, fecha, observacion, es_inicial')
+          .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
+        supabase.schema('produccion').from('insumo').select('id, factor, unidad').eq('activo', true),
+        supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
+          { p_finca: finca.id, p_hasta: alDia }),
+        supabase.schema('produccion').from('insumo_finca')
+          .select('insumo_id, factor, stock_minimo, unidad, contenido, unidad_contenido').eq('finca_id', finca.id),
+        supabase.schema('produccion').rpc('fn_saldo_insumo_plazo',
+          { p_finca: finca.id, p_hasta: alDia }),
+        supabase.schema('produccion').from('plazo_insumo')
+          .select('insumo_id, finca_id, plazo').is('vigente_hasta', null)
+          .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
+      ])
+      if (eS) throw eS
+
+      // El factor convierte el precio (por unidad de consumo) a precio
+      // por unidad de compra. Se resuelve por finca (override o catálogo).
+      const factor = {}
+      ;(ins || []).forEach(x => { factor[x.id] = Number(x.factor) || 1 })
+      ;(ovFactor || []).forEach(x => { factor[x.insumo_id] = Number(x.factor) || 1 })
+
+      // Factor + unidad de aplicación por insumo (para el "sobrante" del conteo).
+      const facMap = {}
+      ;(ins || []).forEach(x => { facMap[x.id] = { factor: Number(x.factor) || 1, uApp: x.unidad } })
+      ;(ovFactor || []).forEach(x => { facMap[x.insumo_id] = { factor: Number(x.factor) || 1, uApp: x.unidad || facMap[x.insumo_id]?.uApp,
+        contenido: Number(x.contenido) || null, uCont: x.unidad_contenido || null } })
+      setFactores(facMap)
+
+      // Mínimo por insumo (en unidad de aplicación). Guardamos el min en
+      // unidad de aplicación, el factor y la unidad para comparar y mostrar.
+      const minMap = {}
+      ;(ovFactor || []).forEach(x => {
+        if (x.stock_minimo != null) minMap[x.insumo_id] = { min: Number(x.stock_minimo), factor: Number(x.factor) || 1, unidad: x.unidad }
+      })
+      setMinimos(minMap)
+
+      // Plazo que rige por insumo (el de la finca gana al general). Es el
+      // mismo que muestra el catálogo, para que el precio coincida.
+      const plazoRige = {}
+      ;(plzAct || []).forEach(x => {
+        if (plazoRige[x.insumo_id] != null && !x.finca_id) return
+        plazoRige[x.insumo_id] = Number(x.plazo)
+      })
+      // El precio de la finca le gana al general, Y se toma el del plazo que
+      // rige (no cualquiera). Si no hay precio en ese plazo, se usa el que haya.
+      const pr = {}, prRespaldo = {}
+      ;(p || []).forEach(x => {
+        const val = Number(x.precio_unitario) * (factor[x.insumo_id] || 1)
+        const rige = plazoRige[x.insumo_id] ?? 0
+        const esFinca = !!x.finca_id
+        // Precio del plazo que rige (preferir finca sobre general).
+        if (Number(x.plazo) === rige && (pr[x.insumo_id] == null || esFinca)) pr[x.insumo_id] = val
+        // Respaldo: cualquier precio (preferir finca), por si el plazo que
+        // rige no tiene precio cargado.
+        if (prRespaldo[x.insumo_id] == null || esFinca) prRespaldo[x.insumo_id] = val
+      })
+      ;(p || []).forEach(x => { if (pr[x.insumo_id] == null && prRespaldo[x.insumo_id] != null) pr[x.insumo_id] = prRespaldo[x.insumo_id] })
+
+      const vfMap = {}
+      ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
+      setValorFifo(vfMap)
+
+      const dgm = {}
+      ;(dpz || []).forEach(x => { (dgm[x.insumo_id] = dgm[x.insumo_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
+      setDesglose(dgm)
+
+      setSaldos(s || []); setMovs(m || []); setPrecios(pr); setConteos(t || [])
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
+    } finally {
+      setCargando(false)
+    }
+  }, [finca.id, alDia, desde, hasta])
+
   useEffect(() => { cargar() }, [cargar])
 
-  // Vigente para un plazo dado (uno por plazo puede estar abierto).
-  const vigente = (map, prodId, fincaId, plazo = 0) => (map[k(prodId, fincaId)] || []).find(x => x.vigente_hasta == null && Number(x.plazo) === plazo)
-  const historial = (map, prodId, fincaId, plazo = 0) => (map[k(prodId, fincaId)] || []).filter(x => Number(x.plazo) === plazo).slice().sort((a, b) => (a.vigente_desde < b.vigente_desde ? 1 : -1))
+  const primeraVez = conteos.length === 0
+  const ultimo = conteos[0]
 
-  async function resolver(sol, aprobar) {
-    const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: aprobar ? 'Agregado al catálogo.' : 'Pedido rechazado.' }); await cargar()
+  // El valor total viene del calculo FIFO, no de saldo x precio actual.
+  const valorBodega = useMemo(
+    () => Object.values(valorFifo).reduce((t, v) => t + (Number(v) || 0), 0),
+    [valorFifo])
+  const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
+  const negativos = saldos.filter(s => Number(s.saldo) < 0).length
+  const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
+  const nombreInsumo = id => saldos.find(s => s.insumo_id === id)?.insumo || ''
+
+  const filas = useMemo(() => saldos.map(s => {
+    const txt = contado[s.insumo_id]
+    const hayMain = txt !== undefined && txt !== ''
+    const fac = factores[s.insumo_id]?.factor || 1
+    const sob = sobrante[s.insumo_id]
+    const haySob = sob !== undefined && sob !== '' && Number(sob) !== 0
+    // El conteo se guarda en unidad de compra (presentación). El sobrante
+    // viene en unidad de aplicación → se divide por el factor para sumarlo.
+    const c = (hayMain || haySob) ? (hayMain ? Number(txt) : 0) + (haySob ? Number(String(sob).replace(',', '.')) / fac : 0) : null
+    return { ...s, precio: precios[s.insumo_id] || 0,
+             contado: c, diferencia: c !== null ? c - Number(s.saldo) : null }
+  }), [saldos, precios, contado, sobrante, factores])
+
+  const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
+  const llenadas = filas.filter(f => f.contado !== null).length
+
+  // ¿Bajo mínimo? El saldo está en unidad de compra; el mínimo en unidad de
+  // aplicación. Convierto el saldo a aplicación (saldo × factor) y comparo.
+  const bajoMin = f => {
+    const m = minimos[f.insumo_id]; if (!m) return null
+    const saldoApp = Number(f.saldo) * (m.factor || 1)
+    return saldoApp < m.min ? { saldoApp, ...m } : null
+  }
+  const porReponer = filas.map(f => ({ f, a: bajoMin(f) })).filter(x => x.a)
+
+  function abrirCorregir(f) {
+    setEditando(f.insumo_id)
+    setNuevoSaldo(limpio(f.saldo))
+    setMotivo('')
+    setAviso(null)
   }
 
-  // Guardar precios por plazo para una o varias fincas.
-  // valores: { plazo: numeroDigitado } en la unidad `entrada` ('conteo'|'compra').
-  // Para insumos, si entrada='compra' se convierte a precio por unidad de conteo (÷ factor de la finca).
-  async function guardarPrecio({ tabla, col, prodCol, prodId, fincaIds, valores, entrada, desde, factorBase }) {
-    const plazosConValor = PLAZOS.filter(pz => valores[pz] != null && valores[pz] > 0)
-    if (!plazosConValor.length) { setAviso({ tipo: 'error', texto: 'Pon al menos un precio.' }); return }
-    for (const fid of fincaIds) {
-      const factor = tabla === 'precio_insumo' ? (Number(over[k(prodId, fid)]?.factor) || factorBase || 1) : 1
-      for (const pz of plazosConValor) {
-        const bruto = valores[pz]
-        const guardado = (tabla === 'precio_insumo' && entrada === 'compra') ? bruto / factor : bruto
-        await supabase.schema('produccion').from(tabla).delete().eq(prodCol, prodId).eq('finca_id', fid).eq('plazo', pz).gte('vigente_desde', desde)
-        await supabase.schema('produccion').from(tabla).update({ vigente_hasta: sumarDias(desde, -1) })
-          .eq(prodCol, prodId).eq('finca_id', fid).eq('plazo', pz).is('vigente_hasta', null).lt('vigente_desde', desde)
-        const { error } = await supabase.schema('produccion').from(tabla).insert({ [prodCol]: prodId, finca_id: fid, plazo: pz, [col]: guardado, vigente_desde: desde })
-        if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el precio. ' + error.message }); return }
+  // Corregir el saldo de un insumo suelto. Solo jefes y con motivo: un
+  // ajuste es donde se tapa un descuadre, y sin el porque no sirve.
+  async function guardarCorreccion(f) {
+    const nuevo = Number(String(nuevoSaldo).replace(',', '.'))
+    if (!isFinite(nuevo)) {
+      setAviso({ tipo: 'error', texto: 'El saldo nuevo no es un número.' }); return
+    }
+    const delta = nuevo - Number(f.saldo)
+    if (Math.abs(delta) < 0.0001) { setEditando(null); return }
+    if (!motivo.trim()) {
+      setAviso({ tipo: 'error', texto: 'La corrección necesita un motivo.' }); return
+    }
+
+    setGuardandoAj(true)
+    const { error } = await supabase.schema('produccion').from('ajuste_insumo')
+      .insert({ finca_id: finca.id, fecha: alDia, insumo_id: f.insumo_id,
+                cantidad: delta, motivo: motivo.trim() })
+    setGuardandoAj(false)
+    if (error) {
+      setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return
+    }
+    setEditando(null)
+    setAviso({ tipo: 'ok', texto: `${f.insumo} corregido a ${limpio(nuevo)}.` })
+    await cargar()
+  }
+
+  const filaNueva = () => ({ nombre: '', unidad: 'kg', compraDistinta: false, unidadCompra: '', factor: '' })
+  const setNuevo = (i, campo, val) => setNuevos(ns => ns.map((n, j) => j === i ? { ...n, [campo]: val } : n))
+
+  async function guardarNuevos() {
+    const validos = nuevos.filter(n => n.nombre.trim())
+    if (!validos.length) { setNuevos([]); return }
+    const rows = validos.map(n => ({
+      nombre: n.nombre.trim(),
+      unidad: n.unidad,
+      unidad_compra: (n.compraDistinta ? n.unidadCompra.trim() : n.unidad) || n.unidad,
+      factor: n.compraDistinta ? (Number(String(n.factor).replace(',', '.')) || 1) : 1,
+    }))
+    setGuardandoNuevos(true)
+    if (esJefeGlobal) {
+      const { error } = await supabase.schema('produccion').from('insumo').insert(rows)
+      setGuardandoNuevos(false)
+      if (error) {
+        const dup = /duplicate|unique/i.test(error.message)
+        setAviso({ tipo: 'error', texto: dup ? 'Alguno ya existe con ese nombre.' : 'No se pudo agregar. ' + error.message })
+        return
       }
+      setAviso({ tipo: 'ok', texto: `${rows.length} ${rows.length === 1 ? 'insumo agregado' : 'insumos agregados'}. Ya puedes contarlos abajo.` })
+    } else {
+      // Bodeguero/contadora: no crea, PIDE al jefe.
+      const { data: au } = await supabase.auth.getUser()
+      const solis = rows.map(r => ({
+        finca_id: finca.id, tabla: 'nuevo_insumo', registro_id: crypto.randomUUID(),
+        valor_propuesto: r, motivo: 'Insumo que falta en la lista', solicitado_por: au?.user?.id }))
+      const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert(solis)
+      setGuardandoNuevos(false)
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+      setAviso({ tipo: 'ok', texto: 'Pedido enviado al jefe. Lo agregará al catálogo.' })
     }
-    setEditP(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Precios actualizados.' : `Precios aplicados a ${fincaIds.length} fincas.` }); await cargar()
+    setNuevos([])
+    await cargar()
   }
 
-  // Guardar el plazo de compra vigente para una o varias fincas, desde una fecha.
-  async function guardarPlazo({ prodId, fincaIds, plazo, desde }) {
-    const tablaPz = tab === 'insumos' ? 'plazo_insumo' : 'plazo_producto'
-    const colPz = tab === 'insumos' ? 'insumo_id' : 'producto_id'
-    for (const fid of fincaIds) {
-      await supabase.schema('produccion').from(tablaPz).delete().eq(colPz, prodId).eq('finca_id', fid).gte('vigente_desde', desde)
-      await supabase.schema('produccion').from(tablaPz).update({ vigente_hasta: sumarDias(desde, -1) })
-        .eq(colPz, prodId).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', desde)
-      const { error } = await supabase.schema('produccion').from(tablaPz).insert({ [colPz]: prodId, finca_id: fid, plazo, vigente_desde: desde })
-      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el plazo. ' + error.message }); return }
+  async function editarConteo(c) {
+    const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
+      .select('insumo_id, cantidad_contada, motivo_descuadre').eq('toma_id', c.id)
+    const mapa = {}, md = {}, mo = {}
+    ;(data || []).forEach(l => {
+      mapa[l.insumo_id] = String(l.cantidad_contada)
+      if (l.motivo_descuadre) {
+        if (MOTIVOS_DESCUADRE.includes(l.motivo_descuadre)) md[l.insumo_id] = l.motivo_descuadre
+        else { md[l.insumo_id] = 'Otro'; mo[l.insumo_id] = l.motivo_descuadre }
+      }
+    })
+    setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
+    setFecha(c.fecha); setObs(c.observacion || '')
+    setEditToma(c); setContando(true); setAviso(null)
+  }
+
+  async function verDescuadres(c) {
+    if (detToma === c.id) { setDetToma(null); return }
+    setDetToma(c.id)
+    if (!detLineas[c.id]) {
+      const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
+        .select('insumo_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').eq('toma_id', c.id)
+      const desc = (data || []).filter(l => Math.abs(Number(l.diferencia) || 0) > 0.0001)
+      setDetLineas(m => ({ ...m, [c.id]: desc }))
     }
-    setEditPz(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Plazo actualizado.' : `Plazo aplicado a ${fincaIds.length} fincas.` }); await cargar()
   }
 
-  async function quitar(tabla, id, nombre) {
-    if (!window.confirm(`¿Quitar "${nombre}" del catálogo?\n\nDeja de aparecer para cargar; el historial se conserva.`)) return
-    const { error } = await supabase.schema('produccion').from(tabla).update({ activo: false }).eq('id', id)
-    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Quitado.' }); await cargar()
+  async function borrarConteo(c) {
+    if (!window.confirm(`¿Borrar el conteo del ${corta(c.fecha)}?\n\nEl saldo vuelve a calcularse desde el conteo anterior (o desde cero si no hay otro). No se puede deshacer.`)) return
+    const { error } = await supabase.schema('produccion').from('toma_inventario').delete().eq('id', c.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Conteo borrado.' })
+    await cargar()
   }
 
-  if (!esJefe) return <div style={{ padding: '2rem', color: GRIS }}>El catálogo lo administran el jefe y las contadoras.</div>
+  async function guardar() {
+    if (!llenadas) {
+      setAviso({ tipo: 'error', texto: 'No has contado ningún insumo todavía.' })
+      return
+    }
 
-  const solActual = tab === 'insumos' ? solIns : solBal
-  const lista = tab === 'insumos' ? insumos : productos
+    const texto = editToma
+      ? `Vas a guardar los cambios del conteo del ${corta(editToma.fecha)}.\n\n¿Guardar?`
+      : primeraVez
+      ? `Vas a cargar el inventario inicial con ${llenadas} insumos contados.\n\n` +
+        `De aquí en adelante el saldo se lleva solo: baja con lo que se aplica en las piscinas y sube con lo que entra a bodega.\n\n¿Guardar?`
+      : descuadres.length
+        ? `${descuadres.length} insumos no cuadran con lo que el sistema tenía calculado.\n\n` +
+          descuadres.slice(0, 5).map(d =>
+            `${d.insumo}: el sistema decía ${limpio(d.saldo)}, contaste ${limpio(d.contado)} (${d.diferencia > 0 ? 'sobran ' : 'faltan '}${limpio(Math.abs(d.diferencia))})`
+          ).join('\n') +
+          (descuadres.length > 5 ? `\n...y ${descuadres.length - 5} más` : '') +
+          `\n\nLas diferencias quedan registradas con tu nombre y la fecha. ¿Guardar?`
+        : `Todo cuadra con lo que el sistema tenía calculado. ¿Guardar el conteo?`
+
+    if (!window.confirm(texto)) return
+
+    setGuardando(true); setAviso(null)
+    try {
+      let tomaId
+      if (editToma) {
+        // Editar un conteo existente: actualiza cabecera y reemplaza líneas.
+        const { error: eU } = await supabase.schema('produccion').from('toma_inventario')
+          .update({ fecha, observacion: obs || null }).eq('id', editToma.id)
+        if (eU) throw eU
+        await supabase.schema('produccion').from('toma_inventario_linea').delete().eq('toma_id', editToma.id)
+        tomaId = editToma.id
+      } else {
+        const { data: toma, error } = await supabase.schema('produccion')
+          .from('toma_inventario')
+          .insert({ finca_id: finca.id, fecha, observacion: obs || null, es_inicial: conteos.length === 0 })
+          .select('id').single()
+        if (error) throw error
+        tomaId = toma.id
+      }
+
+      const lineas = filas.filter(f => f.contado !== null).map(f => {
+        // En un recuento normal, hay descuadre si la diferencia no es cero.
+        // Al editar, conservamos el motivo que ya se había cargado.
+        const hayDesc = !primeraVez && (editToma || Math.abs(f.diferencia || 0) > 0.0001)
+        const cat = motivoDesc[f.insumo_id]
+        const motivoD = hayDesc && cat
+          ? (cat === 'Otro' ? (motivoOtro[f.insumo_id]?.trim() || 'Otro') : cat)
+          : null
+        return {
+          toma_id: tomaId, insumo_id: f.insumo_id,
+          cantidad_contada: f.contado,
+          cantidad_sistema: Number(f.saldo),
+          diferencia: f.diferencia,
+          motivo_descuadre: motivoD,
+        }
+      })
+      const { error: e2 } = await supabase.schema('produccion')
+        .from('toma_inventario_linea').insert(lineas)
+      if (e2) throw e2
+
+      setAviso({ tipo: 'ok',
+        texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
+      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({})
+      await cargar()
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+    } finally {
+      setGuardando(false)
+    }
+  }
 
   return (
-    <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1040px', color: NAVY, fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 4px' }}>Catálogo</h1>
-      <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 16px', maxWidth: '660px' }}>
-        Todos los productos. Toca uno para ver, por finca, cómo entra, en qué se cuenta y su precio.
-        El jefe define productos y presentaciones; el precio lo ponen el jefe y las contadoras.
-      </p>
+    <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
 
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        {[['insumos', 'Insumos'], ['balanceados', 'Balanceados']].map(([id, txt]) => (
-          <button key={id} onClick={() => { setTab(id); setAbierto(null); setNuevo(false) }} style={{
-            padding: '8px 16px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer',
-            border: '0.5px solid ' + (tab === id ? '#9cc4e8' : BORDE), background: tab === id ? '#E6F1FB' : 'white',
-            color: tab === id ? AZUL : NAVY, fontWeight: tab === id ? 500 : 400 }}>{txt}</button>
-        ))}
-        {esJefeGlobal && (
-          <button onClick={() => { setNuevo(true); setAviso(null) }} style={{ ...btn, marginLeft: 'auto' }}>
-            + Agregar {tab === 'insumos' ? 'Insumo' : 'Balanceado'}
-          </button>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                    gap: '14px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <div>
+          <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 4px' }}>Inventario de insumos</h2>
+          <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
+            Bodega de {String(finca.nombre).toUpperCase()}.
+          </p>
+        </div>
+        {seccion === 'bodega' && !contando && !cargando && (
+          <Btn primario onClick={() => setContando(true)}>
+            {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
+          </Btn>
         )}
       </div>
+
+      <div style={{ display: 'flex', gap: '9px', marginBottom: '16px' }}>
+        <Chip on={seccion === 'bodega'} onClick={() => { setSeccion('bodega'); cargar() }}>Bodega</Chip>
+        <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
+          Ingresos y pedidos
+        </Chip>
+      </div>
+
+      {seccion === 'movimiento' ? (
+        <Ingresos finca={finca} esJefe={esJefe} onCorreccion={onCorreccion} onCambio={cargar} />
+      ) : (
+      <>
+      {/* --- seccion bodega --- */}
 
       {aviso && (
-        <div style={{ borderRadius: '9px', padding: '10px 13px', fontSize: '13px', marginBottom: '12px',
-                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE', color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
-      )}
-
-      {esJefeGlobal && solActual.length > 0 && (
-        <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '10px', padding: '13px 15px', marginBottom: '14px' }}>
-          <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '4px' }}>Pedidos de bodega por aprobar ({solActual.length})</div>
-          {solActual.map(s => {
-            const vp = s.valor_propuesto || {}
-            return (
-              <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
-                    flexWrap: 'wrap', borderTop: '0.5px solid #ecd9b3', paddingTop: '9px', marginTop: '9px' }}>
-                <div style={{ fontSize: '13px' }}>
-                  <b style={{ fontWeight: 500 }}>{vp.nombre}</b>
-                  {tab === 'insumos'
-                    ? <> · {UNIDAD[vp.unidad] || vp.unidad}{vp.unidad_compra && vp.unidad_compra !== vp.unidad ? ` · compra por ${vp.unidad_compra} (${vp.factor})` : ''}</>
-                    : <>{vp.marca ? ` · ${vp.marca}` : ''}</>}
-                  <div style={{ fontSize: '11px', color: GRIS }}>Pedido por {s.finca?.nombre}</div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => resolver(s, true)} style={btn}>Aprobar</button>
-                  <button onClick={() => resolver(s, false)} style={{ ...btn, color: ROJO, borderColor: '#e7cccb' }}>Rechazar</button>
-                </div>
-              </div>
-            )
-          })}
+        <div style={{ borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginBottom: '12px',
+                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
+                      color: aviso.tipo === 'error' ? ROJO : VERDE }}>
+          {aviso.texto}
         </div>
       )}
 
-      {/* Insumos sin precio: su consumo y su saldo valen $0 hasta cargarlo. */}
-      {!cargando && tab === 'insumos' && (() => {
-        const sp = insumos.filter(p => {
-          const gen = preInsGen[p.id]
-          const tieneGen = gen && Object.values(gen).some(v => Number(v) > 0)
-          if (tieneGen) return false
-          return !fincas.some(f => (preIns[k(p.id, f.id)] || []).length > 0)
-        })
-        if (!sp.length) return null
-        return (
-          <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '10px',
-                        padding: '13px 15px', marginBottom: '14px' }}>
-            <div style={{ fontWeight: 500, fontSize: '14px', marginBottom: '2px' }}>
-              {sp.length} {sp.length === 1 ? 'insumo sin precio' : 'insumos sin precio'}
-            </div>
-            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '9px' }}>
-              Sin precio, su consumo y su saldo valen $0 en los reportes. Toca uno para cargarlo.
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px' }}>
-              {sp.map(p => (
-                <button key={p.id}
-                  onClick={() => { setAbierto(p.id); setHist(null); setEditP(null); setEditU(null) }}
-                  style={{ fontSize: '12px', background: 'white', border: '0.5px solid #ecd9b3',
-                           borderRadius: '8px', padding: '4px 10px', cursor: 'pointer',
-                           fontFamily: 'inherit', color: NAVY }}>
-                  {p.nombre}
+      {!contando && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
+                      marginBottom: '14px' }}>
+          <Chip on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
+          <Chip on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+
+          {vista === 'saldo' ? (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+              <span style={{ fontSize: '13px', color: GRIS }}>al</span>
+              <input type="date" value={alDia} max={hoyISO()}
+                     onChange={e => setAlDia(e.target.value)} style={entrada} />
+              {alDia !== hoyISO() && (
+                <button onClick={() => setAlDia(hoyISO())}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer',
+                                 fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>
+                  volver a hoy
                 </button>
-              ))}
-            </div>
-          </div>
-        )
-      })()}
-
-      {nuevo && (tab === 'insumos'
-        ? <FormaInsumo onGuardar={async p => { const ok = await crearInsumo(p, setAviso); if (ok) { setNuevo(false); await cargar() } }} onCancelar={() => setNuevo(false)} />
-        : <FormaProducto onGuardar={async p => { const ok = await crearProducto(p, setAviso); if (ok) { setNuevo(false); await cargar() } }} onCancelar={() => setNuevo(false)} />)}
-
-      {cargando ? <div style={{ fontSize: '13px', color: GRIS, padding: '14px 0' }}>Cargando...</div> : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {lista.map(p => {
-            const ab = abierto === p.id
-            // Badges de "pendiente" (solo insumos).
-            const tienePrecio = tab === 'insumos'
-              ? ((preInsGen[p.id] && Object.values(preInsGen[p.id]).some(v => Number(v) > 0)) ||
-                 (fincas || []).some(f => (preIns[k(p.id, f.id)] || []).length > 0))
-              : true
-            const tieneMin = tab === 'insumos'
-              ? (fincas || []).some(f => over[k(p.id, f.id)]?.stock_minimo != null)
-              : true
-            return (
-              <div key={p.id} style={{ background: 'white', border: '1px solid #e6edf3', borderRadius: '14px',
-                                       boxShadow: '0 1px 2px rgba(16,40,71,0.04)', overflow: 'hidden' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px',
-                              padding: '15px 20px', borderBottom: ab ? '1px solid #f0f4f8' : 'none', cursor: 'pointer' }}
-                     onClick={() => { setAbierto(ab ? null : p.id); setHist(null); setEditP(null); setEditU(null) }}>
-                  <span style={{ fontSize: '15px', fontWeight: 600 }}>
-                    <span style={{ display: 'inline-block', width: '14px', color: GRIS, fontSize: '12px' }}>{ab ? '▾' : '▸'}</span>
-                    {p.nombre}
-                    <span style={{ fontSize: '12px', color: GRIS, fontWeight: 400 }}>
-                      {tab === 'insumos' ? ` · Se aplica en ${UNIDAD[p.unidad] || p.unidad}` : (p.marca ? ` · ${p.marca}` : '')}
-                      {p.proveedor ? ` · Proveedor ${p.proveedor}` : ''}
-                    </span>
-                    {tab === 'insumos' && !tienePrecio && <Insignia color="#A23A38" bg="#FBEAEA">Sin precio</Insignia>}
-                    {tab === 'insumos' && tienePrecio && !tieneMin && <Insignia color="#9a6a12" bg="#FAEEDA">Sin mínimo</Insignia>}
-                  </span>
-                  {esJefeGlobal && (
-                    <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
-                      <button onClick={() => { setAbierto(p.id); setEditConfig(editConfig === p.id ? null : p.id) }} style={linkAccion(VERDE)}>{editConfig === p.id ? 'Cerrar' : 'Configurar'}</button>
-                      <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={linkAccion(AZUL)}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>
-                      <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={linkAccion(ROJO)}>Quitar</button>
-                    </span>
-                  )}
-                </div>
-
-                {editProd === p.id && (
-                  <div style={{ padding: '0 15px 12px', background: ab ? '#f6f9fb' : 'white', borderBottom: '0.5px solid #f1f6f9' }}>
-                    {tab === 'insumos'
-                      ? <FormaInsumo actual={p} onGuardar={async d => { const ok = await editarInsumo(p, d, setAviso); if (ok) { setEditProd(null); await cargar() } }} onCancelar={() => setEditProd(null)} />
-                      : <FormaProducto actual={p} onGuardar={async d => { const ok = await editarProducto(p, d, setAviso); if (ok) { setEditProd(null); await cargar() } }} onCancelar={() => setEditProd(null)} />}
-                  </div>
-                )}
-
-                {editConfig === p.id && tab === 'insumos' && (() => {
-                  // Precarga: config y precios actuales de una finca representativa.
-                  const f0 = (fincas || []).find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || (fincas || [])[0]?.id
-                  const o = over[k(p.id, f0)]
-                  const preciosAct = {}
-                  let desdeAct = null
-                  PLAZOS.forEach(pz => {
-                    const vg = vigente(preIns, p.id, f0, pz)
-                    preciosAct[pz] = vg ? Number(vg.precio_unitario) : (preInsGen[p.id]?.[pz] ?? null)
-                    if (vg && !desdeAct) desdeAct = vg.vigente_desde
-                  })
-                  const pzAct = plz[k(p.id, f0)]?.plazo ?? 0
-                  const vgAct = vigente(preIns, p.id, f0, pzAct)
-                  if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
-                  // Historial de excepciones ya guardadas: qué finca aplica
-                  // distinto (unidad y/o precios por plazo) frente al estándar (f0).
-                  const stdU = o?.unidad || p.unidad
-                  const excIni = []
-                  ;(fincas || []).forEach(f => {
-                    if (f.id === f0 || String(f.nombre).toUpperCase() === 'PRUEBA') return
-                    const of = over[k(p.id, f.id)]
-                    let unidadExc = ''
-                    if (of?.unidad && of.unidad !== stdU) {
-                      const isComp = of.unidad === 'unidad' && of.unidad_contenido && of.unidad_contenido !== 'unidad'
-                      unidadExc = isComp ? '__completo' : of.unidad
-                    }
-                    // Precios propios por plazo (los que difieren del estándar).
-                    const facF = Number(of?.factor) || 1
-                    const precios = {}
-                    let hayPrecio = false, desdeExc = ''
-                    PLAZOS.forEach(pz => {
-                      const vgF = vigente(preIns, p.id, f.id, pz)
-                      const vg0 = vigente(preIns, p.id, f0, pz)
-                      if (vgF && (!vg0 || Number(vgF.precio_unitario) !== Number(vg0.precio_unitario))) {
-                        precios[pz] = String(Math.round(Number(vgF.precio_unitario) * facF * 10000) / 10000)
-                        hayPrecio = true
-                        if (!desdeExc) desdeExc = vgF.vigente_desde || ''
-                      }
-                    })
-                    const pzF = plz[k(p.id, f.id)]?.plazo ?? null
-                    const plazoRige = (hayPrecio || (pzF != null && pzF !== pzAct)) ? (pzF ?? 0) : null
-                    if (unidadExc || hayPrecio) excIni.push({ fincaId: f.id, unidad: unidadExc, desde: desdeExc, precios, plazoRige, abierto: hayPrecio })
-                  })
-                  return (
-                    <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
-                      actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
-                      onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
-                      onError={t => setAviso({ tipo: 'error', texto: t })}
-                      onCancelar={() => setEditConfig(null)} />
-                  )
-                })()}
-
-                {editConfig === p.id && tab === 'balanceados' && (() => {
-                  const f0 = (fincas || []).find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || (fincas || [])[0]?.id
-                  const preciosAct = {}
-                  let desdeAct = null
-                  PLAZOS.forEach(pz => {
-                    const vg = vigente(preBal, p.id, f0, pz)
-                    preciosAct[pz] = vg ? Number(vg.precio_saco) : (preBalGen[p.id]?.[pz] ?? null)
-                    if (vg && !desdeAct) desdeAct = vg.vigente_desde
-                  })
-                  const pzAct = plz[k(p.id, f0)]?.plazo ?? 0
-                  const vgAct = vigente(preBal, p.id, f0, pzAct)
-                  if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
-                  return (
-                    <EditorConfigBal producto={p} fincas={fincas}
-                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
-                      onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
-                      onError={t => setAviso({ tipo: 'error', texto: t })}
-                      onCancelar={() => setEditConfig(null)} />
-                  )
-                })()}
-
-                {ab && (
-                  <div style={{ background: 'white', padding: '0 20px 8px' }}>
-                    {esJefe && (
-                      <div style={{ fontSize: '11.5px', color: GRIS, padding: '8px 0 2px' }}>
-                        Vista de solo lectura. Para cambiar {tab === 'insumos' ? 'unidades, precios' : 'precios'}, mínimo o cantidad deseable, usa <b style={{ color: VERDE }}>Configurar</b> (arriba). El reloj muestra el historial de precios.
-                      </div>
-                    )}
-                    <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
-                                  padding: '10px 0', fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.05em', borderBottom: '1px solid #f0f4f8' }}>
-                      <span>Finca</span>
-                      {tab === 'insumos' && <span>Llega En</span>}
-                      {tab === 'insumos' && <span style={{ textAlign: 'center' }}>Se Aplica En</span>}
-                      {tab === 'insumos' && <span>Mínimo Alerta</span>}
-                      {tab === 'insumos' && <span>Objetivo</span>}
-                      {tab === 'balanceados' && <span>Unidad</span>}
-                      {tab === 'balanceados' && <span>Mínimo</span>}
-                      {tab === 'balanceados' && <span>Objetivo</span>}
-                      <span>Plazo Activo</span>
-                      <span style={{ textAlign: 'right' }}>Precio</span>
-                    </div>
-                    {(fincas || []).map(f => {
-                      const o = tab === 'insumos' ? over[k(p.id, f.id)] : null
-                      const uCons = tab === 'insumos' ? (o?.unidad || p.unidad) : 'sacos'
-                      const uCompra = tab === 'insumos' ? (o?.unidad_compra || p.unidad_compra) : 'sacos'
-                      const factor = tab === 'insumos' ? Number(o?.factor ?? p.factor) : 1
-                      const contenido = o?.contenido != null ? Number(o.contenido) : factor
-                      const uCont = o?.unidad_contenido || uCons
-                      const minimo = o?.stock_minimo != null ? Number(o.stock_minimo) : null
-                      const objetivo = o?.stock_objetivo != null ? Number(o.stock_objetivo) : null
-                      const map = tab === 'insumos' ? preIns : preBal
-                      const prodCol = tab === 'insumos' ? 'insumo_id' : 'producto_id'
-                      const col = tab === 'insumos' ? 'precio_unitario' : 'precio_saco'
-                      const tabla = tab === 'insumos' ? 'precio_insumo' : 'precio_producto'
-                      const genMap = tab === 'insumos' ? preInsGen[p.id] : preBalGen[p.id]  // {plazo: num} en unidad de conteo (insumo) o saco (bal)
-                      // Precio por plazo, con respaldo al general. Devuelve el valor en unidad de conteo (insumo) o saco (bal).
-                      const precioPlazo = (pz) => {
-                        const vg = vigente(map, p.id, f.id, pz)
-                        if (vg) return { val: Number(vg[col]), heredado: false }
-                        const g = genMap && genMap[pz] != null ? genMap[pz] : null
-                        return { val: g, heredado: g != null }
-                      }
-                      // Para mostrar, el insumo se ve por unidad de compra (saco): valor × factor.
-                      const aCompra = (v) => v == null ? null : (tab === 'insumos' ? v * factor : v)
-                      const contado = precioPlazo(0)
-                      const otros = PLAZOS.filter(pz => pz !== 0).map(pz => ({ pz, ...precioPlazo(pz) })).filter(x => x.val != null)
-                      const claveP = k(p.id, f.id)
-                      // Plazo a mostrar: el que rige; si ese no tiene precio,
-                      // el primer plazo que sí tenga (para no decir "Sin precio"
-                      // cuando en realidad hay precio en otro plazo).
-                      const pzRige = plz[claveP]?.plazo ?? 0
-                      const pzMostrar = precioPlazo(pzRige).val != null ? pzRige : (PLAZOS.find(pz => precioPlazo(pz).val != null) ?? pzRige)
-                      return (
-                        <Fragment key={f.id}>
-                          <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
-                                        alignItems: 'center', padding: '10px 0', fontSize: '13px', borderBottom: '0.5px solid #eef3f7' }}>
-                            <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
-                            {tab === 'insumos' && (
-                              <span style={{ color: NAVY }}>
-                                {cap1(uCompra)} <span style={{ color: GRIS, fontSize: '11.5px' }}>(1 = {contenido} {UNIDAD[uCont] || uCont})</span>
-                              </span>
-                            )}
-                            {tab === 'insumos' && (
-                              <span style={{ color: GRIS, textAlign: 'center', fontWeight: 500 }}>{(uCons === 'unidad' ? cap1(uCompra) : (UNIDAD[uCons] || uCons)).toUpperCase()}</span>
-                            )}
-                            {tab === 'insumos' && (
-                              <span style={{ color: minimo != null ? '#BA7517' : '#c3d0db' }}>{minimo != null ? `${minimo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
-                            )}
-                            {tab === 'insumos' && (
-                              <span style={{ color: objetivo != null ? VERDE : '#c3d0db' }}>{objetivo != null ? `${objetivo} ${UNIDAD[uCons] || uCons}` : '—'}</span>
-                            )}
-                            {tab === 'balanceados' && <span style={{ color: GRIS }}>Sacos</span>}
-                            {tab === 'balanceados' && (() => {
-                              const ob = overB[claveP]
-                              const mn = ob?.stock_minimo != null ? Number(ob.stock_minimo) : null
-                              const oj = ob?.stock_objetivo != null ? Number(ob.stock_objetivo) : null
-                              return <>
-                                <span style={{ color: mn != null ? '#BA7517' : '#c3d0db' }}>
-                                  {mn != null ? `${mn} sacos` : '—'}
-                                </span>
-                                <span style={{ color: oj != null ? VERDE : '#c3d0db' }}>{oj != null ? `${oj} sacos` : '—'}</span>
-                              </>
-                            })()}
-                            <span style={{ color: GRIS }}>
-                              <span style={{ fontSize: '11px', background: '#E6F1FB', color: AZUL, borderRadius: '7px', padding: '3px 9px' }}>{PLAZO_LBL[pzMostrar]}</span>
-                            </span>
-                            <span style={{ textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                              {(() => {
-                                const activo = precioPlazo(pzMostrar)   // precio del plazo que rige (o el que tenga precio)
-                                const conv2 = tab === 'insumos' && factor && factor !== 1 && uCons !== uCompra
-                                const contenidoP = activo.val == null
-                                  ? 'Sin precio'
-                                  : <>{dinero(aCompra(activo.val))}
-                                      <span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap1(uCompra)}{activo.heredado ? ' · general' : ''}</span>
-                                      {conv2 && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>= {dineroPrec(activo.val)} /{UNIDAD[uCons] || uCons}</span>}
-                                    </>
-                                const estilo = { border: '0.5px solid ' + BORDE, borderRadius: '6px', padding: '5px 11px', background: 'white', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, fontVariantNumeric: 'tabular-nums', textAlign: 'right', color: activo.val == null ? '#BA7517' : NAVY, minWidth: '96px' }
-                                // Solo lectura (se edita en Configurar) para insumos y balanceados.
-                                return <span style={{ ...estilo, display: 'inline-block' }}>{contenidoP}</span>
-                              })()}
-                              <button onClick={() => abrirHist(p.id, f.id, claveP)} title="Historial de precios"
-                                style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, padding: 0, lineHeight: 1 }}>
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-                              </button>
-                            </span>
-                          </div>
-
-                          {editP === claveP && (
-                            <EditorPrecioPlazo tab={tab} fincas={fincas} fincaActual={f} uCons={uCons} uCompra={uCompra} factor={factor}
-                              plazoActivo={plz[claveP]?.plazo ?? 0}
-                              actuales={Object.fromEntries(PLAZOS.map(pz => [pz, precioPlazo(pz).val]))}
-                              aCompra={aCompra}
-                              onGuardarPlazo={(plazo, desde, fincaIds) => guardarPlazo({ prodId: p.id, fincaIds, plazo, desde })}
-                              onGuardarPrecio={(valores, entrada, desde, fincaIds) => guardarPrecio({ tabla, col, prodCol, prodId: p.id, fincaIds, valores, entrada, desde, factorBase: Number(p.factor) })}
-                              onCancelar={() => setEditP(null)} />
-                          )}
-                          {hist === claveP && (
-                            <div style={{ padding: '6px 0 10px 10px', fontSize: '12px', color: GRIS, borderBottom: '0.5px solid #eef3f7' }}>
-                              {PLAZOS.map(pz => {
-                                const h = histRows.filter(x => Number(x.plazo) === pz).slice().sort((a, b) => (a.vigente_desde < b.vigente_desde ? 1 : -1))
-                                if (!h.length) return null
-                                return (
-                                  <div key={pz} style={{ marginBottom: '4px' }}>
-                                    <b style={{ fontWeight: 500, color: NAVY }}>{PLAZO_LBL[pz]}:</b>{' '}
-                                    {h.map((x, i) => `${dinero(aCompra(Number(x[col])))} desde ${corta(x.vigente_desde)}${x.vigente_hasta ? ` a ${corta(x.vigente_hasta)}` : ' (hoy)'}`).join(' · ')}
-                                  </div>
-                                )
-                              })}
-                              {histRows.length === 0 && 'Sin historial.'}
-                            </div>
-                          )}
-                          {editU === claveP && tab === 'insumos' && (
-                            <EditorUnidadFinca insumo={p} finca={f} fincas={fincas} presentaciones={presentaciones}
-                              actual={{ unidad: uCons, unidad_compra: uCompra, factor, contenido, unidad_contenido: uCont, stock_minimo: minimo, stock_objetivo: objetivo }}
-                              onNuevaPresentacion={async (nom) => { await supabase.schema('produccion').from('presentacion').insert({ nombre: nom }); setPresentaciones(ps => [...new Set([...ps, nom])].sort()) }}
-                              onHecho={async (msg) => { setEditU(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
-                              onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditU(null)} />
-                          )}
-                          {editMinB === claveP && tab === 'balanceados' && (
-                            <EditorMinBal producto={p} finca={f} fincas={fincas} actual={overB[claveP]}
-                              onHecho={async (msg) => { setEditMinB(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
-                              onError={t => setAviso({ tipo: 'error', texto: t })} onCancelar={() => setEditMinB(null)} />
-                          )}
-                        </Fragment>
-                      )
-                    })}
-                    {tab === 'insumos' && (
-                      <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
-                        Presentación y unidad las define el jefe. El precio lo editan jefe y contadora (sus fincas).
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-          {lista.length === 0 && <div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Nada en el catálogo todavía.</div>}
-        </div>
-      )}
-    </div>
-  )
-}
-
-const cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s
-const cap1 = s => s ? String(s).charAt(0).toUpperCase() + String(s).slice(1).toLowerCase() : s
-// Dinero con precisión para valores chicos (ej. $0,0050 por mL).
-const dineroPrec = v => {
-  const n = Number(v) || 0
-  const dec = Math.abs(n) > 0 && Math.abs(n) < 1 ? 4 : 2
-  return '$' + n.toLocaleString('es-EC', { minimumFractionDigits: dec, maximumFractionDigits: 4 })
-}
-
-async function crearInsumo({ nombre, unidad, unidadCompra, factor, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1, proveedor: (proveedor || '').trim() || null })
-  if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
-  setAviso({ tipo: 'ok', texto: 'Insumo agregado.' }); return true
-}
-async function editarInsumo(actual, { nombre, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('insumo').update({ nombre: nombre.trim(), proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
-  if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
-  setAviso({ tipo: 'ok', texto: 'Insumo actualizado.' }); return true
-}
-async function crearProducto({ nombre, marca, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('producto').insert({ nombre: nombre.trim(), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null })
-  if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un balanceado con ese nombre.' : error.message }); return false }
-  setAviso({ tipo: 'ok', texto: 'Balanceado agregado.' }); return true
-}
-async function editarProducto(actual, { nombre, marca, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('producto').update({ nombre: nombre.trim(), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
-  if (error) { setAviso({ tipo: 'error', texto: error.message }); return false }
-  setAviso({ tipo: 'ok', texto: 'Balanceado actualizado.' }); return true
-}
-
-function EditorPrecio({ tab, fincas, fincaActual, uCons, uCompra, factor, actuales, onGuardar, onCancelar }) {
-  const esInsumo = tab === 'insumos'
-  const hayCompra = esInsumo && uCompra && uCompra !== uCons   // ¿se compra en presentación distinta? (saco)
-  // entrada: 'compra' (saco) o 'conteo' (kilo/unidad de cuenta). Balanceado siempre por saco.
-  const [entrada, setEntrada] = useState(hayCompra ? 'compra' : 'conteo')
-  // Prefill: actuales vienen en unidad de conteo (insumo) o saco (bal). Mostrar en la unidad de entrada.
-  const prefill = (pz) => {
-    const a = actuales[pz]
-    if (a == null) return ''
-    const enCompra = esInsumo && entrada === 'compra' ? a * factor : a
-    return String(Math.round(enCompra * 10000) / 10000)
-  }
-  const [plazoSel, setPlazoSel] = useState(0)
-  const [v, setV] = useState(() => prefill(0))
-  const [desde, setDesde] = useState(hoyISO())
-  const [enviando, setEnviando] = useState(false)
-  const [sel, setSel] = useState([fincaActual.id])
-  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
-  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-  // Al cambiar de plazo, precargar el precio vigente de ese plazo.
-  const cambiarPlazo = (pz) => { setPlazoSel(pz); setV(prefillCon(actuales[pz], entrada)) }
-  // Al cambiar la unidad de entrada, reconvertir lo escrito.
-  const cambiarEntrada = (nueva) => {
-    if (nueva === entrada) return
-    const n = numDec(v)
-    if (n > 0) setV(String(Math.round((nueva === 'compra' ? n * factor : n / factor) * 10000) / 10000))
-    setEntrada(nueva)
-  }
-  function prefillCon(a, ent) {
-    if (a == null) return ''
-    const enUnidad = esInsumo && ent === 'compra' ? a * factor : a
-    return String(Math.round(enUnidad * 10000) / 10000)
-  }
-  const unidadTxt = entrada === 'compra' ? (UNIDAD[uCompra] || cap(uCompra)) : (UNIDAD[uCons] || cap(uCons))
-  const val = numDec(v)
-  const equiv = esInsumo && val > 0 ? (entrada === 'compra' ? val / factor : val * factor) : null
-  const guardar = async () => {
-    setEnviando(true)
-    await onGuardar({ [plazoSel]: val }, entrada, desde, sel)
-    setEnviando(false)
-  }
-  return (
-    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
-      {hayCompra && (
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
-          <span style={{ fontSize: '12px', color: GRIS }}>Ingresar precio por:</span>
-          {[['compra', UNIDAD[uCompra] || cap(uCompra)], ['conteo', UNIDAD[uCons] || cap(uCons)]].map(([id, txt]) => (
-            <button key={id} onClick={() => cambiarEntrada(id)} style={{
-              fontSize: '12px', borderRadius: '20px', padding: '5px 12px', cursor: 'pointer', fontFamily: 'inherit',
-              border: '0.5px solid ' + (entrada === id ? '#9cc4e8' : BORDE), background: entrada === id ? '#E6F1FB' : 'white',
-              color: entrada === id ? AZUL : NAVY, fontWeight: entrada === id ? 500 : 400 }}>{txt}</button>
-          ))}
-          <span style={{ fontSize: '11px', color: GRIS, marginLeft: 'auto' }}>1 {cap(uCompra)} = {factor} {UNIDAD[uCons] || uCons}</span>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <Campo label="Este precio es de">
-          <select value={plazoSel} onChange={e => cambiarPlazo(Number(e.target.value))} style={{ ...inp, width: '130px' }}>
-            {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-          </select>
-        </Campo>
-        <Campo label={`Precio por ${unidadTxt}`}>
-          <input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)}
-            placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
-          {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
-            = {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
-        </Campo>
-        <Campo label="Rige desde"><input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} /></Campo>
-        <button disabled={!(val > 0) || sel.length === 0 || enviando} onClick={guardar}
-          style={{ ...btnPri, opacity: (!(val > 0) || sel.length === 0 || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
-      </div>
-      {otras.length > 0 && (
-        <div style={{ marginTop: '10px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar este precio a:</div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
-            {otras.map(f => {
-              const on = sel.includes(f.id)
-              return (
-                <button key={f.id} onClick={() => toggle(f.id)} style={{
-                  fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
-                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
-                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
-                </button>
-              )
-            })}
-            {otras.length > 1 && (
-              <button onClick={() => setSel([fincaActual.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>
-            )}
-          </div>
-          {esInsumo && hayCompra && <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Si otra finca tiene distinto peso por {cap(uCompra)}, el precio por {UNIDAD[uCons] || uCons} se ajusta a su factor.</div>}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// Editor unificado: plazo activo arriba, precios guardados + edición abajo.
-function EditorPrecioPlazo({ tab, fincas, fincaActual, uCons, uCompra, factor, plazoActivo, actuales, aCompra, onGuardarPlazo, onGuardarPrecio, onCancelar }) {
-  const esInsumo = tab === 'insumos'
-  const hayCompra = esInsumo && uCompra && uCompra !== uCons
-  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
-  // --- Plazo activo ---
-  const [plazoSel, setPlazoSel] = useState(plazoActivo ?? 0)
-  const [desdePz, setDesdePz] = useState(hoyISO())
-  const [selPz, setSelPz] = useState([fincaActual.id])
-  const [envPz, setEnvPz] = useState(false)
-  // --- Precios ---
-  const [editar, setEditar] = useState(false)
-  const [plazoP, setPlazoP] = useState(plazoActivo ?? 0)
-  const [entrada, setEntrada] = useState(hayCompra ? 'compra' : 'conteo')
-  const prefill = (pz, ent) => { const a = actuales[pz]; if (a == null) return ''; const v = esInsumo && ent === 'compra' ? a * factor : a; return String(Math.round(v * 10000) / 10000) }
-  const [v, setV] = useState(prefill(plazoActivo ?? 0, hayCompra ? 'compra' : 'conteo'))
-  const [desdeP, setDesdeP] = useState(hoyISO())
-  const [selP, setSelP] = useState([fincaActual.id])
-  const [envP, setEnvP] = useState(false)
-  const val = numDec(v)
-  const equiv = esInsumo && val > 0 ? (entrada === 'compra' ? val / factor : val * factor) : null
-  const cambiarPlazoP = pz => { setPlazoP(pz); setV(prefill(pz, entrada)) }
-  const cambiarEntrada = ne => { if (ne === entrada) return; const n = numDec(v); if (n > 0) setV(String(Math.round((ne === 'compra' ? n * factor : n / factor) * 10000) / 10000)); setEntrada(ne) }
-  const toggle = (setF) => id => setF(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-  const chips = (sel, setF) => otras.length > 0 && (
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '6px' }}>
-      <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
-      {otras.map(f => { const on = sel.includes(f.id); return (
-        <button key={f.id} onClick={() => toggle(setF)(f.id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}</button>
-      )})}
-      {otras.length > 1 && <button onClick={() => setF([fincaActual.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>}
-    </div>
-  )
-  return (
-    <div style={{ background: '#eef3f7', padding: '14px 16px', borderBottom: '0.5px solid #eef3f7' }}>
-      {/* Precios guardados */}
-      <div style={{ fontSize: '11px', fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase', color: AZUL, marginBottom: '8px' }}>Precios guardados (por {cap(uCompra)})</div>
-      <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', alignItems: 'center' }}>
-        {PLAZOS.map(pz => {
-          const val0 = actuales[pz]; const act = pz === (plazoActivo ?? 0)
-          return (
-            <span key={pz} style={{ fontSize: '12px', borderRadius: '7px', padding: '4px 10px',
-              background: act ? '#E6F1FB' : '#eef2f6', color: act ? AZUL : NAVY, fontWeight: act ? 500 : 400 }}>
-              {PLAZO_LBL[pz].replace(' días', 'd')} {val0 == null ? '—' : dinero(aCompra(val0))}{act ? ' · activo' : ''}
-            </span>
-          )
-        })}
-        <button onClick={() => setEditar(e => !e)} style={miniLink}>{editar ? 'cerrar' : 'editar precios'}</button>
-      </div>
-
-      {editar && (
-        <div style={{ marginTop: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '12px' }}>
-          {hayCompra && (
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
-              <span style={{ fontSize: '12px', color: GRIS }}>Ingresar precio por:</span>
-              {[['compra', UNIDAD[uCompra] || cap(uCompra)], ['conteo', UNIDAD[uCons] || cap(uCons)]].map(([id, txt]) => (
-                <button key={id} onClick={() => cambiarEntrada(id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 12px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (entrada === id ? '#9cc4e8' : BORDE), background: entrada === id ? '#E6F1FB' : 'white', color: entrada === id ? AZUL : NAVY, fontWeight: entrada === id ? 500 : 400 }}>{txt}</button>
-              ))}
-              <span style={{ fontSize: '11px', color: GRIS, marginLeft: 'auto' }}>1 {cap(uCompra)} = {factor} {UNIDAD[uCons] || uCons}</span>
-            </div>
+              )}
+            </label>
+          ) : (
+            <>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+                <span style={{ fontSize: '13px', color: GRIS }}>del</span>
+                <input type="date" value={desde} max={hasta}
+                       onChange={e => setDesde(e.target.value)} style={entrada} />
+                <span style={{ fontSize: '13px', color: GRIS }}>al</span>
+                <input type="date" value={hasta} min={desde} max={hoyISO()}
+                       onChange={e => setHasta(e.target.value)} style={entrada} />
+              </label>
+              <Chip pequeno onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>
+                Este mes
+              </Chip>
+              <Chip pequeno onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>
+                Este año
+              </Chip>
+            </>
           )}
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <Campo label="Este precio es de"><select value={plazoP} onChange={e => cambiarPlazoP(Number(e.target.value))} style={{ ...inp, width: '130px' }}>{PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}</select></Campo>
-            <Campo label={`Precio por ${entrada === 'compra' ? (UNIDAD[uCompra] || cap(uCompra)) : (UNIDAD[uCons] || cap(uCons))}`}>
-              <input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)} placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
-              {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>= {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
-            </Campo>
-            <Campo label="Rige desde"><input type="date" value={desdeP} onChange={e => setDesdeP(e.target.value)} style={inp} /></Campo>
-            <button disabled={!(val > 0) || selP.length === 0 || envP} onClick={async () => { setEnvP(true); await onGuardarPrecio({ [plazoP]: val }, entrada, desdeP, selP); setEnvP(false) }} style={{ ...btnPri, opacity: (!(val > 0) || selP.length === 0 || envP) ? 0.5 : 1 }}>{envP ? 'Guardando...' : 'Aplicar precio'}</button>
-          </div>
-          {chips(selP, setSelP)}
         </div>
       )}
 
-      <div style={{ marginTop: '12px' }}><button onClick={onCancelar} style={btn}>Cerrar</button></div>
-    </div>
-  )
-}
-
-function EditorPlazo({ fincas, fincaActual, actual, onGuardar, onCancelar }) {
-  const [plazo, setPlazo] = useState(actual ?? 0)
-  const [desde, setDesde] = useState(hoyISO())
-  const [enviando, setEnviando] = useState(false)
-  const [sel, setSel] = useState([fincaActual.id])
-  const otras = (fincas || []).filter(f => f.id !== fincaActual.id)
-  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-  return (
-    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <Campo label="Se compra a">
-          <select value={plazo} onChange={e => setPlazo(Number(e.target.value))} style={{ ...inp, width: '130px' }}>
-            {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Rige desde"><input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={inp} /></Campo>
-        <button disabled={sel.length === 0 || enviando} onClick={async () => { setEnviando(true); await onGuardar(plazo, desde, sel); setEnviando(false) }}
-          style={{ ...btnPri, opacity: (sel.length === 0 || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Aplicar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
-      </div>
-      <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Desde esa fecha, todo lo que ingrese de este producto en la finca se costea a ese plazo. El bodeguero no lo ve.</div>
-      {otras.length > 0 && (
-        <div style={{ marginTop: '10px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar este plazo a:</div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(fincaActual.nombre).toUpperCase()} (esta)</span>
-            {otras.map(f => {
-              const on = sel.includes(f.id)
-              return (
-                <button key={f.id} onClick={() => toggle(f.id)} style={{
-                  fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
-                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
-                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
-                </button>
-              )
-            })}
-            {otras.length > 1 && (
-              <button onClick={() => setSel([fincaActual.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNuevaPresentacion, onHecho, onError, onCancelar }) {
-  const [presentacion, setPresentacion] = useState(actual.unidad_compra || 'Saco')
-  const [contenido, setContenido] = useState(actual.contenido != null ? String(actual.contenido) : (actual.factor != null ? String(actual.factor) : ''))
-  const [unidad, setUnidad] = useState(actual.unidad)           // se aplica en
-  const [uCont, setUCont] = useState(actual.unidad_contenido || actual.unidad)  // unidad del contenido
-  const [minimo, setMinimo] = useState(actual.stock_minimo != null ? String(actual.stock_minimo) : '')
-  const [objetivo, setObjetivo] = useState(actual.stock_objetivo != null ? String(actual.stock_objetivo) : '')
-  const [enviando, setEnviando] = useState(false)
-  const [sel, setSel] = useState([finca.id])
-  const otras = (fincas || []).filter(f => f.id !== finca.id)
-  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-
-  // Al cambiar la unidad de aplicación, el contenido debe ser de la misma familia.
-  const cambiarUnidad = (u) => {
-    setUnidad(u)
-    if (U_FAMILIA(uCont) !== U_FAMILIA(u)) setUCont(u)  // reencuadra el contenido a la nueva familia
-  }
-  // Al elegir la unidad del contenido, si es de otra familia, alinea la unidad de aplicación.
-  const cambiarUCont = (u) => {
-    setUCont(u)
-    if (U_FAMILIA(u) !== U_FAMILIA(unidad)) setUnidad(u)
-  }
-  // "Completo": aplicar por envase entero (1 = 1). Se cuenta en unidades.
-  const cambiarAplica = (v) => {
-    if (v === '__completo') { setUnidad('unidad'); setContenido('1'); setUCont('unidad') }
-    else cambiarUnidad(v)
-  }
-  // ¿Está en modo "completo"? (se aplica en unidad, 1 por envase)
-  const esCompleto = unidad === 'unidad' && numDec(contenido) === 1 && uCont === 'unidad'
-  const factor = factorDe(contenido, uCont, unidad)
-  const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
-
-  async function aplicarUna(fid) {
-    // 1) Si cambió la unidad de aplicación, convierte el histórico de esa finca.
-    if (unidad !== actual.unidad) {
-      const { error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
-        { p_insumo: insumo.id, p_finca: fid, p_nueva: unidad })
-      if (error) return error
-    }
-    // 2) Guarda presentación, contenido, unidad y mínimo (factor calculado).
-    const { error } = await supabase.schema('produccion').from('insumo_finca')
-      .upsert({ insumo_id: insumo.id, finca_id: fid, unidad, unidad_compra: presentacion.trim(),
-                contenido: numDec(contenido), unidad_contenido: uCont, factor,
-                stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-                stock_objetivo: numDec(objetivo) > 0 ? numDec(objetivo) : null }, { onConflict: 'insumo_id,finca_id' })
-    return error
-  }
-
-  async function guardar() {
-    if (!listo) return
-    setEnviando(true)
-    for (const fid of sel) {
-      const err = await aplicarUna(fid)
-      if (err) { setEnviando(false); onError(err.message.replace(/^.*?:\s*/, '')); return }
-    }
-    setEnviando(false)
-    const n = sel.length
-    onHecho(n === 1 ? 'Actualizado para ' + String(finca.nombre).toUpperCase() + '.' : `Actualizado en ${n} fincas.`)
-  }
-
-  async function crearPresentacion() {
-    const nom = window.prompt('Nueva presentación (ej. Galonera):')
-    if (!nom || !nom.trim()) return
-    const limpio = nom.trim().charAt(0).toUpperCase() + nom.trim().slice(1)
-    await onNuevaPresentacion(limpio)
-    setPresentacion(limpio)
-  }
-
-  return (
-    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
-      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <Campo label="Llega en">
-          <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '150px' }}>
-            {[...new Set([presentacion, ...(presentaciones || [])])].filter(Boolean).map(pn => <option key={pn} value={pn}>{pn}</option>)}
-            <option value="__nueva">+ crear presentación…</option>
-          </select>
-        </Campo>
-        <Campo label="Cada una trae">
-          <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label="Unidad del contenido">
-          <select value={uCont} onChange={e => cambiarUCont(e.target.value)} style={{ ...inp, width: '190px' }}>
-            <optgroup label="Masa">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'masa').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
-            <optgroup label="Líquido">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'liquido').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
-            <optgroup label="Conteo">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'conteo').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
-          </select>
-        </Campo>
-        <Campo label="Se aplica en">
-          <select value={esCompleto ? '__completo' : unidad} onChange={e => cambiarAplica(e.target.value)} style={{ ...inp, width: '190px' }}>
-            <optgroup label="Completo (envase entero)"><option value="__completo">{cap(presentacion || 'Envase')} completo</option></optgroup>
-            <optgroup label="Masa">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'masa').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
-            <optgroup label="Líquido">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'liquido').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
-            <optgroup label="Conteo">{UNIDADES_APP.filter(u => U_FAMILIA(u) === 'conteo').map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>
-          </select>
-        </Campo>
-      </div>
-
-      {factor != null && contenido && (
-        <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 11px', marginTop: '10px', display: 'inline-block' }}>
-          Conversión automática: 1 {cap(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[unidad] || unidad}</b>
-        </div>
-      )}
-
-      <div style={{ marginTop: '10px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-        <Campo label={`Mínimo para alerta (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label={`Objetivo / inventario ideal (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
-        </Campo>
-      </div>
-      {numDec(minimo) > 0 && numDec(objetivo) > 0 && numDec(objetivo) < numDec(minimo) && (
-        <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El objetivo debería ser mayor o igual que el mínimo.</div>
-      )}
-
-      {otras.length > 0 && (
-        <div style={{ marginTop: '10px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar lo mismo a:</div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(finca.nombre).toUpperCase()} (esta)</span>
-            {otras.map(f => {
-              const on = sel.includes(f.id)
-              return (
-                <button key={f.id} onClick={() => toggle(f.id)} style={{
-                  fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit',
-                  border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>
-                  {on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}
-                </button>
-              )
-            })}
-            {otras.length > 1 && (
-              <button onClick={() => setSel([finca.id, ...otras.map(f => f.id)])} style={miniLink}>Todas</button>
-            )}
-          </div>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-        <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
-      </div>
-      {contenido && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
-    </div>
-  )
-}
-
-// Editor de mínimo/objetivo por producto/finca (balanceado), en sacos.
-function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCancelar }) {
-  const [minimo, setMinimo] = useState(actual?.stock_minimo != null ? String(actual.stock_minimo) : '')
-  const [objetivo, setObjetivo] = useState(actual?.stock_objetivo != null ? String(actual.stock_objetivo) : '')
-  const [sel, setSel] = useState([finca.id])
-  const [enviando, setEnviando] = useState(false)
-  const otras = (fincas || []).filter(f => f.id !== finca.id)
-  const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
-
-  async function guardar() {
-    setEnviando(true)
-    const rows = sel.map(fid => ({
-      producto_id: producto.id, finca_id: fid,
-      stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-      stock_objetivo: numDec(objetivo) > 0 ? numDec(objetivo) : null,
-    }))
-    const { error } = await supabase.schema('produccion').from('producto_finca')
-      .upsert(rows, { onConflict: 'producto_id,finca_id' })
-    setEnviando(false)
-    if (error) { onError(error.message); return }
-    onHecho(sel.length === 1 ? 'Mínimo/objetivo guardado.' : `Aplicado a ${sel.length} fincas.`)
-  }
-
-  return (
-    <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
-      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-        <Campo label="Mínimo para alerta (sacos)">
-          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
-        </Campo>
-        <Campo label="Objetivo / inventario ideal (sacos)">
-          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
-        </Campo>
-      </div>
-      {numDec(minimo) > 0 && numDec(objetivo) > 0 && numDec(objetivo) < numDec(minimo) && (
-        <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El objetivo debería ser mayor o igual que el mínimo.</div>
-      )}
-      {otras.length > 0 && (
-        <div style={{ marginTop: '10px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Aplicar lo mismo a:</div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12px', background: '#dbe6f0', borderRadius: '20px', padding: '5px 11px' }}>{String(finca.nombre).toUpperCase()} (esta)</span>
-            {otras.map(f => {
-              const on = sel.includes(f.id)
-              return <button key={f.id} onClick={() => toggle(f.id)} style={{ fontSize: '12px', borderRadius: '20px', padding: '5px 11px', cursor: 'pointer', fontFamily: 'inherit', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{on ? '✓ ' : ''}{String(f.nombre).toUpperCase()}</button>
-            })}
-          </div>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-        <button disabled={enviando} onClick={guardar} style={{ ...btnPri, opacity: enviando ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
-      </div>
-    </div>
-  )
-}
-
-// Configurar TODO de una: presentación, unidad, factor, mínimo, cantidad
-// deseable y precio. Se aplica a TODAS las fincas activas; las excepciones
-// ajustan la unidad de las que difieren (el factor se calcula solo).
-const APP_UNIDADES = ['masa','liquido','conteo']
-const famLbl = fam => fam === 'masa' ? 'Masa' : fam === 'liquido' ? 'Líquido' : 'Conteo'
-
-// Popover "Copiar a otras fincas" — sirve para unidad y para precio.
-function PopCopia({ tipo, origen, valor, otras, copia, setCopia, onAplicar, yaTiene }) {
-  const esU = tipo === 'unidad'
-  const acento = esU ? '#9a6a1b' : '#3f7d4e'
-  const fondoTag = esU ? '#f6eddb' : '#eaf3ee'
-  const bordeTag = esU ? '#e6d5ac' : '#cfe6d6'
-  const sel = copia.sel || {}
-  const marcadas = otras.filter(f => sel[f.id])
-  const chocan = marcadas.filter(f => yaTiene(f.id))
-  const toggle = fid => setCopia(c => ({ ...c, sel: { ...c.sel, [fid]: !c.sel[fid] } }))
-  return (
-    <div style={{ position: 'absolute', zIndex: 20, top: esU ? '66px' : '40px', [esU ? 'left' : 'right']: 0,
-      minWidth: '240px', background: 'white', border: '0.5px solid #dfe7ee', borderRadius: '12px',
-      boxShadow: '0 12px 32px rgba(20,50,75,.15)', padding: '13px 14px' }}>
-      <span style={{ display: 'inline-block', fontSize: '10.5px', fontWeight: 700, color: acento,
-        background: fondoTag, border: '0.5px solid ' + bordeTag, borderRadius: '6px', padding: '2px 7px', marginBottom: '9px' }}>
-        {esU ? '◆ Unidad' : '● Precio'}
-      </span>
-      <div style={{ fontSize: '11.5px', color: '#7c8a97', margin: '0 0 9px' }}>
-        Copiar {esU ? <>la unidad <b>{valor}</b></> : <>los precios de <b>{origen}</b></>} a:
-      </div>
-      <div style={{ maxHeight: '190px', overflowY: 'auto' }}>
-        {otras.filter(f => f.id).map(f => (
-          <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '13.5px', padding: '5px 2px', cursor: 'pointer', color: '#173a55' }}>
-            <input type="checkbox" checked={!!sel[f.id]} onChange={() => toggle(f.id)} /> {f.nombre}
-          </label>
-        ))}
-      </div>
-      {chocan.length > 0 && (
-        <div style={{ fontSize: '11.5px', color: '#b5462f', marginTop: '6px' }}>
-          {chocan.length === 1
-            ? `${chocan[0].nombre} ya tiene ${esU ? 'unidad' : 'precio'}, ¿Reemplazar?`
-            : `${chocan.map(f => f.nombre).join(', ')} ya tienen ${esU ? 'unidad' : 'precio'}, ¿Reemplazar?`}
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '11px', borderTop: '0.5px solid #eef3f7', paddingTop: '11px' }}>
-        <button disabled={marcadas.length === 0} onClick={onAplicar}
-          style={{ background: marcadas.length ? '#173a55' : '#c3d0db', color: 'white', border: 'none', borderRadius: '8px', padding: '7px 14px', fontSize: '12.5px', fontFamily: 'inherit', cursor: marcadas.length ? 'pointer' : 'default' }}>
-          Copiar {esU ? 'unidad' : 'precio'} a {marcadas.length}
-        </button>
-        <button onClick={() => setCopia(null)} style={{ background: 'none', border: 'none', color: '#7c8a97', fontSize: '12.5px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
-      </div>
-    </div>
-  )
-}
-
-function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar }) {
-  const a = actual || {}
-  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
-  const [presentacion, setPresentacion] = useState(cap1(a.unidad_compra || insumo.unidad_compra) || 'Saco')
-  const [presLista, setPresLista] = useState([...new Set((presentaciones || []).map(cap1))])
-  const [contenido, setContenido] = useState(
-    a.contenido != null ? String(a.contenido) : (a.factor != null ? String(a.factor) : (insumo.factor != null ? String(insumo.factor) : '')))
-  // Solo aceptamos unidades de aplicación válidas; si la guardada es una
-  // presentación (ej. "sacos"), dejamos en blanco para que elija bien.
-  const uIni = a.unidad || insumo.unidad
-  const uContIni = a.unidad_contenido || a.unidad || insumo.unidad
-  const [uCont, setUCont] = useState(UNIDADES_APP.includes(uContIni) ? uContIni : 'kg')
-  // "Envase entero" si la unidad no es de aplicación, o si es 'unidad' pero
-  // con un peso de referencia en otra unidad (ej. 1 saco = 45 kg).
-  const compIni = !UNIDADES_APP.includes(uIni) || (uIni === 'unidad' && uContIni && uContIni !== 'unidad')
-  const [unidad, setUnidad] = useState(compIni ? '__completo' : uIni)   // '__completo' = envase entero
-  // Precarga las excepciones ya guardadas (qué finca aplica distinto), para
-  // que al abrir Configurar veas lo que pusiste antes.
-  const [exc, setExc] = useState(() => (excIni || []).map(e => ({
-    fincaId: e.fincaId, unidad: e.unidad || '', desde: e.desde || '',
-    precios: e.precios || {}, plazoRige: e.plazoRige ?? null, abierto: !!e.abierto })))
-  // Popover de copiar: { tipo:'unidad'|'precio', idx, sel:{fincaId:true} }
-  const [copia, setCopia] = useState(null)
-  // Panel "Aplicar a varias fincas" a la vez.
-  const bulkVacio = { open: false, fincas: {}, usarUnidad: false, unidad: '', usarPrecio: false, precios: {}, plazoRige: null, desde: '' }
-  const [bulk, setBulk] = useState(bulkVacio)
-  const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
-  const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
-  // Los precios guardados están por unidad de aplicación. Los precargamos
-  // POR ENVASE (× factor), que es como los ingresaste, para que veas el
-  // mismo número que pusiste.
-  const facPre = Number(a.factor) || factorDe(
-    a.contenido != null ? a.contenido : (a.factor != null ? a.factor : insumo.factor),
-    a.unidad_contenido || a.unidad || insumo.unidad, a.unidad || insumo.unidad) || 1
-  const [precios, setPrecios] = useState(() => {
-    const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * facPre * 10000) / 10000) }); return p
-  })
-  const [precioPor, setPrecioPor] = useState('presentacion')
-  const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)   // qué plazo rige ahora
-  const [desde, setDesde] = useState(a.desde || hoyISO())   // precarga la fecha del precio actual
-  const [enviando, setEnviando] = useState(false)
-
-  const esComp = unidad === '__completo'
-  // En "envase entero" se cuenta por la presentación. Se guarda como
-  // 'unidad' (enum válido) y factor 1; la presentación se muestra aparte.
-  const uStd = esComp ? 'unidad' : unidad
-  const factor = esComp ? 1 : factorDe(contenido, uCont, unidad)
-  const listo = presentacion.trim() && factor != null && factor > 0
-  const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u)
-
-  // --- helpers de la sección "aplica distinto" ---
-  const setRow = (i, campo, valor) => setExc(x => x.map((r, j) => j === i ? { ...r, [campo]: valor } : r))
-  const setRowPrecio = (i, pz, valor) => setExc(x => x.map((r, j) => {
-    if (j !== i) return r
-    // El primer precio que escribe marca ese plazo como "el que rige".
-    const plazoRige = (r.plazoRige == null && numDec(valor) > 0) ? pz : r.plazoRige
-    return { ...r, precios: { ...r.precios, [pz]: valor }, plazoRige }
-  }))
-  const addExc = () => setExc(x => [...x, { fincaId: '', unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }])
-  const rmExc = i => setExc(x => x.filter((_, j) => j !== i))
-  const fincaNom = id => (activas.find(f => f.id === id)?.nombre) || 'esa finca'
-  const rowTienePrecio = r => PLAZOS.some(pz => numDec(r.precios?.[pz] || '') > 0)
-  // Abre el popover de copiar (unidad o precio) preseleccionando ninguna.
-  const abrirCopia = (tipo, idx) => setCopia({ tipo, idx, sel: {} })
-  // Aplica la copia: pega la unidad o los precios de la fila origen a las
-  // fincas destino, creando su fila si no existe.
-  const aplicarCopia = () => {
-    if (!copia) return
-    const origen = exc[copia.idx]; if (!origen) return
-    const destinos = Object.keys(copia.sel).filter(fid => copia.sel[fid])
-    setExc(x => {
-      const arr = [...x]
-      destinos.forEach(fid => {
-        let j = arr.findIndex(r => r.fincaId === fid)
-        if (j === -1) { arr.push({ fincaId: fid, unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }); j = arr.length - 1 }
-        if (copia.tipo === 'unidad') arr[j] = { ...arr[j], unidad: origen.unidad }
-        else arr[j] = { ...arr[j], precios: { ...origen.precios }, plazoRige: origen.plazoRige, desde: origen.desde || arr[j].desde, abierto: true }
-      })
-      return arr
-    })
-    setCopia(null)
-  }
-
-  // Aplica el cambio a TODAS las fincas marcadas de una sola vez.
-  const bulkFincas = () => Object.keys(bulk.fincas).filter(id => bulk.fincas[id])
-  const bulkPuede = bulkFincas().length > 0 && (bulk.usarUnidad || bulk.usarPrecio)
-  function aplicarBulk() {
-    const destinos = bulkFincas()
-    if (!destinos.length) return
-    setExc(x => {
-      const arr = [...x]
-      destinos.forEach(fid => {
-        let j = arr.findIndex(r => r.fincaId === fid)
-        if (j === -1) { arr.push({ fincaId: fid, unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }); j = arr.length - 1 }
-        const upd = { ...arr[j] }
-        if (bulk.usarUnidad) upd.unidad = bulk.unidad
-        if (bulk.usarPrecio) { upd.precios = { ...bulk.precios }; upd.plazoRige = bulk.plazoRige; upd.abierto = true }
-        if (bulk.desde) upd.desde = bulk.desde
-        arr[j] = upd
-      })
-      return arr
-    })
-    setBulk(bulkVacio)
-  }
-
-  async function crearPresentacion() {
-    const nom = window.prompt('Nueva presentación (ej. Galonera):')
-    if (!nom || !nom.trim()) return
-    const limpio = cap1(nom.trim())
-    await supabase.schema('produccion').from('presentacion').insert({ nombre: limpio })
-    setPresLista(ps => [...new Set([...ps, limpio])].sort())
-    setPresentacion(limpio)
-  }
-
-  // Precio por aplicación para un plazo dado y el factor de la finca.
-  function precioAppDe(pz, fac) {
-    const raw = numDec(precios[pz] || '')
-    if (!(raw > 0) || !fac) return null
-    return precioPor === 'presentacion' ? raw / fac : raw
-  }
-  const hayAlgunPrecio = PLAZOS.some(pz => numDec(precios[pz] || '') > 0)
-
-  async function guardar() {
-    if (!listo) { onError('Revisa la presentación y el contenido (factor).'); return }
-    setEnviando(true)
-    try {
-      const excUnit = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excUnit[e.fincaId] = e.unidad })
-      const facMap = {}; const ids = []; const filas = []
-      for (const f of activas) {
-        // '__completo' es "envase entero": se guarda como 'unidad' (enum
-        // válido) con factor 1, igual que el estándar.
-        const uFinca = excUnit[f.id] ? (excUnit[f.id] === '__completo' ? 'unidad' : excUnit[f.id]) : uStd
-        const facFinca = excUnit[f.id] ? factorFinca(excUnit[f.id]) : factor
-        if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
-        facMap[f.id] = facFinca; ids.push(f.id)
-        filas.push({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
-          contenido: numDec(contenido) > 0 ? numDec(contenido) : 1, unidad_contenido: uCont, factor: facFinca,
-          stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-          stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })
-      }
-      // 1) Unidades/mínimos: un solo upsert en bloque.
-      const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filas, { onConflict: 'insumo_id,finca_id' })
-      if (e1) throw e1
-
-      // Cierra el precio anterior y abre el nuevo (con su fecha de vigencia).
-      const cerrarYAbrir = async (fincaIds, pz, rows, dfecha) => {
-        if (!fincaIds.length) return
-        await supabase.schema('produccion').from('precio_insumo').delete()
-          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
-        await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) })
-          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfecha)
-        const { error } = await supabase.schema('produccion').from('precio_insumo').insert(rows)
-        if (error) throw error
-      }
-
-      // 2) Precios estándar por plazo (una tanda por plazo lleno).
-      for (const pz of PLAZOS) {
-        const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
-        const rows = ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz,
-          precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desde }))
-        await cerrarYAbrir(ids, pz, rows, desde)
-      }
-
-      // 3) Excepciones de precio por finca (pisan el estándar). Cada finca
-      //    puede tener precio propio en varios plazos, con su fecha.
-      for (const e of exc) {
-        if (!e.fincaId) continue
-        const fac = facMap[e.fincaId]; if (!fac) continue
-        const dfe = e.desde || desde
-        for (const pz of PLAZOS) {
-          const raw = numDec(e.precios?.[pz] || ''); if (!(raw > 0)) continue
-          const precioApp = precioPor === 'presentacion' ? raw / fac : raw
-          await cerrarYAbrir([e.fincaId], pz, [{ insumo_id: insumo.id, finca_id: e.fincaId, plazo: pz, precio_unitario: precioApp, vigente_desde: dfe }], dfe)
-        }
-      }
-
-      // 4) Plazo que rige ahora. Estándar para todas; luego cada excepción
-      //    con su propio "rige" pisa a su finca.
-      // Si el plazo elegido para regir no tiene precio pero otro sí, se apunta
-      // al primero con precio (así el catálogo muestra precio y el costeo funciona).
-      let rigeStd = plazoActivo
-      if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
-        const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
-        if (conP != null) rigeStd = conP
-      }
-      const plazoRigeFinca = {}   // fincaId -> plazo, con su fecha
-      exc.forEach(e => { if (e.fincaId && e.plazoRige != null) plazoRigeFinca[e.fincaId] = { pz: e.plazoRige, dfe: e.desde || desde } })
-      if (rigeStd != null) {
-        const stdIds = ids.filter(fid => !(fid in plazoRigeFinca))
-        if (stdIds.length) {
-          await supabase.schema('produccion').from('plazo_insumo').delete()
-            .eq('insumo_id', insumo.id).in('finca_id', stdIds).gte('vigente_desde', desde)
-          await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-            .eq('insumo_id', insumo.id).in('finca_id', stdIds).is('vigente_hasta', null).lt('vigente_desde', desde)
-          const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
-            .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
-          if (e4) throw e4
-        }
-      }
-      for (const [fid, { pz, dfe }] of Object.entries(plazoRigeFinca)) {
-        await supabase.schema('produccion').from('plazo_insumo').delete()
-          .eq('insumo_id', insumo.id).eq('finca_id', fid).gte('vigente_desde', dfe)
-        await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(dfe, -1) })
-          .eq('insumo_id', insumo.id).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', dfe)
-        const { error: e5 } = await supabase.schema('produccion').from('plazo_insumo')
-          .insert([{ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfe }])
-        if (e5) throw e5
-      }
-      onHecho(`Configurado en ${activas.length} fincas.`)
-    } catch (err) { onError(err.message || 'No se pudo guardar.') }
-    finally { setEnviando(false) }
-  }
-
-  const seccion = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '15px 16px', marginBottom: '12px' }
-  const tit = { fontSize: '11px', letterSpacing: '.05em', textTransform: 'uppercase', color: GRIS, margin: '0 0 13px', fontWeight: 600 }
-  const usados = [...new Set([presentacion, ...presLista])].filter(Boolean)
-
-  return (
-    <div style={{ background: '#f0f6f2', padding: '16px 18px', borderBottom: '0.5px solid #e6edf3' }}>
-      <div style={{ fontSize: '14px', fontWeight: 600, color: VERDE, marginBottom: '14px' }}>Configurar {insumo.nombre}</div>
-
-      {/* 1. Unidades */}
-      <div style={seccion}>
-        <div style={tit}>1 · Unidades y conversión</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label="Llega en (envase)">
-            <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '160px' }}>
-              {usados.map(pn => <option key={pn} value={pn}>{pn}</option>)}
-              <option value="__nueva">＋ Agregar presentación…</option>
-            </select>
-          </Campo>
-          <Campo label={esComp ? 'Peso del envase (ref.)' : 'Cada envase trae'}>
-            <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 45" style={{ ...inp, width: '90px', textAlign: 'right' }} />
-          </Campo>
-          <Campo label={esComp ? 'Unidad del peso' : 'Unidad del contenido'}>
-            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '175px' }}>
-              {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-            </select>
-          </Campo>
-          <Campo label="Se aplica en (estándar)">
-            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v && v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '190px', borderColor: unidad ? BORDE : '#e0b64a' }}>
-              <option value="">Elige la unidad…</option>
-              <optgroup label="Por envase entero"><option value="__completo">Envase completo ({cap1(presentacion)})</option></optgroup>
-              {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-            </select>
-          </Campo>
-        </div>
-        {esComp ? (
-          <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
-            Se cuenta y consume por <b>{cap1(presentacion)}</b> entero{numDec(contenido) > 0 ? <> · 1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} (referencia)</> : null}
-          </div>
-        ) : factor != null && contenido ? (
-          <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
-            1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[uStd] || uStd}</b>
-          </div>
-        ) : null}
-        {contenido && !esComp && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
-      </div>
-
-      {/* 2. Excepciones */}
-      <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
-        <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca aplica distinto?</div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>
-          Aplica el mismo cambio a varias fincas de una vez, o agrégalas una por una abajo. Lo que dejes vacío usa el estándar.
-        </div>
-
-        {/* Aplicar a varias fincas a la vez */}
-        {!bulk.open ? (
-          <button onClick={() => setBulk({ ...bulkVacio, open: true })}
-            style={{ border: '0.5px solid #d8c48f', background: '#fdf8ec', color: '#8a5a12', borderRadius: '9px',
-                     padding: '9px 14px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer', marginBottom: '13px' }}>
-            ＋ Aplicar a varias fincas
-          </button>
-        ) : (
-          <div style={{ border: '0.5px solid #d8c48f', background: '#fffdf7', borderRadius: '12px', padding: '15px 16px', marginBottom: '14px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: AMBAR, marginBottom: '10px' }}>Aplicar el mismo cambio a varias fincas</div>
-
-            <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 6px' }}>Fincas</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px', marginBottom: '14px' }}>
-              {activas.map(f => {
-                const on = !!bulk.fincas[f.id]
-                return (
-                  <button key={f.id} onClick={() => setBulk(b => ({ ...b, fincas: { ...b.fincas, [f.id]: !b.fincas[f.id] } }))}
-                    style={{ border: '0.5px solid ' + (on ? NAVY : BORDE), background: on ? NAVY : 'white', color: on ? 'white' : NAVY,
-                             borderRadius: '999px', padding: '6px 13px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer' }}>
-                    {f.nombre}{on ? ' ✓' : ''}
-                  </button>
-                )
-              })}
-            </div>
-
-            {/* Unidad */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarUnidad ? '8px' : '12px' }}>
-              <input type="checkbox" checked={bulk.usarUnidad} onChange={e => setBulk(b => ({ ...b, usarUnidad: e.target.checked }))} />
-              Cambiar la unidad
-            </label>
-            {bulk.usarUnidad && (
-              <select value={bulk.unidad} onChange={e => setBulk(b => ({ ...b, unidad: e.target.value }))} style={{ ...inp, width: '260px', marginBottom: '14px' }}>
-                <option value="">(igual al estándar)</option>
-                <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
-                {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-              </select>
-            )}
-
-            {/* Precios */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarPrecio ? '10px' : '12px' }}>
-              <input type="checkbox" checked={bulk.usarPrecio} onChange={e => setBulk(b => ({ ...b, usarPrecio: e.target.checked }))} />
-              Cambiar el precio
-            </label>
-            {bulk.usarPrecio && (
-              <div style={{ marginBottom: '14px' }}>
-                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '7px' }}>Precio por envase ({cap1(presentacion)}) — llena los que apliquen y marca cuál rige</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
-                  {PLAZOS.map(pz => {
-                    const on = bulk.plazoRige === pz
-                    return (
-                      <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
-                        <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                        <input inputMode="decimal" value={bulk.precios[pz] ?? ''} placeholder="—"
-                          onChange={e => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: e.target.value }, plazoRige: b.plazoRige == null && numDec(e.target.value) > 0 ? pz : b.plazoRige }))}
-                          style={{ ...inp, textAlign: 'right', padding: '6px' }} />
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
-                          <input type="radio" name="bulk-rige" checked={on} onChange={() => setBulk(b => ({ ...b, plazoRige: pz }))} /> Rige
-                        </label>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', alignItems: 'end', gap: '16px', flexWrap: 'wrap' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 5px' }}>Rige desde</label>
-                <input type="date" value={bulk.desde || ''} max={hoyISO()} onChange={e => setBulk(b => ({ ...b, desde: e.target.value }))} style={{ ...inp, width: '170px' }} />
-              </div>
-              <div style={{ display: 'flex', gap: '9px', marginLeft: 'auto' }}>
-                <button onClick={() => setBulk(bulkVacio)} style={{ background: 'none', border: 'none', color: GRIS, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
-                <button onClick={aplicarBulk} disabled={!bulkPuede}
-                  style={{ background: bulkPuede ? NAVY : '#c3d0db', color: 'white', border: 'none', borderRadius: '9px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit', cursor: bulkPuede ? 'pointer' : 'default' }}>
-                  Aplicar a {bulkFincas().length} finca{bulkFincas().length === 1 ? '' : 's'}
-                </button>
-              </div>
-            </div>
-            <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>Se crea/actualiza la fila de cada finca marcada. Luego puedes ajustar alguna por separado abajo.</div>
-          </div>
-        )}
-
-        {exc.map((e, i) => {
-          const facF = e.unidad && e.unidad !== '__completo' ? factorFinca(e.unidad) : null
-          const enlace = { background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: '#8a5a12', fontSize: '11.5px', padding: 0 }
-          const otras = activas.filter(f => f.id !== e.fincaId)
-          return (
-          <div key={i} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '11px', padding: '13px 14px', marginBottom: '11px', position: 'relative' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.2fr 150px auto', gap: '11px', alignItems: 'start' }}>
-              <Campo label="Finca">
-                <select value={e.fincaId} onChange={ev => setRow(i, 'fincaId', ev.target.value)} style={inp}>
-                  <option value="">Elegir finca</option>
-                  {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-                </select>
-              </Campo>
-              <div style={{ position: 'relative' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <label style={{ fontSize: '11.5px', color: GRIS }}>Se aplica en</label>
-                  {e.fincaId && e.unidad && <button style={enlace} onClick={() => abrirCopia('unidad', i)}>Copiar unidad a…</button>}
-                </div>
-                <select value={e.unidad} onChange={ev => setRow(i, 'unidad', ev.target.value)} style={{ ...inp, marginTop: '5px' }}>
-                  <option value="">(igual al estándar)</option>
-                  <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
-                  {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-                </select>
-                {copia && copia.tipo === 'unidad' && copia.idx === i && (
-                  <PopCopia tipo="unidad" origen={fincaNom(e.fincaId)} valor={e.unidad === '__completo' ? `Envase entero (${cap1(presentacion)})` : (UNIDAD[e.unidad] || e.unidad)}
-                    otras={otras} copia={copia} setCopia={setCopia} onAplicar={aplicarCopia}
-                    yaTiene={fid => { const r = exc.find(x => x.fincaId === fid); return !!(r && r.unidad) }} />
-                )}
-              </div>
-              <Campo label="Rige desde">
-                <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setRow(i, 'desde', ev.target.value)} style={inp} />
-              </Campo>
-              <button onClick={() => rmExc(i)} title="Quitar" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c7ccd2', fontSize: '17px', marginTop: '22px' }}>✕</button>
-            </div>
-
-            {e.unidad && (e.unidad === '__completo' ? (
-              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
-            ) : facF ? (
-              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
-            ) : (
-              <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '7px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
-            ))}
-
-            {/* Precio propio por plazo */}
-            {!e.abierto ? (
-              <div style={{ marginTop: '9px' }}>
-                <button style={enlace} onClick={() => setRow(i, 'abierto', true)}>＋ Precio propio</button>
-                <span style={{ color: '#c3d0db', fontSize: '11.5px', marginLeft: '8px' }}>— usa el precio estándar</span>
-              </div>
-            ) : (
-              <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '11px 12px', marginTop: '9px', position: 'relative' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '9px' }}>
-                  <span style={{ fontSize: '11.5px', color: GRIS }}>Precio propio · por {precioPor === 'presentacion' ? `envase (${cap1(presentacion)})` : `${UNIDAD[uStd] || uStd}`}</span>
-                  {e.fincaId && rowTienePrecio(e) && <button style={enlace} onClick={() => abrirCopia('precio', i)}>Copiar precio a…</button>}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
-                  {PLAZOS.map(pz => {
-                    const on = e.plazoRige === pz
-                    return (
-                    <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
-                      <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                      <input inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—" onChange={ev => setRowPrecio(i, pz, ev.target.value)} style={{ ...inp, textAlign: 'right', padding: '6px' }} />
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
-                        <input type="radio" name={`rige-${i}`} checked={on} onChange={() => setRow(i, 'plazoRige', pz)} /> Rige
-                      </label>
-                    </div>
-                    )
-                  })}
-                </div>
-                <div style={{ fontSize: '11px', color: AMBAR, marginTop: '8px' }}>Marca cuál plazo se cobra hoy en {e.fincaId ? fincaNom(e.fincaId) : 'esta finca'}. Los demás quedan guardados.</div>
-                {copia && copia.tipo === 'precio' && copia.idx === i && (
-                  <PopCopia tipo="precio" origen={fincaNom(e.fincaId)}
-                    otras={otras} copia={copia} setCopia={setCopia} onAplicar={aplicarCopia}
-                    yaTiene={fid => { const r = exc.find(x => x.fincaId === fid); return !!(r && rowTienePrecio(r)) }} />
-                )}
-              </div>
-            )}
-          </div>
-          )
-        })}
-        <button onClick={addExc} style={miniLink}>＋ Agregar finca distinta</button>
-      </div>
-
-      {/* 3. Precio */}
-      <div style={seccion}>
-        <div style={tit}>3 · Precio</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
-          <Campo label="¿El precio es por…?">
-            <select value={precioPor} onChange={e => setPrecioPor(e.target.value)} style={{ ...inp, width: '210px' }}>
-              <option value="presentacion">Envase entero ({cap1(presentacion)})</option>
-              <option value="aplicacion">Unidad menor ({UNIDAD[uStd] || uStd})</option>
-            </select>
-          </Campo>
-          <Campo label="Plazo que rige ahora">
-            <select value={plazoActivo} onChange={e => setPlazoActivo(Number(e.target.value))} style={{ ...inp, width: '140px' }}>
-              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-            </select>
-          </Campo>
-          <Campo label="Desde cuándo rige">
-            <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
-          </Campo>
-        </div>
-        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Precio por plazo (llena solo los que apliquen):</div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          {PLAZOS.map(pz => (
-            <Campo key={pz} label={PLAZO_LBL[pz]}>
-              <input inputMode="decimal" value={precios[pz] ?? ''} placeholder="—"
-                onChange={e => setPrecios(p => ({ ...p, [pz]: e.target.value }))}
-                style={{ ...inp, width: '95px', textAlign: 'right' }} />
-            </Campo>
-          ))}
-        </div>
-        {hayAlgunPrecio && factor && (
-          <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '8px' }}>
-            Se guarda convertido a precio por unidad menor. El precio anterior de cada plazo queda en el histórico; el nuevo rige desde la fecha (puede ser pasada).
-          </div>
-        )}
-      </div>
-
-      {/* 4. Alertas */}
-      <div style={seccion}>
-        <div style={tit}>4 · Alertas de inventario</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label={`Mínimo (${UNIDAD[uStd] || uStd})`}>
-            <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} />
-          </Campo>
-          <Campo label={`Cantidad deseable (${UNIDAD[uStd] || uStd})`}>
-            <input inputMode="decimal" value={deseable} onChange={e => setDeseable(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
-          </Campo>
-        </div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '8px' }}>Bajo el mínimo = “Bajo”. En o sobre la cantidad deseable = “Suficiente”. En medio = “Medio”.</div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
-        <span style={{ fontSize: '12px', color: GRIS, marginLeft: 'auto' }}>Se guardará en las {activas.length} fincas activas</span>
-      </div>
-    </div>
-  )
-}
-
-// Configurar balanceado: precio por plazo (por saco), plazo activo,
-// mínimo y objetivo. A todas las fincas de un golpe (con excepciones).
-function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancelar }) {
-  const a = actual || {}
-  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
-  const [precios, setPrecios] = useState(() => {
-    const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * 10000) / 10000) }); return p
-  })
-  const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)
-  const [desde, setDesde] = useState(a.desde || hoyISO())
-  const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
-  const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
-  const [exc, setExc] = useState([])   // [{fincaId, precio, plazo, desde}]
-  const [enviando, setEnviando] = useState(false)
-
-  async function guardar() {
-    setEnviando(true)
-    try {
-      const ids = activas.map(f => f.id)
-      // 1) Mínimo/objetivo (si la tabla existe; si no, no rompe).
-      try {
-        await supabase.schema('produccion').from('producto_finca').upsert(
-          ids.map(fid => ({ producto_id: producto.id, finca_id: fid,
-            stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-            stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })), { onConflict: 'producto_id,finca_id' })
-      } catch { /* falta correr el SQL de producto_finca */ }
-
-      const cerrarYAbrir = async (fincaIds, pz, rows, dfe) => {
-        if (!fincaIds.length) return
-        await supabase.schema('produccion').from('precio_producto').delete()
-          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfe)
-        await supabase.schema('produccion').from('precio_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
-          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfe)
-        const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
-        if (error) throw error
-      }
-      // 2) Precios estándar (por saco) por plazo.
-      for (const pz of PLAZOS) {
-        const raw = numDec(precios[pz] || ''); if (!(raw > 0)) continue
-        await cerrarYAbrir(ids, pz, ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
-      }
-      // 3) Excepciones por finca.
-      for (const e of exc) {
-        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
-        const pz = Number(e.plazo) || 0, dfe = e.desde || desde
-        await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: numDec(e.precio), vigente_desde: dfe }], dfe)
-      }
-      // 4) Plazo que rige ahora. Si el elegido no tiene precio pero otro sí,
-      //    se apunta al primero con precio (para que el catálogo lo muestre).
-      let rigeStd = plazoActivo
-      if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
-        const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
-        if (conP != null) rigeStd = conP
-      }
-      await supabase.schema('produccion').from('plazo_producto').delete()
-        .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
-      await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
-        .eq('producto_id', producto.id).in('finca_id', ids).is('vigente_hasta', null).lt('vigente_desde', desde)
-      const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
-        .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
-      if (e4) throw e4
-
-      onHecho(`Configurado en ${activas.length} fincas.`)
-    } catch (err) { onError(err.message || 'No se pudo guardar.') }
-    finally { setEnviando(false) }
-  }
-
-  const seccion = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '15px 16px', marginBottom: '12px' }
-  const tit = { fontSize: '11px', letterSpacing: '.05em', textTransform: 'uppercase', color: GRIS, margin: '0 0 13px', fontWeight: 600 }
-
-  return (
-    <div style={{ background: '#f0f6f2', padding: '16px 18px', borderBottom: '0.5px solid #e6edf3' }}>
-      <div style={{ fontSize: '14px', fontWeight: 600, color: VERDE, marginBottom: '14px' }}>Configurar {producto.nombre} <span style={{ fontWeight: 400, color: GRIS, fontSize: '12px' }}>· se compra y consume en sacos</span></div>
-
-      {/* Precio */}
-      <div style={seccion}>
-        <div style={tit}>1 · Precio (por saco)</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
-          <Campo label="Plazo que rige ahora">
-            <select value={plazoActivo} onChange={e => setPlazoActivo(Number(e.target.value))} style={{ ...inp, width: '140px' }}>
-              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-            </select>
-          </Campo>
-          <Campo label="Desde cuándo rige">
-            <input type="date" value={desde} max={hoyISO()} onChange={e => setDesde(e.target.value)} style={inp} />
-          </Campo>
-        </div>
-        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Precio por saco, por plazo (llena solo los que apliquen):</div>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          {PLAZOS.map(pz => (
-            <Campo key={pz} label={PLAZO_LBL[pz]}>
-              <input inputMode="decimal" value={precios[pz] ?? ''} placeholder="—"
-                onChange={e => setPrecios(p => ({ ...p, [pz]: e.target.value }))} style={{ ...inp, width: '95px', textAlign: 'right' }} />
-            </Campo>
-          ))}
-        </div>
-      </div>
-
-      {/* Excepciones */}
-      <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
-        <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca con precio distinto?</div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '11px' }}>Agrega solo la finca que negocia otro precio/plazo/fecha. Lo vacío usa el estándar.</div>
-        {exc.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr 1fr 1.1fr auto', gap: '9px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase' }}>
-            <span>Finca</span><span style={{ textAlign: 'right' }}>Precio/saco</span><span>Plazo</span><span>Rige desde</span><span></span>
-          </div>
-        )}
-        {exc.map((e, i) => (
-          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr 1fr 1.1fr auto', gap: '9px', alignItems: 'center', marginBottom: '8px' }}>
-            <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
-              <option value="">Elegir finca</option>
-              {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-            </select>
-            <input inputMode="decimal" value={e.precio ?? ''} placeholder="—" onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precio: ev.target.value } : r))} style={{ ...inp, textAlign: 'right' }} />
-            <select value={e.plazo ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazo: Number(ev.target.value) } : r))} style={inp}>
-              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-            </select>
-            <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
-            <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
-          </div>
-        ))}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
-      </div>
-
-      {/* Alertas */}
-      <div style={seccion}>
-        <div style={tit}>3 · Alertas de inventario (sacos)</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label="Mínimo (sacos)"><input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} /></Campo>
-          <Campo label="Cantidad deseable (sacos)"><input inputMode="decimal" value={deseable} onChange={e => setDeseable(e.target.value)} placeholder="opcional" style={{ ...inp, width: '160px', textAlign: 'right' }} /></Campo>
-        </div>
-        <div style={{ fontSize: '11px', color: GRIS, marginTop: '7px' }}>Requiere haber corrido el SQL de balanceado (producto_finca). Si no, el mínimo/objetivo no se guarda (el precio sí).</div>
-      </div>
-
-      <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-        <button disabled={enviando} onClick={guardar} style={{ ...btnPri, opacity: enviando ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
-        <span style={{ fontSize: '12px', color: GRIS, marginLeft: 'auto' }}>Se guardará en las {activas.length} fincas activas</span>
-      </div>
-    </div>
-  )
-}
-
-function Insignia({ children, color, bg }) {
-  return <span style={{ fontSize: '10.5px', fontWeight: 600, background: bg, color, borderRadius: '6px', padding: '2px 8px', marginLeft: '8px' }}>{children}</span>
-}
-
-function FormaInsumo({ actual, onGuardar, onCancelar }) {
-  const [nombre, setNombre] = useState(actual?.nombre || '')
-  const [unidad, setUnidad] = useState(actual?.unidad || 'kg')
-  const [proveedor, setProveedor] = useState(actual?.proveedor || '')
-  const dist = actual ? (actual.unidad_compra && actual.unidad_compra !== actual.unidad) : false
-  const [compraDistinta, setCompraDistinta] = useState(!!dist)
-  const [unidadCompra, setUnidadCompra] = useState(dist ? actual.unidad_compra : '')
-  const [factor, setFactor] = useState(dist ? String(actual.factor) : '')
-  const [enviando, setEnviando] = useState(false)
-  const soloNombre = !!actual   // al editar, aquí solo cambia el nombre y el proveedor; la unidad va por finca
-  const listo = nombre.trim() && (soloNombre || !compraDistinta || (unidadCompra.trim() && numDec(factor) > 0))
-  return (
-    <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px' }}>
-      <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <Campo label="Nombre"><input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} style={{ ...inp, width: '220px' }} placeholder="Ej. Cal agrícola" /></Campo>
-        {!soloNombre && <Campo label="Se aplica en (por defecto)"><select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...inp, width: '160px' }}>{UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}</select></Campo>}
-        <Campo label="Proveedor (opcional)"><input value={proveedor} onChange={e => setProveedor(e.target.value)} style={{ ...inp, width: '200px' }} placeholder="Ej. Agripac" /></Campo>
-      </div>
-      {!soloNombre && (
+      {!contando && !cargando && vista === 'saldo' && (
         <>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '12px 0 0', fontSize: '13px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={compraDistinta} onChange={e => setCompraDistinta(e.target.checked)} /> Se compra en otra presentación (saco, tambor, botella…)
-          </label>
-          {compraDistinta && (
-            <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '10px' }}>
-              <Campo label="Se compra por"><input value={unidadCompra} onChange={e => setUnidadCompra(e.target.value)} placeholder="ej. saco" style={{ ...inp, width: '150px' }} /></Campo>
-              <Campo label={`Cada uno trae (${UNIDAD[unidad]})`}><input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '150px', textAlign: 'right' }} /></Campo>
-            </div>
+          {/* Resumen */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                        gap: '11px', marginBottom: '14px' }}>
+            {/* El valor en dolares es solo para el jefe. */}
+            {esJefe && <Kpi titulo="Valor de la bodega" valor={dinero(valorBodega)} />}
+            <Kpi titulo="Insumos con saldo" valor={`${conSaldo} de ${saldos.length}`} />
+            <Kpi titulo="Último conteo"
+                 valor={ultimo ? corta(ultimo.fecha) : 'Nunca'}
+                 nota={ultimo ? null : 'todo arranca en cero'}
+                 alerta={!ultimo} />
+            <Kpi titulo="Con problema"
+                 valor={negativos + sinPrecio === 0 ? 'Ninguno' : String(negativos + sinPrecio)}
+                 nota={negativos ? `${negativos} en negativo` : sinPrecio ? `${sinPrecio} sin precio` : null}
+                 alerta={negativos + sinPrecio > 0} />
+          </div>
+
+          {primeraVez && (
+            filas.some(f => Number(f.saldo) !== 0) ? (
+              <Nota color={AMBAR} fondo="#FAEEDA">
+                Aún no has hecho un conteo físico de esta finca. El saldo de arriba viene de los
+                ingresos registrados. Cuando cuentes la bodega con <b>Cargar inventario inicial</b>,
+                ese conteo fija el punto de partida.
+              </Nota>
+            ) : (
+              <Nota color={AMBAR} fondo="#FAEEDA">
+                Todavía no se ha contado la bodega de esta finca, así que todo está en cero.
+                Cuenta lo que hay y guárdalo con <b>Cargar inventario inicial</b>. De ahí en adelante
+                el saldo se lleva solo: baja con lo que se aplica en las piscinas y sube con lo que entra.
+              </Nota>
+            )
           )}
-          <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Esta es la presentación por defecto. Cada finca puede ajustarla en su fila.</div>
+
+          {negativos > 0 && (
+            <Nota color={ROJO} fondo="#FBEAEA">
+              Hay {negativos} {negativos === 1 ? 'insumo' : 'insumos'} con saldo negativo. Eso significa
+              que se registró más consumo del que entró a bodega: falta cargar un ingreso, o hay que
+              volver a contar.
+            </Nota>
+          )}
+
+          {esJefe && sinPrecio > 0 && (
+            <Nota color={AMBAR} fondo="#FBF5E9">
+              Hay {sinPrecio} {sinPrecio === 1 ? 'insumo' : 'insumos'} sin precio: su saldo y su consumo
+              valen $0. Cárgales el precio en <b>Catálogo</b> para que la valorización cuadre.
+            </Nota>
+          )}
         </>
       )}
-      <div style={{ display: 'flex', gap: '9px', marginTop: '14px' }}>
-        <button disabled={!listo || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1, proveedor }); setEnviando(false) }}
-          style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
-        <button onClick={onCancelar} style={btn}>Cancelar</button>
+
+      {cargando ? (
+        <Caja><div style={{ padding: '34px', textAlign: 'center', fontSize: '13px', color: GRIS }}>
+          Cargando...
+        </div></Caja>
+
+      ) : contando ? (
+        <Caja>
+          {editToma && (
+            <div style={{ padding: '11px 16px', background: '#E6F1FB', color: AZUL, fontSize: '13px',
+                          borderBottom: '0.5px solid ' + BORDE }}>
+              Editando el conteo del {corta(editToma.fecha)}. Cambia las cantidades y guarda.
+            </div>
+          )}
+          <div style={{ padding: '15px 16px', borderBottom: '0.5px solid ' + BORDE,
+                        display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <Etiqueta>Fecha del conteo</Etiqueta>
+              <input type="date" value={fecha} max={hoyISO()}
+                     onChange={e => setFecha(e.target.value)} style={entrada} />
+            </div>
+            <div style={{ flex: 1, minWidth: '240px' }}>
+              <Etiqueta>Observación</Etiqueta>
+              <input value={obs} placeholder="Quién contó, qué se encontró"
+                     onChange={e => setObs(e.target.value)} style={{ ...entrada, width: '100%' }} />
+            </div>
+          </div>
+
+          {/* Agregar insumos que faltan, varios a la vez. */}
+          <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
+            {nuevos.length === 0 ? (
+              <button onClick={() => setNuevos([filaNueva()])} style={{ ...btnLink }}>
+                + ¿Falta un insumo? {esJefeGlobal ? 'Agrégalo aquí' : 'Pídelo al jefe'}
+              </button>
+            ) : (
+              <div>
+                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
+                  Insumos nuevos para esta bodega (puedes agregar varios):
+                </div>
+                {nuevos.map((n, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center',
+                                        marginBottom: '7px', flexWrap: 'wrap' }}>
+                    <input autoFocus={i === nuevos.length - 1} value={n.nombre}
+                      placeholder="Nombre del insumo"
+                      onChange={e => setNuevo(i, 'nombre', e.target.value)}
+                      style={{ ...entrada, flex: 1, minWidth: '180px' }} />
+                    <select value={n.unidad} onChange={e => setNuevo(i, 'unidad', e.target.value)}
+                      style={{ ...entrada, width: '130px' }}>
+                      {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
+                    </select>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: GRIS, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={n.compraDistinta}
+                        onChange={e => setNuevo(i, 'compraDistinta', e.target.checked)} />
+                      se compra en otra presentación
+                    </label>
+                    {n.compraDistinta && (
+                      <>
+                        <input value={n.unidadCompra} placeholder="ej. tambor"
+                          onChange={e => setNuevo(i, 'unidadCompra', e.target.value)}
+                          style={{ ...entrada, width: '110px' }} />
+                        <input inputMode="decimal" value={n.factor} placeholder={`${UNIDAD[n.unidad]} por unidad`}
+                          onChange={e => setNuevo(i, 'factor', e.target.value)}
+                          style={{ ...entrada, width: '140px' }} />
+                      </>
+                    )}
+                    <button onClick={() => setNuevos(ns => ns.filter((_, j) => j !== i))}
+                      title="Quitar" style={{ border: 'none', background: 'none', cursor: 'pointer',
+                        color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+                  <button onClick={() => setNuevos(ns => [...ns, filaNueva()])} style={btnLink}>
+                    + Otro insumo
+                  </button>
+                  <span style={{ marginLeft: 'auto' }} />
+                  <Btn onClick={() => setNuevos([])}>Cancelar</Btn>
+                  <Btn primario onClick={guardarNuevos}
+                       disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}>
+                    {guardandoNuevos ? (esJefeGlobal ? 'Agregando...' : 'Enviando...') : (esJefeGlobal ? 'Agregar a la lista' : 'Enviar pedido al jefe')}
+                  </Btn>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <Tabla
+            columnas={(primeraVez || editToma)
+              ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
+              : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Contado', 'Diferencia']}
+            anchos="1fr 185px 95px 250px 115px"
+          >
+            {filas.map(f => {
+              const facF = factores[f.insumo_id]
+              const convF = facF && (facF.factor || 1) !== 1
+              const conPesoF = !convF && facF && facF.contenido && facF.contenido !== 1 && facF.uCont
+              return (
+              <Fila key={f.insumo_id} anchos="1fr 185px 95px 250px 115px">
+                <Celda>{f.insumo}</Celda>
+                <Celda gris>
+                  <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[f.unidad] || f.unidad)}</span>
+                  {convF && <>
+                    {' '}<span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[facF.uApp] || facF.uApp)}
+                    <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.factor)} {cap1(UNIDAD[facF.uApp] || facF.uApp)}</div>
+                  </>}
+                  {conPesoF && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.contenido)} {cap1(UNIDAD[facF.uCont] || facF.uCont)}</div>}
+                </Celda>
+                <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
+                <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
+                  {convF ? (
+                    <>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[f.unidad] || f.unidad)} completas</span>
+                          <input inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
+                            style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                        </div>
+                        <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
+                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[facF.uApp] || facF.uApp)} sueltos</span>
+                          <input inputMode="decimal" value={sobrante[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={e => setSobrante(s => ({ ...s, [f.insumo_id]: e.target.value }))}
+                            style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                        </div>
+                      </div>
+                      {f.contado !== null && (
+                        <div style={{ fontSize: '10.5px', color: VERDE, marginTop: '4px', textAlign: 'right' }}>
+                          = {limpio(f.contado)} {cap1(UNIDAD[f.unidad] || f.unidad)} · {limpio(f.contado * (facF.factor || 1))} {cap1(UNIDAD[facF.uApp] || facF.uApp)}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <input inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="—"
+                      onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
+                      style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                  )}
+                </div>
+                {/* La primera vez no hay contra que comparar: es la carga
+                    inicial. La diferencia aparece de la segunda en adelante. */}
+                <Celda derecha color={
+                  f.diferencia === null ? '#c3d0db'
+                  : f.diferencia < 0 ? ROJO
+                  : f.diferencia > 0 ? AMBAR : VERDE
+                }>
+                  {(primeraVez || editToma) ? ''
+                    : f.diferencia === null ? '—'
+                    : f.diferencia === 0 ? 'cuadra'
+                    : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
+                </Celda>
+                {/* Motivo del descuadre: solo cuando no cuadra (recuento). */}
+                {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.0001 && (
+                  <div style={{ gridColumn: '1 / -1', padding: '0 12px 11px 12px',
+                                display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap',
+                                borderBottom: '0.5px solid #f1f6f9', marginTop: '-2px' }}>
+                    <span style={{ fontSize: '11px', color: GRIS }}>
+                      {f.diferencia < 0 ? '¿Por qué faltan?' : '¿Por qué sobran?'}
+                    </span>
+                    <select value={motivoDesc[f.insumo_id] || ''}
+                      onChange={e => setMotivoDesc(m => ({ ...m, [f.insumo_id]: e.target.value }))}
+                      style={{ ...entrada, width: '180px', padding: '5px 8px' }}>
+                      <option value="">Elegir motivo</option>
+                      {MOTIVOS_DESCUADRE.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                    {motivoDesc[f.insumo_id] === 'Otro' && (
+                      <input value={motivoOtro[f.insumo_id] || ''} placeholder="Especifica el motivo"
+                        onChange={e => setMotivoOtro(m => ({ ...m, [f.insumo_id]: e.target.value }))}
+                        style={{ ...entrada, flex: 1, minWidth: '160px', padding: '5px 8px' }} />
+                    )}
+                  </div>
+                )}
+              </Fila>
+            )})}
+          </Tabla>
+
+          <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
+                        display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', color: GRIS, marginRight: 'auto' }}>
+              {llenadas} de {saldos.length} contados
+              {!primeraVez && descuadres.length > 0 && ` · ${descuadres.length} no cuadran`}
+            </span>
+            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null) }}>Cancelar</Btn>
+            <Btn primario onClick={guardar} disabled={guardando || !llenadas}>
+              {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
+            </Btn>
+          </div>
+        </Caja>
+
+      ) : vista === 'movimientos' ? (
+        <>
+          <Tabla
+            caja min="960px"
+            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Conteo', 'Queda']}
+            anchos={ANCHOS_MOV2}
+          >
+            {movs.map(m => {
+              const fac = factores[m.insumo_id]
+              const conv = fac && (fac.factor || 1) !== 1
+              // Segunda unidad: si se aplica en otra unidad (factor≠1), la de
+              // aplicación; si no, el peso del envase (contenido, ej. saco = 45 kg).
+              const conPeso = !conv && fac && fac.contenido && fac.contenido !== 1 && fac.uCont
+              const eq = v => {
+                if (conv) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div>
+                if (conPeso) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>
+                return null
+              }
+              // Si el saldo inicial es 0 y hay un conteo (el inicial), ese conteo
+              // ES el inventario inicial: se muestra en "Inicial", no en "Conteo".
+              const contInicial = Math.abs(Number(m.saldo_inicial)) < 0.0001 && m.conteo !== null && m.conteo !== undefined
+              const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
+              const conteoMostrar = contInicial ? null : m.conteo
+              return (
+              <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
+                <Celda>{m.insumo}</Celda>
+                <Celda gris>
+                  <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
+                  {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
+                  {conPeso && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {limpio(fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>}
+                </Celda>
+                <Celda derecha gris>{iniMostrar === null ? '—' : <>{limpio(iniMostrar)}{eq(iniMostrar)}</>}</Celda>
+                <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
+                  {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}{Number(m.ingresos) ? eq(m.ingresos) : null}
+                </Celda>
+                <Celda derecha color={Number(m.consumo) ? ROJO : '#c3d0db'}>
+                  {Number(m.consumo) ? '−' + limpio(m.consumo) : '—'}{Number(m.consumo) ? eq(m.consumo) : null}
+                </Celda>
+                <Celda derecha color={Number(m.devuelto) ? ROJO : '#c3d0db'}>
+                  {Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}{Number(m.devuelto) ? eq(m.devuelto) : null}
+                </Celda>
+                <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
+                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{limpio(conteoMostrar)}{eq(conteoMostrar)}</>}
+                </Celda>
+                <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
+                  {limpio(m.saldo_final)}{eq(m.saldo_final)}
+                </Celda>
+              </Fila>
+            )})}
+          </Tabla>
+
+          {movs.some(m => m.conteo !== null) && (
+            <Nota color={AZUL} fondo="#E6F1FB">
+              En este rango se contó la bodega físicamente; ese conteo fija el "Queda"
+              (por eso puede no ser exactamente inicial + entró − aplicado).
+            </Nota>
+          )}
+        </>
+
+      ) : (
+        <>
+          {porReponer.length > 0 && (
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', background: '#FDF3F3',
+                          border: '0.5px solid #f0d4d3', borderRadius: '12px', padding: '12px 15px', marginBottom: '14px' }}>
+              <span style={{ color: ROJO, fontSize: '15px', lineHeight: 1.2 }}>⚠</span>
+              <div style={{ fontSize: '13px', color: '#6d2b29' }}>
+                <b style={{ fontWeight: 600 }}>Por reponer ({porReponer.length})</b>
+                <div style={{ marginTop: '3px' }}>
+                  {porReponer.map(({ f, a }) => (
+                    <span key={f.insumo_id} style={{ display: 'inline-block', marginRight: '14px' }}>
+                      {f.insumo}: {limpio(Math.round(a.saldoApp * 100) / 100)} / mín {limpio(a.min)} {UNIDAD[a.unidad] || a.unidad}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <Tabla
+            caja min={esJefe ? '760px' : '620px'}
+            columnas={esJefe
+              ? ['Insumo', 'Llega / se aplica', 'Saldo', 'Precio', 'Valor', '']
+              : ['Insumo', 'Llega / se aplica', 'Saldo']}
+            anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
+          >
+            {filas.map(f => {
+              const edit = editando === f.insumo_id
+              const dg = desglose[f.insumo_id] || []
+              const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
+              const ab = abierto === f.insumo_id
+              return (
+              <div key={f.insumo_id}>
+                <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}>
+                  <Celda>
+                    {varios ? (
+                      <button onClick={() => setAbierto(ab ? null : f.insumo_id)} style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                        fontSize: '13px', color: NAVY, textAlign: 'left' }}>
+                        <span style={{ color: GRIS, marginRight: '5px' }}>{ab ? '▾' : '▸'}</span>{f.insumo}
+                      </button>
+                    ) : f.insumo}
+                  </Celda>
+                  <Celda gris>
+                    {(() => {
+                      const fac = factores[f.insumo_id]
+                      const conv = fac && (fac.factor || 1) !== 1
+                      const pres = cap1(UNIDAD[f.unidad] || f.unidad)
+                      const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
+                      return (
+                        <span>
+                          <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
+                          {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {app}
+                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {pres} = {fac.factor} {app}</span></>}
+                        </span>
+                      )
+                    })()}
+                  </Celda>
+                  {edit ? (
+                    <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f6f9fb' }}>
+                      <input autoFocus inputMode="decimal" value={nuevoSaldo}
+                        onChange={e => setNuevoSaldo(e.target.value)}
+                        style={{ ...entrada, width: '100%', textAlign: 'right',
+                                 fontVariantNumeric: 'tabular-nums',
+                                 borderColor: '#9cc4e8' }} />
+                    </div>
+                  ) : (
+                    <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
+                      {limpio(f.saldo)}
+                      {(() => {
+                        const fac = factores[f.insumo_id]
+                        if (!fac || (fac.factor || 1) === 1) return null
+                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)})</span>
+                      })()}
+                      {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
+                    </Celda>
+                  )}
+                  {/* Precio y valor en dolares: solo el jefe. */}
+                  {esJefe && <Celda derecha gris>{f.precio ? <>{dinero(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'sin precio'}</Celda>}
+                  {esJefe && <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>}
+                  {esJefe && (
+                    <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
+                                  textAlign: 'right' }}>
+                      {!edit && (
+                        <button onClick={() => abrirCorregir(f)} style={{
+                          background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                          padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                          color: GRIS, cursor: 'pointer' }}>
+                          Corregir
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </Fila>
+
+                {edit && (
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center',
+                                padding: '10px 14px', background: '#f6f9fb', flexWrap: 'wrap',
+                                borderBottom: '0.5px solid #f1f6f9' }}>
+                    <span style={{ fontSize: '12px', color: GRIS }}>
+                      De {limpio(f.saldo)} a {limpio(Number(String(nuevoSaldo).replace(',', '.')) || 0)}.
+                      Motivo:
+                    </span>
+                    <input value={motivo} autoFocus={false}
+                      placeholder="Por qué se corrige — queda en la bitácora"
+                      onChange={e => setMotivo(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && guardarCorreccion(f)}
+                      style={{ ...entrada, flex: 1, minWidth: '240px' }} />
+                    <Btn onClick={() => setEditando(null)}>Cancelar</Btn>
+                    <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoAj}>
+                      {guardandoAj ? 'Guardando...' : 'Guardar corrección'}
+                    </Btn>
+                  </div>
+                )}
+
+                {ab && !edit && (
+                  <div style={{ padding: '8px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                    <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
+                    {dg.map((d, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px',
+                                            padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                        <span>{PLAZO_LBL[d.plazo]}</span>
+                        <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
+                          <span>{limpio(d.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
+                          {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(d.valor)}</span>}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', fontWeight: 500,
+                                  padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
+                      <span>Total</span>
+                      <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
+                        <span>{limpio(f.saldo)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
+                        {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(valorFifo[f.insumo_id] || 0)}</span>}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )})}
+            {esJefe && (
+              <Fila anchos={ANCHOS_SALDO_JEFE} total>
+                <Celda fuerte>Total</Celda>
+                <Celda /><Celda /><Celda />
+                <Celda derecha fuerte>{dinero(valorBodega)}</Celda>
+                <Celda />
+              </Fila>
+            )}
+          </Tabla>
+
+          {conteos.length > 0 && (
+            <div style={{ marginTop: '18px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Conteos anteriores</h3>
+              <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 11px' }}>
+                El saldo de arriba se calcula desde el más reciente.
+              </p>
+              <Tabla caja columnas={esJefe ? ['Fecha', 'Observación', ''] : ['Fecha', 'Observación']}
+                     anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
+                {conteos.map(c => (
+                  <div key={c.id}>
+                  <Fila anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
+                    <Celda fuerte>{corta(c.fecha)}{c.es_inicial && <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 500, background: '#E6F1FB', color: AZUL, borderRadius: '6px', padding: '2px 7px' }}>Inventario inicial</span>}</Celda>
+                    <Celda gris>
+                      {c.observacion || 'Sin observación'}
+                      <button onClick={() => verDescuadres(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL, marginLeft: '8px', padding: 0 }}>
+                        {detToma === c.id ? 'ocultar descuadres' : 'ver descuadres'}
+                      </button>
+                    </Celda>
+                    {esJefe && (
+                      <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => editarConteo(c)}
+                          style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                                   padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                                   color: NAVY, cursor: 'pointer' }}>Editar</button>
+                        <button onClick={() => borrarConteo(c)}
+                          style={{ background: 'white', border: '0.5px solid #e7cccb', borderRadius: '8px',
+                                   padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                                   color: ROJO, cursor: 'pointer' }}>Borrar</button>
+                      </div>
+                    )}
+                  </Fila>
+                  {detToma === c.id && (
+                    <div style={{ padding: '8px 16px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      {!detLineas[c.id] ? (
+                        <div style={{ fontSize: '12px', color: GRIS }}>Cargando...</div>
+                      ) : !detLineas[c.id].length ? (
+                        <div style={{ fontSize: '12px', color: VERDE }}>Todo cuadró en este conteo.</div>
+                      ) : detLineas[c.id].map((l, i) => {
+                        const dif = Number(l.diferencia)
+                        return (
+                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px', fontSize: '12.5px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                            <span>{nombreInsumo(l.insumo_id)}</span>
+                            <span style={{ color: GRIS }}>sistema {limpio(l.cantidad_sistema)} · contó {limpio(l.cantidad_contada)}</span>
+                            <span style={{ textAlign: 'right', color: dif < 0 ? ROJO : AMBAR }}>
+                              {(dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}{l.motivo_descuadre ? ` · ${l.motivo_descuadre}` : ''}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  </div>
+                ))}
+              </Tabla>
+            </div>
+          )}
+        </>
+      )}
+      </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Piezas de tabla
+// ---------------------------------------------------------------------
+function Tabla({ columnas, anchos, children, caja, min }) {
+  const cuerpo = (
+    <div style={{ minWidth: min || 'auto' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: anchos,
+                    background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE }}>
+        {columnas.map((c, i) => (
+          <div key={c} style={{ padding: '10px 12px', fontSize: '11px', fontWeight: 500,
+                  color: GRIS, letterSpacing: '0.02em', textTransform: 'uppercase',
+                  textAlign: i >= 2 ? 'right' : 'left',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {c}
+          </div>
+        ))}
       </div>
+      {children}
     </div>
   )
-}
-
-function FormaProducto({ actual, onGuardar, onCancelar }) {
-  const [nombre, setNombre] = useState(actual?.nombre || '')
-  const [marca, setMarca] = useState(actual?.marca || '')
-  const [proveedor, setProveedor] = useState(actual?.proveedor || '')
-  const [enviando, setEnviando] = useState(false)
+  if (!caja) return cuerpo
   return (
-    <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-      <Campo label="Nombre del balanceado"><input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej. Nicovita 35" style={{ ...inp, width: '220px' }} /></Campo>
-      <Campo label="Marca (opcional)"><input value={marca} onChange={e => setMarca(e.target.value)} placeholder="Ej. Nicovita" style={{ ...inp, width: '150px' }} /></Campo>
-      <Campo label="Proveedor (opcional)"><input value={proveedor} onChange={e => setProveedor(e.target.value)} placeholder="Ej. Vitapro" style={{ ...inp, width: '150px' }} /></Campo>
-      <button disabled={!nombre.trim() || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, marca, proveedor }); setEnviando(false) }}
-        style={{ ...btnPri, opacity: (!nombre.trim() || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
-      <button onClick={onCancelar} style={btn}>Cancelar</button>
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                  overflow: 'hidden' }}>
+      <div style={{ overflowX: 'auto' }}>{cuerpo}</div>
     </div>
   )
 }
 
-function Campo({ label, children }) { return <div><div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{label}</div>{children}</div> }
-const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
-const btn = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '7px 13px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }
-const btnPri = { background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '9px 18px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }
-const miniLink = { background: 'none', border: 'none', padding: '0 0 0 6px', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px' }
-const linkAccion = color => ({ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color, fontFamily: 'inherit', fontSize: '13px' })
+function Fila({ anchos, children, total }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: anchos, alignItems: 'center',
+                  borderBottom: total ? 'none' : '0.5px solid #f1f6f9',
+                  borderTop: total ? '0.5px solid ' + BORDE : 'none',
+                  background: total ? '#fafcfd' : 'white' }}>
+      {children}
+    </div>
+  )
+}
+
+function Celda({ children, derecha, gris, fuerte, color }) {
+  return (
+    <div style={{ padding: '10px 12px', fontSize: '13px',
+                  textAlign: derecha ? 'right' : 'left',
+                  color: color || (gris ? GRIS : NAVY),
+                  fontWeight: fuerte ? 500 : 400,
+                  fontVariantNumeric: derecha ? 'tabular-nums' : 'normal' }}>
+      {children}
+    </div>
+  )
+}
+
+function Kpi({ titulo, valor, nota, alerta }) {
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + (alerta ? '#e8d5b0' : BORDE),
+                  borderRadius: '12px', padding: '13px 15px' }}>
+      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '5px',
+                    letterSpacing: '0.03em', textTransform: 'uppercase' }}>{titulo}</div>
+      <div style={{ fontSize: '20px', fontWeight: 500, fontVariantNumeric: 'tabular-nums',
+                    color: alerta ? AMBAR : NAVY }}>{valor}</div>
+      {nota && <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>{nota}</div>}
+    </div>
+  )
+}
+
+function Chip({ children, on, pequeno, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      padding: pequeno ? '6px 12px' : '8px 15px', borderRadius: '20px',
+      fontFamily: 'inherit', fontSize: pequeno ? '12px' : '13px', cursor: 'pointer',
+      border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
+      background: on ? '#E6F1FB' : 'white',
+      color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400,
+    }}>{children}</button>
+  )
+}
+
+function Nota({ children, color, fondo }) {
+  return (
+    <div style={{ background: fondo, color, borderRadius: '10px', padding: '13px 15px',
+                  fontSize: '13px', marginBottom: '12px', lineHeight: 1.6 }}>
+      {children}
+    </div>
+  )
+}
+
+function Caja({ children }) {
+  return (
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                  overflow: 'hidden' }}>{children}</div>
+  )
+}
+
+function Etiqueta({ children }) {
+  return <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{children}</div>
+}
+
+function Btn({ children, primario, ...props }) {
+  return (
+    <button {...props} style={{
+      padding: '9px 17px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+      borderRadius: '9px', cursor: props.disabled ? 'default' : 'pointer',
+      border: '0.5px solid ' + (primario ? AZUL : BORDE),
+      background: primario ? AZUL : 'white',
+      color: primario ? 'white' : NAVY,
+      opacity: props.disabled ? 0.45 : 1,
+    }}>{children}</button>
+  )
+}
+
+// Los insumos vienen en unidades muy distintas: 40 sacos y 0,0265
+// gramos. Mostrar siempre cuatro decimales llenaria la tabla de ceros.
+function limpio(n) {
+  const v = Number(n)
+  if (!isFinite(v)) return '—'
+  const s = v.toFixed(2).replace(/\.?0+$/, '')
+  return s === '' || s === '-' ? '0' : s
+}
+
+const entrada = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
+                  border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                  boxSizing: 'border-box', background: 'white' }
+const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
