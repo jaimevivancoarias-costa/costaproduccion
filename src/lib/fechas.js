@@ -108,3 +108,10 @@ export const miles = n =>
 export const dinero = n =>
   (n === null || n === undefined) ? '' :
   '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// Precio EXACTO como se registró: hasta 4 decimales, sin redondear a 2.
+// Muestra mínimo 2 y quita ceros sobrantes (54.6570 -> $54.657, 54.6 -> $54.60).
+export const dineroExacto = n => {
+  if (n === null || n === undefined || n === '') return ''
+  return '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}
