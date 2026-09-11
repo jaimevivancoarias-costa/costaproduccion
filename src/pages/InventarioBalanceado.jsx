@@ -27,7 +27,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   useEffect(() => { if (abrirIngresos) setSeccion('ingresos') }, [abrirIngresos])
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
   const [busq, setBusq] = useState('')
-  const coincide = nom => !busq.trim() || String(nom || '').toLowerCase().includes(busq.trim().toLowerCase())
+  const coincide = nom => !busq || nom === busq
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -367,8 +367,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           <div style={{ display: 'flex', gap: '9px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
             <Chip pequeno on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
             <Chip pequeno on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
-            <input value={busq} onChange={e => setBusq(e.target.value)} placeholder="Buscar balanceado…"
-                   style={{ ...inp, marginLeft: 'auto', minWidth: '190px' }} />
+            <select value={busq} onChange={e => setBusq(e.target.value)}
+                    style={{ ...inp, marginLeft: 'auto', minWidth: '210px' }}>
+              <option value="">Todos los balanceados</option>
+              {[...new Set(saldos.map(s => s.producto))].sort().map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px', fontSize: '13px', color: GRIS }}>
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
@@ -946,7 +949,7 @@ function Kpi({ k, v, alerta }) {
 }
 function Nota({ children, color, bg }) { return <div style={{ background: bg, color, borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>{children}</div> }
 function Caja({ children }) { return <div style={cajaS}>{children}</div> }
-const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }
+const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'auto', maxHeight: '68vh' }
 function Campo({ label, children }) { return <div><div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{label}</div>{children}</div> }
 function Encabezado({ cols, gtc }) {
   return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '10px 14px', fontSize: '12px', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, position: 'sticky', top: 0, zIndex: 3 }}>
