@@ -57,6 +57,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [nuevos, setNuevos] = useState([])
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
   const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
+  const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -481,10 +482,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <Cel der color={m.conteo === null ? '#c3d0db' : AZUL}>
                     {m.conteo === null ? '—' : limpio(m.conteo)}
                     {m.conteo !== null && conteoQuien[m.producto_id] && (
-                      <div style={{ fontSize: '9px', color: GRIS, marginTop: '2px' }}
-                           title={`Contado por ${conteoQuien[m.producto_id].autor || 'desconocido'} el ${corta(conteoQuien[m.producto_id].fecha)}`}>
-                        {conteoQuien[m.producto_id].autor || '—'} · {corta(conteoQuien[m.producto_id].fecha)}
-                      </div>
+                      <>
+                        <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
+                          title="Ver quién contó y cuándo"
+                          style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontSize: '10px', padding: '0 0 0 5px', lineHeight: 1 }}>
+                          {conteoDet === m.producto_id ? '▾' : '▸'}</button>
+                        {conteoDet === m.producto_id && (
+                          <div style={{ fontSize: '9.5px', color: GRIS, marginTop: '2px', fontWeight: 400 }}>
+                            {conteoQuien[m.producto_id].autor || 'desconocido'} · {corta(conteoQuien[m.producto_id].fecha)}
+                          </div>
+                        )}
+                      </>
                     )}
                   </Cel>
                   <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
