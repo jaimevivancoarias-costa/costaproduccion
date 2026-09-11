@@ -26,6 +26,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [seccion, setSeccion] = useState('bodega')  // 'bodega' | 'ingresos' | 'precios'
   useEffect(() => { if (abrirIngresos) setSeccion('ingresos') }, [abrirIngresos])
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
+  const [busq, setBusq] = useState('')
+  const coincide = nom => !busq.trim() || String(nom || '').toLowerCase().includes(busq.trim().toLowerCase())
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -294,7 +296,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           </div>
 
           <Encabezado gtc={G_CONTEO} cols={['Balanceado', 'Llega / se aplica', (primeraVez || editToma) ? '' : 'El sistema dice', editToma ? 'Contado' : primeraVez ? 'Inventario inicial' : 'Contado', (primeraVez || editToma) ? '' : 'Diferencia']} />
-          {filas.map(f => (
+          {(primeraVez || editToma ? filas : filas.filter(f => coincide(f.producto))).map(f => (
             <Fila gtc={G_CONTEO} key={f.producto_id}>
               <Cel>{f.producto}</Cel>
               <Cel gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
@@ -365,6 +367,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           <div style={{ display: 'flex', gap: '9px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
             <Chip pequeno on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
             <Chip pequeno on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+            <input value={busq} onChange={e => setBusq(e.target.value)} placeholder="Buscar balanceado…"
+                   style={{ ...inp, marginLeft: 'auto', minWidth: '190px' }} />
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px', fontSize: '13px', color: GRIS }}>
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
@@ -398,7 +402,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               )}
               <Caja>
                 <Encabezado gtc={esJefe ? G_SALDO_J : G_SALDO_B} cols={esJefe ? ['Balanceado', 'Saldo', 'Precio saco', 'Valor', ''] : ['Balanceado', 'Saldo']} />
-                {filas.map(f => {
+                {filas.filter(f => coincide(f.producto)).map(f => {
                   const dg = desglose[f.producto_id] || []
                   const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
                   const ab = abierto === f.producto_id
@@ -447,7 +451,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           ) : (
             <Caja>
               <Encabezado gtc={esJefe ? G_MOV_J : G_MOV_B} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', 'Conteo', 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
-              {movs.map(m => (
+              {movs.filter(m => coincide(m.producto)).map(m => (
                 <Fila gtc={esJefe ? G_MOV_J : G_MOV_B} key={m.producto_id}>
                   <Cel>{m.producto}</Cel>
                   <Cel der gris>{limpio(m.saldo_inicial)}</Cel>
@@ -945,7 +949,7 @@ function Caja({ children }) { return <div style={cajaS}>{children}</div> }
 const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }
 function Campo({ label, children }) { return <div><div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{label}</div>{children}</div> }
 function Encabezado({ cols, gtc }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '10px 14px', fontSize: '12px', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE }}>
+  return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '10px 14px', fontSize: '12px', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, position: 'sticky', top: 0, zIndex: 3 }}>
     {cols.map((c, i) => <span key={i} style={{ textAlign: i === 0 ? 'left' : 'right' }}>{c}</span>)}
   </div>
 }
