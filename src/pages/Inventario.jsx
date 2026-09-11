@@ -67,6 +67,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
   const [conteoQuien, setConteoQuien] = useState({})  // insumo_id -> {fecha, autor} del conteo
+  const [conteoDet, setConteoDet] = useState(null)    // insumo_id con el detalle del conteo abierto
   const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
   const coincide = nom => !busq || nom === busq
   const [alDia, setAlDia] = useState(hoyISO())
@@ -765,11 +766,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
               const conteoMostrar = contInicial ? null : m.conteo
               const cq = conteoQuien[m.insumo_id]
+              const abierto2 = conteoDet === m.insumo_id
+              // Flechita para desplegar quién contó y cuándo (no llena la celda).
               const porQuien = cq && (
-                <div style={{ fontSize: '9px', color: GRIS, marginTop: '2px' }}
-                     title={`Contado por ${cq.autor || 'desconocido'} el ${corta(cq.fecha)}`}>
-                  {cq.autor || '—'} · {corta(cq.fecha)}
-                </div>
+                <>
+                  <button onClick={() => setConteoDet(abierto2 ? null : m.insumo_id)}
+                    title="Ver quién contó y cuándo"
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL,
+                             fontSize: '10px', padding: '0 0 0 5px', lineHeight: 1 }}>{abierto2 ? '▾' : '▸'}</button>
+                  {abierto2 && <div style={{ fontSize: '9.5px', color: GRIS, marginTop: '2px', fontWeight: 400 }}>
+                    {cq.autor || 'desconocido'} · {corta(cq.fecha)}
+                  </div>}
+                </>
               )
               return (
               <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
