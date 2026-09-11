@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
+import { hoyISO, corta, numDec, dinero, dineroExacto } from '../lib/fechas'
 
 // Catálogo · maestro de productos + detalle por finca.
 //
@@ -505,7 +505,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                                 const conv2 = tab === 'insumos' && factor && factor !== 1 && uCons !== uCompra
                                 const contenidoP = activo.val == null
                                   ? 'Sin precio'
-                                  : <>{dinero(aCompra(activo.val))}
+                                  : <>{dineroExacto(aCompra(activo.val))}
                                       <span style={{ display: 'block', fontSize: '10px', color: GRIS, fontWeight: 400 }}>/{cap1(uCompra)}{activo.heredado ? ' · general' : ''}</span>
                                       {conv2 && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>= {dineroPrec(activo.val)} /{UNIDAD[uCons] || uCons}</span>}
                                     </>
