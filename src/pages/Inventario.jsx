@@ -66,6 +66,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
+  const [conteoQuien, setConteoQuien] = useState({})  // insumo_id -> {fecha, autor} del conteo
   const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
   const coincide = nom => !busq || nom === busq
   const [alDia, setAlDia] = useState(hoyISO())
@@ -177,6 +178,22 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       setDesglose(dgm)
 
       setSaldos(s || []); setMovs(m || []); setPrecios(pr); setConteos(t || [])
+
+      // Autoría del conteo por insumo (quién y cuándo), para mostrarlo en la
+      // columna Conteo / Inicial de "Qué se movió".
+      const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
+        supabase.schema('produccion').from('toma_inventario')
+          .select('fecha, creado_por, toma_inventario_linea(insumo_id)')
+          .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+          .order('fecha', { ascending: true }),
+        supabase.schema('produccion').from('vw_usuario').select('id, nombre, email'),
+      ])
+      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre || u.email })
+      const cq = {}
+      ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
+        cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null }
+      }))
+      setConteoQuien(cq)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -747,6 +764,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const contInicial = Math.abs(Number(m.saldo_inicial)) < 0.0001 && m.conteo !== null && m.conteo !== undefined
               const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
               const conteoMostrar = contInicial ? null : m.conteo
+              const cq = conteoQuien[m.insumo_id]
+              const porQuien = cq && (
+                <div style={{ fontSize: '9px', color: GRIS, marginTop: '2px' }}
+                     title={`Contado por ${cq.autor || 'desconocido'} el ${corta(cq.fecha)}`}>
+                  {cq.autor || '—'} · {corta(cq.fecha)}
+                </div>
+              )
               return (
               <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
                 <Celda>{m.insumo}</Celda>
@@ -755,7 +779,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
                   {conPeso && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {limpio(fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>}
                 </Celda>
-                <Celda derecha gris>{iniMostrar === null ? '—' : <>{limpio(iniMostrar)}{eq(iniMostrar)}</>}</Celda>
+                <Celda derecha gris>{iniMostrar === null ? '—' : <>{limpio(iniMostrar)}{eq(iniMostrar)}{contInicial && porQuien}</>}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
                   {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}{Number(m.ingresos) ? eq(m.ingresos) : null}
                 </Celda>
@@ -769,7 +793,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + limpio(Math.abs(Number(m.ajustes))) : '—'}{Number(m.ajustes) ? eq(Math.abs(Number(m.ajustes))) : null}
                 </Celda>
                 <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
-                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{limpio(conteoMostrar)}{eq(conteoMostrar)}</>}
+                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{limpio(conteoMostrar)}{eq(conteoMostrar)}{porQuien}</>}
                 </Celda>
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {limpio(m.saldo_final)}{eq(m.saldo_final)}
