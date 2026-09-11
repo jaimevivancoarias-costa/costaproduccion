@@ -98,13 +98,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }] = await Promise.all([
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }, { data: plzAct }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_insumo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_insumo',
           { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').from('precio_insumo')
-          .select('insumo_id, finca_id, precio_unitario')
+          .select('insumo_id, finca_id, precio_unitario, plazo')
           .is('vigente_hasta', null)
           .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
         supabase.schema('produccion').from('toma_inventario')
@@ -117,6 +117,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .select('insumo_id, factor, stock_minimo, unidad, contenido, unidad_contenido').eq('finca_id', finca.id),
         supabase.schema('produccion').rpc('fn_saldo_insumo_plazo',
           { p_finca: finca.id, p_hasta: alDia }),
+        supabase.schema('produccion').from('plazo_insumo')
+          .select('insumo_id, finca_id, plazo').is('vigente_hasta', null)
+          .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
       ])
       if (eS) throw eS
 
@@ -141,13 +144,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       })
       setMinimos(minMap)
 
-      // El precio de la finca le gana al general. Se guarda ya por
-      // unidad de compra: precio del catalogo por el factor.
-      const pr = {}
-      ;(p || []).forEach(x => {
-        if (pr[x.insumo_id] && !x.finca_id) return
-        pr[x.insumo_id] = Number(x.precio_unitario) * (factor[x.insumo_id] || 1)
+      // Plazo que rige por insumo (el de la finca gana al general). Es el
+      // mismo que muestra el catálogo, para que el precio coincida.
+      const plazoRige = {}
+      ;(plzAct || []).forEach(x => {
+        if (plazoRige[x.insumo_id] != null && !x.finca_id) return
+        plazoRige[x.insumo_id] = Number(x.plazo)
       })
+      // El precio de la finca le gana al general, Y se toma el del plazo que
+      // rige (no cualquiera). Si no hay precio en ese plazo, se usa el que haya.
+      const pr = {}, prRespaldo = {}
+      ;(p || []).forEach(x => {
+        const val = Number(x.precio_unitario) * (factor[x.insumo_id] || 1)
+        const rige = plazoRige[x.insumo_id] ?? 0
+        const esFinca = !!x.finca_id
+        // Precio del plazo que rige (preferir finca sobre general).
+        if (Number(x.plazo) === rige && (pr[x.insumo_id] == null || esFinca)) pr[x.insumo_id] = val
+        // Respaldo: cualquier precio (preferir finca), por si el plazo que
+        // rige no tiene precio cargado.
+        if (prRespaldo[x.insumo_id] == null || esFinca) prRespaldo[x.insumo_id] = val
+      })
+      ;(p || []).forEach(x => { if (pr[x.insumo_id] == null && prRespaldo[x.insumo_id] != null) pr[x.insumo_id] = prRespaldo[x.insumo_id] })
 
       const vfMap = {}
       ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
