@@ -46,6 +46,13 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [solReapertura, setSolReapertura] = useState([])
   const [userId, setUserId] = useState(null)
   const [cerrandoDia, setCerrandoDia] = useState(false)
+  const [saldoIns, setSaldoIns] = useState({})    // insumo_id -> saldo (unidad de compra)
+  const [factorIns, setFactorIns] = useState({})  // insumo_id -> factor (app por compra)
+
+  // Disponible en unidad de aplicación, y nombre del insumo.
+  const dispApp = id => (saldoIns[id] || 0) * (factorIns[id] || 1)
+  const nombreIns = id => insumos.find(i => i.id === id)?.nombre || 'insumo'
+  const uds = id => UNIDAD[insumos.find(i => i.id === id)?.unidad] || ''
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -61,22 +68,30 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: ps, error: eP }, { data: ins }, { data: cs }, { data: ov }] = await Promise.all([
+      const [{ data: ps, error: eP }, { data: ins }, { data: cs }, { data: ov }, { data: saldosI }] = await Promise.all([
         supabase.schema('produccion').from('piscina')
           .select('id, codigo, nombre, hectareas, tipo, es_reservorio')
           .eq('finca_id', finca.id).eq('activa', true),
         supabase.schema('produccion').from('insumo')
-          .select('id, nombre, unidad').eq('activo', true).order('nombre'),
+          .select('id, nombre, unidad, factor').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('ciclo')
           .select('id, piscina_origen_id, fecha_siembra, fecha_cierre')
           .eq('finca_id', finca.id),
         supabase.schema('produccion').from('insumo_finca')
-          .select('insumo_id, unidad').eq('finca_id', finca.id),
+          .select('insumo_id, unidad, factor').eq('finca_id', finca.id),
+        supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: domingo }),
       ])
       if (eP) throw eP
       // Unidad por finca: si esta finca tiene override, se usa esa.
       const over = {}; (ov || []).forEach(x => { over[x.insumo_id] = x.unidad })
       const insFinca = (ins || []).map(i => ({ ...i, unidad: over[i.id] || i.unidad }))
+      // Factor por insumo (override de finca o base). Convierte saldo (unidad
+      // de compra) a unidad de aplicación: disponible_app = saldo × factor.
+      const facM = {}; (ins || []).forEach(i => { facM[i.id] = Number(i.factor) || 1 })
+      ;(ov || []).forEach(x => { if (x.factor != null) facM[x.insumo_id] = Number(x.factor) || 1 })
+      setFactorIns(facM)
+      const si = {}; (saldosI || []).forEach(r => { si[r.insumo_id] = Number(r.saldo) })
+      setSaldoIns(si)
 
       const lista = (ps || []).map(p => ({
         piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
@@ -208,11 +223,19 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   // Reabrir la semana de insumos. Solo jefe/contadora (esJefe).
   async function reabrirSemana() {
     const { anio, semana } = semanaISO(lunes)
-    if (!window.confirm('¿Reabrir los insumos de toda la semana? Vuelve a quedar editable para la finca.')) return
+    if (!window.confirm('¿Reabrir los insumos de toda la semana? Vuelve a quedar editable para la finca (todos los días).')) return
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
       .delete().eq('finca_id', finca.id).eq('anio', anio).eq('semana', semana).eq('ambito', 'insumos')
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Semana reabierta' })
+    // Reabrir también los DÍAS cerrados de esa semana (si solo se quita el
+    // cierre de la semana, los días cerrados siguen bloqueados y no se
+    // pueden editar los que sí tuvieron consumo).
+    const { error: eDias } = await supabase.schema('produccion').from('dia_registro')
+      .update({ estado: 'reabierto' })
+      .eq('finca_id', finca.id).eq('ambito', 'insumos').eq('estado', 'cerrado')
+      .gte('fecha', lunes).lte('fecha', domingo)
+    if (eDias) { setAviso({ tipo: 'error', texto: 'Semana reabierta, pero no los días. ' + eDias.message }); await cargar(); return }
+    setAviso({ tipo: 'ok', texto: 'Semana y días reabiertos' })
     await cargar()
   }
 
@@ -260,28 +283,47 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       setAviso({ tipo: 'error', texto: 'Ese insumo ya está en ese día. Edita la cantidad.' })
       return
     }
+    // Chequeo de STOCK: no se puede consumir más de lo que hay en bodega.
+    const disp = dispApp(insumoId)
+    if (cant > disp + 0.0001) {
+      setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(insumoId)}: hay ${miles(Math.round(disp * 100) / 100)} ${uds(insumoId)}, quieres consumir ${miles(cant)}. Ingresa a bodega primero.` })
+      return
+    }
     const fila = { piscina_id: p.piscinaId, fecha: f, insumo_id: insumoId,
                    ciclo_id: p.cicloId, cantidad: cant }
     const { data, error } = await supabase.schema('produccion').from('consumo_insumo')
       .insert(fila).select('id').single()
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
     setLineas(m => ({ ...m, [k]: [...(m[k] || []), { id: data.id, insumoId, cantidad: cant }] }))
+    // Descuenta del saldo en vivo (en unidad de compra), para el próximo chequeo.
+    setSaldoIns(s => ({ ...s, [insumoId]: (s[insumoId] || 0) - cant / (factorIns[insumoId] || 1) }))
     setAbierta(null)
   }
 
   async function cambiarCantidad(k, id, valor) {
+    const linea = (lineas[k] || []).find(l => l.id === id)
+    const antes = num(linea?.cantidad)
     const cant = num(valor)
+    // Solo se chequea si SUBE. La diferencia extra no puede superar lo disponible.
+    if (cant && linea && cant - antes > dispApp(linea.insumoId) + 0.0001) {
+      setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(linea.insumoId)}: hay ${miles(Math.round(dispApp(linea.insumoId) * 100) / 100)} ${uds(linea.insumoId)} más disponibles.` })
+      return
+    }
     setLineas(m => ({ ...m, [k]: m[k].map(l => l.id === id ? { ...l, cantidad: valor } : l) }))
     if (!cant) return
     await supabase.schema('produccion').from('consumo_insumo')
       .update({ cantidad: cant, actualizado_en: new Date().toISOString() }).eq('id', id)
+    if (linea) setSaldoIns(s => ({ ...s, [linea.insumoId]: (s[linea.insumoId] || 0) - (cant - antes) / (factorIns[linea.insumoId] || 1) }))
   }
 
   async function quitar(k, id) {
     const antes = lineas[k]
+    const linea = (antes || []).find(l => l.id === id)
     setLineas(m => ({ ...m, [k]: m[k].filter(l => l.id !== id) }))
     const { error } = await supabase.schema('produccion').from('consumo_insumo').delete().eq('id', id)
-    if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }) }
+    if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }); return }
+    // Devuelve al saldo lo que se había consumido.
+    if (linea) setSaldoIns(s => ({ ...s, [linea.insumoId]: (s[linea.insumoId] || 0) + num(linea.cantidad) / (factorIns[linea.insumoId] || 1) }))
   }
 
   const COLS = `180px repeat(7, minmax(190px, 1fr))`
@@ -313,6 +355,31 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
           background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
           color: aviso.tipo === 'error' ? '#A32D2D' : '#3B6D11' }}>{aviso.texto}</div>
+      )}
+
+      {/* Semana cerrada: aviso claro con Reabrir (jefe/contadora). */}
+      {!cargando && semanaCerrada && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap',
+                      padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
+                      background: '#FAEEDA', color: '#854F0B' }}>
+          <span>Los insumos de esta semana están cerrados.{' '}
+            {esJefe ? 'Puedes reabrirla para corregir.' : 'Para corregir, pide a tu jefe que la reabra.'}</span>
+          {esJefe && !soloLectura && (
+            <button onClick={reabrirSemana}
+              style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px',
+                       padding: '6px 14px', fontFamily: 'inherit', fontSize: '13px', color: '#854F0B', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              Reabrir semana
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Semana anterior abierta: se puede editar y cerrar (el panel de cierre está abajo). */}
+      {!cargando && !semanaCerrada && !semanaDeHoy && !soloLectura && (
+        <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
+                      background: '#F4F7FA', color: GRIS }}>
+          Estás en una semana anterior. Puedes editar los insumos y cerrarla desde el panel de abajo.
+        </div>
       )}
 
       {/* Resumen de la semana · mismas tarjetas que el registro de balanceado */}
