@@ -74,6 +74,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [editProd, setEditProd] = useState(null)   // id de producto en edición (nombre)
   const [editConfig, setEditConfig] = useState(null)  // id de insumo en "Configurar todo de una"
   const [presentaciones, setPresentaciones] = useState([])
+  const [busqCat, setBusqCat] = useState('')   // filtro por nombre en el catálogo
 
   const fincaIds = (fincas || []).map(f => f.id)
 
@@ -197,7 +198,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   if (!esJefe) return <div style={{ padding: '2rem', color: GRIS }}>El catálogo lo administran el jefe y las contadoras.</div>
 
   const solActual = tab === 'insumos' ? solIns : solBal
-  const lista = tab === 'insumos' ? insumos : productos
+  const lista = (tab === 'insumos' ? insumos : productos)
+    .filter(p => !busqCat.trim() || String(p.nombre || '').toLowerCase().includes(busqCat.trim().toLowerCase()))
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1040px', color: NAVY, fontFamily: 'Inter, system-ui, sans-serif' }}>
@@ -214,6 +216,10 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
             border: '0.5px solid ' + (tab === id ? '#9cc4e8' : BORDE), background: tab === id ? '#E6F1FB' : 'white',
             color: tab === id ? AZUL : NAVY, fontWeight: tab === id ? 500 : 400 }}>{txt}</button>
         ))}
+        <input value={busqCat} onChange={e => setBusqCat(e.target.value)}
+               placeholder={`Buscar ${tab === 'insumos' ? 'insumo' : 'balanceado'}…`}
+               style={{ padding: '8px 12px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
+                        borderRadius: '9px', background: 'white', minWidth: '200px', marginLeft: esJefeGlobal ? '0' : 'auto' }} />
         {esJefeGlobal && (
           <button onClick={() => { setNuevo(true); setAviso(null) }} style={{ ...btn, marginLeft: 'auto' }}>
             + Agregar {tab === 'insumos' ? 'Insumo' : 'Balanceado'}
