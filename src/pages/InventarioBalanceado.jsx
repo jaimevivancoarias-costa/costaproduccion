@@ -83,7 +83,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_balanceado')
-          .select('fecha, creado_por, toma_balanceado_linea(producto_id)')
+          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre, email'),
@@ -91,7 +91,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre || u.email })
       const cq = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
-        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null }
+        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
       }))
       setConteoQuien(cq)
     } catch (err) {
@@ -481,6 +481,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
                   <Cel der color={m.conteo === null ? '#c3d0db' : AZUL}>
                     {m.conteo === null ? '—' : limpio(m.conteo)}
+                    {m.conteo !== null && conteoQuien[m.producto_id]?.esInicial && (
+                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Inventario inicial</span>
+                    )}
                     {m.conteo !== null && conteoQuien[m.producto_id] && (
                       <>
                         <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
