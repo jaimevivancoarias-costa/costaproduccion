@@ -56,6 +56,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [guardando, setGuardando] = useState(false)
   const [nuevos, setNuevos] = useState([])
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
+  const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -77,6 +78,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm)
       if (par && Number(par.valor) > 0) setLps(Number(par.valor))
+
+      // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
+      const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
+        supabase.schema('produccion').from('toma_balanceado')
+          .select('fecha, creado_por, toma_balanceado_linea(producto_id)')
+          .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+          .order('fecha', { ascending: true }),
+        supabase.schema('produccion').from('vw_usuario').select('id, nombre, email'),
+      ])
+      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre || u.email })
+      const cq = {}
+      ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
+        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null }
+      }))
+      setConteoQuien(cq)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
@@ -462,7 +478,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <Cel der>{Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}</Cel>
                   <Cel der color={Number(m.devuelto) ? ROJO : '#c3d0db'}>{Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}</Cel>
                   <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
-                  <Cel der color={m.conteo === null ? '#c3d0db' : AZUL}>{m.conteo === null ? '—' : limpio(m.conteo)}</Cel>
+                  <Cel der color={m.conteo === null ? '#c3d0db' : AZUL}>
+                    {m.conteo === null ? '—' : limpio(m.conteo)}
+                    {m.conteo !== null && conteoQuien[m.producto_id] && (
+                      <div style={{ fontSize: '9px', color: GRIS, marginTop: '2px' }}
+                           title={`Contado por ${conteoQuien[m.producto_id].autor || 'desconocido'} el ${corta(conteoQuien[m.producto_id].fecha)}`}>
+                        {conteoQuien[m.producto_id].autor || '—'} · {corta(conteoQuien[m.producto_id].fecha)}
+                      </div>
+                    )}
+                  </Cel>
                   <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
                   {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
                 </Fila>
