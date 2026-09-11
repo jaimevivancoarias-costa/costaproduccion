@@ -192,6 +192,16 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     setAviso({ tipo: 'ok', texto: 'Día reabierto.' }); await cargar()
   }
 
+  // Reabrir un día cerrado cualquiera (no solo hoy). Solo jefe/contadora.
+  async function reabrirDia(fecha) {
+    if (!window.confirm(`¿Reabrir el ${nombreDia(fecha).toLowerCase()} ${corta(fecha)}? Vuelve a quedar editable.`)) return
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha, ambito: 'insumos', estado: 'reabierto', reabierto_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo reabrir. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: `${nombreDia(fecha)} reabierto` }); await cargar()
+  }
+
   async function pedirReabrirHoy() {
     const id = diasId[hoy]
     if (!id) return
@@ -381,6 +391,25 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           Estás en una semana anterior. Puedes editar los insumos y cerrarla desde el panel de abajo.
         </div>
       )}
+
+      {/* Reabrir un día ya cerrado (jefe/contadora), aunque tenga consumo. */}
+      {!cargando && !semanaCerrada && !soloLectura && esJefe && (() => {
+        const cerrados = fechas.filter(f => dias[f] === 'cerrado')
+        if (!cerrados.length) return null
+        return (
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
+                        padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', background: '#F4F7FA', color: GRIS }}>
+            <span>¿Necesitas corregir un día ya cerrado?</span>
+            {cerrados.map(f => (
+              <button key={f} onClick={() => reabrirDia(f)}
+                style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                         padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>
+                Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
+              </button>
+            ))}
+          </div>
+        )
+      })()}
 
       {/* Resumen de la semana · mismas tarjetas que el registro de balanceado */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
