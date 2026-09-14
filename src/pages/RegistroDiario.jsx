@@ -1186,9 +1186,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             onCerrar={cerrarSemana}
             onCerrarDias={cerrarDiasPendientes}
             // El dia de hoy no cuenta aqui: para eso esta "Cerrar dia".
-            diasPendientes={fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+            diasPendientesLista={fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
                                                && f !== hoy
-                                               && situacionDia(f, hoy) !== 'futuro').length}
+                                               && situacionDia(f, hoy) !== 'futuro')
+                                       .map(f => `${nombreDia(f).slice(0,3)} ${corta(f).slice(0,5)}`)}
             // Un bodeguero puede firmar los dias sueltos de su semana.
             // Firmar hacia atras una semana pasada es cosa del jefe.
             puedeFirmarDias={!soloLectura && !semanaCerrada && (esJefe || semanaDeHoy)}
@@ -1443,8 +1444,9 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer }) {
 // ---------------------------------------------------------------------
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendientes,
+function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendientesLista = [],
                   puedeFirmarDias, puedeCerrar, cerrada }) {
+  const diasPendientes = diasPendientesLista.length
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
@@ -1486,7 +1488,8 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
             {puedeFirmarDias && diasPendientes > 0 && (
               <>
                 <span style={{ fontSize: '12px', color: GRIS, marginRight: 'auto' }}>
-                  Faltan {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'} por dar por cerrados.
+                  {diasPendientes === 1 ? 'Falta cerrar 1 día' : `Faltan cerrar ${diasPendientes} días`}
+                  {': '}{diasPendientesLista.join(', ')}.
                 </span>
                 <Btn onClick={onCerrarDias}>
                   Cerrar los {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'}
