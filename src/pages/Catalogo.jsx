@@ -1181,13 +1181,18 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
   const [desde, setDesde] = useState(a.desde || hoyISO())   // precarga la fecha del precio actual
   const [enviando, setEnviando] = useState(false)
 
+  // Densidad del producto (kg/L). Se usa cuando alguna finca aplica en una
+  // familia distinta (peso<->volumen). Global al producto.
+  const [densD, setDensD] = useState(insumo?.densidad != null ? Number(insumo.densidad) : null)
+  const [densTxt, setDensTxt] = useState('')  // texto que se está escribiendo
+
   const esComp = unidad === '__completo'
   // En "envase entero" se cuenta por la presentación. Se guarda como
   // 'unidad' (enum válido) y factor 1; la presentación se muestra aparte.
   const uStd = esComp ? 'unidad' : unidad
-  const factor = esComp ? 1 : factorDe(contenido, uCont, unidad)
+  const factor = esComp ? 1 : factorDe(contenido, uCont, unidad, densD)
   const listo = presentacion.trim() && factor != null && factor > 0
-  const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u)
+  const factorFinca = u => u === '__completo' ? 1 : factorDe(contenido, uCont, u, densD)
 
   // --- helpers de la sección "aplica distinto" ---
   const setRow = (i, campo, valor) => setExc(x => x.map((r, j) => j === i ? { ...r, [campo]: valor } : r))
@@ -1282,6 +1287,12 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       // 1) Unidades/mínimos: un solo upsert en bloque.
       const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filas, { onConflict: 'insumo_id,finca_id' })
       if (e1) throw e1
+
+      // 1b) Densidad del producto (para el puente peso<->volumen). Global.
+      if (densD != null && densD > 0 && densD !== Number(insumo.densidad)) {
+        const { error: eD } = await supabase.schema('produccion').from('insumo').update({ densidad: densD }).eq('id', insumo.id)
+        if (eD) throw eD
+      }
 
       // Cierra el precio anterior y abre el nuevo (con su fecha de vigencia).
       const cerrarYAbrir = async (fincaIds, pz, rows, dfecha) => {
@@ -1533,6 +1544,19 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
               <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
             ) : facF ? (
               <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
+            ) : cruzaFamilia(uCont, e.unidad) ? (
+              <div style={{ marginTop: '7px', background: '#FFF7E8', border: '0.5px solid #f0dcae', borderRadius: '9px', padding: '9px 11px' }}>
+                <div style={{ fontSize: '11.5px', color: '#8a5a12', marginBottom: '6px' }}>
+                  Pasa de {U_FAMILIA(uCont) === 'masa' ? 'peso' : 'volumen'} a {U_FAMILIA(e.unidad) === 'masa' ? 'peso' : 'volumen'}. Dinos cuánto rinde:
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12.5px' }}>
+                  <span>1 {UNIDAD[uCont] || uCont} =</span>
+                  <input inputMode="decimal" value={densTxt}
+                    onChange={ev => { setDensTxt(ev.target.value); setDensD(densInterna(numDec(ev.target.value), uCont, e.unidad)) }}
+                    placeholder="ej. 0.71" style={{ ...inp, width: '80px', textAlign: 'right' }} />
+                  <span>{UNIDAD[e.unidad] || e.unidad}</span>
+                </div>
+              </div>
             ) : (
               <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '7px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
             ))}
