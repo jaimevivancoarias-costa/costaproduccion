@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, dinero } from '../lib/fechas'
+import { hoyISO, dinero, miles } from '../lib/fechas'
+
+// Etiqueta corta de cada unidad, para el desglose del bodeguero.
+const UNIDAD = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
+                 libras: 'lb', kg: 'kg', unidad: 'u' }
 
 // Presupuesto mensual de insumos · modulo Produccion
 //
@@ -30,6 +34,7 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
   const [gasto, setGasto] = useState(0)
   const [historico, setHistorico] = useState([])
   const [resumen, setResumen] = useState([])
+  const [consumo, setConsumo] = useState([])   // desglose por insumo del mes (sin precios, para bodeguero)
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
   const [nuevo, setNuevo] = useState('')
@@ -38,7 +43,10 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: p }, { data: g }, { data: h }, { data: r }] = await Promise.all([
+    // Primer y ultimo dia del mes elegido, para el desglose por insumo.
+    const desde = `${anio}-${String(mes).padStart(2, '0')}-01`
+    const hasta = new Date(anio, mes, 0).toISOString().slice(0, 10)
+    const [{ data: p }, { data: g }, { data: h }, { data: r }, { data: cons }] = await Promise.all([
       supabase.schema('produccion').from('presupuesto_insumo')
         .select('monto').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle(),
       supabase.schema('produccion').rpc('fn_gasto_insumos_mes',
@@ -46,11 +54,27 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
       supabase.schema('produccion').rpc('fn_presupuesto_historico', { p_finca: finca.id }),
       esJefe ? supabase.schema('produccion').rpc('fn_presupuesto_resumen', { p_anio: anio, p_mes: mes })
              : Promise.resolve({ data: [] }),
+      // El bodeguero ve en qué insumo se va el mes (cantidad y %, sin $).
+      esJefe ? Promise.resolve({ data: [] })
+             : supabase.schema('produccion').rpc('fn_reporte_consumo',
+                 { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
     ])
     setMonto(p ? Number(p.monto) : null)
     setGasto(Number(g) || 0)
     setHistorico((h || []).filter(x => !(x.anio === anio && x.mes === mes)))
     setResumen(r || [])
+    // Agrupar por insumo: suma de costo (para el %) y de cantidad por unidad.
+    const m = {}
+    ;(cons || []).forEach(f => {
+      if (f.tipo !== 'insumo') return
+      const k = f.item_id
+      if (!m[k]) m[k] = { id: k, nombre: f.item, costo: 0, cantidad: 0, unidad: f.unidad, mixto: false }
+      const it = m[k]
+      it.costo += Number(f.costo) || 0
+      if (it.unidad === f.unidad) it.cantidad += Number(f.cantidad) || 0
+      else it.mixto = true
+    })
+    setConsumo(Object.values(m).sort((a, b) => b.costo - a.costo))
     setNuevo(p ? String(p.monto) : '')
     setCargando(false)
   }, [finca.id, anio, mes, esJefe])
@@ -177,6 +201,57 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
         </Caja>
       )}
 
+      {/* Desglose por insumo del mes · SOLO bodeguero, SIN precios.
+          Muestra en qué se está yendo el consumo: cantidad y % del mes. */}
+      {!esJefe && !cargando && consumo.length > 0 && (() => {
+        const total = consumo.reduce((t, c) => t + c.costo, 0)
+        return (
+          <div style={{ marginTop: '22px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>
+              En qué se va el mes
+            </h3>
+            <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 11px' }}>
+              Consumo de {MESES[mes - 1]} por insumo. El % es cuánto pesa cada uno en el mes.
+            </p>
+            <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 52px 1fr',
+                            gap: '12px', alignItems: 'center', padding: '11px 16px',
+                            borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb',
+                            fontSize: '12px', color: GRIS }}>
+                <span>Insumo</span>
+                <span style={{ textAlign: 'right' }}>Cantidad</span>
+                <span style={{ textAlign: 'right' }}>%</span>
+                <span>Peso</span>
+              </div>
+              {consumo.map(c => {
+                const pc = total ? Math.round(c.costo / total * 100) : 0
+                return (
+                  <div key={c.id} style={{ display: 'grid', gridTemplateColumns: '1fr 120px 52px 1fr',
+                          gap: '12px', alignItems: 'center', padding: '11px 16px',
+                          borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
+                    <span style={{ fontWeight: 500 }}>
+                      {c.nombre}
+                      <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '7px' }}>insumo</span>
+                    </span>
+                    <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                      {c.mixto ? '—' : `${miles(c.cantidad)} ${UNIDAD[c.unidad] || c.unidad || ''}`}
+                    </span>
+                    <span style={{ textAlign: 'right', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                      {pc}%
+                    </span>
+                    <span style={{ display: 'block', height: '9px', background: '#eef3f7',
+                                   borderRadius: '20px', overflow: 'hidden' }}>
+                      <i style={{ display: 'block', height: '100%', width: pc + '%',
+                                  background: '#E3B15F', borderRadius: '20px' }} />
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Tablero del mes de todas las fincas: solo el jefe. */}
       {esJefe && resumen.length > 0 && (() => {
         const vis = resumen
@@ -235,7 +310,7 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
                       {r.finca}
                       <div style={{ fontSize: '11px', color: GRIS, marginTop: '1px', fontVariantNumeric: 'tabular-nums' }}>
                         {Number(r.monto)
-                          ? `Ppto ${dinero(r.monto)} · Gastó ${dinero(r.gasto)}`
+                          ? `Ppto ${dinero(r.monto)} · gastó ${dinero(r.gasto)}`
                           : 'Sin presupuesto'}
                       </div>
                     </span>
