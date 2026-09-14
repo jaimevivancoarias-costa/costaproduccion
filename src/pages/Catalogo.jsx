@@ -24,12 +24,39 @@ const U_FAMILIA = u => ['mg', 'gramos', 'kg', 't', 'libras'].includes(u) ? 'masa
 const U_LABEL = { mg: 'Miligramos (mg)', gramos: 'Gramos (g)', kg: 'Kilos (kg)', t: 'Toneladas (t)', libras: 'Libras (lb)',
                   ml: 'Mililitros (mL)', cl: 'Centilitros (cL)', litros: 'Litros (L)', m3: 'Metros cúbicos (m³)',
                   gal: 'Galones (gal)', floz: 'Onzas líquidas (fl oz)', unidad: 'Unidades' }
+// ¿El par contenido/aplicación cruza masa<->líquido? (necesita densidad)
+const cruzaFamilia = (uCont, uApp) => {
+  const a = U_FAMILIA(uCont), b = U_FAMILIA(uApp)
+  return a !== b && a !== 'conteo' && b !== 'conteo'
+}
+// Densidad interna (kg/L = g/mL) a partir del ratio que escribe el jefe:
+// r = cuántas uApp hay en 1 uCont. Sirve para cualquier par masa/líquido.
+const densInterna = (r, uCont, uApp) => {
+  if (!(r > 0)) return null
+  return U_FAMILIA(uCont) === 'masa'
+    ? U_POR[uCont] / (r * U_POR[uApp])       // 1 uCont(g) = r·uApp(mL)  -> g/mL
+    : (r * U_POR[uApp]) / U_POR[uCont]       // 1 uCont(mL) = r·uApp(g)  -> g/mL
+}
+// Ratio para mostrar (uApp por 1 uCont) desde la densidad guardada.
+const rDesdeDens = (d, uCont, uApp) => {
+  if (!(d > 0)) return null
+  return U_FAMILIA(uCont) === 'masa'
+    ? U_POR[uCont] / (d * U_POR[uApp])
+    : (d * U_POR[uCont]) / U_POR[uApp]
+}
 // Factor: cuánto trae 1 presentación, expresado en la unidad de aplicación.
-const factorDe = (contenido, uCont, uApp) => {
+// densidad (kg/L) solo se usa cuando el par cruza masa<->líquido.
+const factorDe = (contenido, uCont, uApp, densidad) => {
   const c = numDec(String(contenido))
   if (!(c > 0)) return null
-  if (U_FAMILIA(uCont) !== U_FAMILIA(uApp)) return null
-  return c * (U_POR[uCont] / U_POR[uApp])
+  const fc = U_FAMILIA(uCont), fa = U_FAMILIA(uApp)
+  if (fc === fa) return c * (U_POR[uCont] / U_POR[uApp])
+  if (fc === 'conteo' || fa === 'conteo') return null
+  const d = Number(densidad)
+  if (!(d > 0)) return null
+  let base = c * U_POR[uCont]                 // g si masa, mL si líquido
+  base = fc === 'masa' ? base / d : base * d  // -> mL o -> g
+  return base / U_POR[uApp]
 }
 const PLAZOS = [0, 30, 60, 90, 120]
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
@@ -95,7 +122,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       return { data: out }
     }
     const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
-      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor').eq('activo', true).order('nombre'),
+      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor, densidad').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo, stock_objetivo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       allVigente('precio_insumo', 'id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta'),
@@ -836,20 +863,27 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
   const [uCont, setUCont] = useState(actual.unidad_contenido || actual.unidad)  // unidad del contenido
   const [minimo, setMinimo] = useState(actual.stock_minimo != null ? String(actual.stock_minimo) : '')
   const [objetivo, setObjetivo] = useState(actual.stock_objetivo != null ? String(actual.stock_objetivo) : '')
+  // Densidad: ratio "uApp por 1 uCont" que escribe el jefe. Solo se usa al cruzar familias.
+  const uc0 = actual.unidad_contenido || actual.unidad
+  const dInit = (insumo?.densidad != null && cruzaFamilia(uc0, actual.unidad))
+    ? rDesdeDens(Number(insumo.densidad), uc0, actual.unidad) : null
+  const [dens, setDens] = useState(dInit != null ? String(Math.round(dInit * 10000) / 10000) : '')
   const [enviando, setEnviando] = useState(false)
   const [sel, setSel] = useState([finca.id])
   const otras = (fincas || []).filter(f => f.id !== finca.id)
   const toggle = id => setSel(s => s.includes(id) ? s.filter(x => x !== id) : [...s, id])
 
-  // Al cambiar la unidad de aplicación, el contenido debe ser de la misma familia.
+  // Conteo no cruza; masa<->líquido sí (con densidad). Solo se realinea
+  // cuando uno de los dos lados es conteo.
   const cambiarUnidad = (u) => {
     setUnidad(u)
-    if (U_FAMILIA(uCont) !== U_FAMILIA(u)) setUCont(u)  // reencuadra el contenido a la nueva familia
+    const fu = U_FAMILIA(u), fc = U_FAMILIA(uCont)
+    if (fu !== fc && (fu === 'conteo' || fc === 'conteo')) setUCont(u)
   }
-  // Al elegir la unidad del contenido, si es de otra familia, alinea la unidad de aplicación.
   const cambiarUCont = (u) => {
     setUCont(u)
-    if (U_FAMILIA(u) !== U_FAMILIA(unidad)) setUnidad(u)
+    const fu = U_FAMILIA(unidad), fc = U_FAMILIA(u)
+    if (fu !== fc && (fu === 'conteo' || fc === 'conteo')) setUnidad(u)
   }
   // "Completo": aplicar por envase entero (1 = 1). Se cuenta en unidades.
   const cambiarAplica = (v) => {
@@ -858,14 +892,19 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
   }
   // ¿Está en modo "completo"? (se aplica en unidad, 1 por envase)
   const esCompleto = unidad === 'unidad' && numDec(contenido) === 1 && uCont === 'unidad'
-  const factor = factorDe(contenido, uCont, unidad)
+  const cruza = cruzaFamilia(uCont, unidad)
+  // densidad interna (kg/L = g/mL) desde el ratio escrito.
+  const densD = cruza ? densInterna(numDec(dens), uCont, unidad) : null
+  const factor = factorDe(contenido, uCont, unidad, densD)
   const listo = sel.length > 0 && presentacion.trim() && factor != null && factor > 0
+                && (!cruza || (densD != null && densD > 0))
 
   async function aplicarUna(fid) {
     // 1) Si cambió la unidad de aplicación, convierte el histórico de esa finca.
+    //    Cuando cruza masa<->líquido, p_por lleva la densidad (kg/L).
     if (unidad !== actual.unidad) {
       const { error } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
-        { p_insumo: insumo.id, p_finca: fid, p_nueva: unidad })
+        { p_insumo: insumo.id, p_finca: fid, p_nueva: unidad, ...(cruza && densD ? { p_por: densD } : {}) })
       if (error) return error
     }
     // 2) Guarda presentación, contenido, unidad y mínimo (factor calculado).
@@ -926,9 +965,27 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
         </Campo>
       </div>
 
+      {/* Densidad: aparece SOLO cuando cruza masa<->líquido. La etiqueta
+          sigue la dirección elegida: "1 kg = ___ litros" o al revés. */}
+      {cruza && (
+        <div style={{ marginTop: '10px', background: '#FFF7E8', border: '0.5px solid #f0dcae',
+                      borderRadius: '9px', padding: '10px 12px' }}>
+          <div style={{ fontSize: '12px', color: '#8a5a12', marginBottom: '7px' }}>
+            Este producto pasa de {U_FAMILIA(uCont) === 'masa' ? 'peso' : 'volumen'} a {U_FAMILIA(unidad) === 'masa' ? 'peso' : 'volumen'}.
+            Dinos cuánto rinde para poder convertir:
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+            <span>1 {UNIDAD[uCont] || uCont} =</span>
+            <input inputMode="decimal" value={dens} onChange={e => setDens(e.target.value)}
+              placeholder="ej. 0.71" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+            <span>{UNIDAD[unidad] || unidad}</span>
+          </div>
+        </div>
+      )}
+
       {factor != null && contenido && (
         <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 11px', marginTop: '10px', display: 'inline-block' }}>
-          Conversión automática: 1 {cap(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[unidad] || unidad}</b>
+          {cruza ? 'Conversión' : 'Conversión automática'}: 1 {cap(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[unidad] || unidad}</b>
         </div>
       )}
 
