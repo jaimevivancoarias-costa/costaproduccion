@@ -904,11 +904,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       ) : (
         <>
           <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
-            <div style={{ overflowX: 'auto' }}>
+            <div style={{ overflow: 'auto', maxHeight: '72vh' }}>
               <div style={{ minWidth: ANCHO }}>
 
                 <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
-                              borderBottom: '0.5px solid ' + BORDE }}>
+                              borderBottom: '0.5px solid ' + BORDE,
+                              position: 'sticky', top: 0, zIndex: 4 }}>
                   <Th pegado>Piscina</Th>
                   <Th>Estado</Th>
                   {fechas.map(f => {
