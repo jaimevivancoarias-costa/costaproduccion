@@ -413,7 +413,7 @@ export default function App() {
                 ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
                 : panelInv === 'balanceado'
                 ? <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
-                : <InventarioDiesel key={finca.id} finca={finca} esJefe={esJefe} />}
+                : <InventarioDiesel key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} />}
             </div>
           ) : modulo === 'diesel' ? (
             <Diesel key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} onCambio={cargarDiesel} />
