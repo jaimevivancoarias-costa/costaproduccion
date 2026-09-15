@@ -414,9 +414,11 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
       </div>
 
-      <BuscadorAplicacion ambito="insumos" opciones={insumos}
-        valor={filtroProd} onCambio={setFiltroProd}
-        nPisc={(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).length} />
+      <div style={{ marginBottom: '18px' }}>
+        <BuscadorAplicacion ambito="insumos" opciones={insumos}
+          valor={filtroProd} onCambio={setFiltroProd}
+          nPisc={(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).length} />
+      </div>
 
       {cargando ? (
         <div style={{ padding: '40px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>
