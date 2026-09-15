@@ -72,10 +72,12 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     if (!form.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
     const fecha = form.fecha || hoyISO()
     if (form.modo === 'pedido') {
+      // El bodeguero registra libre: el pedido cuenta al saldo de una vez.
       const { error } = await supabase.schema('produccion').from('diesel_pedido')
-        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha })
-      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo pedir. ' + error.message }); return }
-      setAviso({ tipo: 'ok', texto: 'Pedido enviado. Espera la aprobación del jefe.' })
+        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha,
+                  estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString() })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
+      setAviso({ tipo: 'ok', texto: 'Pedido registrado.' })
     } else {
       const { error } = await supabase.schema('produccion').from('diesel_consumo')
         .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha })
@@ -83,14 +85,6 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
       setAviso({ tipo: 'ok', texto: 'Consumo registrado.' })
     }
     setForm(null); await refrescar()
-  }
-
-  async function aprobarPedido(id, ok) {
-    const { error } = await supabase.schema('produccion').from('diesel_pedido')
-      .update({ estado: ok ? 'aprobado' : 'rechazado', aprobado_por: userId, aprobado_en: new Date().toISOString() })
-      .eq('id', id)
-    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: ok ? 'Pedido aprobado.' : 'Pedido rechazado.' }); await refrescar()
   }
 
   // --- Jefe: edita/borra directo ---
@@ -139,8 +133,6 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Corrección rechazada.' }); await refrescar()
   }
 
-  const pendientes = pedidos.filter(p => p.estado === 'pendiente')
-
   // Acciones por fila según rol (jefe edita/borra; bodeguero pide permiso).
   function Acciones({ tabla, row }) {
     if (!puedeRegistrar) return null
@@ -188,12 +180,12 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
                           padding: '11px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb',
                           fontSize: '12px', color: GRIS }}>
               <span>Diesel</span>
-              <span style={{ textAlign: 'right' }}>Pedido aprobado (sem)</span>
+              <span style={{ textAlign: 'right' }}>Pedidos (sem)</span>
               <span style={{ textAlign: 'right' }}>Consumo (sem)</span>
               <span style={{ textAlign: 'right' }}>Saldo actual (gal)</span>
             </div>
             {tipos.map(t => {
-              const ped = galSemana(pedidos, t.id, 'aprobado')
+              const ped = galSemana(pedidos, t.id)
               const con = galSemana(consumos, t.id)
               const saldo = Number(saldos[t.id]?.saldo || 0)
               return (
@@ -239,11 +231,6 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
                   <Btn primario onClick={guardarForm}>{form.modo === 'pedido' ? 'Enviar pedido' : 'Guardar consumo'}</Btn>
                   <Btn onClick={() => setForm(null)}>Cancelar</Btn>
                 </div>
-                {form.modo === 'pedido' && (
-                  <div style={{ fontSize: '12px', color: GRIS, marginTop: '9px' }}>
-                    El pedido queda pendiente hasta que el jefe lo apruebe. Recién ahí suma al saldo.
-                  </div>
-                )}
               </div>
             </Caja>
           )}
@@ -276,36 +263,24 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
           )}
 
           <div style={{ marginTop: '18px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>
-              Pedidos de la semana {pendientes.length > 0 && <span style={{ fontSize: '12px', color: AMBAR }}>· {pendientes.length} por aprobar</span>}
-            </h3>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>Pedidos de la semana</h3>
             {pedidos.length === 0 ? (
               <Caja><div style={{ padding: '20px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Sin pedidos esta semana.</div></Caja>
             ) : (
               <Caja>
-                {pedidos.map(p => {
-                  const col = p.estado === 'aprobado' ? VERDE : p.estado === 'rechazado' ? ROJO : AMBAR
-                  const et = p.estado === 'aprobado' ? 'Aprobado' : p.estado === 'rechazado' ? 'Rechazado' : 'Pendiente'
-                  return (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
-                      <span>
-                        <span style={{ fontWeight: 500 }}>{nombreTipo(p.tipo_id)}</span>
-                        <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(p.fecha)}</span>
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ fontVariantNumeric: 'tabular-nums' }}>{miles(Number(p.galones))} gal</span>
-                        <span style={{ fontSize: '12px', color: col, background: col + '18', borderRadius: '20px', padding: '3px 10px' }}>{et}</span>
-                        {esJefe && p.estado === 'pendiente'
-                          ? <span style={{ display: 'flex', gap: '6px' }}>
-                              <button onClick={() => aprobarPedido(p.id, true)} style={btnOk}>Aprobar</button>
-                              <button onClick={() => aprobarPedido(p.id, false)} style={btnNo}>Rechazar</button>
-                            </span>
-                          : <Acciones tabla="diesel_pedido" row={p} />}
-                      </span>
-                    </div>
-                  )
-                })}
+                {pedidos.map(p => (
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
+                    <span>
+                      <span style={{ fontWeight: 500 }}>{nombreTipo(p.tipo_id)}</span>
+                      <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(p.fecha)}</span>
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ color: VERDE, fontVariantNumeric: 'tabular-nums' }}>+{miles(Number(p.galones))} gal</span>
+                      <Acciones tabla="diesel_pedido" row={p} />
+                    </span>
+                  </div>
+                ))}
               </Caja>
             )}
           </div>
