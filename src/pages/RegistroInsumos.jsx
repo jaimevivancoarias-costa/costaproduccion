@@ -47,6 +47,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [userId, setUserId] = useState(null)
   const [cerrandoDia, setCerrandoDia] = useState(false)
   const [saldoIns, setSaldoIns] = useState({})    // insumo_id -> saldo (unidad de compra)
+  const [filtroProd, setFiltroProd] = useState('')  // ver solo piscinas/días con este insumo
   const [factorIns, setFactorIns] = useState({})  // insumo_id -> factor (app por compra)
 
   // Disponible en unidad de aplicación, y nombre del insumo.
@@ -281,6 +282,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
   const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
   const cel = (p, f) => lineas[`${p.piscinaId}|${f}`] || []
+  // Filtro: piscinas que aplicaron el insumo elegido en la semana.
+  const piscTieneIns = (p) => fechas.some(f => cel(p, f).some(l => l.insumoId === filtroProd))
 
   // Se guarda linea por linea: son pocas por celda y evita el baile de
   // diffing de todo el grid. Optimista: se pinta y si falla se revierte.
@@ -410,8 +413,9 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
       </div>
 
-      <BuscadorAplicacion finca={finca} ambito="insumos" opciones={insumos}
-        onIrFecha={f => setLunes(lunesDe(f))} />
+      <BuscadorAplicacion ambito="insumos" opciones={insumos}
+        valor={filtroProd} onCambio={setFiltroProd}
+        nPisc={(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).length} />
 
       {cargando ? (
         <div style={{ padding: '40px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>
@@ -432,7 +436,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               ))}
             </div>
 
-            {piscinas.map(p => (
+            {(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).map(p => (
               <div key={p.piscinaId} style={{ display: 'grid', gridTemplateColumns: COLS,
                     borderBottom: '0.5px solid #f1f6f9', alignItems: 'stretch' }}>
                 <div style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'white',
@@ -447,9 +451,11 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                   const ls = cel(p, f)
                   const edit = puedeEditar(f)
                   const abriendo = abierta === k
+                  const marca = !!filtroProd && ls.some(l => l.insumoId === filtroProd)
                   return (
                     <div key={f} style={{ padding: '7px 8px',
-                          background: situacionDia(f, hoy) === 'hoy' ? HOYB
+                          background: marca ? '#E1F5EE'
+                                    : situacionDia(f, hoy) === 'hoy' ? HOYB
                                     : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : 'white',
                           borderLeft: '0.5px solid #f6f9fb' }}>
                       {ls.map(l => (
