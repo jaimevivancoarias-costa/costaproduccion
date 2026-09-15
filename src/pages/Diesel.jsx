@@ -14,7 +14,7 @@ const VERDE = '#0F6E56'
 const AMBAR = '#BA7517'
 const ROJO = '#A32D2D'
 
-export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes }) {
+export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, onCambio }) {
   const domingo = sumarDias(lunes, 6)
   const [tipos, setTipos] = useState([])
   const [saldos, setSaldos] = useState({})       // tipo_id -> {ingresos, consumo, saldo}
@@ -67,7 +67,7 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes }) 
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
       setAviso({ tipo: 'ok', texto: 'Consumo registrado.' })
     }
-    setForm(null); await cargar()
+    setForm(null); await cargar(); onCambio && onCambio()
   }
 
   async function aprobar(id, ok) {
@@ -77,7 +77,7 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes }) 
       .eq('id', id)
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     setAviso({ tipo: 'ok', texto: ok ? 'Pedido aprobado.' : 'Pedido rechazado.' })
-    await cargar()
+    await cargar(); onCambio && onCambio()
   }
 
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
