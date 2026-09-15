@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento } from './DialogoEvento'
+import BuscadorAplicacion from './BuscadorAplicacion'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, miles,
@@ -896,6 +897,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           </span>
         </div>
       )}
+
+      <div style={{ padding: '0 1.4rem' }}>
+        <BuscadorAplicacion finca={finca} ambito="balanceado" opciones={productos}
+          onIrFecha={f => setLunes(lunesDe(f))} />
+      </div>
 
       {cargando ? (
         <Vacio>Cargando la semana...</Vacio>
