@@ -11,11 +11,10 @@ export default function FiltroProducto({ ambito, opciones, valor, onCambio, nPis
   const label = ambito === 'balanceado' ? 'balanceado' : 'insumo'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-      <span style={{ fontSize: '13px', color: GRIS }}>Ver solo piscinas que aplicaron un {label}:</span>
       <select value={valor} onChange={e => onCambio(e.target.value)}
         style={{ padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
-                 borderRadius: '9px', background: 'white', color: NAVY, minWidth: '220px' }}>
-        <option value="">Todas las piscinas</option>
+                 borderRadius: '9px', background: 'white', color: valor ? NAVY : GRIS, minWidth: '240px' }}>
+        <option value="">Filtrar por {label}…</option>
         {opciones.map(o => <option key={o.id} value={o.id}>{o.nombre}</option>)}
       </select>
       {valor && (
