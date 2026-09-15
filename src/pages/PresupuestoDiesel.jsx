@@ -17,8 +17,9 @@ const ROJO = '#A32D2D'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-export default function PresupuestoDiesel({ finca, esJefe }) {
+export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   const hoy = hoyISO()
+  const activas = (fincas || [finca]).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
   const [anio, setAnio] = useState(Number(hoy.slice(0, 4)))
   const [mes, setMes] = useState(Number(hoy.slice(5, 7)))
   const [tipos, setTipos] = useState([])
@@ -27,6 +28,8 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
   const [galones, setGalones] = useState({})  // tipo_id -> galones consumidos del mes
   const [precios, setPrecios] = useState({})  // tipo_id -> precio actual del galón (o null)
   const [cargando, setCargando] = useState(true)
+  const [bulk, setBulk] = useState(null)          // { modo, valores:{tipo_id: string} }
+  const [guardandoBulk, setGuardandoBulk] = useState(false)
   const [editando, setEditando] = useState(null)  // clave en edición
   const [editModo, setEditModo] = useState('gal') // 'gal' | 'usd'
   const [editGal, setEditGal] = useState('')      // galones en modo galones
@@ -97,6 +100,53 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
     setEditando(null); setNuevo(''); setAviso({ tipo: 'ok', texto: 'Presupuesto guardado.' }); await cargar()
   }
 
+  // Upsert de un presupuesto (finca + tipo + mes).
+  async function upsertUno(fincaId, tipoId, monto) {
+    let q = supabase.schema('produccion').from('presupuesto_diesel').select('id')
+      .eq('finca_id', fincaId).eq('anio', anio).eq('mes', mes).eq('tipo_id', tipoId)
+    const { data: ex } = await q.maybeSingle()
+    const fila = { finca_id: fincaId, tipo_id: tipoId, anio, mes, monto, actualizado_en: new Date().toISOString() }
+    return ex
+      ? supabase.schema('produccion').from('presupuesto_diesel').update(fila).eq('id', ex.id)
+      : supabase.schema('produccion').from('presupuesto_diesel').insert(fila)
+  }
+
+  // Fijar el presupuesto de todas las fincas de una vez.
+  async function guardarBulk() {
+    if (guardandoBulk) return
+    const hayValor = tipos.some(t => numDec(bulk.valores[t.id] || '') > 0)
+    if (!hayValor) { setAviso({ tipo: 'error', texto: 'Pon al menos un valor.' }); return }
+    setGuardandoBulk(true)
+    // Precio vigente por finca y tipo (para el modo galones).
+    const { data: pr } = await supabase.schema('produccion').from('diesel_precio')
+      .select('tipo_id, finca_id, precio_galon').is('vigente_hasta', null)
+    const pf = {}, pg = {}
+    ;(pr || []).forEach(r => {
+      if (r.finca_id) pf[r.finca_id + '|' + r.tipo_id] = Number(r.precio_galon)
+      else pg[r.tipo_id] = Number(r.precio_galon)
+    })
+    const precioDe = (fid, tid) => (pf[fid + '|' + tid] ?? pg[tid] ?? null)
+    let aplicadas = 0, sinPrecio = 0
+    for (const f of activas) {
+      for (const t of tipos) {
+        const raw = numDec(bulk.valores[t.id] || '')
+        if (!(raw > 0)) continue
+        let monto
+        if (bulk.modo === 'gal') {
+          const p = precioDe(f.id, t.id)
+          if (p == null) { sinPrecio++; continue }
+          monto = Math.round(raw * p * 100) / 100
+        } else monto = raw
+        const { error } = await upsertUno(f.id, t.id, monto)
+        if (error) { setGuardandoBulk(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + error.message }); return }
+        aplicadas++
+      }
+    }
+    setGuardandoBulk(false); setBulk(null)
+    setAviso({ tipo: 'ok', texto: `Presupuesto aplicado a ${activas.length} fincas.` + (sinPrecio ? ` (${sinPrecio} sin precio, se saltaron)` : '') })
+    await cargar()
+  }
+
   async function borrar(clave) {
     if (!window.confirm('¿Borrar este presupuesto del mes?')) return
     const tipoId = clave === 'global' ? null : clave
@@ -127,7 +177,47 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
         <select value={anio} onChange={e => setAnio(Number(e.target.value))} style={sel}>
           {[anio - 1, anio, anio + 1].map(a => <option key={a} value={a}>{a}</option>)}
         </select>
+        {esJefe && activas.length > 1 && !bulk && (
+          <button onClick={() => setBulk({ modo: 'gal', valores: {} })}
+            style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY, marginLeft: 'auto' }}>
+            Fijar para todas las fincas
+          </button>
+        )}
       </div>
+
+      {bulk && (
+        <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '10px' }}>Presupuesto de diesel para todas las fincas · {MESES[mes - 1]}</div>
+          <div style={{ display: 'inline-flex', background: '#eef3f7', borderRadius: '8px', padding: '3px', gap: '3px', marginBottom: '12px' }}>
+            {[['gal', 'En galones'], ['usd', 'En dólares']].map(([id, txt]) => (
+              <button key={id} onClick={() => setBulk(b => ({ ...b, modo: id }))} style={{ border: 0, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: '12px', padding: '5px 12px', borderRadius: '6px',
+                background: bulk.modo === id ? 'white' : 'transparent', color: bulk.modo === id ? AZUL : GRIS,
+                fontWeight: bulk.modo === id ? 500 : 400 }}>{txt}</button>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            {tipos.map(t => (
+              <div key={t.id}>
+                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '5px' }}>{t.nombre} · {bulk.modo === 'gal' ? 'galones' : '$'}</div>
+                <input inputMode="decimal" value={bulk.valores[t.id] || ''} placeholder={bulk.modo === 'gal' ? '450' : '2500'}
+                  onChange={e => setBulk(b => ({ ...b, valores: { ...b.valores, [t.id]: e.target.value } }))}
+                  style={{ ...sel, width: '120px', textAlign: 'right' }} />
+              </div>
+            ))}
+            <button onClick={guardarBulk} disabled={guardandoBulk}
+              style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoBulk ? 0.6 : 1 }}>
+              {guardandoBulk ? 'Aplicando...' : `Aplicar a ${activas.length} fincas`}
+            </button>
+            <button onClick={() => setBulk(null)} style={boton}>Cancelar</button>
+          </div>
+          <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>
+            {bulk.modo === 'gal'
+              ? 'En galones, cada finca calcula su $ con su propio precio del galón. Las fincas sin precio se saltan.'
+              : 'El mismo monto en $ para todas las fincas.'}
+          </div>
+        </div>
+      )}
 
       {aviso && (
         <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
