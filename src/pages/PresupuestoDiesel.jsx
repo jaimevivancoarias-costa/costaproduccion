@@ -25,9 +25,12 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
   const [montos, setMontos] = useState({})   // tipo_id -> monto
   const [gastos, setGastos] = useState({})    // tipo_id (+'global') -> $ gastado
   const [galones, setGalones] = useState({})  // tipo_id -> galones consumidos del mes
+  const [precios, setPrecios] = useState({})  // tipo_id -> precio actual del galón (o null)
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(null)  // clave en edición
-  const [nuevo, setNuevo] = useState('')
+  const [editModo, setEditModo] = useState('gal') // 'gal' | 'usd'
+  const [editGal, setEditGal] = useState('')      // galones en modo galones
+  const [nuevo, setNuevo] = useState('')          // monto $ en modo dólares
   const [aviso, setAviso] = useState(null)
 
   const cargar = useCallback(async () => {
@@ -58,14 +61,29 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
     const gal = {}
     ;(co || []).forEach(r => { gal[r.tipo_id] = (gal[r.tipo_id] || 0) + Number(r.galones) })
     setGalones(gal)
+    // Precio actual del galón por tipo (para fijar el presupuesto en galones).
+    const pr = await Promise.all(lista.map(t =>
+      supabase.schema('produccion').rpc('fn_precio_diesel', { p_tipo: t.id, p_finca: finca.id, p_fecha: hoyISO() })))
+    const pm = {}
+    lista.forEach((t, i) => { pm[t.id] = pr[i].data != null ? Number(pr[i].data) : null })
+    setPrecios(pm)
     setCargando(false)
   }, [finca.id, anio, mes])
 
   useEffect(() => { cargar() }, [cargar])
 
   async function guardar(clave) {
-    const v = numDec(nuevo)
-    if (!(v >= 0)) { setAviso({ tipo: 'error', texto: 'Monto no válido.' }); return }
+    const precio = precios[clave]
+    let v
+    if (editModo === 'gal') {
+      if (precio == null) { setAviso({ tipo: 'error', texto: 'Falta el precio del galón. Ponlo en Catálogo → Diesel.' }); return }
+      const g = numDec(editGal)
+      if (!(g >= 0)) { setAviso({ tipo: 'error', texto: 'Galones no válidos.' }); return }
+      v = Math.round(g * precio * 100) / 100
+    } else {
+      v = numDec(nuevo)
+      if (!(v >= 0)) { setAviso({ tipo: 'error', texto: 'Monto no válido.' }); return }
+    }
     const tipoId = clave === 'global' ? null : clave
     let q = supabase.schema('produccion').from('presupuesto_diesel').select('id')
       .eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes)
@@ -134,7 +152,13 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '10px' }}>
                   <span style={{ fontSize: '14px', fontWeight: 500, color: c.oscura ? 'white' : NAVY }}>{c.nombre}</span>
                   {esJefe && !enEdit && !c.global && (
-                    <button onClick={() => { setEditando(c.clave); setNuevo(monto != null ? String(monto) : '') }}
+                    <button onClick={() => {
+                      const pr = precios[c.clave]
+                      setEditando(c.clave)
+                      setEditModo(pr != null ? 'gal' : 'usd')
+                      setEditGal(pr != null && monto != null ? String(Math.round(monto / pr * 100) / 100) : '')
+                      setNuevo(monto != null ? String(monto) : '')
+                    }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                                fontSize: '12px', color: AZUL }}>
                       {monto != null ? 'Cambiar' : 'Fijar'}
@@ -145,16 +169,47 @@ export default function PresupuestoDiesel({ finca, esJefe }) {
 
                 {enEdit ? (
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
-                      <span style={{ fontSize: '16px', color: c.oscura ? 'white' : GRIS }}>$</span>
-                      <input inputMode="decimal" value={nuevo} placeholder="2500" autoFocus
-                        onChange={e => setNuevo(e.target.value)}
-                        style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
-                                 border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
+                    <div style={{ display: 'inline-flex', background: '#eef3f7', borderRadius: '8px', padding: '3px', gap: '3px', marginBottom: '10px' }}>
+                      {[['gal', 'En galones'], ['usd', 'En dólares']].map(([id, txt]) => (
+                        <button key={id} onClick={() => setEditModo(id)} style={{ border: 0, cursor: 'pointer', fontFamily: 'inherit',
+                          fontSize: '12px', padding: '5px 12px', borderRadius: '6px',
+                          background: editModo === id ? 'white' : 'transparent', color: editModo === id ? AZUL : GRIS,
+                          fontWeight: editModo === id ? 500 : 400 }}>{txt}</button>
+                      ))}
                     </div>
+
+                    {editModo === 'gal' ? (
+                      precios[c.clave] == null ? (
+                        <div style={{ fontSize: '13px', color: '#854F0B', background: '#FAEEDA', borderRadius: '9px', padding: '9px 11px', marginBottom: '10px' }}>
+                          Falta el precio del galón de {c.nombre} en esta finca. Ponlo en <b>Catálogo → Diesel</b> y vuelve.
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                            <input inputMode="decimal" value={editGal} placeholder="450" autoFocus
+                              onChange={e => setEditGal(e.target.value)}
+                              style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
+                                       border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
+                            <span style={{ fontSize: '13px', color: GRIS }}>gal → <b style={{ color: NAVY }}>{dinero((numDec(editGal) || 0) * precios[c.clave])}</b></span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '10px' }}>
+                            Precio actual: ${Number(precios[c.clave]).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 })} / gal
+                          </div>
+                        </>
+                      )
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
+                        <span style={{ fontSize: '16px', color: GRIS }}>$</span>
+                        <input inputMode="decimal" value={nuevo} placeholder="2500" autoFocus
+                          onChange={e => setNuevo(e.target.value)}
+                          style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
+                                   border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
+                      </div>
+                    )}
+
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button onClick={() => guardar(c.clave)} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL }}>Guardar</button>
-                      <button onClick={() => { setEditando(null); setNuevo('') }} style={boton}>Cancelar</button>
+                      <button onClick={() => { setEditando(null); setNuevo(''); setEditGal('') }} style={boton}>Cancelar</button>
                       {monto != null && <button onClick={() => borrar(c.clave)} style={{ ...boton, color: ROJO, borderColor: '#e8c9c9' }}>Borrar</button>}
                     </div>
                   </div>
