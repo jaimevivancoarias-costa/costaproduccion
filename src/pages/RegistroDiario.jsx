@@ -1063,6 +1063,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             onElegir={id => cambiarLaboratorio(p, id)} onNuevo={() => nuevoLaboratorio(p)} />
                         </div>
                       </div>
+                      {p.cicloId && <TransferenciaInfo cicloId={p.cicloId} />}
                       {editSiembra === p.piscinaId && (
                         <div style={{ marginTop: '10px' }}>
                           <EditorSiembra p={p} onGuardar={guardarSiembra} onCancelar={() => setEditSiembra(null)} />
@@ -1215,6 +1216,61 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             cerrada={semanaCerrada}
           />
         </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Detalle de transferencia (se carga al abrir la flechita): a dónde se
+// fue el camarón de este ciclo y con qué reparto, y de dónde vino.
+// ---------------------------------------------------------------------
+function TransferenciaInfo({ cicloId }) {
+  const [envio, setEnvio] = useState([])   // destinos a los que se transfirió
+  const [recibio, setRecibio] = useState([])  // de dónde vino
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      const [{ data: evs }, { data: dst }] = await Promise.all([
+        supabase.schema('produccion').from('evento')
+          .select('fecha, evento_destino ( porcentaje, cantidad, piscina:piscina_id ( nombre ) )')
+          .eq('ciclo_id', cicloId).eq('tipo', 'transferencia'),
+        supabase.schema('produccion').from('evento_destino')
+          .select('porcentaje, cantidad, evento:evento_id ( fecha, ciclo:ciclo_id ( piscina:piscina_origen_id ( nombre ) ) )')
+          .eq('ciclo_destino_id', cicloId),
+      ])
+      if (!vivo) return
+      const env = []
+      ;(evs || []).forEach(e => (e.evento_destino || []).forEach(d =>
+        env.push({ fecha: e.fecha, nombre: d.piscina?.nombre || '—', porc: d.porcentaje, cant: d.cantidad })))
+      setEnvio(env)
+      setRecibio((dst || []).map(d => ({
+        fecha: d.evento?.fecha, origen: d.evento?.ciclo?.piscina?.nombre || null,
+        porc: d.porcentaje, cant: d.cantidad })))
+    })()
+    return () => { vivo = false }
+  }, [cicloId])
+
+  if (!envio.length && !recibio.length) return null
+  const linea = { fontSize: '12px', color: NAVY, marginTop: '3px' }
+  return (
+    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #e8eef4' }}>
+      {recibio.map((r, i) => (
+        <div key={'r' + i} style={linea}>
+          <span style={{ color: '#3C3489', fontWeight: 500 }}>Recibió</span>{' '}
+          {r.origen ? <>desde <b>{r.origen}</b> </> : ''}
+          {r.fecha ? `el ${corta(r.fecha)} · ` : ''}
+          {r.cant != null ? `${miles(r.cant)} animales` : `${Math.round(r.porc)}%`}
+        </div>
+      ))}
+      {envio.length > 0 && (
+        <div style={linea}>
+          <span style={{ color: '#3C3489', fontWeight: 500 }}>Transferida</span>{' '}
+          {envio[0].fecha ? `el ${corta(envio[0].fecha)} a: ` : 'a: '}
+          {envio.map((e, i) => (
+            <span key={i}>{i > 0 ? ', ' : ''}{e.nombre} ({e.cant != null ? `${miles(e.cant)}` : `${Math.round(e.porc)}%`})</span>
+          ))}
+        </div>
       )}
     </div>
   )
