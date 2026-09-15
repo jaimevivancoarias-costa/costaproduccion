@@ -110,16 +110,25 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
           laboratorio_id: padre.laboratorio_id,
           ciclo_padre_id: cid,
           origen_porcentaje: d.porcentaje,
+          // Si vino de una precria, guarda cuantos animales (millones) entraron.
+          cantidad_larva: d.cantidad != null ? d.cantidad : null,
         }).select('id').single()
       if (eH) throw eH
       cicloDestino = hijo.id
       await supabase.schema('produccion').from('ciclo_piscina')
         .insert({ ciclo_id: cicloDestino, piscina_id: d.piscinaId, fecha_desde: fecha })
+    } else if (d.cantidad != null) {
+      // Se junto en una piscina que ya tenia camaron: sumar los animales.
+      const { data: cd } = await supabase.schema('produccion').from('ciclo')
+        .select('cantidad_larva').eq('id', cicloDestino).single()
+      await supabase.schema('produccion').from('ciclo')
+        .update({ cantidad_larva: (Number(cd?.cantidad_larva) || 0) + d.cantidad }).eq('id', cicloDestino)
     }
 
     await supabase.schema('produccion').from('evento_destino')
       .insert({ evento_id: ev.id, piscina_id: d.piscinaId,
-                porcentaje: d.porcentaje, ciclo_destino_id: cicloDestino })
+                porcentaje: d.porcentaje, cantidad: d.cantidad != null ? d.cantidad : null,
+                ciclo_destino_id: cicloDestino })
   }
 }
 
@@ -222,19 +231,29 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   // que invente un numero, y un numero inventado es peor que un vacio.
   const pideLibras = tipo === 'raleo' || tipo === 'cosecha'
 
-  // Para transferencia, destinos = [{ piscinaId, porcentaje }]. Al
-  // marcar o desmarcar una piscina se reparte el 100% en partes iguales;
-  // despues se puede ajustar a mano.
+  // Origen precria: se pasa el NUMERO real de animales (millones) a cada
+  // piscina, no un %. De ahi sale la sobrevivencia. Piscina->piscina va en %.
+  const esPrecria = objetivo?.tipo === 'precria'
+  const larvasSembradas = num(objetivo?.larva) || 0
+
+  // Para transferencia %, destinos = [{ piscinaId, porcentaje }]. Para
+  // precria, destinos = [{ piscinaId, cantidad }].
   const sumaPct = destinos.reduce((t, d) => t + (Number(d.porcentaje) || 0), 0)
   const pctOk = destinos.length > 0 && Math.abs(sumaPct - 100) < 0.01
+  const totalCant = destinos.reduce((t, d) => t + (num(d.cantidad) || 0), 0)
+  const cantOk = destinos.length > 0 && destinos.every(d => num(d.cantidad) > 0)
+  const sobrevivencia = esPrecria && larvasSembradas > 0 ? (totalCant / larvasSembradas) * 100 : null
 
   function toggleDestino(pid) {
     setDestinos(ds => {
       const existe = ds.some(d => d.piscinaId === pid)
+      if (esPrecria) {
+        // Sin reparto automatico: se escribe el numero real de cada una.
+        return existe ? ds.filter(d => d.piscinaId !== pid) : [...ds, { piscinaId: pid, cantidad: '' }]
+      }
       const base = existe ? ds.filter(d => d.piscinaId !== pid) : [...ds, { piscinaId: pid, porcentaje: 0 }]
       const n = base.length
       if (!n) return base
-      // Reparto en partes iguales, ajustando el ultimo para que sume 100.
       const cada = Math.floor((100 / n) * 100) / 100
       return base.map((d, i) => ({
         ...d, porcentaje: i === n - 1 ? Number((100 - cada * (n - 1)).toFixed(2)) : cada,
@@ -244,8 +263,11 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   function setPct(pid, valor) {
     setDestinos(ds => ds.map(d => d.piscinaId === pid ? { ...d, porcentaje: valor } : d))
   }
+  function setCant(pid, valor) {
+    setDestinos(ds => ds.map(d => d.piscinaId === pid ? { ...d, cantidad: valor } : d))
+  }
 
-  const listo = fecha && (tipo !== 'transferencia' || pctOk)
+  const listo = fecha && (tipo !== 'transferencia' || (esPrecria ? cantOk : pctOk))
 
   // Mismo comportamiento que en la columna del registro diario: si ya
   // existe escrito de otra forma, se usa el que esta en vez de crear un
@@ -269,9 +291,14 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
   async function enviar() {
     setEnviando(true)
+    // Precria: el % de costo sale del numero real de cada destino.
+    const dest = esPrecria
+      ? destinos.map(d => ({ piscinaId: d.piscinaId, cantidad: num(d.cantidad),
+                             porcentaje: totalCant > 0 ? (num(d.cantidad) / totalCant) * 100 : 0 }))
+      : destinos.map(d => ({ piscinaId: d.piscinaId, porcentaje: Number(d.porcentaje) || 0 }))
     await onGuardar({
       fecha, laboratorioId: lab || null, larva: num(larva), gramaje: num(gramaje),
-      libras: num(libras), destinos, observacion: obs,
+      libras: num(libras), destinos: dest, observacion: obs,
     })
     setEnviando(false)
   }
@@ -371,7 +398,40 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
               )}
             </Campo>
 
-            {destinos.length > 0 && (
+            {destinos.length > 0 && esPrecria && (
+              <Campo label="Cuántos animales van a cada una (millones)">
+                {destinos.map(d => {
+                  const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
+                  return (
+                    <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
+                      <span style={{ flex: 1, fontSize: '14px' }}>{nombre}</span>
+                      <input inputMode="decimal" value={d.cantidad} placeholder="ej. 0.45"
+                        onChange={e => setCant(d.piscinaId, e.target.value)}
+                        style={{ ...entrada, width: '100px', textAlign: 'right' }} />
+                      <span style={{ fontSize: '13px', color: GRIS, width: '48px' }}>millones</span>
+                    </div>
+                  )
+                })}
+                <div style={{ fontSize: '12px', color: GRIS, marginTop: '6px' }}>
+                  Pon lo que <b>realmente pasó</b> (no lo sembrado). El costo de la precría se
+                  reparte según el número de cada piscina, y los días siguen corriendo desde la siembra.
+                </div>
+                {larvasSembradas > 0 && totalCant > 0 && (
+                  <div style={{ fontSize: '13px', marginTop: '8px', padding: '8px 11px', borderRadius: '9px',
+                                background: '#E1F5EE', color: '#0F6E56' }}>
+                    Pasaron {Math.round(totalCant * 1000) / 1000} de {larvasSembradas} millones sembrados ·
+                    <b> sobrevivencia {Math.round(sobrevivencia * 10) / 10}%</b>
+                  </div>
+                )}
+                {larvasSembradas <= 0 && (
+                  <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '6px' }}>
+                    Esta precría no tiene larvas sembradas registradas, así que no se puede calcular sobrevivencia.
+                  </div>
+                )}
+              </Campo>
+            )}
+
+            {destinos.length > 0 && !esPrecria && (
               <Campo label="Cuánto va a cada una">
                 {destinos.map(d => {
                   const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
