@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, dineroExacto, numDec } from '../lib/fechas'
+import { hoyISO, corta, numDec } from '../lib/fechas'
+
+// Precio del galón con 6 decimales (así lo pidió el negocio).
+const precio6 = n => '$' + (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 })
 
 // Catálogo de diesel · precio por galón de cada tipo (B, Premium) por
 // finca, con fecha de vigencia. Se puede fijar para todas las fincas de
@@ -26,6 +29,7 @@ export default function CatalogoDiesel({ fincas }) {
   const [bulk, setBulk] = useState(null)        // { valores, desde }
   const [hist, setHist] = useState(null)        // fincaId con historial abierto
   const [histRows, setHistRows] = useState([])
+  const [guardando, setGuardando] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -43,13 +47,19 @@ export default function CatalogoDiesel({ fincas }) {
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Aplica los valores a una finca: cierra el vigente y abre el nuevo.
+  // Aplica los valores a una finca. Deja SIEMPRE una sola fila vigente:
+  // 1) si el precio no cambió, no hace nada;
+  // 2) borra cualquier vigente del mismo día o posterior (reemplazo);
+  // 3) cierra el anterior (fecha < desde) para guardar historial;
+  // 4) inserta el nuevo.
   async function aplicar(fincaId, valores, desde) {
     for (const t of tipos) {
       const raw = numDec(valores[t.id] || '')
       if (!(raw > 0)) continue
       const actual = precios[fincaId + '|' + t.id]
       if (actual && Math.abs(actual.precio - raw) < 0.00001) continue
+      await supabase.schema('produccion').from('diesel_precio')
+        .delete().eq('tipo_id', t.id).eq('finca_id', fincaId).is('vigente_hasta', null).gte('vigente_desde', desde)
       await supabase.schema('produccion').from('diesel_precio')
         .update({ vigente_hasta: sumarDias(desde, -1) })
         .eq('tipo_id', t.id).eq('finca_id', fincaId).is('vigente_hasta', null).lt('vigente_desde', desde)
@@ -66,19 +76,23 @@ export default function CatalogoDiesel({ fincas }) {
   }
 
   async function guardar() {
+    if (guardando) return
+    setGuardando(true)
     try { await aplicar(edit.fincaId, edit.valores, edit.desde || hoyISO()) }
-    catch (e) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e.message }); return }
-    setEdit(null); setAviso({ tipo: 'ok', texto: 'Precios guardados.' }); await cargar()
+    catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e.message }); return }
+    setGuardando(false); setEdit(null); setAviso({ tipo: 'ok', texto: 'Precios guardados.' }); await cargar()
   }
 
   async function guardarBulk() {
+    if (guardando) return
     const desde = bulk.desde || hoyISO()
     if (!tipos.some(t => numDec(bulk.valores[t.id] || '') > 0)) {
       setAviso({ tipo: 'error', texto: 'Pon al menos un precio.' }); return
     }
+    setGuardando(true)
     try { for (const f of activas) await aplicar(f.id, bulk.valores, desde) }
-    catch (e) { setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + e.message }); return }
-    setBulk(null); setAviso({ tipo: 'ok', texto: `Precios aplicados a ${activas.length} fincas.` }); await cargar()
+    catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + e.message }); return }
+    setGuardando(false); setBulk(null); setAviso({ tipo: 'ok', texto: `Precios aplicados a ${activas.length} fincas.` }); await cargar()
   }
 
   async function abrirHist(fincaId) {
@@ -101,7 +115,7 @@ export default function CatalogoDiesel({ fincas }) {
       )}
 
       {!cargando && !bulk && (
-        <div style={{ marginBottom: '12px' }}>
+        <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end' }}>
           <button onClick={() => { setEdit(null); setHist(null); setBulk({ valores: {}, desde: hoyISO() }) }}
             style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY }}>Fijar precio para todas las fincas</button>
         </div>
@@ -122,8 +136,9 @@ export default function CatalogoDiesel({ fincas }) {
               <input type="date" value={bulk.desde} max={hoyISO()}
                 onChange={e => setBulk(x => ({ ...x, desde: e.target.value }))} style={inp} />
             </Campo>
-            <button onClick={guardarBulk} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL }}>
-              Aplicar a {activas.length} fincas
+            <button onClick={guardarBulk} disabled={guardando}
+              style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>
+              {guardando ? 'Aplicando...' : `Aplicar a ${activas.length} fincas`}
             </button>
             <button onClick={() => setBulk(null)} style={boton}>Cancelar</button>
           </div>
@@ -140,7 +155,7 @@ export default function CatalogoDiesel({ fincas }) {
           <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '11px 16px',
                         borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb', fontSize: '12px', color: GRIS, alignItems: 'center' }}>
             <span>Finca</span>
-            {tipos.map(t => <span key={t.id} style={{ textAlign: 'right' }}>{t.nombre} · $/gal</span>)}
+            {tipos.map(t => <span key={t.id} style={{ textAlign: 'center' }}>{t.nombre} · $/gal</span>)}
             <span></span>
           </div>
           {activas.map(f => {
@@ -153,7 +168,7 @@ export default function CatalogoDiesel({ fincas }) {
                   <span style={{ fontWeight: 500 }}>{String(f.nombre).toUpperCase()}</span>
                   {tipos.map(t => {
                     const p = precios[f.id + '|' + t.id]
-                    return <span key={t.id} style={{ textAlign: 'right', color: p ? NAVY : '#c3d0db' }}>{p ? dineroExacto(p.precio) : '—'}</span>
+                    return <span key={t.id} style={{ textAlign: 'center', color: p ? NAVY : '#c3d0db' }}>{p ? precio6(p.precio) : '—'}</span>
                   })}
                   <span style={{ textAlign: 'right', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
                     <button onClick={() => abrirHist(f.id)} style={btnLink}>{enHist ? 'Ocultar' : 'Historial'}</button>
@@ -175,7 +190,8 @@ export default function CatalogoDiesel({ fincas }) {
                         <input type="date" value={edit.desde} max={hoyISO()}
                           onChange={e => setEdit(x => ({ ...x, desde: e.target.value }))} style={inp} />
                       </Campo>
-                      <button onClick={guardar} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL }}>Guardar</button>
+                      <button onClick={guardar} disabled={guardando}
+                        style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando...' : 'Guardar'}</button>
                       <button onClick={() => setEdit(null)} style={boton}>Cancelar</button>
                     </div>
                     <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
@@ -193,7 +209,7 @@ export default function CatalogoDiesel({ fincas }) {
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '5px 0', borderBottom: '0.5px solid #f1f6f9' }}>
                         <span>{nombreTipo(r.tipo_id)}</span>
                         <span style={{ color: GRIS }}>
-                          {dineroExacto(Number(r.precio_galon))} / gal · desde {corta(r.vigente_desde)}
+                          {precio6(Number(r.precio_galon))} / gal · desde {corta(r.vigente_desde)}
                           {r.vigente_hasta ? ` hasta ${corta(r.vigente_hasta)}` : ' · vigente'}
                         </span>
                       </div>
