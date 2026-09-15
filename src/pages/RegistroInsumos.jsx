@@ -4,6 +4,7 @@ import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, semanaISO, situacionDia, num, miles, dinero,
 } from '../lib/fechas'
+import BuscadorAplicacion from './BuscadorAplicacion'
 
 // Registro diario de insumos · modulo Produccion
 //
