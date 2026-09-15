@@ -9,6 +9,7 @@ import Costos from './pages/Costos'
 import Resumen from './pages/Resumen'
 import Inventario from './pages/Inventario'
 import InventarioBalanceado from './pages/InventarioBalanceado'
+import InventarioDiesel from './pages/InventarioDiesel'
 import Reportes from './pages/Reportes'
 import PresupuestoBarra from './pages/PresupuestoBarra'
 import Presupuesto from './pages/Presupuesto'
@@ -398,7 +399,7 @@ export default function App() {
           ) : modulo === 'inventario' ? (
             <div>
               <div style={{ display: 'flex', gap: '4px', padding: '14px 1.5rem 0' }}>
-                {[['insumos', 'Insumos'], ['balanceado', 'Balanceado']].map(([id, txt]) => (
+                {[['insumos', 'Insumos'], ['balanceado', 'Balanceado'], ['diesel', 'Diesel']].map(([id, txt]) => (
                   <button key={id} onClick={() => setPanelInv(id)} style={{
                     border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14px',
                     fontWeight: 500, padding: '9px 18px', borderRadius: '9px 9px 0 0',
@@ -410,7 +411,9 @@ export default function App() {
               </div>
               {panelInv === 'insumos'
                 ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
-                : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />}
+                : panelInv === 'balanceado'
+                ? <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
+                : <InventarioDiesel key={finca.id} finca={finca} esJefe={esJefe} />}
             </div>
           ) : modulo === 'diesel' ? (
             <Diesel key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} onCambio={cargarDiesel} />
