@@ -57,7 +57,7 @@ export default function CatalogoDiesel({ fincas }) {
       const raw = numDec(valores[t.id] || '')
       if (!(raw > 0)) continue
       const actual = precios[fincaId + '|' + t.id]
-      if (actual && Math.abs(actual.precio - raw) < 0.00001) continue
+      if (actual && Math.abs(actual.precio - raw) < 1e-9) continue
       await supabase.schema('produccion').from('diesel_precio')
         .delete().eq('tipo_id', t.id).eq('finca_id', fincaId).is('vigente_hasta', null).gte('vigente_desde', desde)
       await supabase.schema('produccion').from('diesel_precio')
