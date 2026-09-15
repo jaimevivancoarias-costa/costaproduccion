@@ -12,6 +12,7 @@ import InventarioBalanceado from './pages/InventarioBalanceado'
 import Reportes from './pages/Reportes'
 import PresupuestoBarra from './pages/PresupuestoBarra'
 import Presupuesto from './pages/Presupuesto'
+import PresupuestoDiesel from './pages/PresupuestoDiesel'
 import Diesel from './pages/Diesel'
 import Historial from './pages/Historial'
 import Catalogo from './pages/Catalogo'
@@ -67,6 +68,8 @@ export default function App() {
   const [verInsumos, setVerInsumos] = useState(false)
   // Inventario: insumos o balanceado.
   const [panelInv, setPanelInv] = useState('insumos')
+  // Presupuesto: insumos o diesel.
+  const [pptoTab, setPptoTab] = useState('insumos')
   // Menu lateral colapsado a solo iconos. Se recuerda entre recargas.
   const [navColapsado, setNavColapsado] = useState(() => {
     try { return localStorage.getItem('nav') === 'colapsado' } catch { return false }
@@ -324,17 +327,30 @@ export default function App() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {modulo === 'presupuesto' ? (
             <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+                {[['insumos', 'Insumos'], ['diesel', 'Diesel']].map(([id, txt]) => (
+                  <button key={id} onClick={() => setPptoTab(id)} style={{
+                    border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500,
+                    padding: '8px 16px', borderRadius: '9px',
+                    background: pptoTab === id ? '#E6F1FB' : 'transparent',
+                    color: pptoTab === id ? AZUL : GRIS }}>{txt}</button>
+                ))}
+              </div>
               <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 4px' }}>
-                Presupuesto de insumos
+                {pptoTab === 'diesel' ? 'Presupuesto de diesel' : 'Presupuesto de insumos'}
               </h2>
               <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 16px' }}>
                 {String(finca.nombre).toUpperCase()}. Se renueva cada mes: arranca de cero el día 1.
               </p>
-              <Presupuesto key={finca.id} finca={finca} esJefe={esJefe}
-                onIrReporte={id => {
-                  setFincaId(id); setVerInsumos(true); setModulo('reportes')
-                  const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
-                }} />
+              {pptoTab === 'diesel' ? (
+                <PresupuestoDiesel key={finca.id} finca={finca} esJefe={esJefe} />
+              ) : (
+                <Presupuesto key={finca.id} finca={finca} esJefe={esJefe}
+                  onIrReporte={id => {
+                    setFincaId(id); setVerInsumos(true); setModulo('reportes')
+                    const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
+                  }} />
+              )}
             </div>
           ) : modulo === 'resumen' ? (
             <Resumen
