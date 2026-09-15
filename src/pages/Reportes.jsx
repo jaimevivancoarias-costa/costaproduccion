@@ -41,7 +41,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [valor, setValor] = useState([])   // valorización de bodega
   const [valFinca, setValFinca] = useState(finca.id)   // finca del reporte de valorización ('todas' = todas)
   const [valFincas, setValFincas] = useState([])       // total por finca (gráfica, modo Todas)
-  const [valTipo, setValTipo] = useState('insumo')     // 'insumo' | 'balanceado'
+  const [valTipo, setValTipo] = useState('insumo')     // 'insumo' | 'balanceado' | 'diesel'
+  const [dslVal, setDslVal] = useState([])             // valorización de diesel [{tipo, saldo, precio, valor}]
   const [estado, setEstado] = useState([])             // estado / reponer
   const [estFinca, setEstFinca] = useState(finca.id)   // finca del reporte de estado ('todas' = todas)
   const [estTipo, setEstTipo] = useState('insumo')     // 'insumo' | 'balanceado'
@@ -110,9 +111,33 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // Al cambiar la finca global, los reportes "ahora" la siguen.
   useEffect(() => { setValFinca(finca.id); setEstFinca(finca.id) }, [finca.id])
 
+  // Valorización de diesel (saldo × precio). Por finca, o sumada por tipo.
+  useEffect(() => {
+    let vivo = true
+    if (valTipo !== 'diesel') { setDslVal([]); return }
+    ;(async () => {
+      const ids = valFinca === 'todas' ? (fincas || []).map(f => f.id) : [valFinca]
+      const res = await Promise.all(ids.map(id =>
+        supabase.schema('produccion').rpc('fn_reporte_valorizacion_diesel', { p_finca: id })))
+      const acc = {}
+      res.forEach(r => (r.data || []).forEach(x => {
+        const k = x.tipo
+        if (!acc[k]) acc[k] = { tipo: x.tipo, saldo: 0, valor: 0, precio: null, nPrecio: 0 }
+        acc[k].saldo += Number(x.saldo) || 0
+        acc[k].valor += Number(x.valor) || 0
+        if (x.precio != null) { acc[k].precio = Number(x.precio); acc[k].nPrecio++ }
+      }))
+      if (!vivo) return
+      // Con una sola finca el precio es único; en "todas" se oculta.
+      setDslVal(Object.values(acc).map(a => ({ ...a, precio: valFinca === 'todas' ? null : a.precio })))
+    })()
+    return () => { vivo = false }
+  }, [valFinca, valTipo, fincas])
+
   // Valorización: es "ahora". Por finca o sumada; insumos o balanceados.
   useEffect(() => {
     let vivo = true
+    if (valTipo === 'diesel') return
     const bal = valTipo === 'balanceado'
     if (valFinca === 'todas') {
       Promise.all([
@@ -275,7 +300,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       {kind === 'valorizacion' && (
         <ReporteValorizacion valor={valor} valFincas={valFincas} fincas={fincas}
                              fincaSel={valFinca} onFinca={setValFinca}
-                             tipo={valTipo} onTipo={setValTipo} />
+                             tipo={valTipo} onTipo={setValTipo} diesel={dslVal} esJefe={esJefe} />
       )}
 
       {kind === 'estado' && (
@@ -617,8 +642,10 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
 // ---------------------------------------------------------------------
 // Valorización de bodega: cuánto vale hoy el inventario, por insumo.
 // ---------------------------------------------------------------------
-function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo, onTipo }) {
+function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo, onTipo, diesel = [], esJefe }) {
   const esTodas = fincaSel === 'todas'
+  const dslTotal = diesel.reduce((t, d) => t + (Number(d.valor) || 0), 0)
+  const DGRID = esTodas ? '1.4fr 1fr 1fr' : '1.4fr 1fr 1fr 1fr'
   const etq = tipo === 'balanceado' ? 'Balanceado' : 'Insumo'
   const VGRID = esTodas ? '1fr 190px 150px' : '1fr 150px 120px 130px'
   const conValor = valor.filter(v => Number(v.valor) > 0 || Number(v.saldo) > 0)
@@ -636,6 +663,7 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
           <div style={{ display: 'flex', gap: '7px' }}>
             <Chip on={tipo === 'insumo'} onClick={() => onTipo('insumo')}>Insumos</Chip>
             <Chip on={tipo === 'balanceado'} onClick={() => onTipo('balanceado')}>Balanceados</Chip>
+            <Chip on={tipo === 'diesel'} onClick={() => onTipo('diesel')}>Diesel</Chip>
           </div>
         </div>
         {fincas && fincas.length > 1 && (
@@ -648,7 +676,36 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
           </div>
         )}
       </div>
-      {!conValor.length ? (
+      {tipo === 'diesel' ? (
+        diesel.every(d => (Number(d.saldo) || 0) === 0 && (Number(d.valor) || 0) === 0) ? (
+          <Caja><Centro>No hay diesel en bodega para valorizar.</Centro></Caja>
+        ) : (
+          <>
+          <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            <Kpi titulo="Valor del diesel" valor={dinero(dslTotal)} />
+            <Kpi titulo="Tipos con saldo" valor={String(diesel.filter(d => Number(d.saldo) > 0).length)} />
+          </div>
+          <Caja>
+            <div style={{ display: 'grid', gridTemplateColumns: DGRID, gap: '12px', padding: '11px 16px',
+                          fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+              <span>Diesel</span>
+              <span style={{ textAlign: 'right' }}>Saldo (gal)</span>
+              {!esTodas && <span style={{ textAlign: 'right' }}>Precio</span>}
+              <span style={{ textAlign: 'right' }}>Valor</span>
+            </div>
+            {diesel.map(d => (
+              <div key={d.tipo} style={{ display: 'grid', gridTemplateColumns: DGRID, gap: '12px', padding: '10px 16px',
+                      alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
+                <span>{d.tipo}</span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(d.saldo)}</span>
+                {!esTodas && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{d.precio != null ? '$' + Number(d.precio).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 }) : '—'}</span>}
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(d.valor)}</span>
+              </div>
+            ))}
+          </Caja>
+          </>
+        )
+      ) : !conValor.length ? (
         <Caja><Centro>No hay saldo en bodega para valorizar.</Centro></Caja>
       ) : (
       <>
