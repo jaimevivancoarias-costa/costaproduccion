@@ -399,16 +399,22 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
             </Campo>
 
             {destinos.length > 0 && esPrecria && (
-              <Campo label="Cuántos animales van a cada una (millones)">
+              <Campo label="Cuántos animales van a cada una">
+                {larvasSembradas > 0 && (
+                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
+                    En esta precría se sembraron <b>{larvasSembradas.toLocaleString('es-EC')}</b>. Pon el número real que pasó a cada piscina (mismo formato).
+                  </div>
+                )}
                 {destinos.map(d => {
                   const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
                   return (
                     <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
                       <span style={{ flex: 1, fontSize: '14px' }}>{nombre}</span>
-                      <input inputMode="decimal" value={d.cantidad} placeholder="ej. 0.45"
+                      <input inputMode="decimal" value={d.cantidad}
+                        placeholder={larvasSembradas > 0 ? String(Math.round(larvasSembradas * 0.9)) : 'número'}
                         onChange={e => setCant(d.piscinaId, e.target.value)}
-                        style={{ ...entrada, width: '100px', textAlign: 'right' }} />
-                      <span style={{ fontSize: '13px', color: GRIS, width: '48px' }}>millones</span>
+                        style={{ ...entrada, width: '150px', textAlign: 'right' }} />
+                      <span style={{ fontSize: '13px', color: GRIS, width: '52px' }}>animales</span>
                     </div>
                   )
                 })}
@@ -419,7 +425,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                 {larvasSembradas > 0 && totalCant > 0 && (
                   <div style={{ fontSize: '13px', marginTop: '8px', padding: '8px 11px', borderRadius: '9px',
                                 background: '#E1F5EE', color: '#0F6E56' }}>
-                    Pasaron {Math.round(totalCant * 1000) / 1000} de {larvasSembradas} millones sembrados ·
+                    Pasaron {Math.round(totalCant).toLocaleString('es-EC')} de {larvasSembradas.toLocaleString('es-EC')} sembrados ·
                     <b> sobrevivencia {Math.round(sobrevivencia * 10) / 10}%</b>
                   </div>
                 )}
