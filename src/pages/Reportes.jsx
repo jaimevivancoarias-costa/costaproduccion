@@ -56,6 +56,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
   const [todasFincas, setTodasFincas] = useState(false)
+  const [dslR, setDslR] = useState({ total: 0, tipos: [] })  // diesel del rango (finca individual)
+  const [verTodoR, setVerTodoR] = useState(false)            // incluir diesel en el total
   // Si se entra desde la barra de presupuesto, arranca en insumos.
   const [tipo, setTipo] = useState(enfoqueInsumos ? 'insumo' : 'todo')
   const [agrupar, setAgrupar] = useState('item') // 'item' | 'piscina' | 'finca'
@@ -85,6 +87,25 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   }, [finca.id, desde, hasta, todasFincas])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Diesel del rango (finca individual). En modo Todas se omite.
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      if (todasFincas) { setDslR({ total: 0, tipos: [] }); return }
+      const [{ data: tp }, { data: co }, { data: tot }] = await Promise.all([
+        supabase.schema('produccion').from('diesel_tipo').select('id, nombre').eq('activo', true).order('nombre'),
+        supabase.schema('produccion').from('diesel_consumo').select('tipo_id, galones').eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta),
+        supabase.schema('produccion').rpc('fn_gasto_diesel_periodo', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+      ])
+      const gal = {}; (co || []).forEach(r => { gal[r.tipo_id] = (gal[r.tipo_id] || 0) + Number(r.galones) })
+      const per = await Promise.all((tp || []).map(t =>
+        supabase.schema('produccion').rpc('fn_gasto_diesel_periodo', { p_finca: finca.id, p_desde: desde, p_hasta: hasta, p_tipo: t.id })))
+      if (!vivo) return
+      setDslR({ total: Number(tot) || 0, tipos: (tp || []).map((t, i) => ({ nombre: t.nombre, galones: gal[t.id] || 0, gasto: Number(per[i].data) || 0 })) })
+    })()
+    return () => { vivo = false }
+  }, [finca.id, todasFincas, desde, hasta])
 
   // Al cambiar la finca global, los reportes "ahora" la siguen.
   useEffect(() => { setValFinca(finca.id); setEstFinca(finca.id) }, [finca.id])
@@ -274,6 +295,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           <Chip on={tipo === 'todo'} onClick={() => setTipo('todo')}>Todo</Chip>
           <Chip on={tipo === 'balanceado'} onClick={() => setTipo('balanceado')}>Balanceado</Chip>
           <Chip on={tipo === 'insumo'} onClick={() => setTipo('insumo')}>Insumos</Chip>
+          {!todasFincas && <Chip on={tipo === 'diesel'} onClick={() => setTipo('diesel')}>Diesel</Chip>}
         </Grupo>
         <Grupo titulo="Agrupar por">
           <Chip on={agrupar === 'item'} onClick={() => setAgrupar('item')}>Producto</Chip>
@@ -286,14 +308,47 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       {!cargando && (
         <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
           {/* El gasto en dolares es solo del jefe. */}
-          {esJefe && <Kpi titulo="Gasto total del rango" valor={dinero(totalCosto)} />}
+          {esJefe && <Kpi titulo={verTodoR ? 'Gasto del rango (con diesel)' : 'Gasto total del rango'}
+                          valor={dinero(totalCosto + (verTodoR ? dslR.total : 0))} />}
+          {esJefe && !todasFincas && <Kpi titulo="Diesel del rango" valor={dinero(dslR.total)} />}
           <Kpi titulo={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'}
                valor={String(grupos.length)} />
           <Kpi titulo="Días" valor={String(dias(desde, hasta))} />
         </div>
       )}
 
-      {cargando ? (
+      {!cargando && esJefe && !todasFincas && (
+        <div style={{ marginBottom: '14px' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS, cursor: 'pointer' }}>
+            <input type="checkbox" checked={verTodoR} onChange={e => setVerTodoR(e.target.checked)} />
+            Ver todo junto (incluir diesel en el gasto total)
+          </label>
+        </div>
+      )}
+
+      {tipo === 'diesel' ? (
+        dslR.tipos.every(t => (t.galones || 0) === 0) ? (
+          <Caja><Centro>No hay consumo de diesel en este rango.</Centro></Caja>
+        ) : (
+          <Caja>
+            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '1.4fr 1fr 1fr' : '1.6fr 1fr', gap: '12px',
+                          padding: '11px 16px', fontSize: '12px', color: GRIS,
+                          borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+              <span>Diesel</span>
+              <span style={{ textAlign: 'right' }}>Galones</span>
+              {esJefe && <span style={{ textAlign: 'right' }}>Costo</span>}
+            </div>
+            {dslR.tipos.map(t => (
+              <div key={t.nombre} style={{ display: 'grid', gridTemplateColumns: esJefe ? '1.4fr 1fr 1fr' : '1.6fr 1fr', gap: '12px',
+                      padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
+                <span>{t.nombre} <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '6px' }}>diesel</span></span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(t.galones)} gal</span>
+                {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(t.gasto)}</span>}
+              </div>
+            ))}
+          </Caja>
+        )
+      ) : cargando ? (
         <Caja><Centro>Cargando...</Centro></Caja>
       ) : !grupos.length ? (
         <Caja><Centro>No hay consumo registrado en este rango.</Centro></Caja>
