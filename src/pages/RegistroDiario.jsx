@@ -60,6 +60,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const celdasOriginales = useRef({})
   // Saldo disponible por producto (en sacos), para no dejar consumir sin stock.
   const [saldoBal, setSaldoBal] = useState({})
+  // Filtro: ver solo piscinas/días donde se aplicó este producto.
+  const [filtroProd, setFiltroProd] = useState('')
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
@@ -734,9 +736,15 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     refs.current[`${iFila + 1}|${iDia}`]?.focus()
   }
 
-  const visibles = soloPendientes
+  // ¿La celda (o sus extras) tiene el producto del filtro?
+  const celTieneProd = (c, prod) => !!c && !c.sinAlimentacion &&
+    (c.productoId === prod || (c.extras || []).some(e => e.productoId === prod))
+  const piscTieneProd = (p) => fechas.some(f => celTieneProd(cel(p, f), filtroProd))
+
+  const visiblesBase = soloPendientes
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
+  const visibles = filtroProd ? visiblesBase.filter(piscTieneProd) : visiblesBase
 
   const COLS_BASE = '230px 150px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
@@ -850,7 +858,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
         <span style={{ ...chip, background: '#E6F1FB', borderColor: '#9cc4e8', color: AZUL, fontWeight: 500 }}>
           Alimentación
@@ -862,6 +870,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           color: verIndicadores ? AZUL : GRIS,
           fontWeight: verIndicadores ? 500 : 400,
         }}>Indicadores</button>
+        <div style={{ marginLeft: 'auto' }}>
+          <BuscadorAplicacion ambito="balanceado" opciones={productos}
+            valor={filtroProd} onCambio={setFiltroProd} nPisc={visibles.length} />
+        </div>
       </div>
 
       {aviso && (
@@ -898,9 +910,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       )}
 
-      <div style={{ padding: '0 1.4rem' }}>
-        <BuscadorAplicacion finca={finca} ambito="balanceado" opciones={productos}
-          onIrFecha={f => setLunes(lunesDe(f))} />
+      <div style={{ padding: '0 1.4rem 12px' }}>
+        <BuscadorAplicacion ambito="balanceado" opciones={productos}
+          valor={filtroProd} onCambio={setFiltroProd} nPisc={visibles.length} />
       </div>
 
       {cargando ? (
@@ -980,8 +992,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     </Td>
                     {fechas.map((f, j) => {
                       const falta = faltantesKeys.has(`${p.piscinaId}|${f}`)
+                      const marca = !!filtroProd && celTieneProd(cel(p, f), filtroProd)
                       return (
                       <Td key={f} fondo={falta ? '#FCEBC8'
+                                        : marca ? '#E1F5EE'
                                         : situacionDia(f, hoy) === 'hoy' ? HOYB
                                         : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : undefined}
                           borde={situacionDia(f, hoy) === 'hoy'}>
