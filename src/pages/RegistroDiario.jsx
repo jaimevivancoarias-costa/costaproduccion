@@ -910,11 +910,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         </div>
       )}
 
-      <div style={{ padding: '0 1.4rem 12px' }}>
-        <BuscadorAplicacion ambito="balanceado" opciones={productos}
-          valor={filtroProd} onCambio={setFiltroProd} nPisc={visibles.length} />
-      </div>
-
       {cargando ? (
         <Vacio>Cargando la semana...</Vacio>
       ) : !piscinas.length ? (
