@@ -31,10 +31,10 @@ const MODULOS = [
   { id: 'presupuesto', nombre: 'Presupuesto',    icono: 'moneda' },
   { id: 'resumen',    nombre: 'Resumen',        icono: 'grid', soloJefe: true },
   { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
+  { id: 'diesel',     nombre: 'Diesel',         icono: 'bidon' },
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
-  { id: 'diesel',     nombre: 'Diesel',         icono: 'gota' },
-  { id: 'catalogo',   nombre: 'Catálogo',       icono: 'caja', soloJefe: true },
+  { id: 'catalogo',   nombre: 'Catálogo',       icono: 'etiqueta', soloJefe: true },
   { id: 'costos',     nombre: 'Costos',         icono: 'moneda', soloJefe: true },
   { id: 'reportes',   nombre: 'Reportes',       icono: 'barras', soloJefe: true },
   // El historial es la bitacora de cambios: herramienta de supervision.
@@ -50,6 +50,8 @@ function Icono({ tipo }) {
   if (tipo === 'caja') return <svg {...p}><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3 6-3M8 8v6"/></svg>
   if (tipo === 'moneda') return <svg {...p}><circle cx="8" cy="8" r="6"/><path d="M8 4.5v7M6 6.5h3M6 9.5h3"/></svg>
   if (tipo === 'gota') return <svg {...p}><path d="M8 2s4 4.5 4 7.5A4 4 0 0 1 4 9.5C4 6.5 8 2 8 2z"/></svg>
+  if (tipo === 'bidon') return <svg {...p}><path d="M5 6h6a1.3 1.3 0 0 1 1.3 1.3v5.1A1.3 1.3 0 0 1 11 13.7H5A1.3 1.3 0 0 1 3.7 12.4V7.3z"/><path d="M4 6.3 2.4 4.7M7 4.6h3.2"/><path d="M8 8.4c0 0-1.2 1.4-1.2 2.3a1.2 1.2 0 0 0 2.4 0c0-.9-1.2-2.3-1.2-2.3z"/></svg>
+  if (tipo === 'etiqueta') return <svg {...p}><path d="M7.7 2.2H3.2v4.5l6.1 6.1 4.5-4.5z"/><circle cx="5.4" cy="5.4" r="0.8"/></svg>
   return <svg {...p}><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
 }
 
