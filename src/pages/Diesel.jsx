@@ -35,7 +35,9 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     const [{ data: u }, { data: tp }, { data: sal }, { data: pe }, { data: co }, { data: sc }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: domingo }),
+      // "Saldo actual" = hoy (o el fin de la semana vista si es futura), no
+      // el domingo de una semana pasada.
+      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: (domingo > hoyISO() ? domingo : hoyISO()) }),
       supabase.schema('produccion').from('diesel_pedido')
         .select('id, tipo_id, galones, fecha, estado').eq('finca_id', finca.id)
         .gte('fecha', lunes).lte('fecha', domingo).order('solicitado_en', { ascending: false }),
