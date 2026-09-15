@@ -410,6 +410,9 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
       </div>
 
+      <BuscadorAplicacion finca={finca} ambito="insumos" opciones={insumos}
+        onIrFecha={f => setLunes(lunesDe(f))} />
+
       {cargando ? (
         <div style={{ padding: '40px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>
           Cargando la semana...
