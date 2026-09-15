@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec, dinero, dineroExacto } from '../lib/fechas'
+import CatalogoDiesel from './CatalogoDiesel'
 
 // Catálogo · maestro de productos + detalle por finca.
 //
@@ -237,24 +238,30 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       </p>
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-        {[['insumos', 'Insumos'], ['balanceados', 'Balanceados']].map(([id, txt]) => (
+        {[['insumos', 'Insumos'], ['balanceados', 'Balanceados'], ['diesel', 'Diesel']].map(([id, txt]) => (
           <button key={id} onClick={() => { setTab(id); setAbierto(null); setNuevo(false); setBusqCat('') }} style={{
             padding: '8px 16px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer',
             border: '0.5px solid ' + (tab === id ? '#9cc4e8' : BORDE), background: tab === id ? '#E6F1FB' : 'white',
             color: tab === id ? AZUL : NAVY, fontWeight: tab === id ? 500 : 400 }}>{txt}</button>
         ))}
-        <select value={busqCat} onChange={e => setBusqCat(e.target.value)}
-                style={{ padding: '8px 12px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
-                         borderRadius: '9px', background: 'white', minWidth: '220px', marginLeft: esJefeGlobal ? '0' : 'auto' }}>
-          <option value="">Todos los {tab === 'insumos' ? 'insumos' : 'balanceados'}</option>
-          {(tab === 'insumos' ? insumos : productos).map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
-        </select>
-        {esJefeGlobal && (
+        {tab !== 'diesel' && (
+          <select value={busqCat} onChange={e => setBusqCat(e.target.value)}
+                  style={{ padding: '8px 12px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
+                           borderRadius: '9px', background: 'white', minWidth: '220px', marginLeft: esJefeGlobal ? '0' : 'auto' }}>
+            <option value="">Todos los {tab === 'insumos' ? 'insumos' : 'balanceados'}</option>
+            {(tab === 'insumos' ? insumos : productos).map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
+          </select>
+        )}
+        {esJefeGlobal && tab !== 'diesel' && (
           <button onClick={() => { setNuevo(true); setAviso(null) }} style={{ ...btn, marginLeft: 'auto' }}>
             + Agregar {tab === 'insumos' ? 'Insumo' : 'Balanceado'}
           </button>
         )}
       </div>
+
+      {tab === 'diesel' ? (
+        <CatalogoDiesel fincas={fincas} />
+      ) : (<>
 
       {aviso && (
         <div style={{ borderRadius: '9px', padding: '10px 13px', fontSize: '13px', marginBottom: '12px',
@@ -599,6 +606,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
           {lista.length === 0 && <div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Nada en el catálogo todavía.</div>}
         </div>
       )}
+      </>)}
     </div>
   )
 }
