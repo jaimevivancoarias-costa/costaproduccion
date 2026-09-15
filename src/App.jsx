@@ -12,6 +12,7 @@ import InventarioBalanceado from './pages/InventarioBalanceado'
 import Reportes from './pages/Reportes'
 import PresupuestoBarra from './pages/PresupuestoBarra'
 import Presupuesto from './pages/Presupuesto'
+import Diesel from './pages/Diesel'
 import Historial from './pages/Historial'
 import Catalogo from './pages/Catalogo'
 import EnConstruccion from './pages/EnConstruccion'
@@ -32,6 +33,7 @@ const MODULOS = [
   { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
   { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
   { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
+  { id: 'diesel',     nombre: 'Diesel',         icono: 'gota' },
   { id: 'catalogo',   nombre: 'Catálogo',       icono: 'caja', soloJefe: true },
   { id: 'costos',     nombre: 'Costos',         icono: 'moneda', soloJefe: true },
   { id: 'reportes',   nombre: 'Reportes',       icono: 'barras', soloJefe: true },
@@ -47,6 +49,7 @@ function Icono({ tipo }) {
   if (tipo === 'barras') return <svg {...p}><path d="M3 13V7M8 13V3M13 13v-4"/></svg>
   if (tipo === 'caja') return <svg {...p}><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3 6-3M8 8v6"/></svg>
   if (tipo === 'moneda') return <svg {...p}><circle cx="8" cy="8" r="6"/><path d="M8 4.5v7M6 6.5h3M6 9.5h3"/></svg>
+  if (tipo === 'gota') return <svg {...p}><path d="M8 2s4 4.5 4 7.5A4 4 0 0 1 4 9.5C4 6.5 8 2 8 2z"/></svg>
   return <svg {...p}><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>
 }
 
@@ -371,6 +374,8 @@ export default function App() {
                 ? <Inventario key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
                 : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />}
             </div>
+          ) : modulo === 'diesel' ? (
+            <Diesel key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} />
           ) : modulo === 'catalogo' ? (
             <Catalogo key={catNonce} esJefe={esJefe} esJefeGlobal={esJefeGlobal} fincas={fincas} tabInicial={catTab} />
           ) : modulo === 'reportes' ? (
