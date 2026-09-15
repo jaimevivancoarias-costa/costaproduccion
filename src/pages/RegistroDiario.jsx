@@ -973,6 +973,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           <div style={{ fontSize: '11px', color: GRIS }}>
                             {p.hectareas.toFixed(2)} ha{p.tipo === 'precria' ? ' · precría' : ''}
                             {p.fechaSiembra ? ` · ${diasCultivo(p.fechaSiembra, corteDias)} días` : ''}
+                            {p.fechaSiembra && p.fechaOcupacion && p.fechaOcupacion !== p.fechaSiembra
+                              ? ` · ${diasCultivo(p.fechaSiembra, corteDias) - diasCultivo(p.fechaOcupacion, corteDias)} en precría` : ''}
                           </div>
                         </div>
                       </div>
