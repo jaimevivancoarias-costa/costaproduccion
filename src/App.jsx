@@ -341,7 +341,7 @@ export default function App() {
                 {String(finca.nombre).toUpperCase()}. Se renueva cada mes: arranca de cero el día 1.
               </p>
               {pptoTab === 'diesel' ? (
-                <PresupuestoDiesel key={finca.id} finca={finca} esJefe={esJefe} />
+                <PresupuestoDiesel key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} />
               ) : (
                 <Presupuesto key={finca.id} finca={finca} esJefe={esJefe}
                   onIrReporte={id => {
