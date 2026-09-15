@@ -106,6 +106,7 @@ export default function App() {
   // una y volver a navegar, el aviso se actualiza.
   const [corrPend, setCorrPend] = useState([])
   const [reponer, setReponer] = useState([])
+  const [dieselPend, setDieselPend] = useState([])
   const [pedirIngresos, setPedirIngresos] = useState(0)
   const [pedirPrecios, setPedirPrecios] = useState(0)
   const [catTab, setCatTab] = useState('insumos')
@@ -143,6 +144,21 @@ export default function App() {
     setReponer(rep || [])
   }, [esJefe])
   useEffect(() => { cargarReponer() }, [cargarReponer])
+
+  // Pedidos de diesel pendientes de aprobación (para la campana del jefe).
+  const cargarDiesel = useCallback(async () => {
+    if (!esJefe) { setDieselPend([]); return }
+    const { data } = await supabase.schema('produccion').from('diesel_pedido')
+      .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+    const g = {}
+    ;(data || []).forEach(r => {
+      const k = r.finca_id
+      g[k] = g[k] || { finca_id: r.finca_id, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0 }
+      g[k].n++
+    })
+    setDieselPend(Object.values(g))
+  }, [esJefe])
+  useEffect(() => { cargarDiesel() }, [cargarDiesel, modulo, fincaId])
 
   function irACorreccion(c) {
     setFincaId(c.finca_id)
@@ -237,7 +253,9 @@ export default function App() {
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          {esJefe && <Campana corrPend={corrPend} reponer={reponer} onIr={irACorreccion} onIrReponer={id => { setFincaId(id); setModulo('inventario') }} />}
+          {esJefe && <Campana corrPend={corrPend} reponer={reponer} dieselPend={dieselPend} onIr={irACorreccion}
+                       onIrReponer={id => { setFincaId(id); setModulo('inventario') }}
+                       onIrDiesel={d => { setFincaId(d.finca_id); if (d.zona) setZona(d.zona); setModulo('diesel') }} />}
           <a href={HUB_URL} style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>Portal</a>
           <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.75)' }}>{nombre || user.email}</span>
           <button onClick={logout} style={{ background: 'none', border: 'none', cursor: 'pointer',
@@ -375,7 +393,7 @@ export default function App() {
                 : <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />}
             </div>
           ) : modulo === 'diesel' ? (
-            <Diesel key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} />
+            <Diesel key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} onCambio={cargarDiesel} />
           ) : modulo === 'catalogo' ? (
             <Catalogo key={catNonce} esJefe={esJefe} esJefeGlobal={esJefeGlobal} fincas={fincas} tabInicial={catTab} />
           ) : modulo === 'reportes' ? (
@@ -392,9 +410,10 @@ export default function App() {
 }
 
 // Campana de correcciones por aprobar (estilo notificaciones).
-function Campana({ corrPend, reponer = [], onIr, onIrReponer }) {
+function Campana({ corrPend, reponer = [], dieselPend = [], onIr, onIrReponer, onIrDiesel }) {
   const [abierto, setAbierto] = useState(false)
-  const total = corrPend.reduce((t, c) => t + c.n, 0) + reponer.length
+  const totalDiesel = dieselPend.reduce((t, d) => t + d.n, 0)
+  const total = corrPend.reduce((t, c) => t + c.n, 0) + reponer.length + totalDiesel
   return (
     <div style={{ position: 'relative' }}>
       <button onClick={() => setAbierto(a => !a)} title="Correcciones por aprobar"
@@ -467,6 +486,29 @@ function Campana({ corrPend, reponer = [], onIr, onIrReponer }) {
                     </button>
                   )
                 })}
+              </>
+            )}
+            {dieselPend.length > 0 && (
+              <>
+                <div style={{ padding: '10px 15px 6px', fontSize: '11px', fontWeight: 600, letterSpacing: '.04em',
+                              textTransform: 'uppercase', color: '#854F0B', background: '#FDF7EC',
+                              borderTop: '0.5px solid #eef3f7' }}>Diesel por aprobar ({totalDiesel})</div>
+                {dieselPend.map((d, i) => (
+                  <button key={'d' + i} onClick={() => { setAbierto(false); onIrDiesel && onIrDiesel(d) }}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                             gap: '10px', padding: '11px 15px', background: 'white', border: 'none',
+                             borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                    <span>
+                      <span style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: NAVY }}>{String(d.nombre).toUpperCase()}</span>
+                      <span style={{ display: 'block', fontSize: '11px', color: '#7d8fa0' }}>Pedido de diesel</span>
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ background: '#FAEEDA', color: '#854F0B', borderRadius: '20px',
+                                     fontSize: '11px', fontWeight: 500, padding: '2px 9px' }}>{d.n}</span>
+                      <span style={{ fontSize: '12px', color: '#0D6CB0', fontWeight: 500 }}>Ver</span>
+                    </span>
+                  </button>
+                ))}
               </>
             )}
           </div>
