@@ -150,10 +150,15 @@ export default function App() {
   // Pedidos de diesel pendientes de aprobación (para la campana del jefe).
   const cargarDiesel = useCallback(async () => {
     if (!esJefe) { setDieselPend([]); return }
-    const { data } = await supabase.schema('produccion').from('diesel_pedido')
-      .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente')
+    const [{ data: ped }, { data: corr }] = await Promise.all([
+      supabase.schema('produccion').from('diesel_pedido')
+        .select('finca_id, finca:finca_id (nombre, zona)').eq('estado', 'pendiente'),
+      supabase.schema('produccion').from('solicitud_correccion')
+        .select('finca_id, finca:finca_id (nombre, zona)')
+        .in('tabla', ['diesel_pedido', 'diesel_consumo']).eq('estado', 'pendiente'),
+    ])
     const g = {}
-    ;(data || []).forEach(r => {
+    ;[...(ped || []), ...(corr || [])].forEach(r => {
       const k = r.finca_id
       g[k] = g[k] || { finca_id: r.finca_id, nombre: r.finca?.nombre || '', zona: r.finca?.zona, n: 0 }
       g[k].n++
@@ -502,7 +507,7 @@ function Campana({ corrPend, reponer = [], dieselPend = [], onIr, onIrReponer, o
                              borderBottom: '0.5px solid #f1f6f9', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
                     <span>
                       <span style={{ display: 'block', fontSize: '13px', fontWeight: 500, color: NAVY }}>{String(d.nombre).toUpperCase()}</span>
-                      <span style={{ display: 'block', fontSize: '11px', color: '#7d8fa0' }}>Pedido de diesel</span>
+                      <span style={{ display: 'block', fontSize: '11px', color: '#7d8fa0' }}>Diesel: pedidos y correcciones</span>
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{ background: '#FAEEDA', color: '#854F0B', borderRadius: '20px',
