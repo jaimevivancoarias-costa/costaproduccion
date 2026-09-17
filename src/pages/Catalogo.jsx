@@ -1352,15 +1352,22 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         convertidas.add(fila.finca_id)
       }
 
-      // 1) Unidades/mínimos: un solo upsert en bloque. Las fincas que se
-      //    acaban de convertir arriba ya tienen su unidad/factor correctos por
-      //    la función; a esas solo se les toca el mínimo/objetivo para no pisar
-      //    la conversión.
-      const filasUpsert = filas.map(fl => convertidas.has(fl.finca_id)
-        ? { insumo_id: fl.insumo_id, finca_id: fl.finca_id, stock_minimo: fl.stock_minimo, stock_objetivo: fl.stock_objetivo }
-        : fl)
-      const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filasUpsert, { onConflict: 'insumo_id,finca_id' })
-      if (e1) throw e1
+      // 1) Unidades/mínimos. Las fincas que se acaban de convertir arriba ya
+      //    tienen su unidad/factor correctos por la función: a esas NO se les
+      //    reescribe la fila (para no pisar la conversión ni mandar unidad
+      //    nula), solo se les actualiza el mínimo/objetivo aparte.
+      const filasUpsert = filas.filter(fl => !convertidas.has(fl.finca_id))
+      if (filasUpsert.length) {
+        const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filasUpsert, { onConflict: 'insumo_id,finca_id' })
+        if (e1) throw e1
+      }
+      for (const fl of filas) {
+        if (!convertidas.has(fl.finca_id)) continue
+        const { error: eS } = await supabase.schema('produccion').from('insumo_finca')
+          .update({ stock_minimo: fl.stock_minimo, stock_objetivo: fl.stock_objetivo })
+          .eq('insumo_id', fl.insumo_id).eq('finca_id', fl.finca_id)
+        if (eS) throw eS
+      }
 
       // 1b) Densidad del producto (para el puente peso<->volumen). Global.
       if (densD != null && densD > 0 && densD !== Number(insumo.densidad)) {
