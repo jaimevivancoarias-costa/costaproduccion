@@ -1212,7 +1212,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             // Un bodeguero puede firmar los dias sueltos de su semana.
             // Firmar hacia atras una semana pasada es cosa del jefe.
             puedeFirmarDias={!soloLectura && !semanaCerrada && (esJefe || semanaDeHoy)}
-            puedeCerrar={esJefe && !semanaCerrada}
+            puedeCerrar={(esJefe || semanaDeHoy) && !semanaCerrada}
             cerrada={semanaCerrada}
           />
         </>
