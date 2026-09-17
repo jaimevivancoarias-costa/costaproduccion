@@ -97,6 +97,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [editando, setEditando] = useState(null)
   const [nuevoSaldo, setNuevoSaldo] = useState('')
   const [motivo, setMotivo] = useState('')
+  const [fechaAj, setFechaAj] = useState('')
   const [guardandoAj, setGuardandoAj] = useState(false)
 
   const cargar = useCallback(async () => {
@@ -247,6 +248,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setEditando(f.insumo_id)
     setNuevoSaldo(limpio(f.saldo))
     setMotivo('')
+    setFechaAj(alDia)
     setAviso(null)
   }
 
@@ -262,10 +264,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     if (!motivo.trim()) {
       setAviso({ tipo: 'error', texto: 'La corrección necesita un motivo.' }); return
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fechaAj || '')) {
+      setAviso({ tipo: 'error', texto: 'Pon la fecha del descuadre (AAAA-MM-DD).' }); return
+    }
 
     setGuardandoAj(true)
     const { error } = await supabase.schema('produccion').from('ajuste_insumo')
-      .insert({ finca_id: finca.id, fecha: alDia, insumo_id: f.insumo_id,
+      .insert({ finca_id: finca.id, fecha: fechaAj, insumo_id: f.insumo_id,
                 cantidad: delta, motivo: motivo.trim() })
     setGuardandoAj(false)
     if (error) {
@@ -932,6 +937,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       onChange={e => setMotivo(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && guardarCorreccion(f)}
                       style={{ ...entrada, flex: 1, minWidth: '240px' }} />
+                    <label style={{ fontSize: '12px', color: GRIS, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      Fecha
+                      <input type="date" value={fechaAj} max={hoyISO()}
+                        onChange={e => setFechaAj(e.target.value)}
+                        title="Día en que ocurrió el descuadre, no siempre hoy"
+                        style={{ ...entrada, width: '150px' }} />
+                    </label>
                     <Btn onClick={() => setEditando(null)}>Cancelar</Btn>
                     <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoAj}>
                       {guardandoAj ? 'Guardando...' : 'Guardar corrección'}
