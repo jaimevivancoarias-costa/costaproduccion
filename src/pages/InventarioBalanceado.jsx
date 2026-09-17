@@ -102,7 +102,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   useEffect(() => { cargar() }, [cargar])
 
   const primeraVez = tomas.length === 0
-  const valorBodega = useMemo(() => Object.values(valorFifo).reduce((t, v) => t + (Number(v) || 0), 0), [valorFifo])
+  // Valor a PRECIO ACTUAL (saldo × precio vigente): al cambiar el precio, el
+  // valor de la bodega se actualiza enseguida.
+  const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(s.saldo || 0) * Number(precios[s.producto_id] || 0), 0), [saldos, precios])
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
@@ -438,7 +440,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></Cel>
                     {esJefe && <Cel der gris>{f.precio ? dineroExacto(f.precio) : 'sin precio'}</Cel>}
-                    {esJefe && <Cel der>{dinero(valorFifo[f.producto_id] || 0)}</Cel>}
+                    {esJefe && <Cel der>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && <button onClick={() => corregir(f)} style={{ ...btn, padding: '5px 11px', fontSize: '12px', color: GRIS }}>Corregir</button>}
                     </div>}
@@ -451,7 +453,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           <span>{PLAZO_LBL[d.plazo]}</span>
                           <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
                             <span>{limpio(d.cantidad)} sacos</span>
-                            {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(d.valor)}</span>}
+                            {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(Number(d.cantidad || 0) * Number(f.precio || 0))}</span>}
                           </span>
                         </div>
                       ))}
@@ -459,7 +461,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <span>Total</span>
                         <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
                           <span>{limpio(f.saldo)} sacos</span>
-                          {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(valorFifo[f.producto_id] || 0)}</span>}
+                          {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</span>}
                         </span>
                       </div>
                     </div>
