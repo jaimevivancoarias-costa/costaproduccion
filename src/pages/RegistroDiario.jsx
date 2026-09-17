@@ -642,6 +642,17 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     await revisarSemana()
   }
 
+  // Cerrar un solo día (seleccionable), para no confundir con el "todos".
+  async function cerrarUnDia(fecha) {
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha, ambito: 'balanceado', estado: 'cerrado', cerrado_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    setAviso({ tipo: 'ok', texto: `${nombreDia(fecha)} cerrado` })
+    await cargar(true)
+    await revisarSemana()
+  }
+
   // El laboratorio se puede poner o corregir despues de la siembra. En
   // la practica el bodeguero no siempre lo sabe el dia que entra la
   // larva, y obligarlo a elegir uno en ese momento solo garantiza que
@@ -1199,20 +1210,38 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             />
           )}
 
+          {/* Cerrar días de la semana: panel aparte, arriba del cierre de
+              semana. Se puede cerrar día por día o todos de una vez. */}
+          {!soloLectura && !semanaCerrada && (() => {
+            const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+                                             && f !== hoy && situacionDia(f, hoy) !== 'futuro')
+            if (!faltan.length) return null
+            return (
+              <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                            padding: '14px 18px', marginTop: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                              gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <div style={{ fontSize: '15px', fontWeight: 500 }}>Cerrar días de la semana</div>
+                  <Btn onClick={cerrarDiasPendientes}>Cerrar todos ({faltan.length})</Btn>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {faltan.map(f => (
+                    <button key={f} onClick={() => cerrarUnDia(f)}
+                      style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                               padding: '7px 12px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }}>
+                      Cerrar {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
+
           <Cierre
             validaciones={validaciones}
             onRevisar={revisarSemana}
             onCerrar={cerrarSemana}
-            onCerrarDias={cerrarDiasPendientes}
-            // El dia de hoy no cuenta aqui: para eso esta "Cerrar dia".
-            diasPendientesLista={fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
-                                               && f !== hoy
-                                               && situacionDia(f, hoy) !== 'futuro')
-                                       .map(f => `${nombreDia(f).slice(0,3)} ${corta(f).slice(0,5)}`)}
-            // Un bodeguero puede firmar los dias sueltos de su semana.
-            // Firmar hacia atras una semana pasada es cosa del jefe.
-            puedeFirmarDias={!soloLectura && !semanaCerrada && (esJefe || semanaDeHoy)}
-            puedeCerrar={(esJefe || semanaDeHoy) && !semanaCerrada}
+            puedeCerrar={!semanaCerrada && !soloLectura}
             cerrada={semanaCerrada}
           />
         </>
@@ -1518,9 +1547,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer }) {
 // ---------------------------------------------------------------------
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendientesLista = [],
-                  puedeFirmarDias, puedeCerrar, cerrada }) {
-  const diasPendientes = diasPendientesLista.length
+function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
@@ -1556,22 +1583,8 @@ function Cierre({ validaciones, onRevisar, onCerrar, onCerrarDias, diasPendiente
           ))}
           <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center',
                         gap: '9px', marginTop: '14px', flexWrap: 'wrap' }}>
-            {/* V5 pide la firma de los siete dias. En una semana pasada
-                no hay boton de "Cerrar dia", asi que el jefe los firma
-                aqui. Solo aparece cuando de verdad falta alguno. */}
-            {puedeFirmarDias && diasPendientes > 0 && (
-              <>
-                <span style={{ fontSize: '12px', color: GRIS, marginRight: 'auto' }}>
-                  {diasPendientes === 1 ? 'Falta cerrar 1 día' : `Faltan cerrar ${diasPendientes} días`}
-                  {': '}{diasPendientesLista.join(', ')}.
-                </span>
-                <Btn onClick={onCerrarDias}>
-                  Cerrar los {diasPendientes} {diasPendientes === 1 ? 'día' : 'días'}
-                </Btn>
-              </>
-            )}
             <Btn primario disabled={!todas || !puedeCerrar} onClick={onCerrar}>
-              {puedeCerrar ? 'Cerrar semana' : 'Solo un jefe puede cerrar'}
+              {puedeCerrar ? 'Cerrar semana' : 'No se puede cerrar'}
             </Btn>
           </div>
         </div>
