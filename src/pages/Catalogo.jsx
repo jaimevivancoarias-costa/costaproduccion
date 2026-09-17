@@ -1292,6 +1292,29 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
           stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })
       }
+      // 0) Si cambió la unidad de aplicación de una finca, convertir el
+      //    histórico ANTES de guardar (igual que "Ajustar unidad"). Así el
+      //    consumo viejo se pasa de gramos a kilos, etc., y no se descuadra.
+      const { data: ufAct } = await supabase.schema('produccion').from('insumo_finca')
+        .select('finca_id, unidad').eq('insumo_id', insumo.id)
+      const uActual = {}; (ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad })
+      for (const fila of filas) {
+        const antes = uActual[fila.finca_id] || insumo.unidad
+        if (fila.unidad === antes) continue
+        const fa = U_FAMILIA(antes), fnew = U_FAMILIA(fila.unidad)
+        if (fa === fnew && fa !== 'conteo') {
+          // Misma familia de medida: conversión automática y segura.
+          const { error: eC } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
+            { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad })
+          if (eC) { onError('No se pudo convertir el histórico de ' + (activas.find(f => f.id === fila.finca_id)?.nombre || '') + '. ' + eC.message.replace(/^.*?:\s*/, '')); setEnviando(false); return }
+        } else {
+          // Cambio a/desde conteo o entre peso y volumen: necesita datos
+          // extra (cuánto trae el envase, o densidad). Se hace por finca.
+          onError(`El cambio de unidad de ${activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'} necesita hacerse en “Ajustar unidad” (por finca), no aquí. Ahí se convierte bien.`)
+          setEnviando(false); return
+        }
+      }
+
       // 1) Unidades/mínimos: un solo upsert en bloque.
       const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filas, { onConflict: 'insumo_id,finca_id' })
       if (e1) throw e1
