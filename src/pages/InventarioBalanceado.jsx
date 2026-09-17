@@ -233,8 +233,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (Math.abs(delta) < 0.001) return
     const motivo = window.prompt('¿Por qué? Queda en la bitácora.')
     if (!motivo || !motivo.trim()) { setAviso({ tipo: 'error', texto: 'Falta el motivo.' }); return }
+    // La fecha del ajuste debe ser la del día en que pasó el descuadre, no
+    // siempre hoy: así cuadra en todos los cortes (no solo el de hoy).
+    const fechaTxt = window.prompt('¿De qué fecha es la corrección? (AAAA-MM-DD)\nPon el día en que ocurrió el descuadre, no el de hoy.', alDia)
+    if (fechaTxt === null) return
+    const fecha = String(fechaTxt).trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setAviso({ tipo: 'error', texto: 'Fecha inválida. Usa el formato AAAA-MM-DD.' }); return }
     const { error } = await supabase.schema('produccion').from('ajuste_balanceado')
-      .insert({ finca_id: finca.id, fecha: alDia, producto_id: f.producto_id, cantidad: delta, motivo: motivo.trim() })
+      .insert({ finca_id: finca.id, fecha, producto_id: f.producto_id, cantidad: delta, motivo: motivo.trim() })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     setAviso({ tipo: 'ok', texto: `${f.producto} corregido.` }); await cargar()
   }
