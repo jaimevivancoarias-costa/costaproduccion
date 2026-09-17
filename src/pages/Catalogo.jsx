@@ -1296,43 +1296,59 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       //    histórico ANTES de guardar (igual que "Ajustar unidad"). Así el
       //    consumo viejo se pasa de gramos a kilos, etc., y no se descuadra.
       const { data: ufAct } = await supabase.schema('produccion').from('insumo_finca')
-        .select('finca_id, unidad').eq('insumo_id', insumo.id)
-      const uActual = {}; (ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad })
+        .select('finca_id, unidad, factor').eq('insumo_id', insumo.id)
+      const uActual = {}, facActual = {}
+      ;(ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad; facActual[r.finca_id] = Number(r.factor) })
       // Toda finca a la que le cambió la unidad se convierte AQUÍ mismo con la
-      // misma función que usa "Ajustar unidad". Si hace falta la equivalencia
-      // (cuánto trae un saco/envase), se pregunta una sola vez por tipo de
-      // cambio y se reutiliza en las demás fincas. Sin rebotar a otra pantalla.
+      // misma función que usa "Ajustar unidad". La equivalencia que necesita
+      // (cuánto trae un saco, o la densidad) YA la tiene la app: se toma sola
+      // del factor/densidad configurados. Solo se pregunta si de verdad falta.
       const convertidas = new Set()
       const porCache = {}
       for (const fila of filas) {
         const antes = uActual[fila.finca_id] || insumo.unidad
         if (fila.unidad === antes) continue
         const nom = activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'
-        let { error: eU } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
-          { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad })
-        if (eU && /FALTA_POR/.test(eU.message)) {
+        const famOld = U_FAMILIA(antes), famNew = U_FAMILIA(fila.unidad)
+        // p_por sólo aplica a cambios "fuertes": hacia/desde conteo (usa el
+        // factor = cuánto trae el envase) o peso<->volumen (usa la densidad).
+        // lado medible del cambio (el que NO es conteo)
+        const medible = famOld === 'conteo' ? fila.unidad : antes
+        let pPor = null
+        if (famOld === 'conteo' || famNew === 'conteo') {
+          // "cuánto trae el envase": primero lo que acabas de escribir en el
+          // form (cada envase trae X), si no, el factor ya guardado.
+          if (numDec(contenido) > 0 && uCont === medible) pPor = numDec(contenido)
+          else { const fv = facActual[fila.finca_id]; if (fv > 0 && fv !== 1) pPor = fv }
+        } else if (famOld !== famNew) {
+          pPor = numDec(densTxt) > 0 ? numDec(densTxt) : (Number(insumo.densidad) > 0 ? Number(insumo.densidad) : null)
+        }
+        const llamar = (por) => supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
+          por != null ? { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad, p_por: por }
+                      : { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad })
+        let { error: eU } = await llamar(pPor)
+        // Sólo si la app NO tenía el dato, se pregunta una vez por tipo de cambio.
+        if (eU && /FALTA_POR|FALTA_DENSIDAD/.test(eU.message)) {
+          const esDens = /FALTA_DENSIDAD/.test(eU.message)
           const clave = antes + '->' + fila.unidad
           let por = porCache[clave]
           if (por == null) {
-            const MASA = ['gramos', 'kg', 'libras', 'ml', 'litros']
-            const um = MASA.includes(antes) ? antes : fila.unidad
-            const uc = MASA.includes(antes) ? fila.unidad : antes
-            const singular = { sacos: 'saco', unidad: 'envase' }[uc] || uc
-            // Si el formulario ya sabe cuánto trae el envase, se ofrece escrito
-            // para que solo confirmes (no lo escribas otra vez).
-            const sugerido = (numDec(contenido) > 0 && uCont === um) ? String(numDec(contenido)) : ''
-            const resp = window.prompt(sugerido
-              ? `Confirma la equivalencia de "${insumo.nombre}":\n¿un ${singular} trae ${sugerido} ${UNIDAD[um] || um}?  (corrígelo si no)`
-              : `¿Cuántos ${UNIDAD[um] || um} trae un ${singular} de "${insumo.nombre}"?\n(para convertir el histórico que ya tiene)`, sugerido)
+            let resp
+            if (esDens) {
+              resp = window.prompt(`¿Cuántos kg pesa 1 litro de "${insumo.nombre}"?\n(densidad, para convertir peso ↔ volumen)`)
+            } else {
+              const conteoUnit = famOld === 'conteo' ? antes : fila.unidad
+              const singular = { sacos: 'saco', unidad: 'envase' }[conteoUnit] || 'envase'
+              resp = window.prompt(`¿Cuántos ${UNIDAD[medible] || medible} trae un ${singular} de "${insumo.nombre}"?\n(para convertir el histórico que ya tiene)`)
+            }
             if (resp === null) { setEnviando(false); return }
             por = numDec(resp)
-            if (!(por > 0)) { onError('Pon un número mayor que cero para la equivalencia.'); setEnviando(false); return }
+            if (!(por > 0)) { onError('Pon un número mayor que cero.'); setEnviando(false); return }
             porCache[clave] = por
           }
-          ;({ error: eU } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
-            { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad, p_por: por }))
+          ;({ error: eU } = await llamar(por))
         }
-        if (eU) { onError('No se pudo convertir ' + nom + '. ' + eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta la equivalencia.')); setEnviando(false); return }
+        if (eU) { onError('No se pudo convertir ' + nom + '. ' + eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta la equivalencia.').replace('FALTA_DENSIDAD', 'Falta la densidad.')); setEnviando(false); return }
         convertidas.add(fila.finca_id)
       }
 
