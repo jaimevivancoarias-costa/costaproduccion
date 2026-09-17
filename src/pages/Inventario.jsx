@@ -905,7 +905,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
                                   textAlign: 'right' }}>
-                      {!edit && (
+                      {esJefeGlobal && !edit && (
                         <button onClick={() => abrirCorregir(f)} style={{
                           background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
                           padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
@@ -917,7 +917,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   )}
                 </Fila>
 
-                {edit && (
+                {esJefeGlobal && edit && (
                   <div style={{ display: 'flex', gap: '10px', alignItems: 'center',
                                 padding: '10px 14px', background: '#f6f9fb', flexWrap: 'wrap',
                                 borderBottom: '0.5px solid #f1f6f9' }}>
