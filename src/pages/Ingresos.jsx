@@ -122,9 +122,6 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         <Chip on={modo === 'ingresos'} onClick={() => { setModo('ingresos'); setNuevo(null) }}>
           Ingresos a bodega
         </Chip>
-        <Chip on={modo === 'pedidos'} onClick={() => { setModo('pedidos'); setNuevo(null) }}>
-          Pedidos
-        </Chip>
         <Chip on={modo === 'devoluciones'} onClick={() => { setModo('devoluciones'); setNuevo(null) }}>
           Devoluciones
         </Chip>
