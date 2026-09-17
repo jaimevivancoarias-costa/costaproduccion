@@ -439,7 +439,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       <div style={{ display: 'flex', gap: '9px', marginBottom: '16px' }}>
         <Chip on={seccion === 'bodega'} onClick={() => { setSeccion('bodega'); cargar() }}>Bodega</Chip>
         <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
-          Ingresos y pedidos
+          Ingresos
         </Chip>
       </div>
 
