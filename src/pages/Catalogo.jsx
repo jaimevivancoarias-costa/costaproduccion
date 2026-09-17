@@ -1298,47 +1298,47 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       const { data: ufAct } = await supabase.schema('produccion').from('insumo_finca')
         .select('finca_id, unidad').eq('insumo_id', insumo.id)
       const uActual = {}; (ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad })
+      // Toda finca a la que le cambió la unidad se convierte AQUÍ mismo con la
+      // misma función que usa "Ajustar unidad". Si hace falta la equivalencia
+      // (cuánto trae un saco/envase), se pregunta una sola vez por tipo de
+      // cambio y se reutiliza en las demás fincas. Sin rebotar a otra pantalla.
+      const convertidas = new Set()
+      const porCache = {}
       for (const fila of filas) {
         const antes = uActual[fila.finca_id] || insumo.unidad
         if (fila.unidad === antes) continue
-        const fa = U_FAMILIA(antes), fnew = U_FAMILIA(fila.unidad)
-        if (fa === fnew && fa !== 'conteo') {
-          // Misma familia de medida: conversión automática y segura.
-          const { error: eC } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
-            { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad })
-          if (eC) { onError('No se pudo convertir el histórico de ' + (activas.find(f => f.id === fila.finca_id)?.nombre || '') + '. ' + eC.message.replace(/^.*?:\s*/, '')); setEnviando(false); return }
-        } else {
-          // Cambio a/desde conteo o entre peso y volumen. Necesita un dato
-          // extra (densidad, o cuánto trae el envase) SOLO si ya hay histórico
-          // que convertir. Si la finca aún no tiene movimientos en este insumo
-          // (catálogo nuevo), se cambia libre aquí mismo.
-          const nom = activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'
-          const { data: pisc, error: eP } = await supabase.schema('produccion').from('piscina').select('id').eq('finca_id', fila.finca_id)
-          const { data: tomas, error: eT } = await supabase.schema('produccion').from('toma_inventario').select('id').eq('finca_id', fila.finca_id)
-          let mov = null
-          if (!eP && !eT) {
-            const piscIds = (pisc || []).map(p => p.id)
-            const tomaIds = (tomas || []).map(t => t.id)
-            let nc = 0, nt = 0, ok = true
-            if (piscIds.length) { const r = await supabase.schema('produccion').from('consumo_insumo').select('id', { count: 'exact', head: true }).eq('insumo_id', insumo.id).in('piscina_id', piscIds); if (r.error) ok = false; else nc = r.count || 0 }
-            if (ok && tomaIds.length) { const r = await supabase.schema('produccion').from('toma_inventario_linea').select('id', { count: 'exact', head: true }).eq('insumo_id', insumo.id).in('toma_id', tomaIds); if (r.error) ok = false; else nt = r.count || 0 }
-            if (ok) mov = nc + nt
+        const nom = activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'
+        let { error: eU } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
+          { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad })
+        if (eU && /FALTA_POR/.test(eU.message)) {
+          const clave = antes + '->' + fila.unidad
+          let por = porCache[clave]
+          if (por == null) {
+            const MASA = ['gramos', 'kg', 'libras', 'ml', 'litros']
+            const um = MASA.includes(antes) ? antes : fila.unidad
+            const uc = MASA.includes(antes) ? fila.unidad : antes
+            const singular = { sacos: 'saco', unidad: 'envase' }[uc] || uc
+            const resp = window.prompt(`¿Cuántos ${UNIDAD[um] || um} trae un ${singular} de "${insumo.nombre}"?\n(para convertir el histórico que ya tiene)`)
+            if (resp === null) { setEnviando(false); return }
+            por = numDec(resp)
+            if (!(por > 0)) { onError('Pon un número mayor que cero para la equivalencia.'); setEnviando(false); return }
+            porCache[clave] = por
           }
-          if (mov == null) {
-            // No se pudo verificar el histórico: se mantiene el camino seguro.
-            onError(`El cambio de unidad de ${nom} necesita hacerse en “Ajustar unidad” (por finca), no aquí. Ahí se convierte bien.`)
-            setEnviando(false); return
-          }
-          if (mov > 0) {
-            onError(`${nom} ya tiene movimientos en este insumo, así que el cambio de unidad debe hacerse en “Ajustar unidad” (por finca) para convertir el histórico. Ahí se convierte bien.`)
-            setEnviando(false); return
-          }
-          // mov === 0: no hay nada que convertir; el upsert de abajo guarda la unidad nueva.
+          ;({ error: eU } = await supabase.schema('produccion').rpc('fn_cambiar_unidad_insumo_finca',
+            { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad, p_por: por }))
         }
+        if (eU) { onError('No se pudo convertir ' + nom + '. ' + eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta la equivalencia.')); setEnviando(false); return }
+        convertidas.add(fila.finca_id)
       }
 
-      // 1) Unidades/mínimos: un solo upsert en bloque.
-      const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filas, { onConflict: 'insumo_id,finca_id' })
+      // 1) Unidades/mínimos: un solo upsert en bloque. Las fincas que se
+      //    acaban de convertir arriba ya tienen su unidad/factor correctos por
+      //    la función; a esas solo se les toca el mínimo/objetivo para no pisar
+      //    la conversión.
+      const filasUpsert = filas.map(fl => convertidas.has(fl.finca_id)
+        ? { insumo_id: fl.insumo_id, finca_id: fl.finca_id, stock_minimo: fl.stock_minimo, stock_objetivo: fl.stock_objetivo }
+        : fl)
+      const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filasUpsert, { onConflict: 'insumo_id,finca_id' })
       if (e1) throw e1
 
       // 1b) Densidad del producto (para el puente peso<->volumen). Global.
