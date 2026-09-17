@@ -200,6 +200,15 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     setAviso({ tipo: 'ok', texto: `${faltan.length} días cerrados` }); await cargar()
   }
 
+  // Cerrar un solo día (seleccionable).
+  async function cerrarUnDia(fecha) {
+    const { error } = await supabase.schema('produccion').from('dia_registro')
+      .upsert({ finca_id: finca.id, fecha, ambito: 'insumos', estado: 'cerrado', cerrado_en: new Date().toISOString() },
+              { onConflict: 'finca_id,fecha,ambito' })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    setAviso({ tipo: 'ok', texto: `${nombreDia(fecha)} cerrado` }); await cargar()
+  }
+
   // El jefe reabre directo; el bodeguero pide y el jefe autoriza.
   async function reabrirDiaHoy() {
     setCerrandoDia(true)
@@ -610,20 +619,27 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
-      {/* Cerrar los días anteriores de la semana que quedaron abiertos.
-          Lo puede hacer también el bodeguero (llena cada dos días). */}
-      {!cargando && semanaDeHoy && !soloLectura && !semanaCerrada && (() => {
+      {/* Cerrar días de la semana (día por día o todos). Lo puede hacer
+          también el bodeguero (llena cada dos días), en cualquier semana. */}
+      {!cargando && !soloLectura && !semanaCerrada && (() => {
         const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
                                           && f !== hoy && situacionDia(f, hoy) !== 'futuro')
         if (!faltan.length) return null
         return (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap',
-                        background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 16px', marginTop: '12px' }}>
-            <div style={{ fontSize: '13px', color: GRIS }}>
-              Faltan cerrar {faltan.length} {faltan.length === 1 ? 'día' : 'días'} de esta semana:{' '}
-              {faltan.map(f => `${nombreDia(f).slice(0, 3)} ${corta(f).slice(0, 5)}`).join(', ')}.
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 16px', marginTop: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              <div style={{ fontSize: '15px', fontWeight: 500 }}>Cerrar días de la semana</div>
+              <Btn onClick={cerrarDiasPendientes}>Cerrar todos ({faltan.length})</Btn>
             </div>
-            <Btn onClick={cerrarDiasPendientes}>Cerrar los {faltan.length} {faltan.length === 1 ? 'día' : 'días'}</Btn>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              {faltan.map(f => (
+                <button key={f} onClick={() => cerrarUnDia(f)}
+                  style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
+                           padding: '7px 12px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }}>
+                  Cerrar {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
+                </button>
+              ))}
+            </div>
           </div>
         )
       })()}
@@ -651,7 +667,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         <Cierre
           validaciones={validaciones}
           cerrada={semanaCerrada}
-          puedeCerrar={(esJefe || semanaDeHoy) && !semanaCerrada}
+          puedeCerrar={!semanaCerrada && !soloLectura}
           puedeReabrir={esJefe && !soloLectura}
           onRevisar={revisarSemana}
           onCerrar={cerrarSemana}
@@ -710,7 +726,7 @@ function Cierre({ validaciones, cerrada, puedeCerrar, puedeReabrir, onRevisar, o
               color: (todas && puedeCerrar) ? 'white' : GRIS,
               cursor: (todas && puedeCerrar) ? 'pointer' : 'default',
               opacity: (todas && puedeCerrar) ? 1 : 0.5 }}>
-              {puedeCerrar ? 'Cerrar semana' : 'Solo un jefe puede cerrar'}
+              {puedeCerrar ? 'Cerrar semana' : 'No se puede cerrar'}
             </button>
           </div>
         </div>
