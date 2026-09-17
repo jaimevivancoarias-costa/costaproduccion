@@ -343,7 +343,7 @@ export default function App() {
               {pptoTab === 'diesel' ? (
                 <PresupuestoDiesel key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} />
               ) : (
-                <Presupuesto key={finca.id} finca={finca} esJefe={esJefe}
+                <Presupuesto key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe}
                   onIrReporte={id => {
                     setFincaId(id); setVerInsumos(true); setModulo('reportes')
                     const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
