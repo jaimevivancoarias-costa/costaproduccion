@@ -440,7 +440,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {esJefe && <Cel der gris>{f.precio ? dineroExacto(f.precio) : 'sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(valorFifo[f.producto_id] || 0)}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
-                      <button onClick={() => corregir(f)} style={{ ...btn, padding: '5px 11px', fontSize: '12px', color: GRIS }}>Corregir</button>
+                      {esJefeGlobal && <button onClick={() => corregir(f)} style={{ ...btn, padding: '5px 11px', fontSize: '12px', color: GRIS }}>Corregir</button>}
                     </div>}
                   </Fila>
                   {ab && (
