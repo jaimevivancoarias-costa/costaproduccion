@@ -1308,10 +1308,32 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
             { p_insumo: insumo.id, p_finca: fila.finca_id, p_nueva: fila.unidad })
           if (eC) { onError('No se pudo convertir el histórico de ' + (activas.find(f => f.id === fila.finca_id)?.nombre || '') + '. ' + eC.message.replace(/^.*?:\s*/, '')); setEnviando(false); return }
         } else {
-          // Cambio a/desde conteo o entre peso y volumen: necesita datos
-          // extra (cuánto trae el envase, o densidad). Se hace por finca.
-          onError(`El cambio de unidad de ${activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'} necesita hacerse en “Ajustar unidad” (por finca), no aquí. Ahí se convierte bien.`)
-          setEnviando(false); return
+          // Cambio a/desde conteo o entre peso y volumen. Necesita un dato
+          // extra (densidad, o cuánto trae el envase) SOLO si ya hay histórico
+          // que convertir. Si la finca aún no tiene movimientos en este insumo
+          // (catálogo nuevo), se cambia libre aquí mismo.
+          const nom = activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'
+          const { data: pisc, error: eP } = await supabase.schema('produccion').from('piscina').select('id').eq('finca_id', fila.finca_id)
+          const { data: tomas, error: eT } = await supabase.schema('produccion').from('toma_inventario').select('id').eq('finca_id', fila.finca_id)
+          let mov = null
+          if (!eP && !eT) {
+            const piscIds = (pisc || []).map(p => p.id)
+            const tomaIds = (tomas || []).map(t => t.id)
+            let nc = 0, nt = 0, ok = true
+            if (piscIds.length) { const r = await supabase.schema('produccion').from('consumo_insumo').select('id', { count: 'exact', head: true }).eq('insumo_id', insumo.id).in('piscina_id', piscIds); if (r.error) ok = false; else nc = r.count || 0 }
+            if (ok && tomaIds.length) { const r = await supabase.schema('produccion').from('toma_inventario_linea').select('id', { count: 'exact', head: true }).eq('insumo_id', insumo.id).in('toma_id', tomaIds); if (r.error) ok = false; else nt = r.count || 0 }
+            if (ok) mov = nc + nt
+          }
+          if (mov == null) {
+            // No se pudo verificar el histórico: se mantiene el camino seguro.
+            onError(`El cambio de unidad de ${nom} necesita hacerse en “Ajustar unidad” (por finca), no aquí. Ahí se convierte bien.`)
+            setEnviando(false); return
+          }
+          if (mov > 0) {
+            onError(`${nom} ya tiene movimientos en este insumo, así que el cambio de unidad debe hacerse en “Ajustar unidad” (por finca) para convertir el histórico. Ahí se convierte bien.`)
+            setEnviando(false); return
+          }
+          // mov === 0: no hay nada que convertir; el upsert de abajo guarda la unidad nueva.
         }
       }
 
