@@ -1864,12 +1864,11 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
           </div>
         ))}
         <button onClick={() => setExc(x => [...x, { fincaId: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
-      </div>
 
-      {/* Aplicar un mismo precio a varias fincas de una vez */}
-      <div style={seccion}>
+        {/* Aplicar un mismo precio a varias fincas de una vez */}
+        <div style={{ borderTop: '0.5px solid #e8d9b8', marginTop: '14px', paddingTop: '13px' }}>
         {!bulk.open ? (
-          <button onClick={() => setBulk({ ...bulkVacio, open: true })} style={miniLink}>＋ Aplicar precio a varias fincas</button>
+          <button onClick={() => setBulk({ ...bulkVacio, open: true })} style={miniLink}>＋ Aplicar el mismo precio a varias fincas</button>
         ) : (
           <>
             <div style={tit}>Aplicar precio a varias fincas</div>
@@ -1916,6 +1915,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
             </div>
           </>
         )}
+        </div>
       </div>
 
       {/* Alertas */}
