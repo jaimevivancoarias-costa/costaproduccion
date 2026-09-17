@@ -241,7 +241,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
       <div style={{ display: 'flex', gap: '9px', marginBottom: '14px', flexWrap: 'wrap' }}>
         <Chip on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</Chip>
-        <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos y pedidos</Chip>
+        <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</Chip>
         {seccion === 'bodega' && !contando && !cargando && (
           <button onClick={() => setContando(true)} style={{ ...btn, marginLeft: 'auto',
             background: AZUL, color: 'white', borderColor: AZUL }}>
@@ -719,7 +719,6 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <Chip on={modo === 'ingresos'} onClick={() => { setModo('ingresos'); setNuevo(null) }}>Ingresos a bodega</Chip>
-        <Chip on={modo === 'pedidos'} onClick={() => { setModo('pedidos'); setNuevo(null) }}>Pedidos</Chip>
         <Chip on={modo === 'devoluciones'} onClick={() => { setModo('devoluciones'); setNuevo(null) }}>Devoluciones</Chip>
         {!nuevo && (
           <button onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}
