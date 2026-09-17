@@ -27,6 +27,7 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   const [gastos, setGastos] = useState({})    // tipo_id (+'global') -> $ gastado
   const [galones, setGalones] = useState({})  // tipo_id -> galones consumidos del mes
   const [precios, setPrecios] = useState({})  // tipo_id -> precio actual del galón (o null)
+  const [historial, setHistorial] = useState([])  // [{mes, monto, gasto}] del año
   const [cargando, setCargando] = useState(true)
   const [bulk, setBulk] = useState(null)          // { modo, valores:{tipo_id: string} }
   const [guardandoBulk, setGuardandoBulk] = useState(false)
@@ -70,6 +71,15 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     const pm = {}
     lista.forEach((t, i) => { pm[t.id] = pr[i].data != null ? Number(pr[i].data) : null })
     setPrecios(pm)
+    // Historial del año: presupuesto (global = suma de tipos) y gasto por mes.
+    const { data: pAll } = await supabase.schema('produccion').from('presupuesto_diesel')
+      .select('mes, monto').eq('finca_id', finca.id).eq('anio', anio).not('tipo_id', 'is', null)
+    const porMes = {}
+    ;(pAll || []).forEach(r => { porMes[r.mes] = (porMes[r.mes] || 0) + Number(r.monto) })
+    const mesesSet = Object.keys(porMes).map(Number).sort((a, b) => a - b)
+    const gm = await Promise.all(mesesSet.map(mm =>
+      supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: finca.id, p_anio: anio, p_mes: mm })))
+    setHistorial(mesesSet.map((mm, i) => ({ mes: mm, monto: porMes[mm], gasto: Number(gm[i].data) || 0 })))
     setCargando(false)
   }, [finca.id, anio, mes])
 
@@ -101,23 +111,25 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   }
 
   // Upsert de un presupuesto (finca + tipo + mes).
-  async function upsertUno(fincaId, tipoId, monto) {
+  async function upsertUno(fincaId, tipoId, monto, m) {
     let q = supabase.schema('produccion').from('presupuesto_diesel').select('id')
-      .eq('finca_id', fincaId).eq('anio', anio).eq('mes', mes).eq('tipo_id', tipoId)
+      .eq('finca_id', fincaId).eq('anio', anio).eq('mes', m).eq('tipo_id', tipoId)
     const { data: ex } = await q.maybeSingle()
-    const fila = { finca_id: fincaId, tipo_id: tipoId, anio, mes, monto, actualizado_en: new Date().toISOString() }
+    const fila = { finca_id: fincaId, tipo_id: tipoId, anio, mes: m, monto, actualizado_en: new Date().toISOString() }
     return ex
       ? supabase.schema('produccion').from('presupuesto_diesel').update(fila).eq('id', ex.id)
       : supabase.schema('produccion').from('presupuesto_diesel').insert(fila)
   }
 
-  // Fijar el presupuesto de todas las fincas de una vez.
+  // Fijar el presupuesto para varias fincas y varios meses de una vez.
   async function guardarBulk() {
     if (guardandoBulk) return
-    const hayValor = tipos.some(t => numDec(bulk.valores[t.id] || '') > 0)
-    if (!hayValor) { setAviso({ tipo: 'error', texto: 'Pon al menos un valor.' }); return }
+    const fincasSel = bulk.fincas || []
+    const mesesSel = (bulk.meses && bulk.meses.length) ? bulk.meses : [mes]
+    if (!fincasSel.length) { setAviso({ tipo: 'error', texto: 'Elige al menos una finca.' }); return }
+    if (!tipos.some(t => numDec(bulk.valores[t.id] || '') > 0)) { setAviso({ tipo: 'error', texto: 'Pon al menos un valor.' }); return }
     setGuardandoBulk(true)
-    // Precio vigente por finca y tipo (para el modo galones).
+    // Precio vigente por finca y tipo (para el modo galones, precio de hoy).
     const { data: pr } = await supabase.schema('produccion').from('diesel_precio')
       .select('tipo_id, finca_id, precio_galon').is('vigente_hasta', null)
     const pf = {}, pg = {}
@@ -126,24 +138,25 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
       else pg[r.tipo_id] = Number(r.precio_galon)
     })
     const precioDe = (fid, tid) => (pf[fid + '|' + tid] ?? pg[tid] ?? null)
-    let aplicadas = 0, sinPrecio = 0
-    for (const f of activas) {
-      for (const t of tipos) {
-        const raw = numDec(bulk.valores[t.id] || '')
-        if (!(raw > 0)) continue
-        let monto
-        if (bulk.modo === 'gal') {
-          const p = precioDe(f.id, t.id)
-          if (p == null) { sinPrecio++; continue }
-          monto = Math.round(raw * p * 100) / 100
-        } else monto = raw
-        const { error } = await upsertUno(f.id, t.id, monto)
-        if (error) { setGuardandoBulk(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + error.message }); return }
-        aplicadas++
+    let sinPrecio = 0
+    for (const fid of fincasSel) {
+      for (const m of mesesSel) {
+        for (const t of tipos) {
+          const raw = numDec(bulk.valores[t.id] || '')
+          if (!(raw > 0)) continue
+          let monto
+          if (bulk.modo === 'gal') {
+            const p = precioDe(fid, t.id)
+            if (p == null) { sinPrecio++; continue }
+            monto = Math.round(raw * p * 100) / 100
+          } else monto = raw
+          const { error } = await upsertUno(fid, t.id, monto, m)
+          if (error) { setGuardandoBulk(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + error.message }); return }
+        }
       }
     }
     setGuardandoBulk(false); setBulk(null)
-    setAviso({ tipo: 'ok', texto: `Presupuesto aplicado a ${activas.length} fincas.` + (sinPrecio ? ` (${sinPrecio} sin precio, se saltaron)` : '') })
+    setAviso({ tipo: 'ok', texto: `Aplicado a ${fincasSel.length} finca(s) × ${mesesSel.length} mes(es).` + (sinPrecio ? ` (${sinPrecio} sin precio, se saltaron)` : '') })
     await cargar()
   }
 
@@ -177,17 +190,17 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
         <select value={anio} onChange={e => setAnio(Number(e.target.value))} style={sel}>
           {[anio - 1, anio, anio + 1].map(a => <option key={a} value={a}>{a}</option>)}
         </select>
-        {esJefe && activas.length > 1 && !bulk && (
-          <button onClick={() => setBulk({ modo: 'gal', valores: {} })}
+        {esJefe && !bulk && (
+          <button onClick={() => setBulk({ modo: 'gal', valores: {}, fincas: activas.map(f => f.id), meses: [mes] })}
             style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY, marginLeft: 'auto' }}>
-            Fijar para todas las fincas
+            Fijar fincas y meses
           </button>
         )}
       </div>
 
       {bulk && (
         <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
-          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '10px' }}>Presupuesto de diesel para todas las fincas · {MESES[mes - 1]}</div>
+          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '10px' }}>Fijar presupuesto de diesel · varias fincas y meses</div>
           <div style={{ display: 'inline-flex', background: '#eef3f7', borderRadius: '8px', padding: '3px', gap: '3px', marginBottom: '12px' }}>
             {[['gal', 'En galones'], ['usd', 'En dólares']].map(([id, txt]) => (
               <button key={id} onClick={() => setBulk(b => ({ ...b, modo: id }))} style={{ border: 0, cursor: 'pointer', fontFamily: 'inherit',
@@ -196,7 +209,7 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                 fontWeight: bulk.modo === id ? 500 : 400 }}>{txt}</button>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
             {tipos.map(t => (
               <div key={t.id}>
                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '5px' }}>{t.nombre} · {bulk.modo === 'gal' ? 'galones' : '$'}</div>
@@ -205,16 +218,45 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                   style={{ ...sel, width: '120px', textAlign: 'right' }} />
               </div>
             ))}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+            <span style={{ fontSize: '11px', color: GRIS }}>Fincas</span>
+            <button onClick={() => setBulk(b => ({ ...b, fincas: activas.map(f => f.id) }))} style={miniLink}>Todas</button>
+            <button onClick={() => setBulk(b => ({ ...b, fincas: [] }))} style={miniLink}>Ninguna</button>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {activas.map(f => {
+              const on = (bulk.fincas || []).includes(f.id)
+              return (
+                <button key={f.id} onClick={() => setBulk(b => ({ ...b, fincas: on ? b.fincas.filter(x => x !== f.id) : [...b.fincas, f.id] }))}
+                  style={{ ...chipBulk, ...(on ? chipOn : {}) }}>{String(f.nombre).toUpperCase()}</button>
+              )
+            })}
+          </div>
+
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Meses de {anio}</div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {MESES.map((m, i) => {
+              const on = (bulk.meses || []).includes(i + 1)
+              return (
+                <button key={i} onClick={() => setBulk(b => ({ ...b, meses: on ? b.meses.filter(x => x !== i + 1) : [...b.meses, i + 1] }))}
+                  style={{ ...chipBulk, ...(on ? chipOn : {}) }}>{m.slice(0, 3)}</button>
+              )
+            })}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button onClick={guardarBulk} disabled={guardandoBulk}
               style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoBulk ? 0.6 : 1 }}>
-              {guardandoBulk ? 'Aplicando...' : `Aplicar a ${activas.length} fincas`}
+              {guardandoBulk ? 'Aplicando...' : `Aplicar a ${(bulk.fincas || []).length} finca(s) × ${(bulk.meses || []).length} mes(es)`}
             </button>
             <button onClick={() => setBulk(null)} style={boton}>Cancelar</button>
           </div>
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>
             {bulk.modo === 'gal'
-              ? 'En galones, cada finca calcula su $ con su propio precio del galón. Las fincas sin precio se saltan.'
-              : 'El mismo monto en $ para todas las fincas.'}
+              ? 'En galones, cada finca usa su precio del galón de hoy (el mismo $ para todos los meses elegidos). Las fincas sin precio se saltan.'
+              : 'El mismo monto en $ para cada finca y mes elegido.'}
           </div>
         </div>
       )}
@@ -361,6 +403,31 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
             </div>
           </div>
         )}
+
+        {historial.length > 0 && (
+          <div style={{ marginTop: '22px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 11px' }}>Historial de {anio}</h3>
+            <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 60px', gap: '10px', padding: '10px 16px',
+                            background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, fontSize: '12px', color: GRIS }}>
+                <span>Mes</span><span style={{ textAlign: 'right' }}>Presupuesto</span><span style={{ textAlign: 'right' }}>Gastado</span><span style={{ textAlign: 'right' }}>%</span>
+              </div>
+              {historial.map(h => {
+                const p = h.monto ? Math.min(100, Math.round(h.gasto / h.monto * 100)) : 0
+                const col = p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
+                return (
+                  <div key={h.mes} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 60px', gap: '10px',
+                          padding: '11px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 500 }}>{MESES[h.mes - 1]}</span>
+                    <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(h.monto)}</span>
+                    <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{dinero(h.gasto)}</span>
+                    <span style={{ textAlign: 'right', fontWeight: 500, color: col, fontVariantNumeric: 'tabular-nums' }}>{p}%</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
         </>
       )}
     </div>
@@ -371,3 +438,7 @@ const sel = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
               border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY }
 const boton = { padding: '8px 13px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                 border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
+const chipBulk = { padding: '6px 12px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
+                   cursor: 'pointer', border: '0.5px solid ' + BORDE, background: 'white', color: GRIS }
+const chipOn = { border: '2px solid ' + AZUL, background: '#E6F1FB', color: AZUL, fontWeight: 500 }
+const miniLink = { border: 'none', background: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: 0 }
