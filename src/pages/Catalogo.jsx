@@ -1705,6 +1705,51 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
   const [exc, setExc] = useState([])   // [{fincaId, precio, plazo, desde}]
   const [enviando, setEnviando] = useState(false)
+  // Panel "Aplicar a varias fincas" (precio por saco a las fincas elegidas).
+  const bulkVacio = { open: false, fincas: {}, precios: {}, plazoRige: 0, desde: '' }
+  const [bulk, setBulk] = useState(bulkVacio)
+  const bulkFincas = () => Object.keys(bulk.fincas).filter(id => bulk.fincas[id])
+  const bulkPuede = bulkFincas().length > 0 && PLAZOS.some(pz => numDec(bulk.precios[pz] || '') > 0)
+
+  async function cerrarYAbrirBal(fincaIds, pz, rows, dfe) {
+    if (!fincaIds.length) return
+    await supabase.schema('produccion').from('precio_producto').delete()
+      .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfe)
+    await supabase.schema('produccion').from('precio_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
+      .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfe)
+    const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
+    if (error) throw error
+  }
+
+  async function aplicarBulk() {
+    const destinos = bulkFincas()
+    if (!destinos.length) return
+    setEnviando(true)
+    try {
+      const dfe = bulk.desde || hoyISO()
+      for (const pz of PLAZOS) {
+        const raw = numDec(bulk.precios[pz] || '')
+        if (raw > 0) await cerrarYAbrirBal(destinos, pz,
+          destinos.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: dfe })), dfe)
+      }
+      let rige = bulk.plazoRige
+      if (rige != null && !(numDec(bulk.precios[rige] || '') > 0)) {
+        const c = PLAZOS.find(pz => numDec(bulk.precios[pz] || '') > 0); if (c != null) rige = c
+      }
+      if (rige != null) {
+        await supabase.schema('produccion').from('plazo_producto').delete()
+          .eq('producto_id', producto.id).in('finca_id', destinos).gte('vigente_desde', dfe)
+        await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
+          .eq('producto_id', producto.id).in('finca_id', destinos).is('vigente_hasta', null).lt('vigente_desde', dfe)
+        const { error } = await supabase.schema('produccion').from('plazo_producto')
+          .insert(destinos.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rige, vigente_desde: dfe })))
+        if (error) throw error
+      }
+      setBulk(bulkVacio)
+      onHecho(`Precio aplicado a ${destinos.length} finca${destinos.length === 1 ? '' : 's'}.`)
+    } catch (err) { onError(err.message || 'No se pudo aplicar.') }
+    finally { setEnviando(false) }
+  }
 
   async function guardar() {
     setEnviando(true)
@@ -1819,6 +1864,58 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
           </div>
         ))}
         <button onClick={() => setExc(x => [...x, { fincaId: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
+      </div>
+
+      {/* Aplicar un mismo precio a varias fincas de una vez */}
+      <div style={seccion}>
+        {!bulk.open ? (
+          <button onClick={() => setBulk({ ...bulkVacio, open: true })} style={miniLink}>＋ Aplicar precio a varias fincas</button>
+        ) : (
+          <>
+            <div style={tit}>Aplicar precio a varias fincas</div>
+            <div style={{ fontSize: '11px', color: GRIS, marginBottom: '7px' }}>Elige las fincas:</div>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              {activas.map(f => {
+                const on = !!bulk.fincas[f.id]
+                return (
+                  <button key={f.id} onClick={() => setBulk(b => ({ ...b, fincas: { ...b.fincas, [f.id]: !on } }))}
+                    style={{ padding: '6px 12px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer',
+                             border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), background: on ? '#E6F1FB' : 'white',
+                             color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{String(f.nombre).toUpperCase()}</button>
+                )
+              })}
+            </div>
+            <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Precio por saco, por plazo (llena los que apliquen y marca cuál rige):</div>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              {PLAZOS.map(pz => {
+                const on = bulk.plazoRige === pz
+                return (
+                  <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
+                    <div style={{ fontSize: '10px', color: GRIS, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
+                    <input inputMode="decimal" value={bulk.precios[pz] ?? ''} placeholder="—"
+                      onChange={e => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: e.target.value } }))}
+                      style={{ ...inp, width: '85px', textAlign: 'right' }} />
+                    <label style={{ display: 'block', fontSize: '10.5px', color: GRIS, marginTop: '4px', cursor: 'pointer' }}>
+                      <input type="radio" name="bulkbal-rige" checked={on} onChange={() => setBulk(b => ({ ...b, plazoRige: pz }))} /> Rige
+                    </label>
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'end', flexWrap: 'wrap' }}>
+              <Campo label="Rige desde">
+                <input type="date" value={bulk.desde || ''} max={hoyISO()} onChange={e => setBulk(b => ({ ...b, desde: e.target.value }))} style={{ ...inp, width: '170px' }} />
+              </Campo>
+              <div style={{ display: 'flex', gap: '9px', marginLeft: 'auto' }}>
+                <button onClick={() => setBulk(bulkVacio)} style={{ background: 'none', border: 'none', color: GRIS, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
+                <button onClick={aplicarBulk} disabled={!bulkPuede || enviando}
+                  style={{ background: bulkPuede ? NAVY : '#c3d0db', color: 'white', border: 'none', borderRadius: '9px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit', cursor: bulkPuede ? 'pointer' : 'default' }}>
+                  Aplicar a {bulkFincas().length} finca{bulkFincas().length === 1 ? '' : 's'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Alertas */}
