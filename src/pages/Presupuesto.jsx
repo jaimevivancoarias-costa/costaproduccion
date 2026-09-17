@@ -26,8 +26,9 @@ const ROJO = '#A32D2D'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
                'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-export default function Presupuesto({ finca, esJefe, onIrReporte }) {
+export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
   const hoy = hoyISO()
+  const activas = (fincas || [finca]).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
   const [anio, setAnio] = useState(Number(hoy.slice(0, 4)))
   const [mes, setMes] = useState(Number(hoy.slice(5, 7)))
   const [monto, setMonto] = useState(null)
@@ -40,6 +41,8 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
   const [nuevo, setNuevo] = useState('')
   const [aviso, setAviso] = useState(null)
   const [zonaFiltro, setZonaFiltro] = useState('todas')
+  const [bulk, setBulk] = useState(null)          // { monto, fincas:[], meses:[] }
+  const [guardandoBulk, setGuardandoBulk] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -93,6 +96,26 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
     await cargar()
   }
 
+  // Fijar el mismo presupuesto para varias fincas y varios meses.
+  async function guardarBulk() {
+    if (guardandoBulk) return
+    const v = Number(String(bulk.monto || '').replace(',', '.'))
+    if (!isFinite(v) || v < 0) { setAviso({ tipo: 'error', texto: 'Monto no válido.' }); return }
+    const fincasSel = bulk.fincas || []
+    const mesesSel = (bulk.meses && bulk.meses.length) ? bulk.meses : [mes]
+    if (!fincasSel.length) { setAviso({ tipo: 'error', texto: 'Elige al menos una finca.' }); return }
+    setGuardandoBulk(true)
+    const filas = []
+    fincasSel.forEach(fid => mesesSel.forEach(m =>
+      filas.push({ finca_id: fid, anio, mes: m, monto: v, actualizado_en: new Date().toISOString() })))
+    const { error } = await supabase.schema('produccion').from('presupuesto_insumo')
+      .upsert(filas, { onConflict: 'finca_id,anio,mes' })
+    setGuardandoBulk(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + error.message }); return }
+    setBulk(null); setAviso({ tipo: 'ok', texto: `Aplicado a ${fincasSel.length} finca(s) × ${mesesSel.length} mes(es).` })
+    await cargar()
+  }
+
   async function borrar() {
     if (!window.confirm(`¿Borrar el presupuesto de ${MESES[mes - 1]} ${anio}?`)) return
     const { error } = await supabase.schema('produccion').from('presupuesto_insumo')
@@ -122,7 +145,56 @@ export default function Presupuesto({ finca, esJefe, onIrReporte }) {
             {monto ? 'Cambiar presupuesto' : 'Fijar presupuesto'}
           </button>
         )}
+        {esJefe && !bulk && (
+          <button onClick={() => setBulk({ monto: '', fincas: activas.map(f => f.id), meses: [mes] })}
+            style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY, marginLeft: 'auto' }}>
+            Fijar fincas y meses
+          </button>
+        )}
       </div>
+
+      {bulk && (
+        <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '10px' }}>Fijar presupuesto de insumos · varias fincas y meses</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
+            <span style={{ fontSize: '16px', color: GRIS }}>$</span>
+            <input inputMode="decimal" value={bulk.monto} placeholder="25000"
+              onChange={e => setBulk(b => ({ ...b, monto: e.target.value }))}
+              style={{ ...sel, width: '150px', textAlign: 'right' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+            <span style={{ fontSize: '11px', color: GRIS }}>Fincas</span>
+            <button onClick={() => setBulk(b => ({ ...b, fincas: activas.map(f => f.id) }))} style={miniLink}>Todas</button>
+            <button onClick={() => setBulk(b => ({ ...b, fincas: [] }))} style={miniLink}>Ninguna</button>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {activas.map(f => {
+              const on = (bulk.fincas || []).includes(f.id)
+              return (
+                <button key={f.id} onClick={() => setBulk(b => ({ ...b, fincas: on ? b.fincas.filter(x => x !== f.id) : [...b.fincas, f.id] }))}
+                  style={{ ...chipBulk, ...(on ? chipOn : {}) }}>{String(f.nombre).toUpperCase()}</button>
+              )
+            })}
+          </div>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '6px' }}>Meses de {anio}</div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {MESES.map((m, i) => {
+              const on = (bulk.meses || []).includes(i + 1)
+              return (
+                <button key={i} onClick={() => setBulk(b => ({ ...b, meses: on ? b.meses.filter(x => x !== i + 1) : [...b.meses, i + 1] }))}
+                  style={{ ...chipBulk, ...(on ? chipOn : {}) }}>{m.slice(0, 3)}</button>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button onClick={guardarBulk} disabled={guardandoBulk}
+              style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoBulk ? 0.6 : 1 }}>
+              {guardandoBulk ? 'Aplicando...' : `Aplicar a ${(bulk.fincas || []).length} finca(s) × ${(bulk.meses || []).length} mes(es)`}
+            </button>
+            <button onClick={() => setBulk(null)} style={boton}>Cancelar</button>
+          </div>
+        </div>
+      )}
 
       {aviso && (
         <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
@@ -383,3 +455,7 @@ const sel = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
 const boton = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                 border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY,
                 cursor: 'pointer' }
+const chipBulk = { padding: '6px 12px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
+                   cursor: 'pointer', border: '0.5px solid ' + BORDE, background: 'white', color: GRIS }
+const chipOn = { border: '2px solid ' + AZUL, background: '#E6F1FB', color: AZUL, fontWeight: 500 }
+const miniLink = { border: 'none', background: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: 0 }
