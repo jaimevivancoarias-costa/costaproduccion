@@ -1318,7 +1318,12 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
             const um = MASA.includes(antes) ? antes : fila.unidad
             const uc = MASA.includes(antes) ? fila.unidad : antes
             const singular = { sacos: 'saco', unidad: 'envase' }[uc] || uc
-            const resp = window.prompt(`¿Cuántos ${UNIDAD[um] || um} trae un ${singular} de "${insumo.nombre}"?\n(para convertir el histórico que ya tiene)`)
+            // Si el formulario ya sabe cuánto trae el envase, se ofrece escrito
+            // para que solo confirmes (no lo escribas otra vez).
+            const sugerido = (numDec(contenido) > 0 && uCont === um) ? String(numDec(contenido)) : ''
+            const resp = window.prompt(sugerido
+              ? `Confirma la equivalencia de "${insumo.nombre}":\n¿un ${singular} trae ${sugerido} ${UNIDAD[um] || um}?  (corrígelo si no)`
+              : `¿Cuántos ${UNIDAD[um] || um} trae un ${singular} de "${insumo.nombre}"?\n(para convertir el histórico que ya tiene)`, sugerido)
             if (resp === null) { setEnviando(false); return }
             por = numDec(resp)
             if (!(por > 0)) { onError('Pon un número mayor que cero para la equivalencia.'); setEnviando(false); return }
