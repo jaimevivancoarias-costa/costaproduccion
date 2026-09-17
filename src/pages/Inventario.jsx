@@ -207,10 +207,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const primeraVez = conteos.length === 0
   const ultimo = conteos[0]
 
-  // El valor total viene del calculo FIFO, no de saldo x precio actual.
+  // El valor se calcula a PRECIO ACTUAL: saldo × precio vigente. Así, al
+  // cambiar el precio (con su "rige desde"), el valor de la bodega se
+  // actualiza enseguida y cuadra con las columnas Saldo y Precio.
   const valorBodega = useMemo(
-    () => Object.values(valorFifo).reduce((t, v) => t + (Number(v) || 0), 0),
-    [valorFifo])
+    () => saldos.reduce((t, s) => t + Number(s.saldo || 0) * Number(precios[s.insumo_id] || 0), 0),
+    [saldos, precios])
   const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
   const negativos = saldos.filter(s => Number(s.saldo) < 0).length
   const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
@@ -901,7 +903,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
                   {esJefe && <Celda derecha gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'sin precio'}</Celda>}
-                  {esJefe && <Celda derecha>{dinero(valorFifo[f.insumo_id] || 0)}</Celda>}
+                  {esJefe && <Celda derecha>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
                                   textAlign: 'right' }}>
@@ -946,7 +948,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <span>{PLAZO_LBL[d.plazo]}</span>
                         <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
                           <span>{limpio(d.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                          {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(d.valor)}</span>}
+                          {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(Number(d.cantidad || 0) * Number(f.precio || 0))}</span>}
                         </span>
                       </div>
                     ))}
@@ -955,7 +957,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       <span>Total</span>
                       <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
                         <span>{limpio(f.saldo)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                        {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(valorFifo[f.insumo_id] || 0)}</span>}
+                        {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</span>}
                       </span>
                     </div>
                   </div>
