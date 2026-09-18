@@ -36,6 +36,8 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   const [editGal, setEditGal] = useState('')      // galones en modo galones
   const [nuevo, setNuevo] = useState('')          // monto $ en modo dólares
   const [aviso, setAviso] = useState(null)
+  const [resumen, setResumen] = useState([])      // [{finca_id, finca, zona, monto, gasto}] del grupo (jefe)
+  const [zonaFiltro, setZonaFiltro] = useState('todas')
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -80,8 +82,24 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     const gm = await Promise.all(mesesSet.map(mm =>
       supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: finca.id, p_anio: anio, p_mes: mm })))
     setHistorial(mesesSet.map((mm, i) => ({ mes: mm, monto: porMes[mm], gasto: Number(gm[i].data) || 0 })))
+
+    // Tablero del grupo (solo jefe): presupuesto y gasto de diesel de cada
+    // finca en el mes, igual que en insumos.
+    if (esJefe && activas.length) {
+      const { data: ppAll } = await supabase.schema('produccion').from('presupuesto_diesel')
+        .select('finca_id, monto').eq('anio', anio).eq('mes', mes).not('tipo_id', 'is', null)
+      const mFinca = {}
+      ;(ppAll || []).forEach(r => { mFinca[r.finca_id] = (mFinca[r.finca_id] || 0) + Number(r.monto) })
+      const gFinca = await Promise.all(activas.map(f =>
+        supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: f.id, p_anio: anio, p_mes: mes })))
+      setResumen(activas.map((f, i) => ({
+        finca_id: f.id, finca: f.nombre, zona: f.zona,
+        monto: mFinca[f.id] || 0, gasto: Number(gFinca[i].data) || 0 })))
+    } else {
+      setResumen([])
+    }
     setCargando(false)
-  }, [finca.id, anio, mes])
+  }, [finca.id, anio, mes, esJefe])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -404,6 +422,75 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
           </div>
         )}
 
+        {/* Tablero de diesel del mes de todas las fincas: solo el jefe. */}
+        {esJefe && resumen.length > 0 && (() => {
+          const vis = resumen
+            .filter(r => zonaFiltro === 'todas' || r.zona === zonaFiltro)
+            .map(r => ({ ...r, pctReal: r.monto ? Math.round(Number(r.gasto) / Number(r.monto) * 100) : null }))
+            .map(r => ({ ...r, pct: r.pctReal === null ? null : Math.min(100, r.pctReal) }))
+            .sort((a, b) => (b.pctReal ?? -1) - (a.pctReal ?? -1))
+          const tMonto = vis.reduce((t, r) => t + Number(r.monto || 0), 0)
+          const tGasto = vis.reduce((t, r) => t + Number(r.gasto || 0), 0)
+          const tPct = tMonto ? Math.min(100, Math.round(tGasto / tMonto * 100)) : 0
+          const enRojo = vis.filter(r => r.pctReal !== null && r.pctReal >= 100).length
+          const LEN = Math.PI * 60
+          const colDe = p => p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
+          return (
+          <div style={{ marginTop: '22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Todas las fincas en {MESES[mes - 1]}</h3>
+              <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                {[['todas', 'Todas'], ['jambeli', 'Jambelí'], ['puna', 'Puná']].map(([z, t]) => (
+                  <button key={z} onClick={() => setZonaFiltro(z)} style={{
+                    padding: '6px 12px', borderRadius: '20px', fontFamily: 'inherit', fontSize: '12px',
+                    cursor: 'pointer', border: '0.5px solid ' + (zonaFiltro === z ? '#9cc4e8' : BORDE),
+                    background: zonaFiltro === z ? '#E6F1FB' : 'white',
+                    color: zonaFiltro === z ? AZUL : NAVY, fontWeight: zonaFiltro === z ? 500 : 400 }}>{t}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '11px', marginBottom: '14px' }}>
+              <TarjetaPpto oscura k="Presupuesto del grupo" v={dinero(tMonto)} />
+              <TarjetaPpto k="Gastado" v={dinero(tGasto)} />
+              <TarjetaPpto k="Queda" v={dinero(tMonto - tGasto)} />
+              <TarjetaPpto k="Fincas en rojo" v={String(enRojo)} rojo={enRojo > 0} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr', gap: '14px', alignItems: 'stretch' }}>
+              <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px',
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="150" height="92" viewBox="0 0 150 92">
+                  <path d="M15 85 A60 60 0 0 1 135 85" fill="none" stroke="#eef3f7" strokeWidth="14" strokeLinecap="round" />
+                  <path d="M15 85 A60 60 0 0 1 135 85" fill="none" stroke={colDe(tPct)} strokeWidth="14" strokeLinecap="round"
+                        strokeDasharray={`${LEN * tPct / 100} ${LEN}`} />
+                </svg>
+                <div style={{ fontSize: '26px', fontWeight: 500, marginTop: '-6px' }}>{tPct}%</div>
+                <div style={{ fontSize: '12px', color: GRIS }}>del grupo</div>
+              </div>
+              <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 18px' }}>
+                <div style={{ fontSize: '13px', color: GRIS, marginBottom: '12px' }}>Cómo va cada finca en diesel</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {vis.map(r => (
+                    <div key={r.finca_id} style={{ display: 'grid', gridTemplateColumns: '150px 1fr 46px', gap: '10px', alignItems: 'center', fontSize: '13px' }}>
+                      <span>
+                        {r.finca}
+                        <div style={{ fontSize: '11px', color: GRIS, marginTop: '1px', fontVariantNumeric: 'tabular-nums' }}>
+                          {Number(r.monto) ? `Ppto ${dinero(r.monto)} · gastó ${dinero(r.gasto)}` : 'Sin presupuesto'}
+                        </div>
+                      </span>
+                      <span style={{ height: '9px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
+                        {r.pct !== null && <i style={{ display: 'block', height: '100%', width: r.pct + '%', background: colDe(r.pctReal), borderRadius: '20px' }} />}
+                      </span>
+                      <span style={{ textAlign: 'right', fontWeight: 500, color: colDe(r.pctReal), fontVariantNumeric: 'tabular-nums' }}>
+                        {r.pctReal === null ? '—' : r.pctReal + '%'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+          )
+        })()}
+
         {historial.length > 0 && (
           <div style={{ marginTop: '22px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 11px' }}>Historial de {anio}</h3>
@@ -430,6 +517,15 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
         )}
         </>
       )}
+    </div>
+  )
+}
+
+function TarjetaPpto({ k, v, oscura, rojo }) {
+  return (
+    <div style={{ background: oscura ? NAVY : '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '12px', color: oscura ? 'rgba(255,255,255,0.65)' : GRIS }}>{k}</div>
+      <div style={{ fontSize: '22px', fontWeight: 500, color: oscura ? 'white' : rojo ? ROJO : NAVY }}>{v}</div>
     </div>
   )
 }
