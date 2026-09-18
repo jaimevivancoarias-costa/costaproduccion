@@ -959,40 +959,38 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 )}
 
                 {ab && !edit && (
-                  <div style={{ padding: '8px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
-                    {esJefe && (lotes[f.insumo_id] || []).length > 0 && (
-                      <div style={{ marginBottom: '14px' }}>
-                        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Lotes en bodega · se gasta primero el más viejo</div>
-                        {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', padding: '5px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                            <span style={{ fontSize: '10.5px', padding: '2px 8px', borderRadius: '12px', whiteSpace: 'nowrap', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: 'white', color: GRIS, border: '0.5px solid ' + BORDE }) }}>{i === 0 ? 'Se gasta primero' : 'Luego'}</span>
-                            <span>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                            <span style={{ color: GRIS }}>{L.costo == null ? 'sin precio' : 'a ' + dineroExacto(L.costo)}</span>
-                            <span style={{ color: '#c3d0db', fontSize: '12px' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'base del conteo'}</span>
-                            <span style={{ marginLeft: 'auto', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{dinero(L.valor)}</span>
+                  <div style={{ padding: '10px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                    {esJefe ? (
+                      (lotes[f.insumo_id] || []).length > 0 && (
+                        <>
+                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Lotes en bodega · el más viejo se gasta primero</div>
+                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '7px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                              <span style={{ width: '22px', height: '22px', flex: '0 0 auto', borderRadius: '50%', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: '#eef2f6', color: GRIS }) }}>{i + 1}</span>
+                              <div>
+                                <div style={{ fontSize: '14px' }}>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)} <span style={{ color: GRIS }}>{L.costo == null ? '· sin precio' : '· comprados a ' + dineroExacto(L.costo)}</span></div>
+                                <div style={{ fontSize: '12px', color: '#9aa6b2' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'base del conteo'}{i === 0 ? ' · próximo a usarse' : ''}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )
+                    ) : (
+                      <>
+                        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
+                        {dg.map((d, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px',
+                                                padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                            <span>{PLAZO_LBL[d.plazo]}</span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(d.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
                           </div>
                         ))}
-                      </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 500,
+                                      padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
+                          <span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(f.saldo)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
+                        </div>
+                      </>
                     )}
-                    <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
-                    {dg.map((d, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px',
-                                            padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                        <span>{PLAZO_LBL[d.plazo]}</span>
-                        <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
-                          <span>{limpio(d.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                          {esJefe && <span style={{ color: GRIS, minWidth: '80px', textAlign: 'right' }}>{dinero(Number(d.cantidad || 0) * Number(f.precio || 0))}</span>}
-                        </span>
-                      </div>
-                    ))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', fontWeight: 500,
-                                  padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
-                      <span>Total</span>
-                      <span style={{ display: 'flex', gap: '18px', fontVariantNumeric: 'tabular-nums' }}>
-                        <span>{limpio(f.saldo)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                        {esJefe && <span style={{ minWidth: '80px', textAlign: 'right' }}>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</span>}
-                      </span>
-                    </div>
                   </div>
                 )}
               </div>
