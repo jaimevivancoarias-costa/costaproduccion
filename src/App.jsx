@@ -43,6 +43,10 @@ const MODULOS = [
   { id: 'historial',  nombre: 'Historial',      icono: 'reloj', soloJefe: true },
 ]
 
+// Recordar lo último entre recargas (si el navegador no deja, no pasa nada).
+const lsGet = (k, d) => { try { return localStorage.getItem(k) || d } catch { return d } }
+const lsSet = (k, v) => { try { localStorage.setItem(k, v) } catch { /* sin storage */ } }
+
 function Icono({ tipo }) {
   const p = { width: 15, height: 15, viewBox: '0 0 16 16', fill: 'none',
               stroke: 'currentColor', strokeWidth: 1.5 }
@@ -61,16 +65,16 @@ export default function App() {
   const { user, nombre, fincas, esJefe, esJefeGlobal, cargando, logout } = useAuth()
   const [fincaId, setFincaId] = useState(null)
   const [zona, setZona] = useState('jambeli')
-  const [modulo, setModulo] = useState('registro')
+  const [modulo, setModulo] = useState(() => lsGet('modulo', 'registro'))
   // Dentro de Registro diario: balanceado o insumos. Comparten semana.
-  const [panelReg, setPanelReg] = useState('balanceado')
+  const [panelReg, setPanelReg] = useState(() => lsGet('panelReg', 'balanceado'))
   // Cuando se entra a Reportes desde la barra de presupuesto, arranca
   // enfocado en insumos.
   const [verInsumos, setVerInsumos] = useState(false)
   // Inventario: insumos o balanceado.
-  const [panelInv, setPanelInv] = useState('insumos')
+  const [panelInv, setPanelInv] = useState(() => lsGet('panelInv', 'insumos'))
   // Presupuesto: insumos o diesel.
-  const [pptoTab, setPptoTab] = useState('insumos')
+  const [pptoTab, setPptoTab] = useState(() => lsGet('pptoTab', 'insumos'))
   // Menu lateral colapsado a solo iconos. Se recuerda entre recargas.
   const [navColapsado, setNavColapsado] = useState(() => {
     try { return localStorage.getItem('nav') === 'colapsado' } catch { return false }
@@ -100,6 +104,19 @@ export default function App() {
   useEffect(() => {
     if (fincaId) { try { localStorage.setItem('finca', fincaId) } catch { /* sin storage */ } }
   }, [fincaId])
+
+  // Recordar la última página y pestañas, para volver a ellas al recargar.
+  useEffect(() => { lsSet('modulo', modulo) }, [modulo])
+  useEffect(() => { lsSet('panelReg', panelReg) }, [panelReg])
+  useEffect(() => { lsSet('panelInv', panelInv) }, [panelInv])
+  useEffect(() => { lsSet('pptoTab', pptoTab) }, [pptoTab])
+
+  // Si la página recordada es solo para jefe y el usuario no lo es, se
+  // vuelve al Registro diario (no dejarlo en una pantalla que no le toca).
+  useEffect(() => {
+    const m = MODULOS.find(x => x.id === modulo)
+    if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) setModulo('registro')
+  }, [modulo, esJefe, esJefeGlobal])
 
   // Mantener la zona sincronizada con la finca elegida.
   useEffect(() => {
