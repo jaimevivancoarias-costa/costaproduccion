@@ -58,11 +58,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
   const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
+  const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }] = await Promise.all([
+      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
@@ -72,12 +73,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           .select('id, fecha, observacion').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('parametro').select('valor').eq('clave', 'libras_por_saco').maybeSingle(),
+        // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
+        esJefe ? supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: alDia }) : Promise.resolve({ data: [] }),
       ])
       if (e) throw e
       const pr = {}; (p || []).forEach(x => { pr[x.producto_id] = Number(x.precio_saco) })
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
-      setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm)
+      const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor) }) })
+      setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm)
       if (par && Number(par.valor) > 0) setLps(Number(par.valor))
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
@@ -97,7 +101,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
-  }, [finca.id, alDia, desde, hasta])
+  }, [finca.id, alDia, desde, hasta, esJefe])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -453,6 +457,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   </Fila>
                   {ab && (
                     <div style={{ padding: '8px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      {esJefe && (lotes[f.producto_id] || []).length > 0 && (
+                        <div style={{ marginBottom: '14px' }}>
+                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Lotes en bodega · se gasta primero el más viejo</div>
+                          {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', padding: '5px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                              <span style={{ fontSize: '10.5px', padding: '2px 8px', borderRadius: '12px', whiteSpace: 'nowrap', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: 'white', color: GRIS, border: '0.5px solid ' + BORDE }) }}>{i === 0 ? 'Se gasta primero' : 'Luego'}</span>
+                              <span>{limpio(L.cantidad)} sacos</span>
+                              <span style={{ color: GRIS }}>{L.costo == null ? 'sin precio' : 'a ' + dineroExacto(L.costo)}</span>
+                              <span style={{ color: '#c3d0db', fontSize: '12px' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'base del conteo'}</span>
+                              <span style={{ marginLeft: 'auto', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{dinero(L.valor)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
                       {dg.map((d, i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
