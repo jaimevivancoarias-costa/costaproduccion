@@ -112,11 +112,13 @@ export default function App() {
   useEffect(() => { lsSet('pptoTab', pptoTab) }, [pptoTab])
 
   // Si la página recordada es solo para jefe y el usuario no lo es, se
-  // vuelve al Registro diario (no dejarlo en una pantalla que no le toca).
+  // vuelve al Registro diario. Se espera a que el usuario termine de cargar:
+  // si no, mientras carga aún no se sabe el rol y patearía al jefe sin razón.
   useEffect(() => {
+    if (cargando) return
     const m = MODULOS.find(x => x.id === modulo)
     if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) setModulo('registro')
-  }, [modulo, esJefe, esJefeGlobal])
+  }, [modulo, esJefe, esJefeGlobal, cargando])
 
   // Mantener la zona sincronizada con la finca elegida.
   useEffect(() => {
