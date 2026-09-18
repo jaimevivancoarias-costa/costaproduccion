@@ -448,14 +448,30 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar(true)
   }
 
-  async function guardarSiembra(p, larva, gramaje) {
+  async function guardarSiembra(p, larva, gramaje, fecha) {
     const lv = larva === '' || larva == null ? null : Math.round(Number(String(larva).replace(/[.,]/g, '')))
     const gr = gramaje === '' || gramaje == null ? null : Number(String(gramaje).replace(',', '.'))
     if (lv !== null && !(lv > 0)) { setAviso({ tipo: 'error', texto: 'La larva debe ser un número mayor que cero.' }); return }
     if (gr !== null && !(gr >= 0)) { setAviso({ tipo: 'error', texto: 'El gramaje no es válido.' }); return }
+    if (!fecha) { setAviso({ tipo: 'error', texto: 'Falta la fecha de siembra.' }); return }
+    if (fecha > hoyISO()) { setAviso({ tipo: 'error', texto: 'La siembra no puede ser una fecha futura.' }); return }
+    // La siembra no puede quedar después de otro evento del ciclo (transferencia,
+    // cosecha…), para que las fechas queden en orden.
+    const { data: evs } = await supabase.schema('produccion').from('evento')
+      .select('fecha, tipo').eq('ciclo_id', p.cicloId).neq('tipo', 'siembra')
+      .order('fecha', { ascending: true }).limit(1)
+    if (evs && evs.length && evs[0].fecha < fecha) {
+      setAviso({ tipo: 'error', texto: `La siembra no puede ser después del ${corta(evs[0].fecha)} (ya hay un evento de ${evs[0].tipo}).` }); return
+    }
+    const campos = { cantidad_larva: lv, gramaje_precria: gr }
+    if (fecha !== p.fechaSiembra) campos.fecha_siembra = fecha
     const { error } = await supabase.schema('produccion').from('ciclo')
-      .update({ cantidad_larva: lv, gramaje_precria: gr }).eq('id', p.cicloId)
+      .update(campos).eq('id', p.cicloId)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    if (fecha !== p.fechaSiembra) {
+      await supabase.schema('produccion').from('evento')
+        .update({ fecha }).eq('ciclo_id', p.cicloId).eq('tipo', 'siembra')
+    }
     setEditSiembra(null)
     setAviso({ tipo: 'ok', texto: `Siembra de ${p.nombre} actualizada.` })
     await cargar(true)
@@ -529,6 +545,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         }
       }
       if (faltan.length) {
+        // Siempre se bloquea si no hay stock: todo debe cuadrar. Primero se
+        // ingresa el balanceado que faltó a bodega, luego se registra.
         setAviso({ tipo: 'error', texto: 'Sin stock suficiente, ingresa balanceado a bodega antes de registrar. ' + faltan.join(' · ') })
         setGuardando(false)
         return false
@@ -1649,12 +1667,19 @@ const Sep = () => <span style={{ width: '1px', height: '22px', background: BORDE
 function EditorSiembra({ p, onGuardar, onCancelar }) {
   const [larva, setLarva] = useState(p.larva != null ? String(p.larva) : '')
   const [gramaje, setGramaje] = useState(p.gramajePrecria != null ? String(p.gramajePrecria) : '')
+  const [fecha, setFecha] = useState(p.fechaSiembra || '')
   const [enviando, setEnviando] = useState(false)
   return (
     <div style={{ background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9',
                   padding: '12px 16px', display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
       <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500, alignSelf: 'center' }}>
         Siembra de {p.nombre}
+      </div>
+      <div>
+        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Fecha de siembra</div>
+        <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)}
+          style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit',
+                   border: '0.5px solid ' + BORDE, borderRadius: '9px' }} />
       </div>
       <div>
         <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Larva sembrada</div>
@@ -1669,7 +1694,7 @@ function EditorSiembra({ p, onGuardar, onCancelar }) {
                    border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
       </div>
       <button disabled={enviando}
-        onClick={async () => { setEnviando(true); await onGuardar(p, larva, gramaje); setEnviando(false) }}
+        onClick={async () => { setEnviando(true); await onGuardar(p, larva, gramaje, fecha); setEnviando(false) }}
         style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '9px 18px',
                  fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer', opacity: enviando ? 0.5 : 1 }}>
         {enviando ? 'Guardando...' : 'Guardar'}
