@@ -57,10 +57,9 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
       supabase.schema('produccion').rpc('fn_presupuesto_historico', { p_finca: finca.id }),
       esJefe ? supabase.schema('produccion').rpc('fn_presupuesto_resumen', { p_anio: anio, p_mes: mes })
              : Promise.resolve({ data: [] }),
-      // El bodeguero ve en qué insumo se va el mes (cantidad y %, sin $).
-      esJefe ? Promise.resolve({ data: [] })
-             : supabase.schema('produccion').rpc('fn_reporte_consumo',
-                 { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+      // "En qué se va el mes" (cantidad y %, sin $): lo ven jefe y bodeguero.
+      supabase.schema('produccion').rpc('fn_reporte_consumo',
+        { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
     ])
     setMonto(p ? Number(p.monto) : null)
     setGasto(Number(g) || 0)
@@ -273,9 +272,9 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
         </Caja>
       )}
 
-      {/* Desglose por insumo del mes · SOLO bodeguero, SIN precios.
-          Muestra en qué se está yendo el consumo: cantidad y % del mes. */}
-      {!esJefe && !cargando && consumo.length > 0 && (() => {
+      {/* Desglose por insumo del mes · lo ve todo el mundo (jefe y bodeguero),
+          SIN precios. Muestra en qué se está yendo el consumo: cantidad y %. */}
+      {!cargando && consumo.length > 0 && (() => {
         const total = consumo.reduce((t, c) => t + c.costo, 0)
         return (
           <div style={{ marginTop: '22px' }}>
