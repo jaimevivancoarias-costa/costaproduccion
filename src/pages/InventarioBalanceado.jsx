@@ -457,34 +457,26 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   </Fila>
                   {ab && (
                     <div style={{ padding: '10px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
-                      {esJefe ? (
-                        (lotes[f.producto_id] || []).length > 0 && (
-                          <>
-                            <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Lotes en bodega · el más viejo se gasta primero</div>
-                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
-                              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '7px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                                <span style={{ width: '22px', height: '22px', flex: '0 0 auto', borderRadius: '50%', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: '#eef2f6', color: GRIS }) }}>{i + 1}</span>
-                                <div>
-                                  <div style={{ fontSize: '14px' }}>{limpio(L.cantidad)} sacos <span style={{ color: GRIS }}>{L.costo == null ? '· sin precio' : '· comprados a ' + dineroExacto(L.costo)}</span></div>
-                                  <div style={{ fontSize: '12px', color: '#9aa6b2' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'base del conteo'}{i === 0 ? ' · próximo a usarse' : ''}</div>
-                                </div>
+                      {esJefe && (lotes[f.producto_id] || []).length > 0 && (
+                        <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
+                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Lotes en bodega · el más viejo se gasta primero</div>
+                          {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '7px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                              <span style={{ width: '22px', height: '22px', flex: '0 0 auto', borderRadius: '50%', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: '#eef2f6', color: GRIS }) }}>{i + 1}</span>
+                              <div>
+                                <div style={{ fontSize: '14px' }}>{limpio(L.cantidad)} sacos{L.fecha == null ? '' : (L.costo == null ? ' · sin precio' : <span style={{ color: GRIS }}> · comprados a {dineroExacto(L.costo)}</span>)}</div>
+                                <div style={{ fontSize: '12px', color: '#9aa6b2' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'del conteo físico'}{i === 0 ? ' · próximo a usarse' : ''}</div>
                               </div>
-                            ))}
-                          </>
-                        )
-                      ) : (
-                        <>
-                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '6px' }}>Por plazo de compra</div>
-                          {dg.map((d, i) => (
-                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '13px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                              <span>{PLAZO_LBL[d.plazo]}</span>
-                              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(d.cantidad)} sacos</span>
                             </div>
                           ))}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 500, padding: '6px 0 0', borderTop: '0.5px solid ' + BORDE, marginTop: '2px' }}>
-                            <span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(f.saldo)} sacos</span>
-                          </div>
-                        </>
+                        </div>
+                      )}
+                      {dg.length > 0 && (
+                        <div style={{ fontSize: '12px', color: GRIS }}>
+                          <span style={{ textTransform: 'uppercase', fontSize: '11px', letterSpacing: '.03em' }}>Por plazo de pago: </span>
+                          {dg.map((d, i) => <span key={i}>{i ? ' · ' : ''}{PLAZO_LBL[d.plazo]} {limpio(d.cantidad)}</span>)}
+                          <span> sacos</span>
+                        </div>
                       )}
                     </div>
                   )}
