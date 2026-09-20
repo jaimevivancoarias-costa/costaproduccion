@@ -41,17 +41,13 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   if (tipo === 'siembra') {
     const pid = idPiscina(piscina)
     if (!pid) throw new Error('No se identificó la piscina')
-    const { data: c, error } = await supabase.schema('produccion').from('ciclo')
-      .insert({ finca_id: fincaId, piscina_origen_id: pid, fecha_siembra: fecha,
-                laboratorio_id: laboratorioId || null, cantidad_larva: larva || null,
-                gramaje_precria: gramaje || null })
-      .select('id').single()
+    // Atómico: crea ciclo + ocupación + evento de una sola vez.
+    const { error } = await supabase.schema('produccion').rpc('fn_sembrar', {
+      p_finca: fincaId, p_piscina: pid, p_fecha: fecha,
+      p_laboratorio: laboratorioId || null, p_larva: larva || null,
+      p_gramaje: gramaje || null, p_observacion: observacion || null,
+    })
     if (error) throw error
-    await supabase.schema('produccion').from('ciclo_piscina')
-      .insert({ ciclo_id: c.id, piscina_id: pid, fecha_desde: fecha })
-    await supabase.schema('produccion').from('evento')
-      .insert({ ciclo_id: c.id, tipo: 'siembra', fecha, piscina_origen_id: pid,
-                observacion: observacion || null })
     return
   }
 
@@ -71,15 +67,12 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   }
 
   if (tipo === 'cosecha') {
-    const { error } = await supabase.schema('produccion').from('evento')
-      .insert({ ...base, tipo: 'cosecha', libras: lb })
+    // Atómico: registra la cosecha, cierra el ciclo y libera la piscina de
+    // una sola vez. Si falla, no queda a medias.
+    const { error } = await supabase.schema('produccion').rpc('fn_cosechar', {
+      p_ciclo: cid, p_fecha: fecha, p_libras: lb, p_observacion: observacion || null,
+    })
     if (error) throw error
-    const { error: e2 } = await supabase.schema('produccion').from('ciclo')
-      .update({ estado: 'cerrado', fecha_cierre: fecha, libras_cosechadas: lb })
-      .eq('id', cid)
-    if (e2) throw e2
-    await supabase.schema('produccion').from('ciclo_piscina')
-      .update({ fecha_hasta: fecha }).eq('ciclo_id', cid).is('fecha_hasta', null)
     return
   }
 
