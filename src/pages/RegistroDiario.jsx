@@ -21,6 +21,7 @@ const NAVY = '#022847'
 const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
+const ROJO = '#A32D2D'
 const HOYB = '#E6F1FB'
 const miniLink = { display: 'block', margin: '3px auto 0', background: 'none', border: 'none',
                    padding: 0, cursor: 'pointer', color: '#0D6CB0', fontFamily: 'inherit', fontSize: '9px' }
