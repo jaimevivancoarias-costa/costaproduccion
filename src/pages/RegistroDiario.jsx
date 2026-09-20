@@ -1115,10 +1115,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                   </div>
                   {abierta === p.piscinaId && (
                     <div style={{ background: '#f7fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 14px 34px' }}>
-                      <div style={{ display: 'flex', gap: '26px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                      <div style={{ display: 'flex', gap: '22px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
                         <div>
-                          <div style={{ fontSize: '11px', color: GRIS }}>Siembra</div>
-                          <div style={{ fontSize: '13px', fontWeight: 500 }}>
+                          <div style={{ fontSize: '11px', color: GRIS }}>Sembrada</div>
+                          <div style={{ fontSize: '14px' }}>
                             {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
                             {p.cicloId && !soloLectura && modo === 'registrar' && (
                               <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
@@ -1129,24 +1129,36 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                                 style={{ background: 'none', border: 'none', color: ROJO, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>eliminar siembra</button>
                             )}
                           </div>
-                          {p.cicloId && (
-                            <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px', fontVariantNumeric: 'tabular-nums' }}>
-                              <span style={{ color: NAVY }}>{p.larva ? miles(p.larva) : '—'}</span> larva · <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + (p.tipo === 'precria' ? ' PLs/g' : ' g') : '—'}</span>
-                            </div>
-                          )}
-                          {p.cicloId && p.tipo !== 'precria' && p.fechaSiembra && (() => {
-                            const ocup = p.fechaOcupacion || p.fechaSiembra
-                            const precria = ocup !== p.fechaSiembra ? diasCultivo(p.fechaSiembra, ocup) : 0
-                            const engorde = diasCultivo(ocup, corteDias)
-                            const secado = p.prevCierre ? diasCultivo(p.prevCierre, ocup) : 0
-                            if (precria <= 0 && secado <= 0) return null
-                            const partes = []
-                            if (precria > 0) partes.push(`${precria} en precría`)
-                            partes.push(`${engorde} de engorde`)
-                            if (secado > 0) partes.push(`${secado} de secado`)
-                            return <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>{partes.join(' · ')}</div>
-                          })()}
                         </div>
+                        {p.cicloId && (
+                          <div>
+                            <div style={{ fontSize: '11px', color: GRIS }}>Larva</div>
+                            <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</div>
+                          </div>
+                        )}
+                        {p.cicloId && (
+                          <div>
+                            <div style={{ fontSize: '11px', color: GRIS }}>Gramaje</div>
+                            <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.gramajePrecria != null ? p.gramajePrecria + (p.tipo === 'precria' ? ' PLs/g' : ' g') : '—'}</div>
+                          </div>
+                        )}
+                        {p.cicloId && p.tipo !== 'precria' && p.fechaSiembra && (() => {
+                          const ocup = p.fechaOcupacion || p.fechaSiembra
+                          const precria = ocup !== p.fechaSiembra ? diasCultivo(p.fechaSiembra, ocup) : 0
+                          const engorde = diasCultivo(ocup, corteDias)
+                          const secado = p.prevCierre ? diasCultivo(p.prevCierre, ocup) : 0
+                          if (precria <= 0 && secado <= 0) return null
+                          const partes = []
+                          if (precria > 0) partes.push(`${precria} en precría`)
+                          partes.push(`${engorde} de engorde`)
+                          if (secado > 0) partes.push(`${secado} de secado`)
+                          return (
+                            <div>
+                              <div style={{ fontSize: '11px', color: GRIS }}>Fases</div>
+                              <div style={{ fontSize: '14px' }}>{partes.join(' · ')}</div>
+                            </div>
+                          )
+                        })()}
                         <div style={{ minWidth: '160px' }}>
                           <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Laboratorio</div>
                           <Laboratorio fila={p} laboratorios={laboratorios}
