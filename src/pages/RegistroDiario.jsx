@@ -1049,21 +1049,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
                           <div style={{ fontSize: '11px', color: GRIS }}>
                             {p.hectareas.toFixed(2)} ha{p.tipo === 'precria' ? ' · precría' : ''}
-                            {p.fechaSiembra && (() => {
-                              // Precría: todos los días son de precría. Piscina de
-                              // engorde: precría (en el vivero) + engorde (aquí) +
-                              // secado (días vacía antes de este cultivo).
-                              if (p.tipo === 'precria') return ` · ${diasCultivo(p.fechaSiembra, corteDias)} días`
-                              const ocup = p.fechaOcupacion || p.fechaSiembra
-                              const precria = ocup !== p.fechaSiembra ? diasCultivo(p.fechaSiembra, ocup) : 0
-                              const engorde = diasCultivo(ocup, corteDias)
-                              const secado = p.prevCierre ? diasCultivo(p.prevCierre, ocup) : 0
-                              const partes = []
-                              if (precria > 0) partes.push(`${precria} en precría`)
-                              partes.push(`${engorde} de engorde`)
-                              if (secado > 0) partes.push(`${secado} de secado`)
-                              return ` · ${precria + engorde + secado} días · ${partes.join(' · ')}`
-                            })()}
+                            {p.fechaSiembra ? ` · ${diasCultivo(p.fechaSiembra, corteDias)} días` : ''}
                           </div>
                         </div>
                       </div>
@@ -1148,6 +1134,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                               <span style={{ color: NAVY }}>{p.larva ? miles(p.larva) : '—'}</span> larva · <span style={{ color: NAVY }}>{p.gramajePrecria != null ? p.gramajePrecria + (p.tipo === 'precria' ? ' PLs/g' : ' g') : '—'}</span>
                             </div>
                           )}
+                          {p.cicloId && p.tipo !== 'precria' && p.fechaSiembra && (() => {
+                            const ocup = p.fechaOcupacion || p.fechaSiembra
+                            const precria = ocup !== p.fechaSiembra ? diasCultivo(p.fechaSiembra, ocup) : 0
+                            const engorde = diasCultivo(ocup, corteDias)
+                            const secado = p.prevCierre ? diasCultivo(p.prevCierre, ocup) : 0
+                            if (precria <= 0 && secado <= 0) return null
+                            const partes = []
+                            if (precria > 0) partes.push(`${precria} en precría`)
+                            partes.push(`${engorde} de engorde`)
+                            if (secado > 0) partes.push(`${secado} de secado`)
+                            return <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>{partes.join(' · ')}</div>
+                          })()}
                         </div>
                         <div style={{ minWidth: '160px' }}>
                           <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Laboratorio</div>
@@ -1371,23 +1369,23 @@ function TransferenciaInfo({ cicloId }) {
     <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #e8eef4' }}>
       {recibio.map((r, i) => {
         const surv = r.cant != null && r.larvaPadre ? (r.cant / r.larvaPadre) * 100 : null
-        const chip = { fontSize: '11px', borderRadius: '11px', padding: '1px 8px', marginRight: '5px', display: 'inline-block' }
+        const chip = { fontSize: '11px', borderRadius: '11px', padding: '1px 8px', display: 'inline-block' }
         return (
-          <div key={'r' + i} style={linea}>
-            <span style={{ color: '#3C3489', fontWeight: 500 }}>Recibió</span>{' '}
-            {r.origen ? <>desde <b>{r.origen}</b> </> : ''}
-            {r.fecha ? `el ${corta(r.fecha)} · ` : ''}
-            {r.cant != null ? `${miles(r.cant)} animales` : `${Math.round(r.porc)}%`}
-            <div style={{ marginTop: '4px' }}>
-              {r.cant != null ? (
-                <>
-                  {surv != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
-                  {r.plsG != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>{r.plsG} PLs/g</span>}
-                </>
-              ) : (
-                r.gramaje != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>Gramaje {r.gramaje} g</span>
-              )}
-            </div>
+          <div key={'r' + i} style={{ ...linea, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+            <span>
+              <span style={{ color: '#3C3489', fontWeight: 500 }}>Recibió</span>{' '}
+              {r.origen ? <>desde <b>{r.origen}</b> </> : ''}
+              {r.fecha ? `el ${corta(r.fecha)} · ` : ''}
+              {r.cant != null ? `${miles(r.cant)} animales` : `${Math.round(r.porc)}%`}
+            </span>
+            {r.cant != null ? (
+              <>
+                {surv != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
+                {r.plsG != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>{r.plsG} PLs/g</span>}
+              </>
+            ) : (
+              r.gramaje != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>Gramaje {r.gramaje} g</span>
+            )}
           </div>
         )
       })}
