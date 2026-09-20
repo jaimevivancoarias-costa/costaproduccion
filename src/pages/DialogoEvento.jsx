@@ -88,6 +88,7 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   const { error } = await supabase.schema('produccion').rpc('fn_transferir', {
     p_ciclo: cid, p_fecha: fecha, p_libras: lb,
     p_observacion: observacion || null, p_destinos: dest,
+    p_gramaje: gramaje > 0 ? gramaje : null,
   })
   if (error) throw error
 }
@@ -227,7 +228,15 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
     setDestinos(ds => ds.map(d => d.piscinaId === pid ? { ...d, cantidad: valor } : d))
   }
 
-  const listo = fecha && (tipo !== 'transferencia' || (esPrecria ? cantOk : pctOk))
+  // Gramaje obligatorio: al sembrar una precría (PLs/gramos) y en toda
+  // transferencia (gramaje de transferencia).
+  const gramajeOk = num(gramaje) > 0
+  const listo = fecha && (
+    tipo === 'transferencia'
+      ? ((esPrecria ? cantOk : pctOk) && gramajeOk)
+      : tipo === 'siembra' && esPrecria ? gramajeOk
+      : true
+  )
 
   // Mismo comportamiento que en la columna del registro diario: si ya
   // existe escrito de otra forma, se usa el que esta en vez de crear un
@@ -308,9 +317,15 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                 Densidad: <b style={{ color: NAVY, fontWeight: 500 }}>{miles(densidad)}</b> larvas por hectárea
               </div>
             )}
-            <Campo label="Gramaje de precría">
-              <input inputMode="decimal" value={gramaje} placeholder="Opcional"
+            <Campo label={esPrecria ? 'PLs por gramo' : 'Gramaje de siembra (g)'}>
+              <input inputMode="decimal" value={gramaje}
+                     placeholder={esPrecria ? 'ej. 80 · obligatorio' : 'Opcional'}
                      onChange={e => setGramaje(e.target.value)} style={entrada} />
+              {esPrecria && (
+                <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
+                  Cuántas post-larvas (PLs) hay por gramo. Es obligatorio para sembrar la precría.
+                </div>
+              )}
             </Campo>
           </>
         )}
@@ -420,6 +435,16 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                 <div style={{ fontSize: '12px', color: GRIS, marginTop: '4px' }}>
                   El porcentaje reparte el costo del ciclo entre los destinos. Cada piscina
                   sigue el mismo ciclo: conserva los días de cultivo desde la siembra.
+                </div>
+              </Campo>
+            )}
+
+            {destinos.length > 0 && (
+              <Campo label="Gramaje de transferencia (g)">
+                <input inputMode="decimal" value={gramaje} placeholder="obligatorio"
+                       onChange={e => setGramaje(e.target.value)} style={entrada} />
+                <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
+                  El tamaño (gramaje) del camarón al momento de pasarlo. Es obligatorio.
                 </div>
               </Campo>
             )}
