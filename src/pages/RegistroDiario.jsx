@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento } from './DialogoEvento'
+import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento, mensajeError } from './DialogoEvento'
 import BuscadorAplicacion from './BuscadorAplicacion'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
@@ -343,7 +343,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       setAviso({ tipo: 'ok', texto: TIPOS[dialogo.tipo].nombre + ' registrada' })
       await cargar(true)
     } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + mensajeError(err) })
     }
   }
 
@@ -475,6 +475,28 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     setEditSiembra(null)
     setAviso({ tipo: 'ok', texto: `Siembra de ${p.nombre} actualizada.` })
     await cargar(true)
+  }
+
+  // Eliminar una siembra directa equivocada (borra el ciclo entero) para
+  // dejar la piscina libre — p. ej. cuando en realidad va una transferencia
+  // desde precría. Reusa la lógica de "Deshacer", que bloquea si ya hay
+  // consumo u otra novedad.
+  async function eliminarSiembra(p) {
+    if (!window.confirm(`¿Eliminar la siembra de ${p.nombre}?\n\nLa piscina quedará vacía. Solo se puede si no tiene consumo ni otras novedades (cosecha, raleo, transferencia).`)) return
+    const { data: ev } = await supabase.schema('produccion').from('evento')
+      .select('id, fecha, tipo').eq('ciclo_id', p.cicloId).eq('tipo', 'siembra').maybeSingle()
+    if (!ev) {
+      setAviso({ tipo: 'error', texto: 'Esta piscina no tiene una siembra directa (quizá llegó por transferencia). Para vaciarla, deshaz la transferencia que la llenó.' })
+      return
+    }
+    try {
+      await eliminarEvento({ evento: ev, cicloId: p.cicloId })
+      setEditSiembra(null); setAbierta(null)
+      setAviso({ tipo: 'ok', texto: `Siembra de ${p.nombre} eliminada. La piscina quedó libre para la transferencia.` })
+      await cargar(true)
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: err.message || 'No se pudo eliminar la siembra.' })
+    }
   }
 
   const totalSemana = useMemo(
@@ -616,7 +638,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       await cargar(true)
       return true
     } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + mensajeError(err) })
       return false
     } finally {
       setGuardando(false)
@@ -1077,6 +1099,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             {p.cicloId && !soloLectura && modo === 'registrar' && (
                               <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
                                 style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>{editSiembra === p.piscinaId ? 'cerrar' : 'editar'}</button>
+                            )}
+                            {p.cicloId && esJefe && !soloLectura && modo === 'registrar' && (
+                              <button onClick={() => eliminarSiembra(p)}
+                                style={{ background: 'none', border: 'none', color: ROJO, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>eliminar siembra</button>
                             )}
                           </div>
                           {p.cicloId && (
