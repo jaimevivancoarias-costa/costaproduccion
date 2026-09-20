@@ -320,7 +320,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
             )}
             <Campo label={esPrecria ? 'PLs por gramo' : 'Gramaje de siembra (g)'}>
               <input inputMode="decimal" value={gramaje}
-                     placeholder={esPrecria ? 'ej. 80 · obligatorio' : 'Opcional'}
+                     placeholder={esPrecria ? 'ej. 80 · Obligatorio' : 'Opcional'}
                      onChange={e => setGramaje(e.target.value)} style={entrada} />
               {esPrecria && (
                 <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
@@ -454,7 +454,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
             {destinos.length > 0 && (
               <Campo label="Gramaje de transferencia (g)">
-                <input inputMode="decimal" value={gramaje} placeholder="obligatorio"
+                <input inputMode="decimal" value={gramaje} placeholder="Obligatorio"
                        onChange={e => setGramaje(e.target.value)} style={entrada} />
                 <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
                   El tamaño (gramaje) del camarón al momento de pasarlo. Es obligatorio.
