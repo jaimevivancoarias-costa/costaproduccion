@@ -95,7 +95,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           .select('id, codigo, nombre, hectareas, tipo')
           .eq('finca_id', finca.id).eq('activa', true).eq('es_reservorio', false),
         supabase.schema('produccion').from('ciclo')
-          .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
+          .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, estado, cantidad_larva, gramaje_precria, piscina_origen_id, ciclo_padre_id, laboratorio_id, laboratorio:laboratorio_id (nombre)')
           .eq('finca_id', finca.id),
         supabase.schema('produccion').from('laboratorio')
           .select('id, nombre').eq('activo', true).order('nombre'),
@@ -166,8 +166,26 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           siembraPosterior: posterior[p.id] || null,
           laboratorio: c?.laboratorio?.nombre || null,
           gramajePrecria: c?.gramaje_precria ?? null,
+          // Directa (sin padre) vs venida por transferencia. Se usa para
+          // mostrar "eliminar siembra" solo en siembras directas.
+          cicloPadreId: c?.ciclo_padre_id || null,
         }
       }).sort(ordenar)
+
+      // "eliminar siembra" solo aplica a siembras DIRECTAS (sin padre) y
+      // LIMPIAS (sin alimentación ni insumos). Se revisa solo para esas
+      // pocas, no para todas las piscinas.
+      const idsDir = lista.filter(x => x.cicloId && !x.cicloPadreId).map(x => x.cicloId)
+      const conReg = new Set()
+      if (idsDir.length) {
+        const [{ data: al2 }, { data: co2 }] = await Promise.all([
+          supabase.schema('produccion').from('alimentacion').select('ciclo_id').in('ciclo_id', idsDir),
+          supabase.schema('produccion').from('consumo_insumo').select('ciclo_id').in('ciclo_id', idsDir),
+        ])
+        ;(al2 || []).forEach(r => r.ciclo_id && conReg.add(r.ciclo_id))
+        ;(co2 || []).forEach(r => r.ciclo_id && conReg.add(r.ciclo_id))
+      }
+      lista.forEach(p => { p.siembraLimpia = !!p.cicloId && !p.cicloPadreId && !conReg.has(p.cicloId) })
       setPiscinas(lista)
 
       setLaboratorios(labs || [])
@@ -1101,7 +1119,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                               <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
                                 style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>{editSiembra === p.piscinaId ? 'cerrar' : 'editar'}</button>
                             )}
-                            {p.cicloId && esJefe && !soloLectura && modo === 'registrar' && (
+                            {p.cicloId && p.siembraLimpia && esJefe && !soloLectura && modo === 'registrar' && (
                               <button onClick={() => eliminarSiembra(p)}
                                 style={{ background: 'none', border: 'none', color: ROJO, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>eliminar siembra</button>
                             )}
