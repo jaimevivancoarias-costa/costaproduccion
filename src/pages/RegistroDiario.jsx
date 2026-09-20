@@ -1149,7 +1149,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           const precria = ocup !== p.fechaSiembra ? diasCultivo(p.fechaSiembra, ocup) : 0
                           const engorde = diasCultivo(ocup, corteDias)
                           const secado = p.prevCierre ? diasCultivo(p.prevCierre, ocup) : 0
-                          if (precria <= 0 && secado <= 0) return null
                           const partes = []
                           if (precria > 0) partes.push(`${precria} en precría`)
                           partes.push(`${engorde} de engorde`)
