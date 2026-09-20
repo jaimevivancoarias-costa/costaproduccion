@@ -1049,7 +1049,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
                           <div style={{ fontSize: '11px', color: GRIS }}>
                             {p.hectareas.toFixed(2)} ha{p.tipo === 'precria' ? ' · precría' : ''}
-                            {p.fechaSiembra ? ` · ${diasCultivo(p.fechaSiembra, corteDias)} días` : ''}
+                            {p.fechaSiembra ? ` · ${p.tipo === 'precria'
+                              ? diasCultivo(p.fechaSiembra, corteDias)
+                              : diasCultivo(p.fechaOcupacion || p.fechaSiembra, corteDias)} días` : ''}
                           </div>
                         </div>
                       </div>
@@ -1390,14 +1392,8 @@ function TransferenciaInfo({ cicloId }) {
               {r.fecha ? `el ${corta(r.fecha)} · ` : ''}
               {r.cant != null ? `${miles(r.cant)} animales` : `${Math.round(r.porc)}%`}
             </span>
-            {r.cant != null ? (
-              <>
-                {surv != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
-                {r.plsG != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>{r.plsG} PLs/g</span>}
-              </>
-            ) : (
-              r.gramaje != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>Gramaje {r.gramaje} g</span>
-            )}
+            {surv != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
+            {r.gramaje != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>Gramaje {r.gramaje} g</span>}
           </div>
         )
       })}
