@@ -22,6 +22,19 @@ export const TIPOS = {
 const idPiscina = p => p?.piscinaId ?? p?.id
 const idCiclo   = c => c?.cicloId ?? c?.id
 
+// Traduce los errores técnicos de la base a algo entendible en español.
+// Los mensajes que ya vienen en español (de fn_transferir) pasan tal cual.
+export function mensajeError(err) {
+  const m = (err && err.message) || String(err || '')
+  if (/ciclo_uno_abierto_por_piscina/.test(m)) return 'Una de las piscinas de destino ya tiene un cultivo vivo. Cosecha o transfiere el actual antes de meter otro ahí.'
+  if (/ciclo_siembra_unica/.test(m)) return 'Ya hay un cultivo con esa misma fecha de siembra en esa piscina. Revisa el cultivo existente o usa otra fecha.'
+  if (/duplicate key/i.test(m) && /dia_registro/.test(m)) return 'Ese día ya estaba registrado.'
+  if (/duplicate key/i.test(m)) return 'Ese registro ya existe (puede ser un doble clic o un dato repetido). Recarga la página y revisa antes de reintentar.'
+  if (/foreign key/i.test(m)) return 'Falta un dato relacionado o ya no existe. Recarga la página e intenta de nuevo.'
+  if (/permission|row-level|rls/i.test(m)) return 'Tu usuario no tiene permiso para hacer esto.'
+  return m
+}
+
 export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   const { fecha, laboratorioId, larva, gramaje, libras, destinos, observacion } = datos
 
@@ -70,66 +83,20 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
     return
   }
 
-  // Transferencia: es TOTAL. El ciclo de origen se cierra (la piscina
-  // queda vacia) y nace un ciclo hijo en cada destino con su porcentaje.
-  // El hijo conserva la fecha de siembra del padre para que los dias de
-  // cultivo sigan corriendo: es el mismo lote de camaron.
-  //
-  // destinos aqui es [{ piscinaId, porcentaje }].
-  const { data: padre, error: eP } = await supabase.schema('produccion').from('ciclo')
-    .select('finca_id, fecha_siembra, laboratorio_id, cantidad_larva').eq('id', cid).single()
-  if (eP) throw eP
-
-  const { data: ev, error } = await supabase.schema('produccion').from('evento')
-    .insert({ ...base, tipo: 'transferencia', libras: lb })
-    .select('id').single()
+  // Transferencia ATÓMICA: todo se hace en una sola operación en la base
+  // (fn_transferir). Si algo falla, se revierte completo — nunca deja un
+  // ciclo o evento colgado. Si la piscina destino ya tiene cultivo, se
+  // juntan. destinos = [{ piscinaId, porcentaje?, cantidad? }].
+  const dest = (destinos || []).map(d => ({
+    piscina_id: d.piscinaId,
+    porcentaje: d.porcentaje != null ? d.porcentaje : null,
+    cantidad: d.cantidad != null ? d.cantidad : null,
+  }))
+  const { error } = await supabase.schema('produccion').rpc('fn_transferir', {
+    p_ciclo: cid, p_fecha: fecha, p_libras: lb,
+    p_observacion: observacion || null, p_destinos: dest,
+  })
   if (error) throw error
-
-  // Cerrar el ciclo de origen: transferido, no cosechado, pero la
-  // piscina queda libre igual.
-  await supabase.schema('produccion').from('ciclo')
-    .update({ estado: 'cerrado', fecha_cierre: fecha }).eq('id', cid)
-  await supabase.schema('produccion').from('ciclo_piscina')
-    .update({ fecha_hasta: fecha }).eq('ciclo_id', cid).is('fecha_hasta', null)
-
-  // Por cada destino: si la piscina ya tiene un lote, se juntan (usa su
-  // ciclo); si esta vacia, nace un ciclo hijo que conserva los dias del
-  // padre. El aporte de costo viaja por evento_destino en los dos casos.
-  for (const d of destinos) {
-    const { data: ocup } = await supabase.schema('produccion').from('ciclo_piscina')
-      .select('ciclo_id').eq('piscina_id', d.piscinaId).is('fecha_hasta', null).maybeSingle()
-
-    let cicloDestino = ocup?.ciclo_id || null
-    if (!cicloDestino) {
-      const { data: hijo, error: eH } = await supabase.schema('produccion').from('ciclo')
-        .insert({
-          finca_id: fincaId,
-          piscina_origen_id: d.piscinaId,
-          fecha_siembra: padre.fecha_siembra,   // conserva los dias de cultivo
-          fecha_ocupacion: fecha,               // empieza a comer aqui hoy
-          laboratorio_id: padre.laboratorio_id,
-          ciclo_padre_id: cid,
-          origen_porcentaje: d.porcentaje,
-          // Si vino de una precria, guarda cuantos animales (millones) entraron.
-          cantidad_larva: d.cantidad != null ? d.cantidad : null,
-        }).select('id').single()
-      if (eH) throw eH
-      cicloDestino = hijo.id
-      await supabase.schema('produccion').from('ciclo_piscina')
-        .insert({ ciclo_id: cicloDestino, piscina_id: d.piscinaId, fecha_desde: fecha })
-    } else if (d.cantidad != null) {
-      // Se junto en una piscina que ya tenia camaron: sumar los animales.
-      const { data: cd } = await supabase.schema('produccion').from('ciclo')
-        .select('cantidad_larva').eq('id', cicloDestino).single()
-      await supabase.schema('produccion').from('ciclo')
-        .update({ cantidad_larva: (Number(cd?.cantidad_larva) || 0) + d.cantidad }).eq('id', cicloDestino)
-    }
-
-    await supabase.schema('produccion').from('evento_destino')
-      .insert({ evento_id: ev.id, piscina_id: d.piscinaId,
-                porcentaje: d.porcentaje, cantidad: d.cantidad != null ? d.cantidad : null,
-                ciclo_destino_id: cicloDestino })
-  }
 }
 
 // Deshacer un evento ya registrado. Es lo que permite corregir "me
