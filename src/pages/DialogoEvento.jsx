@@ -186,6 +186,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   const [obs, setObs] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [errorLab, setErrorLab] = useState(null)
+  const [dropAbierto, setDropAbierto] = useState(false)   // lista de piscinas destino
 
   // Las libras nunca bloquean el registro. El bodeguero no las sabe el
   // dia de la cosecha, llegan despues de la empacadora. Exigirlas hace
@@ -348,38 +349,58 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
               {!destinosPosibles?.length ? (
                 <div style={{ fontSize: '13px', color: GRIS }}>No hay otras piscinas disponibles.</div>
               ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                  {destinosPosibles.map(p => {
-                    const on = destinos.some(d => d.piscinaId === p.id)
-                    return (
-                      <button key={p.id} onClick={() => toggleDestino(p.id)}
-                        title={p.ocupada ? 'Ya tiene camarón: se juntan los dos lotes' : 'Piscina vacía'}
-                        style={{ padding: '7px 13px', borderRadius: '20px', fontFamily: 'inherit',
-                                 fontSize: '13px', cursor: 'pointer',
-                                 border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE),
-                                 background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY,
-                                 fontWeight: on ? 500 : 400 }}>
-                        {p.nombre}
-                        {p.ocupada && <span style={{ color: '#BA7517', marginLeft: '5px' }}>•</span>}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              {destinosPosibles.some(p => p.ocupada) && (
-                <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '7px' }}>
-                  Las piscinas con un punto ya tienen camarón.
-                </div>
+                <>
+                  {/* Campo con las elegidas como chips + abrir la lista. */}
+                  <div onClick={() => setDropAbierto(v => !v)}
+                    style={{ border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '7px 9px',
+                             display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center',
+                             cursor: 'pointer', minHeight: '38px', boxSizing: 'border-box' }}>
+                    {destinos.map(d => {
+                      const nom = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
+                      return (
+                        <span key={d.piscinaId} style={{ fontSize: '13px', background: '#E6F1FB', color: AZUL,
+                              borderRadius: '14px', padding: '3px 6px 3px 10px', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                          {nom}
+                          <span onClick={e => { e.stopPropagation(); toggleDestino(d.piscinaId) }}
+                            style={{ cursor: 'pointer', fontSize: '12px' }}>✕</span>
+                        </span>
+                      )
+                    })}
+                    <span style={{ flex: 1, minWidth: '70px', fontSize: '13px', color: GRIS,
+                                   display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      {destinos.length ? 'Agregar…' : 'Elegir piscinas…'} <span style={{ fontSize: '11px' }}>▾</span>
+                    </span>
+                  </div>
+                  {dropAbierto && (
+                    <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '9px', maxHeight: '160px',
+                                  overflow: 'auto', marginTop: '6px' }}>
+                      {destinosPosibles.map((p, i) => {
+                        const on = destinos.some(d => d.piscinaId === p.id)
+                        return (
+                          <div key={p.id} onClick={() => toggleDestino(p.id)}
+                            style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '8px 11px',
+                                     fontSize: '13.5px', cursor: 'pointer',
+                                     borderBottom: i < destinosPosibles.length - 1 ? '0.5px solid #f1f6f9' : 'none',
+                                     background: on ? '#f6fafe' : 'white' }}>
+                            <input type="checkbox" readOnly checked={on} />
+                            <span style={{ flex: 1 }}>{p.nombre}</span>
+                            {p.ocupada && <span style={{ color: '#BA7517' }}>•</span>}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {destinosPosibles.some(p => p.ocupada) && (
+                    <div style={{ fontSize: '12px', color: '#BA7517', marginTop: '7px' }}>
+                      Las piscinas con un punto ya tienen camarón (se juntan los lotes).
+                    </div>
+                  )}
+                </>
               )}
             </Campo>
 
             {destinos.length > 0 && esPrecria && (
-              <Campo label="Cuántos animales van a cada una">
-                {larvasSembradas > 0 && (
-                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
-                    En esta precría se sembraron <b>{larvasSembradas.toLocaleString('es-EC')}</b>. Pon el número real que pasó a cada piscina (mismo formato).
-                  </div>
-                )}
+              <Campo label="Animales que pasaron a cada una">
                 {destinos.map(d => {
                   const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
                   return (
@@ -393,10 +414,6 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                     </div>
                   )
                 })}
-                <div style={{ fontSize: '12px', color: GRIS, marginTop: '6px' }}>
-                  Pon lo que <b>realmente pasó</b> (no lo sembrado). El costo de la precría se
-                  reparte según el número de cada piscina, y los días siguen corriendo desde la siembra.
-                </div>
                 {larvasSembradas > 0 && totalCant > 0 && (
                   <div style={{ fontSize: '13px', marginTop: '8px', padding: '8px 11px', borderRadius: '9px',
                                 background: '#E1F5EE', color: '#0F6E56' }}>
@@ -431,10 +448,6 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                               color: pctOk ? '#0F6E56' : '#A32D2D' }}>
                   {pctOk ? 'Suma 100%.'
                     : `Suman ${sumaPct}%. Tienen que sumar exactamente 100%.`}
-                </div>
-                <div style={{ fontSize: '12px', color: GRIS, marginTop: '4px' }}>
-                  El porcentaje reparte el costo del ciclo entre los destinos. Cada piscina
-                  sigue el mismo ciclo: conserva los días de cultivo desde la siembra.
                 </div>
               </Campo>
             )}
