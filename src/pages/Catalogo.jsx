@@ -449,7 +449,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       if (vg) { tiene = true; const v = Number(vg.precio_saco); preciosF[pz] = String(v); if (!desdeF) desdeF = vg.vigente_desde; if (v !== preciosAct[pz]) distinta = true }
                     }
                     if (!tiene) continue
-                    if (distinta) { excIni.push({ fincaId: f.id, precios: preciosF, desde: desdeF }); if (!desdeAct) desdeAct = desdeF }
+                    if (distinta) { excIni.push({ fincaId: f.id, precios: preciosF, desde: desdeF, plazoRige: plz[k(p.id, f.id)]?.plazo ?? 0 }); if (!desdeAct) desdeAct = desdeF }
                     else { fincasGen.push(f.id); if (!desdeAct) desdeAct = desdeF }
                   }
                   let pzAct = 0
@@ -1863,26 +1863,28 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         }
       }))
 
-      // 4) Plazo que rige (a las fincas configuradas: general + distintas).
+      // 4) Plazo que rige. El general va a las fincas del general; cada finca
+      //    distinta usa SU propio plazo que rige.
       let rigeStd = plazoActivo
       if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
         const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
         if (conP != null) rigeStd = conP
       }
-      const pPlazo = (async () => {
-        if (!idsConf.length) return
+      const cerrarAbrirPlazo = async (fincaIds, plazoVal, dfe) => {
+        if (!fincaIds.length) return
         await supabase.schema('produccion').from('plazo_producto').delete()
-          .eq('producto_id', producto.id).in('finca_id', idsConf).gte('vigente_desde', desde)
-        await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
-          .eq('producto_id', producto.id).in('finca_id', idsConf).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
-        const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
-          .insert(idsConf.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
-        if (e4) throw e4
-      })()
+          .eq('producto_id', producto.id).in('finca_id', fincaIds).gte('vigente_desde', dfe)
+        await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
+          .eq('producto_id', producto.id).in('finca_id', fincaIds).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
+        const { error } = await supabase.schema('produccion').from('plazo_producto')
+          .insert(fincaIds.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: plazoVal, vigente_desde: dfe })))
+        if (error) throw error
+      }
+      const pPlazo = cerrarAbrirPlazo(idsGen, rigeStd, desde)
 
       await Promise.all([pMin, pPrecios, pPlazo])
 
-      // 3) Distintas: una finca por fila, con sus plazos (después del general).
+      // 3) Distintas: una finca por fila, con sus plazos y su plazo que rige.
       for (const e of exc) {
         if (!e.fincaId) continue
         const dfe = e.desde || desde
@@ -1894,6 +1896,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
             await borrarAbierto([e.fincaId], pz)
           }
         }
+        await cerrarAbrirPlazo([e.fincaId], e.plazoRige ?? 0, dfe)
       }
 
       onHecho(`Configurado en ${idsConf.length} fincas.`)
@@ -1995,26 +1998,36 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         )}
 
         {exc.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr repeat(5, 0.8fr) 1.1fr auto', gap: '8px', fontSize: '10px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase' }}>
-            <span>Finca</span>{PLAZOS.map(pz => <span key={pz} style={{ textAlign: 'right' }}>{PLAZO_LBL[pz]}</span>)}<span>Rige desde</span><span></span>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '8px' }}>Cada columna es un plazo. Llena el precio de los plazos que apliquen; el "que rige" se elige arriba.</div>
+        )}
+        {exc.length > 0 && (
+          <div style={{ overflowX: 'auto', paddingBottom: '4px' }}>
+            <div style={{ minWidth: '900px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '150px repeat(5, 88px) 120px 122px 26px', gap: '8px', fontSize: '10px', color: GRIS, padding: '0 2px 5px', textTransform: 'uppercase' }}>
+                <span>Finca</span>{PLAZOS.map(pz => <span key={pz} style={{ textAlign: 'right' }}>{PLAZO_LBL[pz]}</span>)}<span>Plazo que rige</span><span>Rige desde</span><span></span>
+              </div>
+              {exc.map((e, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '150px repeat(5, 88px) 120px 122px 26px', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+                  <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
+                    <option value="">Elegir finca</option>
+                    {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+                  </select>
+                  {PLAZOS.map(pz => (
+                    <input key={pz} inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—"
+                      onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precios: { ...(r.precios || {}), [pz]: ev.target.value } } : r))}
+                      style={{ ...inp, textAlign: 'right', padding: '8px 6px' }} />
+                  ))}
+                  <select value={e.plazoRige ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazoRige: Number(ev.target.value) } : r))} style={inp}>
+                    {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
+                  </select>
+                  <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
+                  <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
-        {exc.map((e, i) => (
-          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.2fr repeat(5, 0.8fr) 1.1fr auto', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
-            <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
-              <option value="">Elegir finca</option>
-              {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-            </select>
-            {PLAZOS.map(pz => (
-              <input key={pz} inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—"
-                onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precios: { ...(r.precios || {}), [pz]: ev.target.value } } : r))}
-                style={{ ...inp, textAlign: 'right', padding: '8px 6px' }} />
-            ))}
-            <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
-            <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
-          </div>
-        ))}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', precios: {}, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
+        <button onClick={() => setExc(x => [...x, { fincaId: '', precios: {}, desde: '', plazoRige: 0 }])} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
       {/* Alertas */}
