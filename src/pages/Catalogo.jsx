@@ -430,35 +430,33 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                 {editConfig === p.id && tab === 'balanceados' && (() => {
                   const activasList = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
                   const f0 = activasList[0]?.id || (fincas || [])[0]?.id
+                  // General = precio MÁS COMÚN por plazo (entre fincas que tienen precio).
                   const preciosAct = {}
-                  let desdeAct = null
                   PLAZOS.forEach(pz => {
-                    // Estándar = precio que comparten TODAS las fincas activas.
-                    // Si no lo comparten todas, no hay estándar y cada finca con
-                    // precio se lista abajo como "finca con precio distinto".
-                    const vals = activasList.map(f => { const vg = vigente(preBal, p.id, f.id, pz); return vg ? Number(vg.precio_saco) : null })
-                    const todasIgual = vals.length > 0 && vals.every(v => v != null && v === vals[0])
-                    preciosAct[pz] = todasIgual ? vals[0] : (preBalGen[p.id]?.[pz] ?? null)
+                    const counts = {}
+                    for (const f of activasList) { const vg = vigente(preBal, p.id, f.id, pz); if (vg) { const v = Number(vg.precio_saco); counts[v] = (counts[v] || 0) + 1 } }
+                    const es = Object.entries(counts).sort((x, y) => y[1] - x[1])
+                    preciosAct[pz] = es.length ? Number(es[0][0]) : (preBalGen[p.id]?.[pz] ?? null)
                   })
-                  // Fincas cuyo precio difiere del estándar -> sección 2.
-                  const excIni = []
+                  // Distintas: una fila por finca (con sus plazos) si algún plazo != general.
+                  // fincasGen: fincas con precio que SÍ usan el general (no distintas).
+                  const excIni = []; const fincasGen = []
+                  let desdeAct = null
                   for (const f of activasList) {
+                    const preciosF = {}; let tiene = false, distinta = false, desdeF = null
                     for (const pz of PLAZOS) {
                       const vg = vigente(preBal, p.id, f.id, pz)
-                      if (vg && Number(vg.precio_saco) !== preciosAct[pz]) {
-                        excIni.push({ fincaId: f.id, precio: String(Number(vg.precio_saco)), plazo: pz, desde: vg.vigente_desde })
-                        if (!desdeAct) desdeAct = vg.vigente_desde
-                      }
+                      if (vg) { tiene = true; const v = Number(vg.precio_saco); preciosF[pz] = String(v); if (!desdeF) desdeF = vg.vigente_desde; if (v !== preciosAct[pz]) distinta = true }
                     }
+                    if (!tiene) continue
+                    if (distinta) { excIni.push({ fincaId: f.id, precios: preciosF, desde: desdeF }); if (!desdeAct) desdeAct = desdeF }
+                    else { fincasGen.push(f.id); if (!desdeAct) desdeAct = desdeF }
                   }
                   let pzAct = 0
                   for (const f of activasList) { const pv = plz[k(p.id, f.id)]?.plazo; if (pv != null) { pzAct = pv; break } }
-                  let vgAct = null
-                  for (const f of activasList) { const v = vigente(preBal, p.id, f.id, pzAct); if (v) { vgAct = v; break } }
-                  if (vgAct?.vigente_desde && !desdeAct) desdeAct = vgAct.vigente_desde
                   return (
                     <EditorConfigBal producto={p} fincas={fincas}
-                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct, exc: excIni }}
+                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct, exc: excIni, fincasGen }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onCancelar={() => setEditConfig(null)} />
@@ -1822,6 +1820,15 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
     setEnviando(true)
     try {
       const ids = activas.map(f => f.id)
+      // Fincas a las que aplica el precio GENERAL (las que ya lo usaban).
+      // Producto nuevo sin datos -> todas. Las que están abajo (distintas) se
+      // excluyen del general. Las que hoy no tienen precio NO se tocan.
+      const excFincaIds = exc.map(e => e.fincaId).filter(Boolean)
+      const baseGen = (a.fincasGen && a.fincasGen.length) ? a.fincasGen
+        : ((a.exc && a.exc.length) ? [] : ids)
+      const idsGen = baseGen.filter(id => !excFincaIds.includes(id))
+      const idsConf = [...new Set([...idsGen, ...excFincaIds])]
+
       const cerrarYAbrir = async (fincaIds, pz, rows, dfe) => {
         if (!fincaIds.length) return
         await supabase.schema('produccion').from('precio_producto').delete()
@@ -1829,6 +1836,12 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         await supabase.schema('produccion').from('precio_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
           .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
         const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
+        if (error) throw error
+      }
+      const borrarAbierto = async (fincaIds, pz) => {
+        if (!fincaIds.length) return
+        const { error } = await supabase.schema('produccion').from('precio_producto').delete()
+          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null)
         if (error) throw error
       }
 
@@ -1839,44 +1852,51 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
           stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })), { onConflict: 'producto_id,finca_id' })
         .then(() => {}, () => {})
 
-      // 2) Precios estándar por plazo, EN PARALELO (cada plazo es independiente).
+      // 2) Precio GENERAL por plazo, solo a las fincas del general, en paralelo.
       const pPrecios = Promise.all(PLAZOS.map(async pz => {
+        if (!idsGen.length) return
         const raw = numDec(precios[pz] || '')
         if (raw > 0) {
-          await cerrarYAbrir(ids, pz, ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
+          await cerrarYAbrir(idsGen, pz, idsGen.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
         } else {
-          const { error: eDel } = await supabase.schema('produccion').from('precio_producto').delete()
-            .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', ids).is('vigente_hasta', null)
-          if (eDel) throw eDel
+          await borrarAbierto(idsGen, pz)
         }
       }))
 
-      // 4) Plazo que rige ahora (tabla distinta; corre en paralelo con los precios).
+      // 4) Plazo que rige (a las fincas configuradas: general + distintas).
       let rigeStd = plazoActivo
       if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
         const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
         if (conP != null) rigeStd = conP
       }
       const pPlazo = (async () => {
+        if (!idsConf.length) return
         await supabase.schema('produccion').from('plazo_producto').delete()
-          .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
+          .eq('producto_id', producto.id).in('finca_id', idsConf).gte('vigente_desde', desde)
         await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
-          .eq('producto_id', producto.id).in('finca_id', ids).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
+          .eq('producto_id', producto.id).in('finca_id', idsConf).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
         const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
-          .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
+          .insert(idsConf.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
         if (e4) throw e4
       })()
 
       await Promise.all([pMin, pPrecios, pPlazo])
 
-      // 3) Excepciones por finca (después de los estándar, para que los sobreescriban).
+      // 3) Distintas: una finca por fila, con sus plazos (después del general).
       for (const e of exc) {
-        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
-        const pz = Number(e.plazo) || 0, dfe = e.desde || desde
-        await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: numDec(e.precio), vigente_desde: dfe }], dfe)
+        if (!e.fincaId) continue
+        const dfe = e.desde || desde
+        for (const pz of PLAZOS) {
+          const raw = numDec(e.precios?.[pz] || '')
+          if (raw > 0) {
+            await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: raw, vigente_desde: dfe }], dfe)
+          } else {
+            await borrarAbierto([e.fincaId], pz)
+          }
+        }
       }
 
-      onHecho(`Configurado en ${activas.length} fincas.`)
+      onHecho(`Configurado en ${idsConf.length} fincas.`)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
     finally { setEnviando(false) }
   }
@@ -1975,25 +1995,26 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         )}
 
         {exc.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr 1fr 1.1fr auto', gap: '9px', fontSize: '10.5px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase' }}>
-            <span>Finca</span><span style={{ textAlign: 'right' }}>Precio/saco</span><span>Plazo</span><span>Rige desde</span><span></span>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr repeat(5, 0.8fr) 1.1fr auto', gap: '8px', fontSize: '10px', color: GRIS, padding: '0 2px 4px', textTransform: 'uppercase' }}>
+            <span>Finca</span>{PLAZOS.map(pz => <span key={pz} style={{ textAlign: 'right' }}>{PLAZO_LBL[pz]}</span>)}<span>Rige desde</span><span></span>
           </div>
         )}
         {exc.map((e, i) => (
-          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.3fr 0.9fr 1fr 1.1fr auto', gap: '9px', alignItems: 'center', marginBottom: '8px' }}>
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.2fr repeat(5, 0.8fr) 1.1fr auto', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
             <select value={e.fincaId} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, fincaId: ev.target.value } : r))} style={inp}>
               <option value="">Elegir finca</option>
               {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
             </select>
-            <input inputMode="decimal" value={e.precio ?? ''} placeholder="—" onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precio: ev.target.value } : r))} style={{ ...inp, textAlign: 'right' }} />
-            <select value={e.plazo ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazo: Number(ev.target.value) } : r))} style={inp}>
-              {PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}
-            </select>
+            {PLAZOS.map(pz => (
+              <input key={pz} inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—"
+                onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precios: { ...(r.precios || {}), [pz]: ev.target.value } } : r))}
+                style={{ ...inp, textAlign: 'right', padding: '8px 6px' }} />
+            ))}
             <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, desde: ev.target.value } : r))} style={inp} />
             <button onClick={() => setExc(x => x.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: ROJO, fontSize: '16px' }}>✕</button>
           </div>
         ))}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', precio: '', plazo: 0, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
+        <button onClick={() => setExc(x => [...x, { fincaId: '', precios: {}, desde: '' }])} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
       {/* Alertas */}
