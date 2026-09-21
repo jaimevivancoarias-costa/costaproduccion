@@ -137,17 +137,22 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const editable = f =>
     !soloLectura && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado'
 
-  // Peso de referencia para el incremento: el último muestreo de la semana
-  // anterior (normalmente el domingo). Así el domingo mide de domingo a
-  // domingo (semana completa) y el miércoles, desde el domingo pasado.
-  // No se usa el miércoles de esta semana como base.
-  function anterior(fila) {
-    return previos[fila.cicloId] || null
+  // Peso de referencia para el incremento: preferimos el último muestreo de
+  // la semana anterior (normalmente el domingo), así el domingo mide de
+  // domingo a domingo (semana completa) y el miércoles desde el domingo
+  // pasado. Si no hay domingo anterior (semana sin muestreo), caemos al
+  // muestreo anterior de esta misma semana para no dejar el dato en blanco.
+  function anterior(fila, fecha) {
+    if (previos[fila.cicloId]) return previos[fila.cicloId]
+    const dentro = muestreos
+      .filter(f => f < fecha && numDec(valores[`${fila.piscinaId}|${f}`]))
+      .map(f => ({ fecha: f, peso: numDec(valores[`${fila.piscinaId}|${f}`]) }))
+    return dentro.length ? dentro[dentro.length - 1] : null
   }
 
   function calculo(fila, fecha) {
     const actual = numDec(valores[`${fila.piscinaId}|${fecha}`])
-    const ant = anterior(fila)
+    const ant = anterior(fila, fecha)
     if (actual === null || !ant) return { actual, ant: null }
     const inc = actual - ant.peso
     const dias = Math.round((new Date(fecha + 'T12:00:00') - new Date(ant.fecha + 'T12:00:00')) / 86400000)
