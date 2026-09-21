@@ -1805,14 +1805,6 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
     setEnviando(true)
     try {
       const ids = activas.map(f => f.id)
-      // 1) Mínimo/objetivo (si la tabla existe; si no, no rompe).
-      try {
-        await supabase.schema('produccion').from('producto_finca').upsert(
-          ids.map(fid => ({ producto_id: producto.id, finca_id: fid,
-            stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-            stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })), { onConflict: 'producto_id,finca_id' })
-      } catch { /* falta correr el SQL de producto_finca */ }
-
       const cerrarYAbrir = async (fincaIds, pz, rows, dfe) => {
         if (!fincaIds.length) return
         await supabase.schema('produccion').from('precio_producto').delete()
@@ -1822,8 +1814,16 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
         if (error) throw error
       }
-      // 2) Precios estándar (por saco) por plazo. Vacío/0 => borra el vigente.
-      for (const pz of PLAZOS) {
+
+      // 1) Mínimo/objetivo (independiente; si falta la tabla, no rompe).
+      const pMin = supabase.schema('produccion').from('producto_finca').upsert(
+        ids.map(fid => ({ producto_id: producto.id, finca_id: fid,
+          stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
+          stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })), { onConflict: 'producto_id,finca_id' })
+        .then(() => {}, () => {})
+
+      // 2) Precios estándar por plazo, EN PARALELO (cada plazo es independiente).
+      const pPrecios = Promise.all(PLAZOS.map(async pz => {
         const raw = numDec(precios[pz] || '')
         if (raw > 0) {
           await cerrarYAbrir(ids, pz, ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
@@ -1832,27 +1832,32 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
             .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', ids).is('vigente_hasta', null)
           if (eDel) throw eDel
         }
-      }
-      // 3) Excepciones por finca.
-      for (const e of exc) {
-        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
-        const pz = Number(e.plazo) || 0, dfe = e.desde || desde
-        await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: numDec(e.precio), vigente_desde: dfe }], dfe)
-      }
-      // 4) Plazo que rige ahora. Si el elegido no tiene precio pero otro sí,
-      //    se apunta al primero con precio (para que el catálogo lo muestre).
+      }))
+
+      // 4) Plazo que rige ahora (tabla distinta; corre en paralelo con los precios).
       let rigeStd = plazoActivo
       if (rigeStd != null && !(numDec(precios[rigeStd] || '') > 0)) {
         const conP = PLAZOS.find(pz => numDec(precios[pz] || '') > 0)
         if (conP != null) rigeStd = conP
       }
-      await supabase.schema('produccion').from('plazo_producto').delete()
-        .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
-      await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
-        .eq('producto_id', producto.id).in('finca_id', ids).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
-      const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
-        .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
-      if (e4) throw e4
+      const pPlazo = (async () => {
+        await supabase.schema('produccion').from('plazo_producto').delete()
+          .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
+        await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
+          .eq('producto_id', producto.id).in('finca_id', ids).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
+        const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
+          .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
+        if (e4) throw e4
+      })()
+
+      await Promise.all([pMin, pPrecios, pPlazo])
+
+      // 3) Excepciones por finca (después de los estándar, para que los sobreescriban).
+      for (const e of exc) {
+        if (!e.fincaId || !(numDec(e.precio || '') > 0)) continue
+        const pz = Number(e.plazo) || 0, dfe = e.desde || desde
+        await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: numDec(e.precio), vigente_desde: dfe }], dfe)
+      }
 
       onHecho(`Configurado en ${activas.length} fincas.`)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
