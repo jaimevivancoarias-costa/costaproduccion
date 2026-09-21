@@ -140,8 +140,15 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
         else pgg[r.tipo_id] = Number(r.precio_galon)
       })
       const precioFT = (fid, tid) => (pfg[fid + '|' + tid] ?? pgg[tid] ?? null)
-      // Precio general (sin finca) por tipo, para la tarjeta de referencia.
-      setPrecioGen({ ...pgg })
+      // Precio del galón por tipo para la tarjeta de referencia. Los precios
+      // se cargan por finca; si todas tienen el mismo se muestra ese, si
+      // varían se muestra el rango. (pgg = precio general, si existe.)
+      const pTipo = {}
+      lista.forEach(t => {
+        const vals = activas.map(f => precioFT(f.id, t.id)).filter(v => v != null)
+        if (vals.length) pTipo[t.id] = { min: Math.min(...vals), max: Math.max(...vals) }
+      })
+      setPrecioGen(pTipo)
       const { data: ppAll } = await supabase.schema('produccion').from('presupuesto_diesel')
         .select('finca_id, tipo_id, monto, galones').eq('anio', anio).eq('mes', mes).not('tipo_id', 'is', null)
       const mFinca = {}, gBFinca = {}
@@ -643,22 +650,27 @@ function TarjetaPpto({ k, v, oscura, rojo }) {
   )
 }
 
-// Precio general (sin finca) del galón por tipo, a la fecha de hoy. Es la
+// Precio del galón por tipo a la fecha de hoy. Los precios se cargan por
+// finca; si todas coinciden se muestra ese valor, si no el rango. Es la
 // referencia con la que se pasan galones a $ y viceversa.
 function TarjetaPrecio({ precios, tipos, fecha }) {
   const dm = fecha ? `${fecha.slice(8, 10)}/${fecha.slice(5, 7)}` : ''
-  const conPrecio = tipos.filter(t => precios[t.id] != null)
+  const fmt = n => '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 4, maximumFractionDigits: 4 })
+  const conPrecio = tipos.filter(t => precios[t.id])
   return (
     <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
       <div style={{ fontSize: '12px', color: GRIS }}>Precio galón · {dm}</div>
       {conPrecio.length === 0 ? (
-        <div style={{ fontSize: '13px', color: GRIS, marginTop: '4px' }}>Sin precio general</div>
+        <div style={{ fontSize: '13px', color: GRIS, marginTop: '4px' }}>Sin precio cargado</div>
       ) : (
         <div style={{ fontSize: '13px', color: NAVY, lineHeight: 1.5, marginTop: '3px' }}>
-          {conPrecio.map(t => (
-            <div key={t.id}>{t.nombre} <span style={{ fontWeight: 500, color: VERDE }}>
-              ${Number(precios[t.id]).toLocaleString('es-EC', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</span></div>
-          ))}
+          {conPrecio.map(t => {
+            const { min, max } = precios[t.id]
+            const txt = min === max ? fmt(min) : `${fmt(min)}–${fmt(max)}`
+            return (
+              <div key={t.id}>{t.nombre} <span style={{ fontWeight: 500, color: VERDE }}>{txt}</span></div>
+            )
+          })}
         </div>
       )}
     </div>
