@@ -70,7 +70,9 @@ export default function Historial({ finca, esJefe, todasLasFincas }) {
     )
   }
 
-  const visibles = filtro ? filas.filter(f => f.tabla === filtro) : filas
+  const visibles = (filtro ? filas.filter(f => f.tabla === filtro) : filas)
+    .slice()
+    .sort((a, b) => new Date(b.creado_en) - new Date(a.creado_en))
 
   return (
     <Marco>

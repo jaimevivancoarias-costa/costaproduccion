@@ -18,7 +18,18 @@ const NAVY = '#022847'
 const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
+const ROJO = '#A32D2D'   // mismo rojo que ya usa la app
+// Rango plausible de densidad de siembra (larvas/ha). Fuera de esto casi
+// siempre es larva u hectareas mal cargadas, no una densidad real.
+const DENS_MIN = 20000
+const DENS_MAX = 500000
 const HOYB = '#E6F1FB'
+const AMBAR = '#854F0B'
+const RBG = '#FBEAEA'   // fondo rojo suave
+const ABG = '#FAEEDA'   // fondo ambar suave
+// Semaforo de crecimiento semanal (g/semana, domingo->domingo).
+const CREC_OK = 1.0      // normal a partir de aqui
+const CREC_ALERTA = 0.5  // debajo de esto, muy lento (rojo)
 
 export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [filas, setFilas] = useState([])
@@ -130,13 +141,17 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const editable = f =>
     !soloLectura && situacionDia(f, hoy) !== 'futuro' && dias[f] !== 'cerrado'
 
-  // Peso anterior a una fecha dada, mirando primero dentro de la semana.
+  // Peso de referencia para el incremento: preferimos el último muestreo de
+  // la semana anterior (normalmente el domingo), así el domingo mide de
+  // domingo a domingo (semana completa) y el miércoles desde el domingo
+  // pasado. Si no hay domingo anterior (semana sin muestreo), caemos al
+  // muestreo anterior de esta misma semana para no dejar el dato en blanco.
   function anterior(fila, fecha) {
+    if (previos[fila.cicloId]) return previos[fila.cicloId]
     const dentro = muestreos
       .filter(f => f < fecha && numDec(valores[`${fila.piscinaId}|${f}`]))
       .map(f => ({ fecha: f, peso: numDec(valores[`${fila.piscinaId}|${f}`]) }))
-    if (dentro.length) return dentro[dentro.length - 1]
-    return previos[fila.cicloId] || null
+    return dentro.length ? dentro[dentro.length - 1] : null
   }
 
   function calculo(fila, fecha) {
@@ -340,9 +355,17 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     )
                   })}
 
-                  <Td><span style={{ color: GRIS }}>
-                    {fila.larva ? miles(fila.larva / fila.hectareas) : ''}
-                  </span></Td>
+                  <Td>{(() => {
+                    if (!fila.larva) return ''
+                    const dens = fila.larva / fila.hectareas
+                    const imposible = dens < DENS_MIN || dens > DENS_MAX
+                    return (
+                      <span title={imposible ? 'Densidad fuera de rango: revisar la larva y las hectáreas de esta piscina' : undefined}
+                            style={{ color: imposible ? ROJO : GRIS, fontWeight: imposible ? 600 : 400 }}>
+                        {miles(dens)}{imposible ? ' ⚠' : ''}
+                      </span>
+                    )
+                  })()}</Td>
                 </div>
               ))}
             </div>
@@ -440,6 +463,15 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
   if (fuera) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
   if (futuro) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
   const baja = calc.inc !== undefined && calc.inc < 0
+  // Semáforo de crecimiento: solo sobre el domingo, que mide la semana
+  // completa (Dom→Dom). Se normaliza a g/semana con el crecimiento diario,
+  // por si el domingo anterior faltó y el tramo no fue exacto de 7 días.
+  const esDom = new Date(fecha + 'T12:00:00').getDay() === 0
+  const semSem = esDom && calc.crec != null ? calc.crec * 7 : null
+  let incBg = f, incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
+  if (baja) incBg = RBG
+  else if (semSem != null && semSem < CREC_ALERTA) { incBg = RBG; incColor = ROJO; incPeso = 500 }
+  else if (semSem != null && semSem < CREC_OK) { incBg = ABG; incColor = AMBAR; incPeso = 500 }
   return (
     <>
       <Td fondo={f}>
@@ -453,7 +485,7 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
           <span style={{ fontSize: '15px' }}>{valor || <Guion />}</span>
         )}
       </Td>
-      <Td fondo={f}><span style={{ color: baja ? '#A32D2D' : GRIS, fontWeight: baja ? 500 : 400 }}>
+      <Td fondo={incBg}><span style={{ color: incColor, fontWeight: incPeso }}>
         {calc.inc === undefined ? '' : (calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)}
       </span></Td>
       <Td fondo={f}><span style={{ color: GRIS }}>{calc.dias ?? ''}</span></Td>

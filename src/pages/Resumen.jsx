@@ -7,7 +7,7 @@ import { LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, miles, dinero } from '../l
 // Es la vista que no existe en ningun Excel: cada finca vive en su
 // archivo y nadie ve las once juntas. Balanceado + insumos, por zona.
 
-const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
+const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', AMBAR = '#9A6A00'
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 function semanaActual() {
@@ -27,16 +27,33 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
   const [reponer, setReponer] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
+  // Días de balanceado efectivamente registrados por finca, y cuántos se
+  // esperaban en el rango: sirve para distinguir "nadie registró" de "0 real".
+  const [diasReg, setDiasReg] = useState({})
+  const [diasEsper, setDiasEsper] = useState(0)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data, error }, { data: rep }] = await Promise.all([
+    const [{ data, error }, { data: rep }, { data: dr }] = await Promise.all([
       supabase.schema('produccion').rpc('fn_resumen_fincas', { p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').rpc('fn_por_reponer', {}),
+      supabase.schema('produccion').from('dia_registro')
+        .select('finca_id, fecha')
+        .eq('ambito', 'balanceado').in('estado', ['cerrado', 'reabierto'])
+        .gte('fecha', desde).lte('fecha', hasta),
     ])
     if (error) setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + error.message })
     setFilas(data || [])
     setReponer(rep || [])
+    // Cuántos días distintos registró cada finca (por si un día se guarda dos veces).
+    const reg = {}
+    ;(dr || []).forEach(r => { (reg[r.finca_id] = reg[r.finca_id] || new Set()).add(r.fecha) })
+    const cuenta = {}; Object.keys(reg).forEach(k => { cuenta[k] = reg[k].size })
+    setDiasReg(cuenta)
+    // Días esperados: del inicio del rango hasta hoy (no se cuenta el futuro).
+    const fin = hasta > hoyISO() ? hoyISO() : hasta
+    const dEsper = Math.max(0, Math.round((new Date(fin + 'T12:00:00') - new Date(desde + 'T12:00:00')) / 86400000) + 1)
+    setDiasEsper(dEsper)
     setCargando(false)
   }, [desde, hasta])
 
@@ -47,8 +64,10 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
     .map(f => ({ ...f,
       costo_bal: Number(f.costo_bal), costo_ins: Number(f.costo_ins),
       total: Number(f.costo_bal) + Number(f.costo_ins),
-      sacos: Number(f.libras_bal) / LIBRAS_POR_SACO })),
-    [filas, zonaFiltro])
+      sacos: Number(f.libras_bal) / LIBRAS_POR_SACO,
+      diasReg: diasReg[f.finca_id] || 0,
+      sinLlenar: Math.max(0, diasEsper - (diasReg[f.finca_id] || 0)) })),
+    [filas, zonaFiltro, diasReg, diasEsper])
 
   const tot = useMemo(() => vis.reduce((a, f) => ({
     bal: a.bal + f.costo_bal, ins: a.ins + f.costo_ins, ha: a.ha + Number(f.hectareas),
@@ -144,8 +163,17 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
                     <span style={{ fontWeight: 500 }}>{f.finca}</span>
                     <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{Number(f.hectareas).toFixed(2)}</span>
                     <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      {esJefe ? dinero(f.costo_bal) : `${miles(f.libras_bal)} lb`}
-                      <div style={{ fontSize: '11px', color: GRIS }}>{miles(f.sacos)} sacos</div>
+                      {f.diasReg === 0 ? (
+                        <span style={{ color: AMBAR, fontStyle: 'italic' }}>Sin registro</span>
+                      ) : (
+                        <>
+                          {esJefe ? dinero(f.costo_bal) : `${miles(f.libras_bal)} lb`}
+                          <div style={{ fontSize: '11px', color: GRIS }}>
+                            {miles(f.sacos)} sacos
+                            {f.sinLlenar > 0 && <span style={{ color: AMBAR }}> · {f.sinLlenar} día{f.sinLlenar > 1 ? 's' : ''} sin llenar</span>}
+                          </div>
+                        </>
+                      )}
                     </span>
                     {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(f.costo_ins)}</span>}
                     {esJefe && <span style={{ textAlign: 'right', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{dinero(f.total)}</span>}
