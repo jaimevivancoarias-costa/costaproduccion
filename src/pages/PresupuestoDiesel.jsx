@@ -37,8 +37,10 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   const [editGal, setEditGal] = useState('')      // galones en modo galones
   const [nuevo, setNuevo] = useState('')          // monto $ en modo dólares
   const [aviso, setAviso] = useState(null)
-  const [resumen, setResumen] = useState([])      // [{finca_id, finca, zona, monto, gasto}] del grupo (jefe)
+  const [resumen, setResumen] = useState([])      // [{finca_id, finca, zona, monto, gasto, galBudget, galGasto}] del grupo (jefe)
   const [zonaFiltro, setZonaFiltro] = useState('todas')
+  const [tabUnidad, setTabUnidad] = useState('gal') // 'gal' | 'usd' — unidad del tablero del grupo
+  const [precioGen, setPrecioGen] = useState({})    // tipo_id -> precio general del galón (hoy)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -97,16 +99,33 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     // tipo en esta finca (pm) para poder compararlos en $.
     const { data: pAll } = await supabase.schema('produccion').from('presupuesto_diesel')
       .select('mes, tipo_id, monto, galones').eq('finca_id', finca.id).eq('anio', anio).not('tipo_id', 'is', null)
-    const porMes = {}
+    // Por mes: presupuesto en $ y en galones. Los fijados en galones valen su
+    // galonaje; los fijados en $ se pasan a galones con el precio actual (pm).
+    const porMes = {}, galMes = {}
     ;(pAll || []).forEach(r => {
       const val = r.monto != null ? Number(r.monto)
         : (r.galones != null && pm[r.tipo_id] != null ? Number(r.galones) * pm[r.tipo_id] : 0)
       porMes[r.mes] = (porMes[r.mes] || 0) + val
+      const g = r.galones != null ? Number(r.galones)
+        : (r.monto != null && pm[r.tipo_id] ? Number(r.monto) / pm[r.tipo_id] : 0)
+      galMes[r.mes] = (galMes[r.mes] || 0) + g
     })
     const mesesSet = Object.keys(porMes).map(Number).sort((a, b) => a - b)
     const gm = await Promise.all(mesesSet.map(mm =>
       supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: finca.id, p_anio: anio, p_mes: mm })))
-    setHistorial(mesesSet.map((mm, i) => ({ mes: mm, monto: porMes[mm], gasto: Number(gm[i].data) || 0 })))
+    // Galones consumidos por mes de todo el año (para el bodeguero).
+    const { data: coY } = await supabase.schema('produccion').from('diesel_consumo')
+      .select('fecha, galones').eq('finca_id', finca.id)
+      .gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`)
+    const galGastoMes = {}
+    ;(coY || []).forEach(r => {
+      const mm = Number(String(r.fecha).slice(5, 7))
+      galGastoMes[mm] = (galGastoMes[mm] || 0) + Number(r.galones || 0)
+    })
+    setHistorial(mesesSet.map((mm, i) => ({
+      mes: mm, monto: porMes[mm], gasto: Number(gm[i].data) || 0,
+      galBudget: galMes[mm] || 0, galGasto: galGastoMes[mm] || 0,
+    })))
 
     // Tablero del grupo (solo jefe): presupuesto y gasto de diesel de cada
     // finca en el mes, igual que en insumos.
@@ -121,22 +140,35 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
         else pgg[r.tipo_id] = Number(r.precio_galon)
       })
       const precioFT = (fid, tid) => (pfg[fid + '|' + tid] ?? pgg[tid] ?? null)
+      // Precio general (sin finca) por tipo, para la tarjeta de referencia.
+      setPrecioGen({ ...pgg })
       const { data: ppAll } = await supabase.schema('produccion').from('presupuesto_diesel')
         .select('finca_id, tipo_id, monto, galones').eq('anio', anio).eq('mes', mes).not('tipo_id', 'is', null)
-      const mFinca = {}
+      const mFinca = {}, gBFinca = {}
       ;(ppAll || []).forEach(r => {
         const p = precioFT(r.finca_id, r.tipo_id)
         const val = r.monto != null ? Number(r.monto)
           : (r.galones != null && p != null ? Number(r.galones) * p : 0)
         mFinca[r.finca_id] = (mFinca[r.finca_id] || 0) + val
+        const g = r.galones != null ? Number(r.galones)
+          : (r.monto != null && p ? Number(r.monto) / p : 0)
+        gBFinca[r.finca_id] = (gBFinca[r.finca_id] || 0) + g
       })
+      // Galones consumidos del mes por finca.
+      const desdeM = `${anio}-${String(mes).padStart(2, '0')}-01`
+      const hastaM = new Date(anio, mes, 0).toISOString().slice(0, 10)
+      const { data: coM } = await supabase.schema('produccion').from('diesel_consumo')
+        .select('finca_id, galones').gte('fecha', desdeM).lte('fecha', hastaM)
+      const gGastoFinca = {}
+      ;(coM || []).forEach(r => { gGastoFinca[r.finca_id] = (gGastoFinca[r.finca_id] || 0) + Number(r.galones || 0) })
       const gFinca = await Promise.all(activas.map(f =>
         supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: f.id, p_anio: anio, p_mes: mes })))
       setResumen(activas.map((f, i) => ({
         finca_id: f.id, finca: f.nombre, zona: f.zona,
-        monto: mFinca[f.id] || 0, gasto: Number(gFinca[i].data) || 0 })))
+        monto: mFinca[f.id] || 0, gasto: Number(gFinca[i].data) || 0,
+        galBudget: gBFinca[f.id] || 0, galGasto: gGastoFinca[f.id] || 0 })))
     } else {
-      setResumen([])
+      setResumen([]); setPrecioGen({})
     }
     setCargando(false)
   }, [finca.id, anio, mes, esJefe])
@@ -480,21 +512,38 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
 
         {/* Tablero de diesel del mes de todas las fincas: solo el jefe. */}
         {esJefe && resumen.length > 0 && (() => {
+          const esGal = tabUnidad === 'gal'
+          // % por galones si hay presupuesto en galones; si no, por $.
+          const pctFinca = r => (r.galBudget ? Math.round(r.galGasto / r.galBudget * 100)
+            : (r.monto ? Math.round(Number(r.gasto) / Number(r.monto) * 100) : null))
           const vis = resumen
             .filter(r => zonaFiltro === 'todas' || r.zona === zonaFiltro)
-            .map(r => ({ ...r, pctReal: r.monto ? Math.round(Number(r.gasto) / Number(r.monto) * 100) : null }))
+            .map(r => ({ ...r, pctReal: pctFinca(r) }))
             .map(r => ({ ...r, pct: r.pctReal === null ? null : Math.min(100, r.pctReal) }))
             .sort((a, b) => (b.pctReal ?? -1) - (a.pctReal ?? -1))
           const tMonto = vis.reduce((t, r) => t + Number(r.monto || 0), 0)
           const tGasto = vis.reduce((t, r) => t + Number(r.gasto || 0), 0)
-          const tPct = tMonto ? Math.min(100, Math.round(tGasto / tMonto * 100)) : 0
+          const tGal = vis.reduce((t, r) => t + Number(r.galBudget || 0), 0)
+          const tGalGasto = vis.reduce((t, r) => t + Number(r.galGasto || 0), 0)
+          const tPct = tGal ? Math.min(100, Math.round(tGalGasto / tGal * 100))
+            : (tMonto ? Math.min(100, Math.round(tGasto / tMonto * 100)) : 0)
           const enRojo = vis.filter(r => r.pctReal !== null && r.pctReal >= 100).length
           const LEN = Math.PI * 60
           const colDe = p => p === null ? GRIS : p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
+          // Formatea un par (galones, $) según la unidad elegida.
+          const uv = (gal, usd) => esGal ? `${miles(gal)} gal` : dinero(usd)
           return (
           <div style={{ marginTop: '22px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
               <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Todas las fincas en {MESES[mes - 1]}</h3>
+              <div style={{ display: 'inline-flex', background: '#eef3f7', borderRadius: '8px', padding: '3px', gap: '3px', marginLeft: '4px' }}>
+                {[['gal', 'Galones'], ['usd', 'Dólares']].map(([id, txt]) => (
+                  <button key={id} onClick={() => setTabUnidad(id)} style={{ border: 0, cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: '12px', padding: '5px 12px', borderRadius: '6px',
+                    background: tabUnidad === id ? 'white' : 'transparent', color: tabUnidad === id ? AZUL : GRIS,
+                    fontWeight: tabUnidad === id ? 500 : 400 }}>{txt}</button>
+                ))}
+              </div>
               <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
                 {[['todas', 'Todas'], ['jambeli', 'Jambelí'], ['puna', 'Puná']].map(([z, t]) => (
                   <button key={z} onClick={() => setZonaFiltro(z)} style={{
@@ -506,10 +555,11 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '11px', marginBottom: '14px' }}>
-              <TarjetaPpto oscura k="Presupuesto del grupo" v={dinero(tMonto)} />
-              <TarjetaPpto k="Gastado" v={dinero(tGasto)} />
-              <TarjetaPpto k="Queda" v={dinero(tMonto - tGasto)} />
+              <TarjetaPpto oscura k="Presupuesto del grupo" v={uv(tGal, tMonto)} />
+              <TarjetaPpto k="Gastado" v={uv(tGalGasto, tGasto)} />
+              <TarjetaPpto k="Queda" v={uv(Math.max(tGal - tGalGasto, 0), tMonto - tGasto)} />
               <TarjetaPpto k="Fincas en rojo" v={String(enRojo)} rojo={enRojo > 0} />
+              <TarjetaPrecio precios={precioGen} tipos={tipos} fecha={hoy} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr', gap: '14px', alignItems: 'stretch' }}>
               <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px',
@@ -530,7 +580,9 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                       <span>
                         {r.finca}
                         <div style={{ fontSize: '11px', color: GRIS, marginTop: '1px', fontVariantNumeric: 'tabular-nums' }}>
-                          {Number(r.monto) ? `Ppto ${dinero(r.monto)} · gastó ${dinero(r.gasto)}` : 'Sin presupuesto'}
+                          {(r.galBudget || Number(r.monto))
+                            ? `Ppto ${uv(r.galBudget, r.monto)} · gastó ${uv(r.galGasto, r.gasto)}`
+                            : 'Sin presupuesto'}
                         </div>
                       </span>
                       <span style={{ height: '9px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
@@ -556,14 +608,19 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                 <span>Mes</span><span style={{ textAlign: 'right' }}>Presupuesto</span><span style={{ textAlign: 'right' }}>Gastado</span><span style={{ textAlign: 'right' }}>%</span>
               </div>
               {historial.map(h => {
-                const p = h.monto ? Math.min(100, Math.round(h.gasto / h.monto * 100)) : 0
+                // Jefe: en $. Bodeguero: en galones.
+                const p = esJefe
+                  ? (h.monto ? Math.min(100, Math.round(h.gasto / h.monto * 100)) : 0)
+                  : (h.galBudget ? Math.min(100, Math.round(h.galGasto / h.galBudget * 100)) : 0)
                 const col = p >= 100 ? ROJO : p >= 85 ? AMBAR : VERDE
                 return (
                   <div key={h.mes} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 60px', gap: '10px',
                           padding: '11px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px', alignItems: 'center' }}>
                     <span style={{ fontWeight: 500 }}>{MESES[h.mes - 1]}</span>
-                    <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(h.monto)}</span>
-                    <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{dinero(h.gasto)}</span>
+                    <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {esJefe ? dinero(h.monto) : `${miles(h.galBudget)} gal`}</span>
+                    <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                      {esJefe ? dinero(h.gasto) : `${miles(h.galGasto)} gal`}</span>
                     <span style={{ textAlign: 'right', fontWeight: 500, color: col, fontVariantNumeric: 'tabular-nums' }}>{p}%</span>
                   </div>
                 )
@@ -582,6 +639,28 @@ function TarjetaPpto({ k, v, oscura, rojo }) {
     <div style={{ background: oscura ? NAVY : '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
       <div style={{ fontSize: '12px', color: oscura ? 'rgba(255,255,255,0.65)' : GRIS }}>{k}</div>
       <div style={{ fontSize: '22px', fontWeight: 500, color: oscura ? 'white' : rojo ? ROJO : NAVY }}>{v}</div>
+    </div>
+  )
+}
+
+// Precio general (sin finca) del galón por tipo, a la fecha de hoy. Es la
+// referencia con la que se pasan galones a $ y viceversa.
+function TarjetaPrecio({ precios, tipos, fecha }) {
+  const dm = fecha ? `${fecha.slice(8, 10)}/${fecha.slice(5, 7)}` : ''
+  const conPrecio = tipos.filter(t => precios[t.id] != null)
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
+      <div style={{ fontSize: '12px', color: GRIS }}>Precio galón · {dm}</div>
+      {conPrecio.length === 0 ? (
+        <div style={{ fontSize: '13px', color: GRIS, marginTop: '4px' }}>Sin precio general</div>
+      ) : (
+        <div style={{ fontSize: '13px', color: NAVY, lineHeight: 1.5, marginTop: '3px' }}>
+          {conPrecio.map(t => (
+            <div key={t.id}>{t.nombre} <span style={{ fontWeight: 500, color: VERDE }}>
+              ${Number(precios[t.id]).toLocaleString('es-EC', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</span></div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
