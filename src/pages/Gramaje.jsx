@@ -176,17 +176,19 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   // muestreo de la semana con crecimiento calculable, ordena de peor a mejor.
   // Las jóvenes (<30 días) no entran, igual que en el semáforo.
   const ranking = filas
-    .filter(f => f.fechaSiembra && diasCultivo(f.fechaSiembra, corteDias) >= JOVEN_DIAS)
+    .filter(f => f.fechaSiembra)
     .map(f => {
+      const dCult = diasCultivo(f.fechaSiembra, corteDias)
       let c = null
       for (let i = muestreos.length - 1; i >= 0; i--) {
         const cc = calculo(f, muestreos[i])
         if (cc.crec != null) { c = cc; break }
       }
-      return c ? { id: f.piscinaId, nombre: f.nombre, dias: diasCultivo(f.fechaSiembra, corteDias), wk: c.crec * 7 } : null
+      return c ? { id: f.piscinaId, nombre: f.nombre, dias: dCult, wk: c.crec * 7, joven: dCult < JOVEN_DIAS } : null
     })
     .filter(Boolean)
-    .sort((a, b) => a.wk - b.wk)
+    // Las evaluadas primero (peor→mejor); las jóvenes al final.
+    .sort((a, b) => (a.joven ? 1 : 0) - (b.joven ? 1 : 0) || a.wk - b.wk)
 
   async function guardar() {
     setGuardando(true); setAviso(null)
@@ -268,7 +270,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
     setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
-  const COLS = `180px ${muestreos.map(() => '92px 48px 104px 132px').join(' ')}`
+  const COLS = `minmax(170px,1.3fr) ${muestreos.map(() => 'minmax(78px,1fr) 46px minmax(88px,1fr) minmax(118px,1.4fr)').join(' ')}`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -296,9 +298,9 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       {!practica && filas.length > 0 && (
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '1rem' }}>
           <ChipG k="Piscinas" v={filas.length} />
-          <ChipG k="En meta" v={ranking.filter(r => r.wk >= CREC_OK).length} color={VERDE} />
-          <ChipG k="Van lento" v={ranking.filter(r => r.wk >= CREC_ALERTA && r.wk < CREC_OK).length} color={AMBAR} />
-          <ChipG k="Muy lento" v={ranking.filter(r => r.wk < CREC_ALERTA).length} color={ROJO} />
+          <ChipG k="En meta" v={ranking.filter(r => !r.joven && r.wk >= CREC_OK).length} color={VERDE} />
+          <ChipG k="Van lento" v={ranking.filter(r => !r.joven && r.wk >= CREC_ALERTA && r.wk < CREC_OK).length} color={AMBAR} />
+          <ChipG k="Muy lento" v={ranking.filter(r => !r.joven && r.wk < CREC_ALERTA).length} color={ROJO} />
         </div>
       )}
 
@@ -458,14 +460,18 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
             const col = r.wk < CREC_ALERTA ? ROJO : r.wk < CREC_OK ? AMBAR : VERDE
             const w = Math.min(100, Math.max(2, Math.round(r.wk / 5 * 100)))
             return (
-              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 56px', gap: '10px',
+              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 88px', gap: '10px',
                     alignItems: 'center', padding: '5px 0', fontSize: '13px' }}>
                 <span>{r.nombre}<span style={{ color: GRIS, fontSize: '11px' }}> · {r.dias}d engorde</span></span>
-                <span style={{ position: 'relative', height: '14px', background: '#eef3f7', borderRadius: '7px' }}>
-                  <span style={{ position: 'absolute', left: 0, top: 0, height: '14px', width: w + '%', background: col, borderRadius: '7px' }} />
-                </span>
-                <span style={{ textAlign: 'right', fontWeight: 600, color: col, fontVariantNumeric: 'tabular-nums' }}>
-                  {(r.wk >= 0 ? '+' : '') + r.wk.toFixed(1)}
+                {r.joven ? (
+                  <span style={{ color: GRIS, fontSize: '12px' }}>joven · aún no se evalúa</span>
+                ) : (
+                  <span style={{ position: 'relative', height: '14px', background: '#eef3f7', borderRadius: '7px' }}>
+                    <span style={{ position: 'absolute', left: 0, top: 0, height: '14px', width: w + '%', background: col, borderRadius: '7px' }} />
+                  </span>
+                )}
+                <span style={{ textAlign: 'right', fontWeight: 600, color: r.joven ? GRIS : col, fontVariantNumeric: 'tabular-nums' }}>
+                  {r.joven ? '—' : (r.wk >= 0 ? '+' : '') + r.wk.toFixed(1)}
                 </span>
               </div>
             )
