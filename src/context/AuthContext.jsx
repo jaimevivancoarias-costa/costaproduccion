@@ -78,7 +78,6 @@ export function AuthProvider({ children }) {
         .eq('activa', true)
         .order('nombre')
       setFincas((todas || [])
-        .filter(f => String(f.nombre).trim().toUpperCase() !== 'PRUEBA')
         .map(f => ({ ...f, rol: 'jefe' })))
       setCargando(false)
       return
@@ -88,7 +87,6 @@ export function AuthProvider({ children }) {
       filas
         .filter(f => f.finca && f.finca.activa)
         .map(f => ({ ...f.finca, rol: f.rol }))
-        .filter(f => String(f.nombre).trim().toUpperCase() !== 'PRUEBA')
         .sort((a, b) => a.nombre.localeCompare(b.nombre))
     )
     setCargando(false)

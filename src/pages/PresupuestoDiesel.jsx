@@ -19,7 +19,7 @@ const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
 
 export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   const hoy = hoyISO()
-  const activas = (fincas || [finca]).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+  const activas = (fincas || [finca])
   const [anio, setAnio] = useState(Number(hoy.slice(0, 4)))
   const [mes, setMes] = useState(Number(hoy.slice(5, 7)))
   const [tipos, setTipos] = useState([])
