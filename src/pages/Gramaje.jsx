@@ -19,6 +19,13 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 const HOYB = '#E6F1FB'
+const ROJO = '#A32D2D'
+const AMBAR = '#854F0B'
+const RBG = '#FBEAEA'   // fondo rojo suave
+const ABG = '#FAEEDA'   // fondo ambar suave
+// Semaforo de crecimiento semanal (g/semana, domingo->domingo).
+const CREC_OK = 1.0      // normal a partir de aqui
+const CREC_ALERTA = 0.5  // debajo de esto, muy lento (rojo)
 
 export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [filas, setFilas] = useState([])
@@ -439,6 +446,15 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
   if (fuera) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
   if (futuro) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
   const baja = calc.inc !== undefined && calc.inc < 0
+  // Semáforo de crecimiento: solo sobre el domingo, que mide la semana
+  // completa (Dom→Dom). Se normaliza a g/semana con el crecimiento diario,
+  // por si el domingo anterior faltó y el tramo no fue exacto de 7 días.
+  const esDom = new Date(fecha + 'T12:00:00').getDay() === 0
+  const semSem = esDom && calc.crec != null ? calc.crec * 7 : null
+  let incBg = f, incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
+  if (baja) incBg = RBG
+  else if (semSem != null && semSem < CREC_ALERTA) { incBg = RBG; incColor = ROJO; incPeso = 500 }
+  else if (semSem != null && semSem < CREC_OK) { incBg = ABG; incColor = AMBAR; incPeso = 500 }
   return (
     <>
       <Td fondo={f}>
@@ -452,7 +468,7 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
           <span style={{ fontSize: '15px' }}>{valor || <Guion />}</span>
         )}
       </Td>
-      <Td fondo={f}><span style={{ color: baja ? '#A32D2D' : GRIS, fontWeight: baja ? 500 : 400 }}>
+      <Td fondo={incBg}><span style={{ color: incColor, fontWeight: incPeso }}>
         {calc.inc === undefined ? '' : (calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)}
       </span></Td>
       <Td fondo={f}><span style={{ color: GRIS }}>{calc.dias ?? ''}</span></Td>
