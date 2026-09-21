@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, nombreDia,
-  esDiaDeMuestreo, diasCultivo, situacionDia, num, numDec, miles,
+  esDiaDeMuestreo, diasCultivo, situacionDia, num, numDec,
 } from '../lib/fechas'
 
 // Gramaje · peso promedio del camaron
@@ -19,10 +19,6 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 const ROJO = '#A32D2D'   // mismo rojo que ya usa la app
-// Rango plausible de densidad de siembra (larvas/ha). Fuera de esto casi
-// siempre es larva u hectareas mal cargadas, no una densidad real.
-const DENS_MIN = 20000
-const DENS_MAX = 500000
 const HOYB = '#E6F1FB'
 const AMBAR = '#854F0B'
 const RBG = '#FBEAEA'   // fondo rojo suave
@@ -374,13 +370,6 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     <div style={{ fontSize: '11px', color: GRIS }}>
                       {fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) + ' días' : fila.hectareas.toFixed(2) + ' ha'}
                     </div>
-                    {(() => {
-                      if (!fila.larva) return null
-                      const dens = fila.larva / fila.hectareas
-                      if (dens >= DENS_MIN && dens <= DENS_MAX) return null
-                      return <div title="Densidad fuera de rango: revisar la larva y las hectáreas"
-                                  style={{ fontSize: '11px', color: ROJO, fontWeight: 600 }}>⚠ densidad {miles(dens)}/ha</div>
-                    })()}
                   </Td>
 
                   {muestreos.map(f => {
