@@ -428,16 +428,22 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                 })()}
 
                 {editConfig === p.id && tab === 'balanceados' && (() => {
-                  const f0 = (fincas || []).find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || (fincas || [])[0]?.id
+                  const activasList = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+                  const f0 = activasList[0]?.id || (fincas || [])[0]?.id
                   const preciosAct = {}
                   let desdeAct = null
                   PLAZOS.forEach(pz => {
-                    const vg = vigente(preBal, p.id, f0, pz)
+                    // Toma el precio de la PRIMERA finca que lo tenga (no solo f0),
+                    // para que Configurar muestre lo que ya está guardado.
+                    let vg = null
+                    for (const f of activasList) { const v = vigente(preBal, p.id, f.id, pz); if (v) { vg = v; break } }
                     preciosAct[pz] = vg ? Number(vg.precio_saco) : (preBalGen[p.id]?.[pz] ?? null)
                     if (vg && !desdeAct) desdeAct = vg.vigente_desde
                   })
-                  const pzAct = plz[k(p.id, f0)]?.plazo ?? 0
-                  const vgAct = vigente(preBal, p.id, f0, pzAct)
+                  let pzAct = 0
+                  for (const f of activasList) { const pv = plz[k(p.id, f.id)]?.plazo; if (pv != null) { pzAct = pv; break } }
+                  let vgAct = null
+                  for (const f of activasList) { const v = vigente(preBal, p.id, f.id, pzAct); if (v) { vgAct = v; break } }
                   if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
                   return (
                     <EditorConfigBal producto={p} fincas={fincas}
