@@ -194,7 +194,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
         const guardado = (tabla === 'precio_insumo' && entrada === 'compra') ? bruto / factor : bruto
         await supabase.schema('produccion').from(tabla).delete().eq(prodCol, prodId).eq('finca_id', fid).eq('plazo', pz).gte('vigente_desde', desde)
         await supabase.schema('produccion').from(tabla).update({ vigente_hasta: sumarDias(desde, -1) })
-          .eq(prodCol, prodId).eq('finca_id', fid).eq('plazo', pz).is('vigente_hasta', null).lt('vigente_desde', desde)
+          .eq(prodCol, prodId).eq('finca_id', fid).eq('plazo', pz).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
         const { error } = await supabase.schema('produccion').from(tabla).insert({ [prodCol]: prodId, finca_id: fid, plazo: pz, [col]: guardado, vigente_desde: desde })
         if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el precio. ' + error.message }); return }
       }
@@ -209,7 +209,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     for (const fid of fincaIds) {
       await supabase.schema('produccion').from(tablaPz).delete().eq(colPz, prodId).eq('finca_id', fid).gte('vigente_desde', desde)
       await supabase.schema('produccion').from(tablaPz).update({ vigente_hasta: sumarDias(desde, -1) })
-        .eq(colPz, prodId).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', desde)
+        .eq(colPz, prodId).eq('finca_id', fid).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
       const { error } = await supabase.schema('produccion').from(tablaPz).insert({ [colPz]: prodId, finca_id: fid, plazo, vigente_desde: desde })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el plazo. ' + error.message }); return }
     }
@@ -1381,7 +1381,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         await supabase.schema('produccion').from('precio_insumo').delete()
           .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
         await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) })
-          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfecha)
+          .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
         const { error } = await supabase.schema('produccion').from('precio_insumo').insert(rows)
         if (error) throw error
       }
@@ -1431,7 +1431,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           await supabase.schema('produccion').from('plazo_insumo').delete()
             .eq('insumo_id', insumo.id).in('finca_id', stdIds).gte('vigente_desde', desde)
           await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-            .eq('insumo_id', insumo.id).in('finca_id', stdIds).is('vigente_hasta', null).lt('vigente_desde', desde)
+            .eq('insumo_id', insumo.id).in('finca_id', stdIds).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
           const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
             .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
           if (e4) throw e4
@@ -1441,7 +1441,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         await supabase.schema('produccion').from('plazo_insumo').delete()
           .eq('insumo_id', insumo.id).eq('finca_id', fid).gte('vigente_desde', dfe)
         await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(dfe, -1) })
-          .eq('insumo_id', insumo.id).eq('finca_id', fid).is('vigente_hasta', null).lt('vigente_desde', dfe)
+          .eq('insumo_id', insumo.id).eq('finca_id', fid).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
         const { error: e5 } = await supabase.schema('produccion').from('plazo_insumo')
           .insert([{ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfe }])
         if (e5) throw e5
@@ -1766,7 +1766,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
     await supabase.schema('produccion').from('precio_producto').delete()
       .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfe)
     await supabase.schema('produccion').from('precio_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
-      .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfe)
+      .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
     const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
     if (error) throw error
   }
@@ -1790,7 +1790,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         await supabase.schema('produccion').from('plazo_producto').delete()
           .eq('producto_id', producto.id).in('finca_id', destinos).gte('vigente_desde', dfe)
         await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
-          .eq('producto_id', producto.id).in('finca_id', destinos).is('vigente_hasta', null).lt('vigente_desde', dfe)
+          .eq('producto_id', producto.id).in('finca_id', destinos).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
         const { error } = await supabase.schema('produccion').from('plazo_producto')
           .insert(destinos.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rige, vigente_desde: dfe })))
         if (error) throw error
@@ -1818,7 +1818,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         await supabase.schema('produccion').from('precio_producto').delete()
           .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfe)
         await supabase.schema('produccion').from('precio_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
-          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).is('vigente_hasta', null).lt('vigente_desde', dfe)
+          .eq('producto_id', producto.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
         const { error } = await supabase.schema('produccion').from('precio_producto').insert(rows)
         if (error) throw error
       }
@@ -1849,7 +1849,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
       await supabase.schema('produccion').from('plazo_producto').delete()
         .eq('producto_id', producto.id).in('finca_id', ids).gte('vigente_desde', desde)
       await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(desde, -1) })
-        .eq('producto_id', producto.id).in('finca_id', ids).is('vigente_hasta', null).lt('vigente_desde', desde)
+        .eq('producto_id', producto.id).in('finca_id', ids).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
       const { error: e4 } = await supabase.schema('produccion').from('plazo_producto')
         .insert(ids.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
       if (e4) throw e4
