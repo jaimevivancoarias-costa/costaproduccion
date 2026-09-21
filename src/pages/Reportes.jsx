@@ -351,6 +351,38 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         </div>
       )}
 
+      {!cargando && esJefe && tipo !== 'diesel' && (() => {
+        const bal = filas.filter(f => f.tipo === 'balanceado').reduce((t, f) => t + Number(f.costo || 0), 0)
+        const ins = filas.filter(f => f.tipo === 'insumo').reduce((t, f) => t + Number(f.costo || 0), 0)
+        const dsl = todasFincas ? 0 : Number(dslR.total || 0)
+        const tot = bal + ins + dsl
+        if (tot <= 0) return null
+        const segs = [
+          { label: 'Balanceado', valor: bal, color: '#0D6CB0' },
+          { label: 'Insumos', valor: ins, color: '#E3B15F' },
+          { label: 'Diesel', valor: dsl, color: '#5F5E5A' },
+        ].filter(s => s.valor > 0)
+        return (
+          <div style={{ marginBottom: '14px', maxWidth: '420px' }}>
+            <CajaGrafica titulo="En qué se va la plata · por categoría">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <Donut segmentos={segs} centro="" sub="" />
+                <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+                  {segs.map(s => (
+                    <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+                      <span style={{ width: '11px', height: '11px', borderRadius: '3px', background: s.color, display: 'inline-block' }} />
+                      <span style={{ minWidth: '86px' }}>{s.label}</span>
+                      <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{dinero(s.valor)}</span>
+                      <span style={{ color: GRIS }}>{Math.round(s.valor / tot * 100)}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CajaGrafica>
+          </div>
+        )
+      })()}
+
       {tipo === 'diesel' ? (
         dslR.tipos.every(t => (t.galones || 0) === 0) ? (
           <Caja><Centro>No hay consumo de diesel en este rango.</Centro></Caja>
@@ -500,6 +532,23 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
         )}
       </div>
 
+      {esJefe && (() => {
+        const conCpl = cosechas.filter(c => Number(c.costo_por_libra) > 0)
+        if (conCpl.length < 2) return null
+        const items = conCpl
+          .map(c => ({ label: c.piscina, valor: Number(c.costo_por_libra), finca: c.finca }))
+          .sort((a, b) => a.valor - b.valor)
+        const prom = items.reduce((t, i) => t + i.valor, 0) / items.length
+        const colDe = v => v <= prom ? VERDE : v <= prom * 1.25 ? AMBAR : '#A32D2D'
+        return (
+          <div style={{ marginBottom: '14px' }}>
+            <CajaGrafica titulo="Costo por libra · cuál salió más caro">
+              <BarrasRank items={items} money promedio={prom} colorDe={colDe} />
+            </CajaGrafica>
+          </div>
+        )
+      })()}
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {cosechas.map(c => {
           const ab = abierto === c.ciclo_id
@@ -595,6 +644,28 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
           </div>
         )}
       </div>
+
+      {esJefe && (() => {
+        const items = proceso
+          .filter(c => Number(c.costo_por_ha) > 0)
+          .map(c => ({ label: c.piscina, valor: Number(c.costo_por_ha) }))
+          .sort((a, b) => b.valor - a.valor)
+          .slice(0, 12)
+        if (items.length < 2) return null
+        const max = Math.max(...items.map(i => i.valor))
+        // Azul más oscuro = más caro por hectárea.
+        const colDe = v => {
+          const t = v / max
+          return t > 0.75 ? '#0C447C' : t > 0.5 ? '#185FA5' : t > 0.28 ? '#378ADD' : '#7bb0dd'
+        }
+        return (
+          <div style={{ marginBottom: '14px' }}>
+            <CajaGrafica titulo="Costo por hectárea · quién va gastando de más">
+              <BarrasRank items={items} money colorDe={colDe} />
+            </CajaGrafica>
+          </div>
+        )
+      })()}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {proceso.map(c => {
@@ -944,6 +1015,33 @@ function BarrasH({ items, money }) {
             <div style={{ height: '100%', borderRadius: '20px', width: (it.valor / max * 100) + '%', background: cols[i % cols.length] }} />
           </div>
           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{money ? dinero(it.valor) : miles(it.valor)}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Barras de ranking: color por valor (colorDe) y promedio opcional.
+function BarrasRank({ items, money = true, promedio = null, colorDe }) {
+  if (!items.length) return <div style={{ fontSize: '12px', color: GRIS }}>Sin datos.</div>
+  const max = Math.max(1, ...items.map(i => i.valor))
+  const fmt = v => money ? dinero(v) : miles(v)
+  const col = colorDe || (() => AZUL)
+  return (
+    <div>
+      {promedio != null && (
+        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '11px' }}>
+          Promedio: <b style={{ color: NAVY, fontWeight: 500 }}>{fmt(promedio)}</b>
+        </div>
+      )}
+      {items.map((it, i) => (
+        <div key={i} style={{ display: 'grid', gridTemplateColumns: '92px 1fr 80px', gap: '10px',
+                alignItems: 'center', marginBottom: '9px', fontSize: '12px' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label}</span>
+          <div style={{ height: '14px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
+            <div style={{ height: '100%', borderRadius: '20px', width: (it.valor / max * 100) + '%', background: col(it.valor) }} />
+          </div>
+          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: col(it.valor), fontWeight: 500 }}>{fmt(it.valor)}</span>
         </div>
       ))}
     </div>
