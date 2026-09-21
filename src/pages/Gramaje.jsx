@@ -293,6 +293,15 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         </div>
       </div>
 
+      {!practica && filas.length > 0 && (
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '1rem' }}>
+          <ChipG k="Piscinas" v={filas.length} />
+          <ChipG k="En meta" v={ranking.filter(r => r.wk >= CREC_OK).length} color={VERDE} />
+          <ChipG k="Van lento" v={ranking.filter(r => r.wk >= CREC_ALERTA && r.wk < CREC_OK).length} color={AMBAR} />
+          <ChipG k="Muy lento" v={ranking.filter(r => r.wk < CREC_ALERTA).length} color={ROJO} />
+        </div>
+      )}
+
       {aviso && (
         <div style={{ padding: '10px 14px', borderRadius: '9px', marginBottom: '10px', fontSize: '13px',
           background: aviso.tipo === 'error' ? '#FCEBEB' : '#EAF3DE',
@@ -520,6 +529,11 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
   if (baja) incBg = RBG
   else if (semSem != null && semSem < CREC_ALERTA) { incBg = RBG; incColor = ROJO; incPeso = 500 }
   else if (semSem != null && semSem < CREC_OK) { incBg = ABG; incColor = AMBAR; incPeso = 500 }
+  // El crecimiento del domingo (semanal) se muestra como pastilla con estado.
+  const esSem = semSem != null
+  const estadoTxt = !esSem ? '' : semSem < CREC_ALERTA ? 'muy lento' : semSem < CREC_OK ? 'va lento' : 'en meta'
+  const pillBg = !esSem ? null : semSem < CREC_ALERTA ? RBG : semSem < CREC_OK ? ABG : '#E1F5EE'
+  const pillColor = !esSem ? null : semSem < CREC_ALERTA ? ROJO : semSem < CREC_OK ? AMBAR : VERDE
   return (
     <>
       <Td fondo={f}>
@@ -533,14 +547,31 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
           <span style={{ fontSize: '15px' }}>{valor || <Guion />}</span>
         )}
       </Td>
-      <Td fondo={incBg}><span style={{ color: incColor, fontWeight: incPeso }}>
-        {calc.inc === undefined ? '' : (calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)}
-      </span></Td>
+      <Td fondo={esSem ? f : incBg}>
+        {calc.inc === undefined ? '' : esSem ? (
+          <span style={{ display: 'inline-block', fontSize: '11.5px', fontWeight: 600, padding: '2px 8px',
+                         borderRadius: '20px', background: pillBg, color: pillColor, whiteSpace: 'nowrap' }}>
+            {(calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)} · {estadoTxt}
+          </span>
+        ) : (
+          <span style={{ color: incColor, fontWeight: incPeso }}>{(calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)}</span>
+        )}
+      </Td>
       <Td fondo={f}><span style={{ color: GRIS }}>{calc.dias ?? ''}</span></Td>
       <Td fondo={f}><span style={{ color: baja ? '#A32D2D' : GRIS, fontWeight: baja ? 500 : 400 }}>
         {calc.crec == null ? '' : calc.crec.toFixed(2)}
       </span></Td>
     </>
+  )
+}
+
+function ChipG({ k, v, color }) {
+  return (
+    <div style={{ flex: '1 1 130px', background: 'white', border: '0.5px solid ' + BORDE,
+                  borderRadius: '12px', padding: '10px 14px' }}>
+      <div style={{ fontSize: '12px', color: color || GRIS }}>{k}</div>
+      <div style={{ fontSize: '22px', fontWeight: 600, color: color || NAVY }}>{v}</div>
+    </div>
   )
 }
 
