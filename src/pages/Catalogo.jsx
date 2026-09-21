@@ -433,21 +433,32 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   const preciosAct = {}
                   let desdeAct = null
                   PLAZOS.forEach(pz => {
-                    // Toma el precio de la PRIMERA finca que lo tenga (no solo f0),
-                    // para que Configurar muestre lo que ya está guardado.
-                    let vg = null
-                    for (const f of activasList) { const v = vigente(preBal, p.id, f.id, pz); if (v) { vg = v; break } }
-                    preciosAct[pz] = vg ? Number(vg.precio_saco) : (preBalGen[p.id]?.[pz] ?? null)
-                    if (vg && !desdeAct) desdeAct = vg.vigente_desde
+                    // Estándar = precio que comparten TODAS las fincas activas.
+                    // Si no lo comparten todas, no hay estándar y cada finca con
+                    // precio se lista abajo como "finca con precio distinto".
+                    const vals = activasList.map(f => { const vg = vigente(preBal, p.id, f.id, pz); return vg ? Number(vg.precio_saco) : null })
+                    const todasIgual = vals.length > 0 && vals.every(v => v != null && v === vals[0])
+                    preciosAct[pz] = todasIgual ? vals[0] : (preBalGen[p.id]?.[pz] ?? null)
                   })
+                  // Fincas cuyo precio difiere del estándar -> sección 2.
+                  const excIni = []
+                  for (const f of activasList) {
+                    for (const pz of PLAZOS) {
+                      const vg = vigente(preBal, p.id, f.id, pz)
+                      if (vg && Number(vg.precio_saco) !== preciosAct[pz]) {
+                        excIni.push({ fincaId: f.id, precio: String(Number(vg.precio_saco)), plazo: pz, desde: vg.vigente_desde })
+                        if (!desdeAct) desdeAct = vg.vigente_desde
+                      }
+                    }
+                  }
                   let pzAct = 0
                   for (const f of activasList) { const pv = plz[k(p.id, f.id)]?.plazo; if (pv != null) { pzAct = pv; break } }
                   let vgAct = null
                   for (const f of activasList) { const v = vigente(preBal, p.id, f.id, pzAct); if (v) { vgAct = v; break } }
-                  if (vgAct?.vigente_desde) desdeAct = vgAct.vigente_desde
+                  if (vgAct?.vigente_desde && !desdeAct) desdeAct = vgAct.vigente_desde
                   return (
                     <EditorConfigBal producto={p} fincas={fincas}
-                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
+                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct, exc: excIni }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onCancelar={() => setEditConfig(null)} />
@@ -1759,7 +1770,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
   const [desde, setDesde] = useState(a.desde || hoyISO())
   const [minimo, setMinimo] = useState(a.stock_minimo != null ? String(a.stock_minimo) : '')
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
-  const [exc, setExc] = useState([])   // [{fincaId, precio, plazo, desde}]
+  const [exc, setExc] = useState(() => (a.exc || []))   // [{fincaId, precio, plazo, desde}]
   const [enviando, setEnviando] = useState(false)
   // Panel "Aplicar a varias fincas" (precio por saco a las fincas elegidas).
   const bulkVacio = { open: false, fincas: {}, precios: {}, plazoRige: 0, desde: '' }
