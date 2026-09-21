@@ -30,6 +30,7 @@ const ABG = '#FAEEDA'   // fondo ambar suave
 // Semaforo de crecimiento semanal (g/semana, domingo->domingo).
 const CREC_OK = 1.0      // normal a partir de aqui
 const CREC_ALERTA = 0.5  // debajo de esto, muy lento (rojo)
+const JOVEN_DIAS = 30    // piscinas con menos dias no se evaluan
 
 export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [filas, setFilas] = useState([])
@@ -345,9 +346,10 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     const c = calculo(fila, f)
                     const puede = (practica ? situacionDia(f, hoy) !== 'futuro' : editable(f)) && !fuera
                     const futuro = situacionDia(f, hoy) === 'futuro'
+                    const joven = fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) < JOVEN_DIAS : true
                     return (
                       <Grupo.Celdas
-                        key={f} fecha={f} hoy={hoy}
+                        key={f} fecha={f} hoy={hoy} joven={joven}
                         fuera={fuera} futuro={futuro} puede={puede} calc={c}
                         valor={valores[`${fila.piscinaId}|${f}`] || ''}
                         onChange={v => setValores(x => ({ ...x, [`${fila.piscinaId}|${f}`]: v }))}
@@ -458,7 +460,7 @@ function Grupo({ fecha, hoy }) {
   )
 }
 
-Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, onChange }) {
+Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, onChange, joven }) {
   const f = fecha === hoy ? HOYB : undefined
   if (fuera) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
   if (futuro) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
@@ -466,8 +468,10 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
   // Semáforo de crecimiento: solo sobre el domingo, que mide la semana
   // completa (Dom→Dom). Se normaliza a g/semana con el crecimiento diario,
   // por si el domingo anterior faltó y el tramo no fue exacto de 7 días.
+  // Las piscinas jóvenes (<30 días) no se evalúan: al inicio crecen lento
+  // y no tiene sentido alarmar.
   const esDom = new Date(fecha + 'T12:00:00').getDay() === 0
-  const semSem = esDom && calc.crec != null ? calc.crec * 7 : null
+  const semSem = esDom && !joven && calc.crec != null ? calc.crec * 7 : null
   let incBg = f, incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
   if (baja) incBg = RBG
   else if (semSem != null && semSem < CREC_ALERTA) { incBg = RBG; incColor = ROJO; incPeso = 500 }
