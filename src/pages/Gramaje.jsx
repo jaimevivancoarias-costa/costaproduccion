@@ -18,6 +18,11 @@ const NAVY = '#022847'
 const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
+const ROJO = '#A32D2D'   // mismo rojo que ya usa la app
+// Rango plausible de densidad de siembra (larvas/ha). Fuera de esto casi
+// siempre es larva u hectareas mal cargadas, no una densidad real.
+const DENS_MIN = 20000
+const DENS_MAX = 500000
 const HOYB = '#E6F1FB'
 
 export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
@@ -340,9 +345,17 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     )
                   })}
 
-                  <Td><span style={{ color: GRIS }}>
-                    {fila.larva ? miles(fila.larva / fila.hectareas) : ''}
-                  </span></Td>
+                  <Td>{(() => {
+                    if (!fila.larva) return ''
+                    const dens = fila.larva / fila.hectareas
+                    const imposible = dens < DENS_MIN || dens > DENS_MAX
+                    return (
+                      <span title={imposible ? 'Densidad fuera de rango: revisar la larva y las hectáreas de esta piscina' : undefined}
+                            style={{ color: imposible ? ROJO : GRIS, fontWeight: imposible ? 600 : 400 }}>
+                        {miles(dens)}{imposible ? ' ⚠' : ''}
+                      </span>
+                    )
+                  })()}</Td>
                 </div>
               ))}
             </div>
