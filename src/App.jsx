@@ -299,6 +299,7 @@ export default function App() {
           finca={finca}
           esJefe={esJefe}
           onIr={esJefe ? () => { setVerInsumos(true); setModulo('reportes') } : undefined}
+          onIrDiesel={() => { setPptoTab('diesel'); setModulo('presupuesto') }}
         />
       )}
 
