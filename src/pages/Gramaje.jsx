@@ -24,7 +24,6 @@ const ROJO = '#A32D2D'   // mismo rojo que ya usa la app
 const DENS_MIN = 20000
 const DENS_MAX = 500000
 const HOYB = '#E6F1FB'
-const ROJO = '#A32D2D'
 const AMBAR = '#854F0B'
 const RBG = '#FBEAEA'   // fondo rojo suave
 const ABG = '#FAEEDA'   // fondo ambar suave
