@@ -31,6 +31,7 @@ const ABG = '#FAEEDA'   // fondo ambar suave
 const CREC_OK = 1.0      // normal a partir de aqui
 const CREC_ALERTA = 0.5  // debajo de esto, muy lento (rojo)
 const JOVEN_DIAS = 30    // piscinas con menos dias no se evaluan
+const VERDE = '#0F6E56'
 
 export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [filas, setFilas] = useState([])
@@ -170,6 +171,22 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       return c.inc !== undefined && c.inc < 0
     }).map(fe => ({ fila: f, fecha: fe }))
   )
+
+  // Ranking de crecimiento semanal (g/sem, normalizado): toma el último
+  // muestreo de la semana con crecimiento calculable, ordena de peor a mejor.
+  // Las jóvenes (<30 días) no entran, igual que en el semáforo.
+  const ranking = filas
+    .filter(f => f.fechaSiembra && diasCultivo(f.fechaSiembra, corteDias) >= JOVEN_DIAS)
+    .map(f => {
+      let c = null
+      for (let i = muestreos.length - 1; i >= 0; i--) {
+        const cc = calculo(f, muestreos[i])
+        if (cc.crec != null) { c = cc; break }
+      }
+      return c ? { id: f.piscinaId, nombre: f.nombre, dias: diasCultivo(f.fechaSiembra, corteDias), wk: c.crec * 7 } : null
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.wk - b.wk)
 
   async function guardar() {
     setGuardando(true); setAviso(null)
@@ -415,6 +432,33 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Ranking · crecimiento semanal (solo mirar; la tabla de arriba es para cargar) */}
+      {!cargando && !practica && ranking.length > 0 && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
+                      padding: '14px 16px', marginTop: '14px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>Ranking · crecimiento semanal</div>
+          {ranking.map(r => {
+            const col = r.wk < CREC_ALERTA ? ROJO : r.wk < CREC_OK ? AMBAR : VERDE
+            const w = Math.min(100, Math.max(2, Math.round(r.wk / 5 * 100)))
+            return (
+              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 56px', gap: '10px',
+                    alignItems: 'center', padding: '5px 0', fontSize: '13px' }}>
+                <span>{r.nombre}<span style={{ color: GRIS, fontSize: '11px' }}> · {r.dias}d engorde</span></span>
+                <span style={{ position: 'relative', height: '14px', background: '#eef3f7', borderRadius: '7px' }}>
+                  <span style={{ position: 'absolute', left: 0, top: 0, height: '14px', width: w + '%', background: col, borderRadius: '7px' }} />
+                </span>
+                <span style={{ textAlign: 'right', fontWeight: 600, color: col, fontVariantNumeric: 'tabular-nums' }}>
+                  {(r.wk >= 0 ? '+' : '') + r.wk.toFixed(1)}
+                </span>
+              </div>
+            )
+          })}
+          <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
+            g/semana (dom→dom). Jóvenes (&lt;{JOVEN_DIAS} días) no entran. Rojo &lt;{CREC_ALERTA} · ámbar &lt;{CREC_OK} · verde ≥{CREC_OK}.
           </div>
         </div>
       )}
