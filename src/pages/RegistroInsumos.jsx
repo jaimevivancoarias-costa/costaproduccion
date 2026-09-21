@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
-  nombreDia, semanaISO, situacionDia, num, miles, dinero,
+  nombreDia, semanaISO, situacionDia, numDec, miles, dinero,
 } from '../lib/fechas'
 import BuscadorAplicacion from './BuscadorAplicacion'
 
@@ -282,7 +282,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const consumoSemana = useMemo(() => {
     const m = {}
     Object.values(lineas).flat().forEach(l => {
-      m[l.insumoId] = (m[l.insumoId] || 0) + num(l.cantidad)
+      m[l.insumoId] = (m[l.insumoId] || 0) + numDec(l.cantidad)
     })
     return Object.entries(m)
       .map(([id, cant]) => ({ id, cant }))
@@ -298,7 +298,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       if (arr.length) piscinasConMov.add(k.split('|')[0])
       arr.forEach(l => {
         insumosUsados.add(l.insumoId)
-        gasto += num(l.cantidad) * Number(l.precio || 0)
+        gasto += numDec(l.cantidad) * Number(l.precio || 0)
       })
     })
     return { insumos: insumosUsados.size, piscinas: piscinasConMov.size, gasto }
@@ -315,7 +315,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   // Se guarda linea por linea: son pocas por celda y evita el baile de
   // diffing de todo el grid. Optimista: se pinta y si falla se revierte.
   async function agregar(p, f, insumoId, cantidad) {
-    const cant = num(cantidad)
+    const cant = numDec(cantidad)
     if (!insumoId || !cant) return
     const k = `${p.piscinaId}|${f}`
     const yaHay = (lineas[k] || []).find(l => l.insumoId === insumoId)
@@ -342,8 +342,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
   async function cambiarCantidad(k, id, valor) {
     const linea = (lineas[k] || []).find(l => l.id === id)
-    const antes = num(linea?.cantidad)
-    const cant = num(valor)
+    const antes = numDec(linea?.cantidad)
+    const cant = numDec(valor)
     // Solo se chequea si SUBE. La diferencia extra no puede superar lo disponible.
     if (cant && linea && cant - antes > dispApp(linea.insumoId) + 0.0001) {
       setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(linea.insumoId)}: hay ${miles(Math.round(dispApp(linea.insumoId) * 100) / 100)} ${uds(linea.insumoId)} más disponibles.` })
@@ -363,7 +363,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     const { error } = await supabase.schema('produccion').from('consumo_insumo').delete().eq('id', id)
     if (error) { setLineas(m => ({ ...m, [k]: antes })); setAviso({ tipo: 'error', texto: error.message }); return }
     // Devuelve al saldo lo que se había consumido.
-    if (linea) setSaldoIns(s => ({ ...s, [linea.insumoId]: (s[linea.insumoId] || 0) + num(linea.cantidad) / (factorIns[linea.insumoId] || 1) }))
+    if (linea) setSaldoIns(s => ({ ...s, [linea.insumoId]: (s[linea.insumoId] || 0) + numDec(linea.cantidad) / (factorIns[linea.insumoId] || 1) }))
   }
 
   const COLS = `180px repeat(7, minmax(190px, 1fr))`
@@ -510,7 +510,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                             </div>
                           ) : (
                             <span style={{ fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
-                              <b style={{ fontWeight: 600 }}>{miles(num(l.cantidad))}</b> {unidadInsumo(l.insumoId)}
+                              <b style={{ fontWeight: 600 }}>{miles(numDec(l.cantidad))}</b> {unidadInsumo(l.insumoId)}
                             </span>
                           )}
                         </div>
@@ -759,10 +759,10 @@ function Agregar({ insumos, usados, onGuardar, onCerrar }) {
           onKeyDown={e => e.key === 'Enter' && (onGuardar(insumoId, cant))}
           style={{ flex: 1, fontFamily: 'inherit', fontSize: '11px', padding: '4px',
                    border: '0.5px solid ' + BORDE, borderRadius: '6px', minWidth: 0 }} />
-        <button onClick={() => onGuardar(insumoId, cant)} disabled={!insumoId || !num(cant)}
+        <button onClick={() => onGuardar(insumoId, cant)} disabled={!insumoId || !numDec(cant)}
           style={{ border: 'none', background: AZUL, color: 'white', borderRadius: '6px',
                    fontFamily: 'inherit', fontSize: '11px', padding: '4px 8px',
-                   cursor: 'pointer', opacity: (!insumoId || !num(cant)) ? 0.4 : 1 }}>ok</button>
+                   cursor: 'pointer', opacity: (!insumoId || !numDec(cant)) ? 0.4 : 1 }}>ok</button>
         <button onClick={onCerrar}
           style={{ border: '0.5px solid ' + BORDE, background: 'white', borderRadius: '6px',
                    fontFamily: 'inherit', fontSize: '11px', padding: '4px 7px', cursor: 'pointer',
