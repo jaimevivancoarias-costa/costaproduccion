@@ -469,12 +469,13 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
     if (abierto === c.ciclo_id) { setAbierto(null); return }
     setAbierto(c.ciclo_id)
     if (!detalle[c.ciclo_id]) {
-      const [{ data: ln }, { data: ev }] = await Promise.all([
+      const [{ data: ln }, { data: ev }, { data: det }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_ciclo_lineas', { p_ciclo: c.ciclo_id }),
         supabase.schema('produccion').from('evento')
           .select('tipo, fecha, libras').eq('ciclo_id', c.ciclo_id).order('fecha'),
+        supabase.schema('produccion').rpc('fn_ciclo_detalle', { p_ciclo: c.ciclo_id }),
       ])
-      setDetalle(d => ({ ...d, [c.ciclo_id]: { lineas: ln || [], eventos: ev || [] } }))
+      setDetalle(d => ({ ...d, [c.ciclo_id]: { lineas: ln || [], eventos: ev || [], det: (det && det[0]) || null } }))
     }
   }
 
@@ -518,9 +519,10 @@ function ReporteCosechas({ cosechas, cargando, esJefe, todasFincas }) {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '14px', fontWeight: 500 }}>Cosecha {corta(c.fecha_cosecha)}</div>
-                    <div style={{ fontSize: '12px', color: GRIS }}>{c.dias} Días</div>
+                    <div style={{ fontSize: '12px', color: GRIS }}>{c.dias} días de engorde</div>
                   </div>
                 </div>
+                <FasesChips c={c} />
                 <div style={metricas}>
                   <Metrica k="Libras" v={Number(c.libras) ? miles(c.libras) : 'Pendiente'}
                            alerta={!Number(c.libras)} />
@@ -564,12 +566,13 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
     if (abierto === c.ciclo_id) { setAbierto(null); return }
     setAbierto(c.ciclo_id)
     if (!detalle[c.ciclo_id]) {
-      const [{ data: ln }, { data: ev }] = await Promise.all([
+      const [{ data: ln }, { data: ev }, { data: det }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_ciclo_lineas', { p_ciclo: c.ciclo_id }),
         supabase.schema('produccion').from('evento')
           .select('tipo, fecha, libras').eq('ciclo_id', c.ciclo_id).order('fecha'),
+        supabase.schema('produccion').rpc('fn_ciclo_detalle', { p_ciclo: c.ciclo_id }),
       ])
-      setDetalle(d => ({ ...d, [c.ciclo_id]: { lineas: ln || [], eventos: ev || [] } }))
+      setDetalle(d => ({ ...d, [c.ciclo_id]: { lineas: ln || [], eventos: ev || [], det: (det && det[0]) || null } }))
     }
   }
 
@@ -615,9 +618,10 @@ function ReporteEnProceso({ proceso, cargando, esJefe, todasFincas }) {
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '16px', fontWeight: 500 }}>{c.dias}</div>
-                    <div style={{ fontSize: '12px', color: GRIS }}>Días</div>
+                    <div style={{ fontSize: '12px', color: GRIS }}>Días de engorde</div>
                   </div>
                 </div>
+                <FasesChips c={c} />
                 <div style={metricas}>
                   {esJefe && <Metrica k="Balanceado" v={dinero(c.costo_balanceado)} />}
                   {esJefe && <Metrica k="Insumos" v={dinero(c.costo_insumos)} />}
@@ -1068,19 +1072,26 @@ function exportarProcesoCSV(proceso) {
   URL.revokeObjectURL(url)
 }
 
-// El detalle de un ciclo: que paso (eventos) y que se consumio.
+// El detalle de un ciclo: que paso (origen + eventos), que se consumio y
+// de donde sale el costo total.
 function DetalleCiclo({ d, esJefe }) {
   const bal = d.lineas.filter(l => l.tipo === 'balanceado')
   const ins = d.lineas.filter(l => l.tipo === 'insumo')
+  const det = d.det
+  // La siembra ya se explica en el origen; se saca de la lista de eventos.
+  const otros = d.eventos.filter(e => e.tipo !== 'siembra')
   return (
+    <>
     <div style={{ display: 'flex', gap: '26px', flexWrap: 'wrap' }}>
-      <div style={{ flex: '1 1 220px' }}>
+      <div style={{ flex: '1 1 240px' }}>
         <Sub>Qué pasó</Sub>
-        {d.eventos.length === 0 ? <Vac>Sin eventos</Vac> : d.eventos.map((e, i) => (
+        <OrigenResumen det={det} />
+        {otros.map((e, i) => (
           <Rengl key={i} a={cap(e.tipo)} b={corta(e.fecha) + (e.libras ? ` · ${miles(e.libras)} lb` : '')} />
         ))}
+        {!det && otros.length === 0 && <Vac>Sin eventos</Vac>}
       </div>
-      <div style={{ flex: '1 1 280px' }}>
+      <div style={{ flex: '1 1 260px' }}>
         <Sub>Balanceado</Sub>
         {bal.length === 0 ? <Vac>Sin balanceado</Vac> : bal.map((l, i) => (
           <Rengl key={i} a={l.item}
@@ -1088,13 +1099,122 @@ function DetalleCiclo({ d, esJefe }) {
             nota={`${corta(l.desde)} a ${corta(l.hasta)}`} />
         ))}
       </div>
-      <div style={{ flex: '1 1 280px' }}>
+      <div style={{ flex: '1 1 200px' }}>
         <Sub>Insumos</Sub>
         {ins.length === 0 ? <Vac>Sin insumos</Vac> : ins.map((l, i) => (
           <Rengl key={i} a={l.item}
             b={`${miles(l.cantidad)} ${l.unidad}${esJefe ? ' · ' + dinero(l.costo) : ''}`}
             nota={`${corta(l.desde)} a ${corta(l.hasta)}`} />
         ))}
+      </div>
+    </div>
+    {esJefe && det && <DesgloseCosto det={det} />}
+    </>
+  )
+}
+
+// Chip de fase (días) para la cabecera de la tarjeta.
+function FasesChips({ c }) {
+  const prep = Number(c.dias_prep) || 0
+  const prec = Number(c.dias_precria) || 0
+  const eng = Number(c.dias) || 0
+  const items = []
+  if (prep > 0) items.push(['Preparación', prep, '#F1EFE8', '#5F5E5A'])
+  if (prec > 0) items.push(['Precría', prec, '#EEEDFE', '#3C3489'])
+  items.push(['Engorde', eng, '#E1F5EE', '#0F6E56'])
+  const total = prep + prec + eng
+  return (
+    <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginTop: '10px' }}>
+      {items.map(([lbl, n, bg, fg]) => (
+        <span key={lbl} style={{ background: bg, color: fg, fontSize: '12px', padding: '3px 10px', borderRadius: '20px' }}>{lbl} {n} d</span>
+      ))}
+      {(prep > 0 || prec > 0) && (
+        <span style={{ background: '#fff', border: '0.5px solid ' + BORDE, color: GRIS, fontSize: '12px', padding: '3px 10px', borderRadius: '20px' }}>Total en el sistema {total} d</span>
+      )}
+    </div>
+  )
+}
+
+function Pill({ bg, fg, children }) {
+  return <span style={{ background: bg, color: fg, fontSize: '11px', padding: '2px 8px', borderRadius: '20px' }}>{children}</span>
+}
+
+// Resumen del origen del lote: transferencia (con sobrevivencia y gramaje)
+// o siembra directa (larvas, PLs/g y laboratorio).
+function OrigenResumen({ det }) {
+  if (!det) return null
+  if (det.es_transferencia) {
+    return (
+      <>
+        <div style={{ marginBottom: '9px', fontSize: '13px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+            <span>Transferencia</span>
+            <span style={{ color: NAVY, whiteSpace: 'nowrap' }}>{corta(det.transfer_fecha)}</span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+            {det.sobrevivencia != null && <Pill bg="#E1F5EE" fg="#0F6E56">Sobrevivencia {miles(det.sobrevivencia)}%</Pill>}
+            {det.transfer_gramaje != null && <Pill bg="#E6F1FB" fg="#0D6CB0">Gramaje {det.transfer_gramaje} g</Pill>}
+          </div>
+          {(det.animales || det.origen_piscina) && (
+            <div style={{ fontSize: '11px', color: GRIS, marginTop: '4px' }}>
+              {det.animales ? `${miles(det.animales)} animales` : ''}
+              {det.origen_piscina ? ` · desde ${det.origen_piscina}` : ''}
+              {det.origen_pct ? ` (${miles(det.origen_pct)}%)` : ''}
+            </div>
+          )}
+        </div>
+        {det.precria_siembra && (
+          <div style={{ marginBottom: '9px', fontSize: '13px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
+              <span>Siembra de la precría</span>
+              <span style={{ color: NAVY, whiteSpace: 'nowrap' }}>{corta(det.precria_siembra)}</span>
+            </div>
+            <div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>
+              {det.precria_larvas ? `${miles(det.precria_larvas)} larvas` : ''}
+              {det.precria_plsg != null ? ` · ${det.precria_plsg} PLs/g` : ''}
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+  return (
+    <div style={{ marginBottom: '9px', fontSize: '13px' }}>
+      <div style={{ color: NAVY }}>Siembra directa</div>
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+        {det.larvas_directas != null && <Pill bg="#E6F1FB" fg="#0D6CB0">{miles(det.larvas_directas)} larvas</Pill>}
+        {det.plsg_directa != null && <Pill bg="#F1EFE8" fg="#5F5E5A">{det.plsg_directa} PLs/g</Pill>}
+      </div>
+      {det.laboratorio && <div style={{ fontSize: '11px', color: GRIS, marginTop: '5px' }}>Laboratorio: {det.laboratorio}</div>}
+    </div>
+  )
+}
+
+// De dónde sale el Costo Total: preparación + balanceado + insumos +
+// heredado de la precría. Solo el jefe (lleva dólares).
+function DesgloseCosto({ det }) {
+  const rows = [
+    ['Preparación', det.costo_preparacion, 'insumos antes de sembrar'],
+    ['Balanceado del cultivo', det.costo_bal_cultivo, null],
+    ['Insumos del cultivo', det.costo_ins_cultivo, null],
+  ]
+  if (Number(det.costo_heredado) > 0) {
+    rows.push(['Heredado de la precría', det.costo_heredado,
+      `${det.origen_piscina || ''}${det.origen_pct ? ` · ${miles(det.origen_pct)}%` : ''}`])
+  }
+  return (
+    <div style={{ marginTop: '12px', padding: '12px 14px', background: '#f6f9fb', borderRadius: '10px' }}>
+      <div style={{ fontSize: '12px', color: GRIS, fontWeight: 500, marginBottom: '9px' }}>De dónde sale el Costo Total</div>
+      {rows.map(([lbl, val, nota]) => (
+        <div key={lbl} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: '13px', marginBottom: '6px' }}>
+          <span>{lbl}{nota ? <span style={{ fontSize: '11px', color: GRIS }}> · {nota}</span> : ''}</span>
+          <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dinero(val)}</span>
+        </div>
+      ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 500,
+                    borderTop: '0.5px solid ' + BORDE, paddingTop: '7px', marginTop: '2px' }}>
+        <span>Costo Total</span>
+        <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{dinero(det.costo_total)}</span>
       </div>
     </div>
   )
