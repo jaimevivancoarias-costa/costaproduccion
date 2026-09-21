@@ -23,7 +23,8 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   const [anio, setAnio] = useState(Number(hoy.slice(0, 4)))
   const [mes, setMes] = useState(Number(hoy.slice(5, 7)))
   const [tipos, setTipos] = useState([])
-  const [montos, setMontos] = useState({})   // tipo_id -> monto
+  const [montos, setMontos] = useState({})   // tipo_id -> monto $ efectivo (puede ser null si falta precio)
+  const [pptoGal, setPptoGal] = useState({}) // tipo_id -> presupuesto en galones
   const [gastos, setGastos] = useState({})    // tipo_id (+'global') -> $ gastado
   const [galones, setGalones] = useState({})  // tipo_id -> galones consumidos del mes
   const [precios, setPrecios] = useState({})  // tipo_id -> precio actual del galón (o null)
@@ -46,12 +47,13 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     const lista = tp || []
     setTipos(lista)
     // Presupuesto solo POR TIPO. El global es la suma (no se fija aparte).
+    // Se puede fijar en $ (monto) o en galones. Guardamos el crudo y luego
+    // calculamos el equivalente con el precio del mes.
     const { data: pp } = await supabase.schema('produccion').from('presupuesto_diesel')
-      .select('tipo_id, monto').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes)
+      .select('tipo_id, monto, galones').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes)
       .not('tipo_id', 'is', null)
-    const m = {}
-    ;(pp || []).forEach(r => { m[r.tipo_id] = Number(r.monto) })
-    setMontos(m)
+    const ppRaw = {}
+    ;(pp || []).forEach(r => { ppRaw[r.tipo_id] = { monto: r.monto, galones: r.galones } })
     // Gasto en $ por tipo.
     const res = await Promise.all(lista.map(t =>
       supabase.schema('produccion').rpc('fn_gasto_diesel_mes',
@@ -73,11 +75,34 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     const pm = {}
     lista.forEach((t, i) => { pm[t.id] = pr[i].data != null ? Number(pr[i].data) : null })
     setPrecios(pm)
+    // Presupuesto efectivo por tipo: $ y galones. Si se fijó en galones,
+    // el $ se calcula con el precio del mes (null si falta precio) y
+    // viceversa. Los galones siempre se conocen cuando se fijó en galones.
+    const m$ = {}, mGal = {}
+    lista.forEach(t => {
+      const raw = ppRaw[t.id]
+      if (!raw) return
+      const p = pm[t.id]
+      if (raw.galones != null) {
+        mGal[t.id] = Number(raw.galones)
+        m$[t.id] = p != null ? Math.round(Number(raw.galones) * p * 100) / 100 : null
+      } else if (raw.monto != null) {
+        m$[t.id] = Number(raw.monto)
+        mGal[t.id] = p != null ? Math.round(Number(raw.monto) / p * 100) / 100 : null
+      }
+    })
+    setMontos(m$); setPptoGal(mGal)
     // Historial del año: presupuesto (global = suma de tipos) y gasto por mes.
+    // Los presupuestos fijados en galones se valoran con el precio actual del
+    // tipo en esta finca (pm) para poder compararlos en $.
     const { data: pAll } = await supabase.schema('produccion').from('presupuesto_diesel')
-      .select('mes, monto').eq('finca_id', finca.id).eq('anio', anio).not('tipo_id', 'is', null)
+      .select('mes, tipo_id, monto, galones').eq('finca_id', finca.id).eq('anio', anio).not('tipo_id', 'is', null)
     const porMes = {}
-    ;(pAll || []).forEach(r => { porMes[r.mes] = (porMes[r.mes] || 0) + Number(r.monto) })
+    ;(pAll || []).forEach(r => {
+      const val = r.monto != null ? Number(r.monto)
+        : (r.galones != null && pm[r.tipo_id] != null ? Number(r.galones) * pm[r.tipo_id] : 0)
+      porMes[r.mes] = (porMes[r.mes] || 0) + val
+    })
     const mesesSet = Object.keys(porMes).map(Number).sort((a, b) => a - b)
     const gm = await Promise.all(mesesSet.map(mm =>
       supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: finca.id, p_anio: anio, p_mes: mm })))
@@ -86,10 +111,25 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     // Tablero del grupo (solo jefe): presupuesto y gasto de diesel de cada
     // finca en el mes, igual que en insumos.
     if (esJefe && activas.length) {
+      // Precio vigente por finca+tipo (y general) para valorar los presupuestos
+      // fijados en galones.
+      const { data: prG } = await supabase.schema('produccion').from('diesel_precio')
+        .select('tipo_id, finca_id, precio_galon').is('vigente_hasta', null)
+      const pfg = {}, pgg = {}
+      ;(prG || []).forEach(r => {
+        if (r.finca_id) pfg[r.finca_id + '|' + r.tipo_id] = Number(r.precio_galon)
+        else pgg[r.tipo_id] = Number(r.precio_galon)
+      })
+      const precioFT = (fid, tid) => (pfg[fid + '|' + tid] ?? pgg[tid] ?? null)
       const { data: ppAll } = await supabase.schema('produccion').from('presupuesto_diesel')
-        .select('finca_id, monto').eq('anio', anio).eq('mes', mes).not('tipo_id', 'is', null)
+        .select('finca_id, tipo_id, monto, galones').eq('anio', anio).eq('mes', mes).not('tipo_id', 'is', null)
       const mFinca = {}
-      ;(ppAll || []).forEach(r => { mFinca[r.finca_id] = (mFinca[r.finca_id] || 0) + Number(r.monto) })
+      ;(ppAll || []).forEach(r => {
+        const p = precioFT(r.finca_id, r.tipo_id)
+        const val = r.monto != null ? Number(r.monto)
+          : (r.galones != null && p != null ? Number(r.galones) * p : 0)
+        mFinca[r.finca_id] = (mFinca[r.finca_id] || 0) + val
+      })
       const gFinca = await Promise.all(activas.map(f =>
         supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: f.id, p_anio: anio, p_mes: mes })))
       setResumen(activas.map((f, i) => ({
@@ -104,36 +144,38 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
   useEffect(() => { cargar() }, [cargar])
 
   async function guardar(clave) {
-    const precio = precios[clave]
-    let v
+    // Se guarda tal cual: en galones (monto null, el $ sale del precio del
+    // mes) o en dólares (galones null). No se convierte al guardar, así el
+    // presupuesto en galones se puede fijar aunque hoy no haya precio.
+    let campos
     if (editModo === 'gal') {
-      if (precio == null) { setAviso({ tipo: 'error', texto: 'Falta el precio del galón. Ponlo en Catálogo → Diesel.' }); return }
       const g = numDec(editGal)
       if (!(g >= 0)) { setAviso({ tipo: 'error', texto: 'Galones no válidos.' }); return }
-      v = Math.round(g * precio * 100) / 100
+      campos = { galones: g, monto: null }
     } else {
-      v = numDec(nuevo)
+      const v = numDec(nuevo)
       if (!(v >= 0)) { setAviso({ tipo: 'error', texto: 'Monto no válido.' }); return }
+      campos = { monto: v, galones: null }
     }
     const tipoId = clave === 'global' ? null : clave
     let q = supabase.schema('produccion').from('presupuesto_diesel').select('id')
       .eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes)
     q = tipoId ? q.eq('tipo_id', tipoId) : q.is('tipo_id', null)
     const { data: ex } = await q.maybeSingle()
-    const fila = { finca_id: finca.id, tipo_id: tipoId, anio, mes, monto: v, actualizado_en: new Date().toISOString() }
+    const fila = { finca_id: finca.id, tipo_id: tipoId, anio, mes, ...campos, actualizado_en: new Date().toISOString() }
     const { error } = ex
       ? await supabase.schema('produccion').from('presupuesto_diesel').update(fila).eq('id', ex.id)
       : await supabase.schema('produccion').from('presupuesto_diesel').insert(fila)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
-    setEditando(null); setNuevo(''); setAviso({ tipo: 'ok', texto: 'Presupuesto guardado.' }); await cargar()
+    setEditando(null); setNuevo(''); setEditGal(''); setAviso({ tipo: 'ok', texto: 'Presupuesto guardado.' }); await cargar()
   }
 
-  // Upsert de un presupuesto (finca + tipo + mes).
-  async function upsertUno(fincaId, tipoId, monto, m) {
+  // Upsert de un presupuesto (finca + tipo + mes). campos = {monto} o {galones}.
+  async function upsertUno(fincaId, tipoId, campos, m) {
     let q = supabase.schema('produccion').from('presupuesto_diesel').select('id')
       .eq('finca_id', fincaId).eq('anio', anio).eq('mes', m).eq('tipo_id', tipoId)
     const { data: ex } = await q.maybeSingle()
-    const fila = { finca_id: fincaId, tipo_id: tipoId, anio, mes: m, monto, actualizado_en: new Date().toISOString() }
+    const fila = { finca_id: fincaId, tipo_id: tipoId, anio, mes: m, monto: null, galones: null, ...campos, actualizado_en: new Date().toISOString() }
     return ex
       ? supabase.schema('produccion').from('presupuesto_diesel').update(fila).eq('id', ex.id)
       : supabase.schema('produccion').from('presupuesto_diesel').insert(fila)
@@ -147,34 +189,22 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     if (!fincasSel.length) { setAviso({ tipo: 'error', texto: 'Elige al menos una finca.' }); return }
     if (!tipos.some(t => numDec(bulk.valores[t.id] || '') > 0)) { setAviso({ tipo: 'error', texto: 'Pon al menos un valor.' }); return }
     setGuardandoBulk(true)
-    // Precio vigente por finca y tipo (para el modo galones, precio de hoy).
-    const { data: pr } = await supabase.schema('produccion').from('diesel_precio')
-      .select('tipo_id, finca_id, precio_galon').is('vigente_hasta', null)
-    const pf = {}, pg = {}
-    ;(pr || []).forEach(r => {
-      if (r.finca_id) pf[r.finca_id + '|' + r.tipo_id] = Number(r.precio_galon)
-      else pg[r.tipo_id] = Number(r.precio_galon)
-    })
-    const precioDe = (fid, tid) => (pf[fid + '|' + tid] ?? pg[tid] ?? null)
-    let sinPrecio = 0
+    // En galones se guarda el número de galones tal cual (el $ sale del
+    // precio de cada mes); en dólares se guarda el monto. Ya no se salta
+    // ninguna finca por falta de precio.
     for (const fid of fincasSel) {
       for (const m of mesesSel) {
         for (const t of tipos) {
           const raw = numDec(bulk.valores[t.id] || '')
           if (!(raw > 0)) continue
-          let monto
-          if (bulk.modo === 'gal') {
-            const p = precioDe(fid, t.id)
-            if (p == null) { sinPrecio++; continue }
-            monto = Math.round(raw * p * 100) / 100
-          } else monto = raw
-          const { error } = await upsertUno(fid, t.id, monto, m)
+          const campos = bulk.modo === 'gal' ? { galones: raw } : { monto: raw }
+          const { error } = await upsertUno(fid, t.id, campos, m)
           if (error) { setGuardandoBulk(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + error.message }); return }
         }
       }
     }
     setGuardandoBulk(false); setBulk(null)
-    setAviso({ tipo: 'ok', texto: `Aplicado a ${fincasSel.length} finca(s) × ${mesesSel.length} mes(es).` + (sinPrecio ? ` (${sinPrecio} sin precio, se saltaron)` : '') })
+    setAviso({ tipo: 'ok', texto: `Aplicado a ${fincasSel.length} finca(s) × ${mesesSel.length} mes(es).` })
     await cargar()
   }
 
@@ -189,10 +219,11 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
     setEditando(null); setNuevo(''); setAviso({ tipo: 'ok', texto: 'Presupuesto borrado.' }); await cargar()
   }
 
-  const hayGlobal = tipos.some(t => montos[t.id] != null)
+  const hayGlobal = tipos.some(t => montos[t.id] != null || pptoGal[t.id] != null)
   const montoGlobal = tipos.reduce((s, t) => s + (montos[t.id] || 0), 0)
   const gastoGlobal = tipos.reduce((s, t) => s + (gastos[t.id] || 0), 0)
   const galTotal = tipos.reduce((s, t) => s + (galones[t.id] || 0), 0)
+  const pptoGalGlobal = tipos.reduce((s, t) => s + (pptoGal[t.id] || 0), 0)
 
   const tarjetas = [
     ...tipos.map(t => ({ clave: t.id, nombre: t.nombre })),
@@ -273,7 +304,7 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
           </div>
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>
             {bulk.modo === 'gal'
-              ? 'En galones, cada finca usa su precio del galón de hoy (el mismo $ para todos los meses elegidos). Las fincas sin precio se saltan.'
+              ? 'Se guardan los galones tal cual. El monto en $ de cada mes se calcula con el precio del galón vigente de ese mes.'
               : 'El mismo monto en $ para cada finca y mes elegido.'}
           </div>
         </div>
@@ -291,9 +322,16 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
         <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: '12px' }}>
           {tarjetas.map(c => {
-            const monto = c.global ? (hayGlobal ? montoGlobal : null) : montos[c.clave]
+            // Presupuesto en $ (puede faltar si se fijó en galones sin precio)
+            // y en galones (puede faltar si se fijó en $ sin precio).
+            const monto = c.global ? montoGlobal : (montos[c.clave] ?? null)
+            const gBudget = c.global ? pptoGalGlobal : (pptoGal[c.clave] ?? null)
             const gasto = c.global ? gastoGlobal : (gastos[c.clave] || 0)
-            const pct = monto ? Math.min(100, Math.round(gasto / monto * 100)) : 0
+            const galGasto = c.global ? galTotal : (galones[c.clave] || 0)
+            const hayPpto = c.global ? hayGlobal : (monto != null || gBudget != null)
+            // % preferimos por galones (siempre se conocen); si no, por $.
+            const pctRaw = gBudget ? galGasto / gBudget : (monto ? gasto / monto : 0)
+            const pct = Math.min(100, Math.round(pctRaw * 100))
             const color = pct >= 100 ? ROJO : pct >= 85 ? AMBAR : VERDE
             const enEdit = editando === c.clave
             return (
@@ -304,14 +342,18 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                   {esJefe && !enEdit && !c.global && (
                     <button onClick={() => {
                       const pr = precios[c.clave]
+                      const gb = pptoGal[c.clave]
                       setEditando(c.clave)
-                      setEditModo(pr != null ? 'gal' : 'usd')
-                      setEditGal(pr != null && monto != null ? String(Math.round(monto / pr * 100) / 100) : '')
+                      // Por defecto en galones (así lo maneja Mel); en $ solo si
+                      // se había fijado en $ y no hay galones que mostrar.
+                      setEditModo(gb != null ? 'gal' : (monto != null ? 'usd' : 'gal'))
+                      setEditGal(gb != null ? String(gb)
+                        : (pr != null && monto != null ? String(Math.round(monto / pr * 100) / 100) : ''))
                       setNuevo(monto != null ? String(monto) : '')
                     }}
                       style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                                fontSize: '12px', color: AZUL }}>
-                      {monto != null ? 'Cambiar' : 'Fijar'}
+                      {hayPpto ? 'Cambiar' : 'Fijar'}
                     </button>
                   )}
                   {c.global && <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)' }}>B + Premium</span>}
@@ -329,24 +371,26 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                     </div>
 
                     {editModo === 'gal' ? (
-                      precios[c.clave] == null ? (
-                        <div style={{ fontSize: '13px', color: '#854F0B', background: '#FAEEDA', borderRadius: '9px', padding: '9px 11px', marginBottom: '10px' }}>
-                          Falta el precio del galón de {c.nombre} en esta finca. Ponlo en <b>Catálogo → Diesel</b> y vuelve.
+                      <>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                          <input inputMode="decimal" value={editGal} placeholder="450" autoFocus
+                            onChange={e => setEditGal(e.target.value)}
+                            style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
+                                     border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
+                          {precios[c.clave] != null
+                            ? <span style={{ fontSize: '13px', color: GRIS }}>gal → <b style={{ color: NAVY }}>{dinero((numDec(editGal) || 0) * precios[c.clave])}</b></span>
+                            : <span style={{ fontSize: '13px', color: GRIS }}>galones</span>}
                         </div>
-                      ) : (
-                        <>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                            <input inputMode="decimal" value={editGal} placeholder="450" autoFocus
-                              onChange={e => setEditGal(e.target.value)}
-                              style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
-                                       border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
-                            <span style={{ fontSize: '13px', color: GRIS }}>gal → <b style={{ color: NAVY }}>{dinero((numDec(editGal) || 0) * precios[c.clave])}</b></span>
-                          </div>
+                        {precios[c.clave] != null ? (
                           <div style={{ fontSize: '11px', color: GRIS, marginBottom: '10px' }}>
                             Precio actual: ${Number(precios[c.clave]).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 })} / gal
                           </div>
-                        </>
-                      )
+                        ) : (
+                          <div style={{ fontSize: '11px', color: '#854F0B', background: '#FAEEDA', borderRadius: '9px', padding: '8px 10px', marginBottom: '10px' }}>
+                            Aún no hay precio del galón. Se guarda en galones; el $ aparecerá cuando registres el precio en <b>Catálogo → Diesel</b>.
+                          </div>
+                        )}
+                      </>
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
                         <span style={{ fontSize: '16px', color: GRIS }}>$</span>
@@ -360,17 +404,26 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button onClick={() => guardar(c.clave)} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL }}>Guardar</button>
                       <button onClick={() => { setEditando(null); setNuevo(''); setEditGal('') }} style={boton}>Cancelar</button>
-                      {monto != null && <button onClick={() => borrar(c.clave)} style={{ ...boton, color: ROJO, borderColor: '#e8c9c9' }}>Borrar</button>}
+                      {hayPpto && !c.global && <button onClick={() => borrar(c.clave)} style={{ ...boton, color: ROJO, borderColor: '#e8c9c9' }}>Borrar</button>}
                     </div>
                   </div>
-                ) : monto == null ? (
+                ) : !hayPpto ? (
                   <div style={{ fontSize: '13px', color: c.oscura ? 'rgba(255,255,255,0.65)' : GRIS }}>
                     {c.global ? 'Se calcula de B + Premium.' : esJefe ? 'Sin fijar. Toca “Fijar”.' : 'Aún sin presupuesto.'}
                   </div>
                 ) : (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '13px', color: c.oscura ? 'rgba(255,255,255,0.65)' : GRIS }}>{dinero(monto)}</span>
+                      <div style={{ lineHeight: 1.3 }}>
+                        <span style={{ fontSize: '13px', color: c.oscura ? 'white' : NAVY, fontWeight: 500 }}>
+                          {gBudget != null ? `${miles(gBudget)} gal` : dinero(monto)}
+                        </span>
+                        {esJefe && gBudget != null && (
+                          <div style={{ fontSize: '12px', color: c.oscura ? 'rgba(255,255,255,0.65)' : GRIS }}>
+                            {monto != null ? dinero(monto) : '$ — falta precio'}
+                          </div>
+                        )}
+                      </div>
                       <span style={{ fontSize: '20px', fontWeight: 600, color: c.oscura ? 'white' : color }}>{pct}%</span>
                     </div>
                     <div style={{ height: '10px', background: c.oscura ? 'rgba(255,255,255,0.18)' : '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
@@ -378,11 +431,14 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                     </div>
                     {esJefe ? (
                       <div style={{ fontSize: '12px', color: c.oscura ? 'rgba(255,255,255,0.75)' : GRIS, marginTop: '9px' }}>
-                        Gastó {dinero(gasto)} · queda {dinero(monto - gasto)}
+                        Gastó {miles(galGasto)} gal{monto != null ? ` · ${dinero(gasto)}` : ''}
+                        {gBudget != null ? ` · queda ${miles(Math.max(gBudget - galGasto, 0))} gal` : ''}
                       </div>
                     ) : (
                       <div style={{ fontSize: '12px', color: c.oscura ? 'rgba(255,255,255,0.75)' : GRIS, marginTop: '9px' }}>
-                        {pct >= 100 ? 'Ya se pasó el presupuesto.' : `Queda ${100 - pct}% del mes.`}
+                        {gBudget != null
+                          ? `Gastó ${miles(galGasto)} gal · queda ${miles(Math.max(gBudget - galGasto, 0))} gal`
+                          : (pct >= 100 ? 'Ya se pasó el presupuesto.' : `Queda ${100 - pct}% del mes.`)}
                       </div>
                     )}
                   </>
