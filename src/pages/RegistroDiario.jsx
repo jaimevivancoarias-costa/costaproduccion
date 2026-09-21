@@ -122,20 +122,27 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       // hubo dos en la misma semana se queda el que empezo despues: es
       // el que sigue vivo al final de la semana.
       const porPiscina = {}
-      // La siembra mas cercana posterior a esta semana, si existe.
+      // La ocupacion mas cercana posterior a esta semana, si existe.
       const posterior = {}
       ;(ciclos || []).forEach(c => {
         const pid = c.piscina_origen_id
-        if (c.fecha_siembra > domingo) {
-          if (!posterior[pid] || c.fecha_siembra < posterior[pid]) posterior[pid] = c.fecha_siembra
+        // Desde cuando este ciclo ocupa la piscina: la siembra, o —si vino
+        // por transferencia— el dia que llego. Un ciclo transferido NO
+        // existe en esta piscina hasta ese dia, aunque su fecha de siembra
+        // (la del padre) sea anterior. Por eso el corte de "futuro" y el
+        // desempate entre dos ciclos se hacen con la OCUPACION, no con la
+        // siembra: si no, al mirar agosto una piscina que recien recibe una
+        // transferencia en septiembre se veia con el ciclo nuevo y escondia
+        // el consumo del ciclo viejo.
+        const ocupa = c.fecha_ocupacion || c.fecha_siembra
+        if (ocupa > domingo) {
+          if (!posterior[pid] || ocupa < posterior[pid]) posterior[pid] = ocupa
           return
         }
         if (c.fecha_cierre && c.fecha_cierre < lunes) return
         const previo = porPiscina[pid]
-        // Si hay dos en la semana se queda el que ocupo la piscina
-        // despues: un ciclo transferido ocupa su piscina el dia de la
-        // transferencia, aunque su fecha de siembra sea la del padre.
-        const ocupa = c.fecha_ocupacion || c.fecha_siembra
+        // Si hay dos ocupando en la misma semana se queda el que ocupo
+        // despues: es el que sigue vivo al final de la semana.
         const ocupaPrevio = previo && (previo.fecha_ocupacion || previo.fecha_siembra)
         if (!previo || ocupa > ocupaPrevio) porPiscina[pid] = c
       })
