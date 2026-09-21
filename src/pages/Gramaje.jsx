@@ -268,7 +268,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
     setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
-  const COLS = `170px 56px 128px ${muestreos.map(() => '112px 88px 74px 88px').join(' ')} 116px`
+  const COLS = `170px 56px 128px ${muestreos.map(() => '112px 96px 74px').join(' ')} 116px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -508,15 +508,14 @@ function Grupo({ fecha, hoy }) {
         <span style={{ color: NAVY }}>Peso g</span></Th>
       <Th fondo={f}>Incremento</Th>
       <Th fondo={f}>Días</Th>
-      <Th fondo={f}>Crec. diario</Th>
     </>
   )
 }
 
 Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, onChange, joven }) {
   const f = fecha === hoy ? HOYB : undefined
-  if (fuera) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
-  if (futuro) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /><Td fondo={f} /></>
+  if (fuera) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /></>
+  if (futuro) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /></>
   const baja = calc.inc !== undefined && calc.inc < 0
   // Semáforo de crecimiento: solo sobre el domingo, que mide la semana
   // completa (Dom→Dom). Se normaliza a g/semana con el crecimiento diario,
@@ -558,9 +557,6 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
         )}
       </Td>
       <Td fondo={f}><span style={{ color: GRIS }}>{calc.dias ?? ''}</span></Td>
-      <Td fondo={f}><span style={{ color: baja ? '#A32D2D' : GRIS, fontWeight: baja ? 500 : 400 }}>
-        {calc.crec == null ? '' : calc.crec.toFixed(2)}
-      </span></Td>
     </>
   )
 }
