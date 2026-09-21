@@ -1868,20 +1868,21 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
 
       await Promise.all([pMin, pPrecios, pPlazo])
 
-      // 3) Distintas: una finca por fila, con sus plazos y su plazo que rige.
-      for (const e of exc) {
-        if (!e.fincaId) continue
+      // 3) Distintas: EN PARALELO (cada finca y cada plazo son independientes).
+      await Promise.all(exc.filter(e => e.fincaId).map(async e => {
         const dfe = e.desde || desde
-        for (const pz of PLAZOS) {
-          const raw = numDec(e.precios?.[pz] || '')
-          if (raw > 0) {
-            await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: raw, vigente_desde: dfe }], dfe)
-          } else {
-            await borrarAbierto([e.fincaId], pz)
-          }
-        }
-        await cerrarAbrirPlazo([e.fincaId], e.plazoRige ?? 0, dfe)
-      }
+        await Promise.all([
+          ...PLAZOS.map(async pz => {
+            const raw = numDec(e.precios?.[pz] || '')
+            if (raw > 0) {
+              await cerrarYAbrir([e.fincaId], pz, [{ producto_id: producto.id, finca_id: e.fincaId, plazo: pz, precio_saco: raw, vigente_desde: dfe }], dfe)
+            } else {
+              await borrarAbierto([e.fincaId], pz)
+            }
+          }),
+          cerrarAbrirPlazo([e.fincaId], e.plazoRige ?? 0, dfe),
+        ])
+      }))
 
       onHecho(`Configurado en ${idsConf.length} fincas.`)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
