@@ -268,7 +268,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
     setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
-  const COLS = `170px 56px 128px ${muestreos.map(() => '112px 96px 74px').join(' ')} 116px`
+  const COLS = `180px ${muestreos.map(() => '92px 48px 104px 132px').join(' ')}`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -335,17 +335,33 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       ) : (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ minWidth: '1100px' }}>
+            <div style={{ minWidth: '940px' }}>
 
+              {/* Encabezados de grupo: Miércoles / Domingo, centrados sobre su bloque */}
+              <div style={{ display: 'grid', gridTemplateColumns: COLS }}>
+                <div />
+                {muestreos.map((f, i) => (
+                  <div key={f} style={{ gridColumn: 'span 4', textAlign: 'center', padding: '9px 0 5px',
+                        fontSize: '12px', fontWeight: 600, color: NAVY,
+                        background: i === muestreos.length - 1 ? '#e7f5ee' : '#eef3f7',
+                        borderLeft: '0.5px solid ' + BORDE }}>
+                    {nombreDia(f)} {corta(f).slice(0, 5)}
+                  </div>
+                ))}
+              </div>
+              {/* Sub-encabezados por columna */}
               <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                             borderBottom: '0.5px solid ' + BORDE }}>
                 <Th pegado>Piscina</Th>
-                <Th>Días</Th>
-                <Th>Muestreo anterior</Th>
-                {muestreos.map(f => (
-                  <Grupo key={f} fecha={f} hoy={hoy} />
-                ))}
-                <Th>Densidad por ha</Th>
+                {muestreos.flatMap(f => {
+                  const semanal = new Date(f + 'T12:00:00').getDay() === 0
+                  return [
+                    <Th key={f + 'a'}>Peso ant.</Th>,
+                    <Th key={f + 'b'}>Días</Th>,
+                    <Th key={f + 'c'}>Peso g</Th>,
+                    <Th key={f + 'd'}>{semanal ? 'Crec. semanal' : 'Crecim.'}</Th>,
+                  ]
+                })}
               </div>
 
               {filas.map(fila => (
@@ -353,47 +369,35 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                       borderBottom: '0.5px solid #f1f6f9', alignItems: 'center' }}>
                   <Td pegado alineado="left">
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>{fila.nombre}</span>
-                    <div style={{ fontSize: '11px', color: GRIS }}>{fila.hectareas.toFixed(2)} ha</div>
-                  </Td>
-                  <Td><span style={{ fontWeight: 500 }}>
-                    {fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) : <Guion />}
-                  </span></Td>
-                  <Td>
-                    {previos[fila.cicloId] ? (
-                      <>
-                        <div style={{ fontSize: '14px' }}>{previos[fila.cicloId].peso} g</div>
-                        <div style={{ fontSize: '11px', color: GRIS }}>{corta(previos[fila.cicloId].fecha)}</div>
-                      </>
-                    ) : <span style={{ color: '#c3d0db', fontSize: '12px' }}>sin muestreos</span>}
+                    <div style={{ fontSize: '11px', color: GRIS }}>
+                      {fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) + ' días' : fila.hectareas.toFixed(2) + ' ha'}
+                    </div>
+                    {(() => {
+                      if (!fila.larva) return null
+                      const dens = fila.larva / fila.hectareas
+                      if (dens >= DENS_MIN && dens <= DENS_MAX) return null
+                      return <div title="Densidad fuera de rango: revisar la larva y las hectáreas"
+                                  style={{ fontSize: '11px', color: ROJO, fontWeight: 600 }}>⚠ densidad {miles(dens)}/ha</div>
+                    })()}
                   </Td>
 
                   {muestreos.map(f => {
                     const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < fila.fechaSiembra
                     const c = calculo(fila, f)
+                    const ant = anterior(fila, f)
+                    const diasBloque = ant ? Math.round((new Date(f + 'T12:00:00') - new Date(ant.fecha + 'T12:00:00')) / 86400000) : null
                     const puede = (practica ? situacionDia(f, hoy) !== 'futuro' : editable(f)) && !fuera
                     const futuro = situacionDia(f, hoy) === 'futuro'
                     const joven = fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) < JOVEN_DIAS : true
                     return (
-                      <Grupo.Celdas
-                        key={f} fecha={f} hoy={hoy} joven={joven}
+                      <Celdas
+                        key={f} fecha={f} hoy={hoy} joven={joven} ant={ant} diasBloque={diasBloque}
                         fuera={fuera} futuro={futuro} puede={puede} calc={c}
                         valor={valores[`${fila.piscinaId}|${f}`] || ''}
                         onChange={v => setValores(x => ({ ...x, [`${fila.piscinaId}|${f}`]: v }))}
                       />
                     )
                   })}
-
-                  <Td>{(() => {
-                    if (!fila.larva) return ''
-                    const dens = fila.larva / fila.hectareas
-                    const imposible = dens < DENS_MIN || dens > DENS_MAX
-                    return (
-                      <span title={imposible ? 'Densidad fuera de rango: revisar la larva y las hectáreas de esta piscina' : undefined}
-                            style={{ color: imposible ? ROJO : GRIS, fontWeight: imposible ? 600 : 400 }}>
-                        {miles(dens)}{imposible ? ' ⚠' : ''}
-                      </span>
-                    )
-                  })()}</Td>
                 </div>
               ))}
             </div>
@@ -498,43 +502,24 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   )
 }
 
-// Cabecera de un dia de muestreo: cuatro columnas agrupadas.
-function Grupo({ fecha, hoy }) {
-  const es = fecha === hoy
-  const f = es ? HOYB : undefined
-  return (
-    <>
-      <Th fondo={f}>{nombreDia(fecha)} {corta(fecha).slice(0, 5)}<br />
-        <span style={{ color: NAVY }}>Peso g</span></Th>
-      <Th fondo={f}>Incremento</Th>
-      <Th fondo={f}>Días</Th>
-    </>
-  )
-}
-
-Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, onChange, joven }) {
+// Un bloque de día (Miércoles o Domingo): Peso ant. · Días · Peso · Crecimiento.
+function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, diasBloque }) {
   const f = fecha === hoy ? HOYB : undefined
-  if (fuera) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /></>
-  if (futuro) return <><Td fondo={f}><Guion /></Td><Td fondo={f} /><Td fondo={f} /></>
+  if (fuera) return <><Td fondo={f} /><Td fondo={f} /><Td fondo={f}><Guion /></Td><Td fondo={f} /></>
   const baja = calc.inc !== undefined && calc.inc < 0
-  // Semáforo de crecimiento: solo sobre el domingo, que mide la semana
-  // completa (Dom→Dom). Se normaliza a g/semana con el crecimiento diario,
-  // por si el domingo anterior faltó y el tramo no fue exacto de 7 días.
-  // Las piscinas jóvenes (<30 días) no se evalúan: al inicio crecen lento
-  // y no tiene sentido alarmar.
+  // El semáforo solo aplica al domingo (semana completa Dom→Dom), normalizado
+  // a g/semana. Las jóvenes (<30 días) no se evalúan.
   const esDom = new Date(fecha + 'T12:00:00').getDay() === 0
   const semSem = esDom && !joven && calc.crec != null ? calc.crec * 7 : null
-  let incBg = f, incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
-  if (baja) incBg = RBG
-  else if (semSem != null && semSem < CREC_ALERTA) { incBg = RBG; incColor = ROJO; incPeso = 500 }
-  else if (semSem != null && semSem < CREC_OK) { incBg = ABG; incColor = AMBAR; incPeso = 500 }
-  // El crecimiento del domingo (semanal) se muestra como pastilla con estado.
   const esSem = semSem != null
+  const incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
   const estadoTxt = !esSem ? '' : semSem < CREC_ALERTA ? 'muy lento' : semSem < CREC_OK ? 'va lento' : 'en meta'
   const pillBg = !esSem ? null : semSem < CREC_ALERTA ? RBG : semSem < CREC_OK ? ABG : '#E1F5EE'
   const pillColor = !esSem ? null : semSem < CREC_ALERTA ? ROJO : semSem < CREC_OK ? AMBAR : VERDE
   return (
     <>
+      <Td fondo={f}><span style={{ color: GRIS }}>{ant ? ant.peso + ' g' : <Guion />}</span></Td>
+      <Td fondo={f}><span style={{ color: GRIS }}>{diasBloque ?? ''}</span></Td>
       <Td fondo={f}>
         {puede ? (
           <input inputMode="decimal" value={valor} placeholder="-"
@@ -546,9 +531,9 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
           <span style={{ fontSize: '15px' }}>{valor || <Guion />}</span>
         )}
       </Td>
-      <Td fondo={esSem ? f : incBg}>
+      <Td fondo={f}>
         {calc.inc === undefined ? '' : esSem ? (
-          <span style={{ display: 'inline-block', fontSize: '11.5px', fontWeight: 600, padding: '2px 8px',
+          <span style={{ display: 'inline-block', fontSize: '11.5px', fontWeight: 600, padding: '2px 9px',
                          borderRadius: '20px', background: pillBg, color: pillColor, whiteSpace: 'nowrap' }}>
             {(calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)} · {estadoTxt}
           </span>
@@ -556,7 +541,6 @@ Grupo.Celdas = function Celdas({ fecha, hoy, fuera, futuro, puede, calc, valor, 
           <span style={{ color: incColor, fontWeight: incPeso }}>{(calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)}</span>
         )}
       </Td>
-      <Td fondo={f}><span style={{ color: GRIS }}>{calc.dias ?? ''}</span></Td>
     </>
   )
 }
