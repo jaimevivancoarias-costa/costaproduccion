@@ -1786,34 +1786,18 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
     if (error) throw error
   }
 
-  async function aplicarBulk() {
+  // "Agregar varias fincas": no guarda en la base; agrega/reemplaza filas en la
+  // lista de abajo (se guarda todo junto al dar Guardar).
+  function aplicarBulk() {
     const destinos = bulkFincas()
     if (!destinos.length) return
-    setEnviando(true)
-    try {
-      const dfe = bulk.desde || hoyISO()
-      for (const pz of PLAZOS) {
-        const raw = numDec(bulk.precios[pz] || '')
-        if (raw > 0) await cerrarYAbrirBal(destinos, pz,
-          destinos.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: dfe })), dfe)
-      }
-      let rige = bulk.plazoRige
-      if (rige != null && !(numDec(bulk.precios[rige] || '') > 0)) {
-        const c = PLAZOS.find(pz => numDec(bulk.precios[pz] || '') > 0); if (c != null) rige = c
-      }
-      if (rige != null) {
-        await supabase.schema('produccion').from('plazo_producto').delete()
-          .eq('producto_id', producto.id).in('finca_id', destinos).gte('vigente_desde', dfe)
-        await supabase.schema('produccion').from('plazo_producto').update({ vigente_hasta: sumarDias(dfe, -1) })
-          .eq('producto_id', producto.id).in('finca_id', destinos).lt('vigente_desde', dfe).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfe)
-        const { error } = await supabase.schema('produccion').from('plazo_producto')
-          .insert(destinos.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: rige, vigente_desde: dfe })))
-        if (error) throw error
-      }
-      setBulk(bulkVacio)
-      onHecho(`Precio aplicado a ${destinos.length} finca${destinos.length === 1 ? '' : 's'}.`)
-    } catch (err) { onError(err.message || 'No se pudo aplicar.') }
-    finally { setEnviando(false) }
+    const precios = {}
+    PLAZOS.forEach(pz => { const v = bulk.precios[pz]; if (v != null && String(v).trim() !== '') precios[pz] = String(v) })
+    let rige = bulk.plazoRige
+    if (rige == null) { const c = PLAZOS.find(pz => numDec(bulk.precios[pz] || '') > 0); rige = c != null ? c : 0 }
+    const nuevas = destinos.map(fid => ({ fincaId: fid, precios: { ...precios }, desde: bulk.desde || '', plazoRige: rige }))
+    setExc(x => [...x.filter(r => !destinos.includes(r.fincaId)), ...nuevas])
+    setBulk(bulkVacio)
   }
 
   async function guardar() {
@@ -1938,18 +1922,18 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
       {/* Excepciones */}
       <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
         <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca con precio distinto?</div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>Aplica el mismo precio a varias fincas de una vez, o agrégalas una por una abajo. Lo que dejes vacío usa el estándar.</div>
+        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>Elige las fincas y su precio; se agregan a la lista de abajo (editable). Lo que dejes vacío usa el general. Todo se guarda al dar Guardar.</div>
 
-        {/* Aplicar a varias fincas a la vez */}
+        {/* Agregar fincas distintas (elige fincas + precio + cuál rige) */}
         {!bulk.open ? (
           <button onClick={() => setBulk({ ...bulkVacio, open: true })}
             style={{ border: '0.5px solid #d8c48f', background: '#fdf8ec', color: '#8a5a12', borderRadius: '9px',
                      padding: '9px 14px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer', marginBottom: '14px' }}>
-            ＋ Aplicar a varias fincas
+            ＋ Agregar fincas con precio distinto
           </button>
         ) : (
           <div style={{ border: '0.5px solid #d8c48f', background: '#fffdf7', borderRadius: '12px', padding: '15px 16px', marginBottom: '14px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: AMBAR, marginBottom: '10px' }}>Aplicar el mismo precio a varias fincas</div>
+            <div style={{ fontSize: '12px', fontWeight: 600, color: AMBAR, marginBottom: '10px' }}>Elige las fincas, su precio y cuál plazo rige</div>
             <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 6px' }}>Fincas</label>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px', marginBottom: '14px' }}>
               {activas.map(f => {
@@ -1987,13 +1971,13 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
               </div>
               <div style={{ display: 'flex', gap: '9px', marginLeft: 'auto' }}>
                 <button onClick={() => setBulk(bulkVacio)} style={{ background: 'none', border: 'none', color: GRIS, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
-                <button onClick={aplicarBulk} disabled={!bulkPuede || enviando}
+                <button onClick={aplicarBulk} disabled={!bulkPuede}
                   style={{ background: bulkPuede ? NAVY : '#c3d0db', color: 'white', border: 'none', borderRadius: '9px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit', cursor: bulkPuede ? 'pointer' : 'default' }}>
-                  Aplicar a {bulkFincas().length} finca{bulkFincas().length === 1 ? '' : 's'}
+                  Agregar {bulkFincas().length} finca{bulkFincas().length === 1 ? '' : 's'} a la lista
                 </button>
               </div>
             </div>
-            <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>Se crea/actualiza el precio de cada finca marcada. Luego puedes ajustar alguna por separado abajo.</div>
+            <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>Se agregan a la lista de abajo, donde puedes ajustar cualquiera. Se guarda al dar Guardar.</div>
           </div>
         )}
 
@@ -2027,7 +2011,6 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
             </div>
           </div>
         )}
-        <button onClick={() => setExc(x => [...x, { fincaId: '', precios: {}, desde: '', plazoRige: 0 }])} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
       {/* Alertas */}
