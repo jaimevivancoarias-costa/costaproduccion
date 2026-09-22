@@ -599,19 +599,37 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   )
 }
 
-// Análisis en barras. Vista A: comparar piscinas (barras horizontales),
-// ordenadas de peor a mejor, con la meta. Doble clic en una piscina abre la
-// vista B: sus barras semana a semana.
+// Análisis en barras con pestañas. "Crec. sem" = barras domingo a domingo de
+// UNA piscina (elegible). Las otras (ISP 2 sem / ISP prom. / Crec. diario) =
+// barras horizontales comparando todas las piscinas, de peor a mejor.
 function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
-  const [metric, setMetric] = useState('isp2')   // 'isp2' | 'isp' | 'diario'
-  const [drill, setDrill] = useState(null)
-  const esSem = metric !== 'diario'
+  const [tab, setTab] = useState('isp2')                       // 'semanal' | 'isp2' | 'isp' | 'diario'
+  const [pisc, setPisc] = useState(filas[0]?.piscinaId || '')  // piscina de la vista semanal
   const meta = mVerde
-  const colBar = v => !esSem ? AZUL : v < mRojo ? ROJO : v < mVerde ? AMBAR : VERDE
+  const colMeta = v => v < mRojo ? ROJO : v < mVerde ? AMBAR : VERDE
 
-  // ---------- Vista B: una piscina, semana a semana ----------
-  if (drill) {
-    const fila = filas.find(f => f.piscinaId === drill)
+  const TABS = [['semanal', 'Crec. sem'], ['isp2', 'ISP 2 sem'], ['isp', 'ISP prom.'], ['diario', 'Crec. diario']]
+  const tabEl = (id, txt) => (
+    <span key={id} onClick={() => setTab(id)} style={{ fontSize: '12px', padding: '7px 13px', borderRadius: '8px', cursor: 'pointer',
+      border: '0.5px solid ' + (tab === id ? NAVY : BORDE), background: tab === id ? NAVY : '#fff', color: tab === id ? '#fff' : GRIS }}>{txt}</span>
+  )
+  const selStyle = { padding: '7px 10px', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: '#fff', color: NAVY, fontFamily: 'inherit' }
+
+  // ---------- Cabecera común ----------
+  const cabecera = (sub, extra) => (
+    <>
+      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · crecimiento</div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>{sub}</div>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+        {TABS.map(([id, txt]) => tabEl(id, txt))}
+        {extra}
+      </div>
+    </>
+  )
+
+  // ---------- Vista "Crec. sem": barras domingo a domingo de una piscina ----------
+  if (tab === 'semanal') {
+    const fila = filas.find(f => f.piscinaId === pisc) || filas[0]
     const byW = {}
     ;(serie[fila?.cicloId] || []).forEach(m => {
       if (m.fecha <= hasta && new Date(m.fecha + 'T12:00:00').getDay() === 0) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m }
@@ -624,23 +642,21 @@ function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
     }
     const vals = barras.map(b => b.inc).filter(v => v != null)
     const ymax = Math.max(meta + 1, ...(vals.length ? vals : [meta]))
+    const selPisc = (
+      <select value={fila?.piscinaId || ''} onChange={e => setPisc(e.target.value)} style={{ marginLeft: 'auto', ...selStyle }}>
+        {filas.map(f => <option key={f.piscinaId} value={f.piscinaId}>{f.nombre}</option>)}
+      </select>
+    )
     return (
       <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2px' }}>
-          <span onClick={() => setDrill(null)} style={{ fontSize: '13px', color: AZUL, fontWeight: 600, cursor: 'pointer' }}>‹ Volver</span>
-          <span style={{ fontSize: '15px', fontWeight: 600 }}>Así creció {fila?.nombre}</span>
-          <select value={drill} onChange={e => setDrill(e.target.value)} style={{ marginLeft: 'auto', padding: '7px 10px', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: '#fff', color: NAVY, fontFamily: 'inherit' }}>
-            {filas.map(f => <option key={f.piscinaId} value={f.piscinaId}>{f.nombre}</option>)}
-          </select>
-        </div>
-        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Crecimiento semanal domingo a domingo. La línea punteada es la meta ({meta}).</div>
-        {barras.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Sin datos suficientes.</div> : (
+        {cabecera('Crecimiento semanal domingo a domingo. Elige la piscina. La línea punteada es la meta (' + meta + ').', selPisc)}
+        {barras.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Sin domingos suficientes para {fila?.nombre}.</div> : (
           <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '14px', height: '190px', borderBottom: '0.5px solid ' + BORDE, paddingTop: '10px' }}>
             <div style={{ position: 'absolute', left: 0, right: 0, borderTop: '1.5px dashed ' + VERDE, top: (10 + (1 - meta / ymax) * 170) + 'px' }} />
             {barras.map((b, i) => (
               <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
-                {b.inc != null && <span style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: colBar(b.inc) }}>{b.inc.toFixed(1)}</span>}
-                <div style={{ width: '100%', maxWidth: '44px', height: (b.inc != null ? Math.max(2, b.inc / ymax * 160) : 0) + 'px', background: b.inc != null ? colBar(b.inc) : 'transparent', borderRadius: '6px 6px 0 0' }} />
+                {b.inc != null && <span style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: colMeta(b.inc) }}>{b.inc.toFixed(1)}</span>}
+                <div style={{ width: '100%', maxWidth: '44px', height: (b.inc != null ? Math.max(2, b.inc / ymax * 160) : 0) + 'px', background: b.inc != null ? colMeta(b.inc) : 'transparent', borderRadius: '6px 6px 0 0' }} />
                 <span style={{ fontSize: '10px', color: GRIS, marginTop: '6px' }}>{b.label}</span>
               </div>
             ))}
@@ -650,28 +666,18 @@ function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
     )
   }
 
-  // ---------- Vista A: comparar piscinas ----------
-  const val = c => metric === 'isp2' ? c.isp2 : metric === 'isp' ? c.isp : c.diario
+  // ---------- Vistas de comparación por piscina ----------
+  const esSem = tab !== 'diario'
+  const val = c => tab === 'isp2' ? c.isp2 : tab === 'isp' ? c.isp : c.diario
   const items = filas.map(f => ({ f, c: crec[f.piscinaId] || {} }))
     .filter(x => !x.c.joven && val(x.c) != null)
     .sort((a, b) => val(a.c) - val(b.c))
   const vals = items.map(x => val(x.c))
   const ymax = esSem ? Math.max(meta * 1.15, ...(vals.length ? vals : [meta])) : Math.max(...(vals.length ? vals : [1]))
-  const tab = (id, txt) => (
-    <span onClick={() => setMetric(id)} style={{ fontSize: '12px', padding: '7px 13px', borderRadius: '8px', cursor: 'pointer',
-      border: '0.5px solid ' + (metric === id ? NAVY : BORDE), background: metric === id ? NAVY : '#fff', color: metric === id ? '#fff' : GRIS }}>{txt}</span>
-  )
+  const colBar = v => !esSem ? AZUL : colMeta(v)
   return (
     <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
-      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · crecimiento por piscina</div>
-      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Ordenado de peor a mejor. Elige una piscina (o doble clic) para ver su crecimiento semana a semana (domingo a domingo).</div>
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-        {tab('isp2', 'ISP 2 sem')}{tab('isp', 'ISP prom.')}{tab('diario', 'Crec. diario')}
-        <select value="" onChange={e => e.target.value && setDrill(e.target.value)} style={{ marginLeft: 'auto', padding: '7px 10px', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: '#fff', color: NAVY, fontFamily: 'inherit' }}>
-          <option value="">Ver una piscina semana a semana…</option>
-          {filas.map(f => <option key={f.piscinaId} value={f.piscinaId}>{f.nombre}</option>)}
-        </select>
-      </div>
+      {cabecera('Comparación de piscinas, de peor a mejor. Doble clic en una para ver su Crec. sem.')}
       {items.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Todavía no hay datos para comparar.</div> : (
         <div>
           {items.map(({ f, c }) => {
@@ -679,19 +685,19 @@ function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
             const w = Math.max(2, Math.min(100, v / ymax * 100))
             const metaPct = esSem ? Math.min(100, meta / ymax * 100) : null
             return (
-              <div key={f.piscinaId} onDoubleClick={() => setDrill(f.piscinaId)} title="Doble clic para ver el detalle"
+              <div key={f.piscinaId} onDoubleClick={() => { setPisc(f.piscinaId); setTab('semanal') }} title="Doble clic para ver su Crec. sem"
                 style={{ display: 'grid', gridTemplateColumns: '150px 1fr 52px', gap: '10px', alignItems: 'center', marginBottom: '11px', fontSize: '13px', cursor: 'pointer' }}>
                 <span><span style={{ fontWeight: 500 }}>{f.nombre}</span><span style={{ color: GRIS, fontSize: '11px' }}> · {c.dias}d</span></span>
                 <span style={{ position: 'relative', height: '20px', background: '#f2f6fa', borderRadius: '6px' }}>
                   <span style={{ position: 'absolute', left: 0, top: 0, height: '20px', width: w + '%', background: col, borderRadius: '6px' }} />
                   {metaPct != null && <span style={{ position: 'absolute', top: '-4px', height: '28px', width: '2px', background: VERDE, left: metaPct + '%' }} />}
                 </span>
-                <span style={{ textAlign: 'right', fontWeight: 600, color: col, fontVariantNumeric: 'tabular-nums' }}>{v.toFixed(metric === 'diario' ? 2 : 1)}</span>
+                <span style={{ textAlign: 'right', fontWeight: 600, color: col, fontVariantNumeric: 'tabular-nums' }}>{v.toFixed(tab === 'diario' ? 2 : 1)}</span>
               </div>
             )
           })}
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
-            {esSem ? 'Barra roja/ámbar/verde según la meta. La línea verde vertical es la meta (' + meta + ').' : 'Crecimiento diario (g/día).'} Doble clic en una piscina para su detalle semanal.
+            {esSem ? 'Barra según la meta. La línea verde vertical es la meta (' + meta + ').' : 'Crecimiento diario (g/día).'} Doble clic en una piscina para su Crec. sem.
           </div>
         </div>
       )}
