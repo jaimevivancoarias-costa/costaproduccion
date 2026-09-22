@@ -95,14 +95,20 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     if (txt == null) return
     const gal = numDec(txt)
     if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Galones no válidos.' }); return }
-    const { error } = await supabase.schema('produccion').from(tabla).update({ galones: gal }).eq('id', row.id)
+    const { data, error } = await supabase.schema('produccion').from(tabla).update({ galones: gal }).eq('id', row.id).select('id')
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    if (!data || data.length === 0) {
+      setAviso({ tipo: 'error', texto: 'No se corrigió: no tienes permiso sobre este registro (revisar RLS de diesel).' }); return
+    }
     setAviso({ tipo: 'ok', texto: 'Corregido.' }); await refrescar()
   }
   async function jefeBorrar(tabla, row) {
     if (!window.confirm(`¿Borrar este registro de ${miles(Number(row.galones))} gal?`)) return
-    const { error } = await supabase.schema('produccion').from(tabla).delete().eq('id', row.id)
+    const { data, error } = await supabase.schema('produccion').from(tabla).delete().eq('id', row.id).select('id')
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    if (!data || data.length === 0) {
+      setAviso({ tipo: 'error', texto: 'No se borró: no tienes permiso sobre este registro (revisar RLS de diesel).' }); return
+    }
     setAviso({ tipo: 'ok', texto: 'Borrado.' }); await refrescar()
   }
 
