@@ -590,10 +590,12 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 }
 
 // Análisis gráfico: cómo viene cada piscina en las últimas semanas. Dos vistas
-// (peso y crecimiento semanal ISP) y se puede ver todas o una sola piscina.
+// (peso y crecimiento semanal ISP), se pueden elegir varias piscinas y al pasar
+// el cursor sale un tooltip con la piscina, el peso y el ISP.
 function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
   const [modo, setModo] = useState('peso')   // 'peso' | 'isp'
-  const [sel, setSel] = useState('todas')
+  const [sel, setSel] = useState(null)        // null = todas; si no, Set de ids
+  const [hint, setHint] = useState(null)
   const NW = 6
   const COLORES = ['#0D6CB0', '#0F6E56', '#A32D2D', '#854F0B', '#6C4BB0', '#0E7C86', '#B0570D', '#3C7A1E']
 
@@ -621,8 +623,15 @@ function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
     return { id: f.piscinaId, nombre: f.nombre, color: COLORES[idx % COLORES.length], pesos, isp, tiene: pesos.some(v => v != null) }
   }).filter(x => x.tiene)
 
-  const activos = sel === 'todas' ? series : series.filter(x => x.id === sel)
-  const datos = s => (modo === 'peso' ? s.pesos : s.isp)
+  const allIds = series.map(x => x.id)
+  const isSel = id => sel === null || sel.has(id)
+  const toggle = id => setSel(prev => {
+    const base = prev === null ? new Set(allIds) : new Set(prev)
+    if (base.has(id)) base.delete(id); else base.add(id)
+    return base.size ? base : null
+  })
+  const activos = series.filter(x => isSel(x.id))
+  const datos = x => (modo === 'peso' ? x.pesos : x.isp)
   const vals = activos.flatMap(datos).filter(v => v != null)
   const ymin = 0
   let ymax = vals.length ? Math.max(...vals) : 10
@@ -633,24 +642,33 @@ function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
   const px = i => PL + (keys.length <= 1 ? 0 : i * (W - PL - PR) / (keys.length - 1))
   const py = v => (H - PB) - (v - ymin) / (ymax - ymin) * (H - PT - PB)
   const ticks = [0, 1, 2, 3, 4].map(t => ymin + (ymax - ymin) * t / 4)
-  const linea = s => datos(s).map((v, i) => (v == null ? null : px(i) + ',' + py(v))).filter(Boolean).join(' ')
+  const linea = x => datos(x).map((v, i) => (v == null ? null : px(i) + ',' + py(v))).filter(Boolean).join(' ')
+
+  const mostrar = (x, i) => {
+    const peso = x.pesos[i], isp = x.isp[i]
+    const bw = Math.max(96, x.nombre.length * 6.5 + 20)
+    const bh = isp != null ? 50 : 36
+    let bx = px(i) - bw / 2; bx = Math.max(2, Math.min(W - bw - 2, bx))
+    let by = py(datos(x)[i]) - bh - 10; if (by < 2) by = py(datos(x)[i]) + 12
+    setHint({ bx, by, bw, bh, nombre: x.nombre, color: x.color, peso, isp })
+  }
 
   const tab = (id, txt) => (
     <span onClick={() => setModo(id)} style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer',
       border: '0.5px solid ' + (modo === id ? NAVY : BORDE), background: modo === id ? NAVY : '#fff', color: modo === id ? '#fff' : GRIS }}>{txt}</span>
   )
-  const chip = (id, txt, color) => (
-    <span key={id} onClick={() => setSel(id)} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
-      fontSize: '12px', padding: '3px 9px', borderRadius: '20px', fontWeight: sel === id ? 600 : 400,
-      background: sel === id ? '#eef3f7' : 'transparent' }}>
-      {color && <span style={{ width: '16px', height: '3px', borderRadius: '2px', background: color, display: 'inline-block' }} />}{txt}
+  const chip = (id, txt, color, on) => (
+    <span key={id} onClick={() => (id === 'todas' ? setSel(null) : toggle(id))} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+      fontSize: '12px', padding: '4px 10px', borderRadius: '20px', fontWeight: on ? 600 : 400,
+      border: '0.5px solid ' + (on ? '#cfe0ef' : 'transparent'), background: on ? '#eef6fc' : '#f4f7fa', color: on ? NAVY : GRIS }}>
+      {color && <span style={{ width: '16px', height: '3px', borderRadius: '2px', background: color, display: 'inline-block', opacity: on ? 1 : 0.4 }} />}{txt}
     </span>
   )
 
   return (
     <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
       <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · tendencia de crecimiento</div>
-      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Cómo viene cada piscina en las últimas semanas.</div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Elige una o varias piscinas. Pasa el cursor por un punto para ver el detalle.</div>
       <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
         {tab('peso', 'Peso (g)')}
         {tab('isp', 'ISP · crecimiento semanal')}
@@ -659,7 +677,7 @@ function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
         <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Todavía no hay suficientes muestreos para el gráfico.</div>
       ) : (
         <>
-          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ fontFamily: 'inherit' }}>
+          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ fontFamily: 'inherit' }} onMouseLeave={() => setHint(null)}>
             <line x1={PL} y1={PT} x2={PL} y2={H - PB} stroke={BORDE} />
             <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} stroke={BORDE} />
             {ticks.map((t, i) => (
@@ -677,16 +695,31 @@ function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
             {activos.map(sName => (
               <g key={sName.id}>
                 <polyline points={linea(sName)} fill="none" stroke={sName.color} strokeWidth="2.5" />
-                {datos(sName).map((v, i) => v == null ? null : <circle key={i} cx={px(i)} cy={py(v)} r="2.5" fill={sName.color} />)}
+                {datos(sName).map((v, i) => v == null ? null : (
+                  <g key={i}>
+                    <circle cx={px(i)} cy={py(v)} r="2.5" fill={sName.color} />
+                    <circle cx={px(i)} cy={py(v)} r="9" fill="transparent" style={{ cursor: 'pointer' }}
+                      onMouseEnter={() => mostrar(sName, i)} />
+                  </g>
+                ))}
               </g>
             ))}
+            {hint && (
+              <g pointerEvents="none">
+                <rect x={hint.bx} y={hint.by} width={hint.bw} height={hint.bh} rx="7" fill="#022847" opacity="0.96" />
+                <circle cx={hint.bx + 12} cy={hint.by + 15} r="4" fill={hint.color} />
+                <text x={hint.bx + 22} y={hint.by + 19} fontSize="11.5" fontWeight="600" fill="#fff">{hint.nombre}</text>
+                <text x={hint.bx + 12} y={hint.by + 33} fontSize="11" fill="#cfe0ef">Peso: {hint.peso != null ? hint.peso + ' g' : '—'}</text>
+                {hint.isp != null && <text x={hint.bx + 12} y={hint.by + 47} fontSize="11" fill="#cfe0ef">ISP: {hint.isp.toFixed(1)} g/sem</text>}
+              </g>
+            )}
           </svg>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' }}>
-            {chip('todas', 'Todas', null)}
-            {series.map(sName => chip(sName.id, sName.nombre, sName.color))}
+            {chip('todas', 'Todas', null, sel === null)}
+            {series.map(sName => chip(sName.id, sName.nombre, sName.color, isSel(sName.id)))}
           </div>
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
-            {modo === 'peso' ? 'Peso promedio (g) semana a semana.' : 'Crecimiento semanal (ISP, g/sem). La línea punteada es la meta (' + mVerde + ').'} Toca una piscina para verla sola.
+            {modo === 'peso' ? 'Peso promedio (g) semana a semana.' : 'Crecimiento semanal (ISP, g/sem). La línea punteada es la meta (' + mVerde + ').'} Toca las piscinas para mostrarlas u ocultarlas.
           </div>
         </>
       )}
