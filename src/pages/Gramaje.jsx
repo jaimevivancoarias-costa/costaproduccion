@@ -68,7 +68,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 
       const { data: ciclos, error } = await supabase
         .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, cantidad_larva, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
+        .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, cantidad_larva, gramaje_precria, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
         .eq('finca_id', finca.id)
         .lte('fecha_siembra', domingo)
         .or(`fecha_cierre.is.null,fecha_cierre.gte.${lunes}`)
@@ -86,6 +86,8 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
           fechaOcupacion: c.fecha_ocupacion || c.fecha_siembra,
           fechaCierre: c.fecha_cierre,
           larva: c.cantidad_larva,
+          // Peso al entrar a engorde (precría/transferencia): base del crec. diario.
+          gramajePrecria: c.gramaje_precria,
         }))
         .sort(ordenar)
       // Sin ciclos sembrados: mostramos igual el formato con las piscinas
@@ -314,19 +316,28 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   // y el orden. Reusa serieSemanal / ispEntre de arriba.
   const crecPorPisc = {}
   filas.forEach(f => {
-    const dCult = diasCultivo(f.fechaOcupacion || f.fechaSiembra, corteDias)
-    const sem = serieSemanal(f)
+    const dEng = diasCultivo(f.fechaOcupacion || f.fechaSiembra, corteDias)
+    const sem = serieSemanal(f)                 // un muestreo por semana, asc
     const n = sem.length
-    const isp = ispEntre(sem[n - 2], sem[n - 1])
-    const ispPrev = ispEntre(sem[n - 3], sem[n - 2])
-    crecPorPisc[f.piscinaId] = { dias: dCult, isp, ispPrev, diario: isp != null ? isp / 7 : null, joven: dCult < JOVEN_DIAS }
+    // Incrementos semanales (g/sem) entre semanas consecutivas.
+    const incs = []
+    for (let i = 1; i < n; i++) { const v = ispEntre(sem[i - 1], sem[i]); if (v != null) incs.push(v) }
+    const prom = arr => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null)
+    const isp = prom(incs)              // ISP = promedio de TODOS los incrementos
+    const isp2 = prom(incs.slice(-2))   // ISP 2 sem = promedio de los 2 últimos
+    // Crec. diario = (peso último − gramaje de precría/transferencia) / días de engorde.
+    const pesoUlt = n ? sem[n - 1].peso : null
+    const base = f.gramajePrecria != null ? Number(f.gramajePrecria) : (n ? sem[0].peso : null)
+    const diario = (pesoUlt != null && base != null && dEng > 0) ? (pesoUlt - base) / dEng : null
+    crecPorPisc[f.piscinaId] = { dias: dEng, isp, isp2, diario, joven: dEng < JOVEN_DIAS }
   })
-  const evalC = Object.values(crecPorPisc).filter(c => c.isp != null && !c.joven)
-  const nMeta = evalC.filter(c => c.isp >= mVerde).length
-  const nLento = evalC.filter(c => c.isp >= mRojo && c.isp < mVerde).length
-  const nMuy = evalC.filter(c => c.isp < mRojo).length
+  // El semáforo y el orden usan el ISP 2 sem (lo más reciente).
+  const evalC = Object.values(crecPorPisc).filter(c => c.isp2 != null && !c.joven)
+  const nMeta = evalC.filter(c => c.isp2 >= mVerde).length
+  const nLento = evalC.filter(c => c.isp2 >= mRojo && c.isp2 < mVerde).length
+  const nMuy = evalC.filter(c => c.isp2 < mRojo).length
   const filasVista = orden === 'piscina' ? filas : (() => {
-    const k = f => { const c = crecPorPisc[f.piscinaId]; return (c && c.isp != null && !c.joven) ? c.isp : null }
+    const k = f => { const c = crecPorPisc[f.piscinaId]; return (c && c.isp2 != null && !c.joven) ? c.isp2 : null }
     const con = filas.filter(f => k(f) != null), sin = filas.filter(f => k(f) == null)
     con.sort((a, b) => orden === 'peor' ? k(a) - k(b) : k(b) - k(a))
     return [...con, ...sin]
@@ -442,7 +453,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                   <Th key={f + 'd'}>Crecim.</Th>,
                 ]))}
                 <Th key="rc" bordeIzq>Crec. diario</Th>
-                <Th key="ri">ISP semana</Th>
+                <Th key="ri">ISP prom.</Th>
                 <Th key="rd">ISP 2 sem</Th>
                 <Th key="re">Estado</Th>
               </div>
@@ -477,30 +488,26 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 
                   {(() => {
                     const rc = crecPorPisc[fila.piscinaId] || {}
-                    if (rc.joven || rc.isp == null) {
+                    const diarioTxt = rc.diario != null ? rc.diario.toFixed(2) : null
+                    const ispTxt = rc.isp != null ? rc.isp.toFixed(1) : null
+                    if (rc.joven || rc.isp2 == null) {
                       return (
                         <>
-                          <Td bordeIzq><Guion /></Td><Td><Guion /></Td><Td><Guion /></Td>
+                          <Td bordeIzq><span style={{ color: GRIS }}>{diarioTxt ?? <Guion />}</span></Td>
+                          <Td><span style={{ color: GRIS }}>{ispTxt ?? <Guion />}</span></Td>
+                          <Td><Guion /></Td>
                           <Td><span style={{ color: GRIS, fontSize: '11px' }}>{rc.joven ? 'joven' : 'aún no'}</span></Td>
                         </>
                       )
                     }
-                    const col = rc.isp < mRojo ? ROJO : rc.isp < mVerde ? AMBAR : VERDE
-                    const bg = rc.isp < mRojo ? RBG : rc.isp < mVerde ? ABG : '#E1F5EE'
-                    const txt = rc.isp < mRojo ? 'Muy lento' : rc.isp < mVerde ? 'Va lento' : 'En meta'
-                    const subio = rc.ispPrev != null ? rc.isp - rc.ispPrev : null
+                    const col = rc.isp2 < mRojo ? ROJO : rc.isp2 < mVerde ? AMBAR : VERDE
+                    const bg = rc.isp2 < mRojo ? RBG : rc.isp2 < mVerde ? ABG : '#E1F5EE'
+                    const txt = rc.isp2 < mRojo ? 'Muy lento' : rc.isp2 < mVerde ? 'Va lento' : 'En meta'
                     return (
                       <>
-                        <Td bordeIzq><span style={{ color: GRIS }}>{rc.diario.toFixed(2)}</span></Td>
-                        <Td><span style={{ fontWeight: 600, color: col }}>{rc.isp.toFixed(1)}</span></Td>
-                        <Td>
-                          {rc.ispPrev == null ? <Guion /> : (
-                            <span style={{ fontSize: '12px', color: GRIS }}>
-                              {rc.ispPrev.toFixed(1)} → {rc.isp.toFixed(1)}
-                              <span style={{ marginLeft: '4px', color: subio >= 0 ? VERDE : ROJO }}>{subio >= 0 ? '▲' : '▼'}</span>
-                            </span>
-                          )}
-                        </Td>
+                        <Td bordeIzq><span style={{ color: GRIS }}>{diarioTxt ?? '—'}</span></Td>
+                        <Td><span style={{ color: GRIS }}>{ispTxt ?? '—'}</span></Td>
+                        <Td><span style={{ fontWeight: 600, color: col }}>{rc.isp2.toFixed(1)}</span></Td>
                         <Td>
                           <span style={{ fontSize: '11px', fontWeight: 600, padding: '3px 9px', borderRadius: '20px', background: bg, color: col, whiteSpace: 'nowrap' }}>{txt}</span>
                         </Td>
@@ -516,8 +523,9 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                         gap: '16px', flexWrap: 'wrap', padding: '14px 16px',
                         borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
             <div style={{ fontSize: '13px', color: GRIS }}>
-              Solo se escribe el peso. El incremento, los días entre muestras y el
-              crecimiento diario se calculan contra el muestreo anterior del mismo ciclo.
+              Solo se escribe el peso. Crec. diario = (peso − gramaje de precría)
+              ÷ días de engorde. ISP prom. = promedio de todos los incrementos
+              semanales. ISP 2 sem = promedio de los 2 últimos. El semáforo usa el ISP 2 sem.
             </div>
             {practica ? (
               <span style={{ fontSize: '13px', color: GRIS, fontStyle: 'italic' }}>
@@ -560,7 +568,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 
       {/* Análisis · tendencia de crecimiento (gráfico de lo sucedido) */}
       {!cargando && !practica && filas.length > 0 && (
-        <ChartTendencia filas={filas} serie={serie} hasta={fechas[6]} mVerde={mVerde} mRojo={mRojo} />
+        <ChartBarras filas={filas} serie={serie} hasta={fechas[6]} mVerde={mVerde} mRojo={mRojo} crec={crecPorPisc} />
       )}
 
       {/* Reaperturas por autorizar (jefe) */}
@@ -589,139 +597,94 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   )
 }
 
-// Análisis gráfico: cómo viene cada piscina en las últimas semanas. Dos vistas
-// (peso y crecimiento semanal ISP), se pueden elegir varias piscinas y al pasar
-// el cursor sale un tooltip con la piscina, el peso y el ISP.
-function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
-  const [modo, setModo] = useState('peso')   // 'peso' | 'isp'
-  const [sel, setSel] = useState(null)        // null = todas; si no, Set de ids
-  const [hint, setHint] = useState(null)
-  const NW = 6
-  const COLORES = ['#0D6CB0', '#0F6E56', '#A32D2D', '#854F0B', '#6C4BB0', '#0E7C86', '#B0570D', '#3C7A1E']
+// Análisis en barras. Vista A: comparar piscinas (barras horizontales),
+// ordenadas de peor a mejor, con la meta. Doble clic en una piscina abre la
+// vista B: sus barras semana a semana.
+function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
+  const [metric, setMetric] = useState('isp2')   // 'isp2' | 'isp' | 'diario'
+  const [drill, setDrill] = useState(null)
+  const esSem = metric !== 'diario'
+  const meta = mVerde
+  const colBar = v => !esSem ? AZUL : v < mRojo ? ROJO : v < mVerde ? AMBAR : VERDE
 
-  const semanasX = []
-  for (let i = NW - 1; i >= 0; i--) {
-    const d = sumarDias(hasta, -7 * i)
-    const w = semanaISO(d)
-    semanasX.push({ key: w.anio + '-' + String(w.semana).padStart(2, '0'), label: corta(d).slice(0, 5) })
-  }
-  const keys = semanasX.map(x => x.key)
-
-  const series = filas.map((f, idx) => {
+  // ---------- Vista B: una piscina, semana a semana ----------
+  if (drill) {
+    const fila = filas.find(f => f.piscinaId === drill)
     const byW = {}
-    ;(serie[f.cicloId] || []).forEach(m => {
-      if (m.fecha <= hasta) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m.peso }
+    ;(serie[fila?.cicloId] || []).forEach(m => {
+      if (m.fecha <= hasta) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m }
     })
-    const pesos = keys.map(k => (byW[k] != null ? byW[k] : null))
-    const isp = keys.map((k, i) => {
-      if (byW[k] == null) return null
-      let j = i - 1
-      while (j >= 0 && byW[keys[j]] == null) j--
-      if (j < 0) return null
-      return (byW[k] - byW[keys[j]]) / (7 * (i - j)) * 7
-    })
-    return { id: f.piscinaId, nombre: f.nombre, color: COLORES[idx % COLORES.length], pesos, isp, tiene: pesos.some(v => v != null) }
-  }).filter(x => x.tiene)
-
-  const allIds = series.map(x => x.id)
-  const isSel = id => sel === null || sel.has(id)
-  const toggle = id => setSel(prev => {
-    const base = prev === null ? new Set(allIds) : new Set(prev)
-    if (base.has(id)) base.delete(id); else base.add(id)
-    return base.size ? base : null
-  })
-  const activos = series.filter(x => isSel(x.id))
-  const datos = x => (modo === 'peso' ? x.pesos : x.isp)
-  const vals = activos.flatMap(datos).filter(v => v != null)
-  const ymin = 0
-  let ymax = vals.length ? Math.max(...vals) : 10
-  if (modo === 'isp') ymax = Math.max(ymax, mVerde)
-  ymax = Math.max(2, Math.ceil((ymax + 0.5) / 2) * 2)
-
-  const W = 640, H = 250, PL = 42, PR = 14, PT = 12, PB = 42
-  const px = i => PL + (keys.length <= 1 ? 0 : i * (W - PL - PR) / (keys.length - 1))
-  const py = v => (H - PB) - (v - ymin) / (ymax - ymin) * (H - PT - PB)
-  const ticks = [0, 1, 2, 3, 4].map(t => ymin + (ymax - ymin) * t / 4)
-  const linea = x => datos(x).map((v, i) => (v == null ? null : px(i) + ',' + py(v))).filter(Boolean).join(' ')
-
-  const mostrar = (x, i) => {
-    const peso = x.pesos[i], isp = x.isp[i]
-    const bw = Math.max(96, x.nombre.length * 6.5 + 20)
-    const bh = isp != null ? 50 : 36
-    let bx = px(i) - bw / 2; bx = Math.max(2, Math.min(W - bw - 2, bx))
-    let by = py(datos(x)[i]) - bh - 10; if (by < 2) by = py(datos(x)[i]) + 12
-    setHint({ bx, by, bw, bh, nombre: x.nombre, color: x.color, peso, isp })
+    const sem = Object.keys(byW).sort().map(kk => byW[kk]).slice(-9)
+    const barras = []
+    for (let i = 1; i < sem.length; i++) {
+      const d = Math.round((new Date(sem[i].fecha + 'T12:00:00') - new Date(sem[i - 1].fecha + 'T12:00:00')) / 86400000)
+      barras.push({ label: corta(sem[i].fecha).slice(0, 5), inc: d > 0 ? (sem[i].peso - sem[i - 1].peso) / d * 7 : null })
+    }
+    const vals = barras.map(b => b.inc).filter(v => v != null)
+    const ymax = Math.max(meta + 1, ...(vals.length ? vals : [meta]))
+    return (
+      <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2px' }}>
+          <span onClick={() => setDrill(null)} style={{ fontSize: '13px', color: AZUL, fontWeight: 600, cursor: 'pointer' }}>‹ Volver</span>
+          <span style={{ fontSize: '15px', fontWeight: 600 }}>Así creció {fila?.nombre}</span>
+        </div>
+        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Crecimiento (ISP) de cada semana. La línea punteada es la meta ({meta}).</div>
+        {barras.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Sin datos suficientes.</div> : (
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '14px', height: '190px', borderBottom: '0.5px solid ' + BORDE, paddingTop: '10px' }}>
+            <div style={{ position: 'absolute', left: 0, right: 0, borderTop: '1.5px dashed ' + VERDE, top: (10 + (1 - meta / ymax) * 170) + 'px' }} />
+            {barras.map((b, i) => (
+              <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+                {b.inc != null && <span style={{ fontSize: '12px', fontWeight: 600, marginBottom: '4px', color: colBar(b.inc) }}>{b.inc.toFixed(1)}</span>}
+                <div style={{ width: '100%', maxWidth: '44px', height: (b.inc != null ? Math.max(2, b.inc / ymax * 160) : 0) + 'px', background: b.inc != null ? colBar(b.inc) : 'transparent', borderRadius: '6px 6px 0 0' }} />
+                <span style={{ fontSize: '10px', color: GRIS, marginTop: '6px' }}>{b.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
   }
 
+  // ---------- Vista A: comparar piscinas ----------
+  const val = c => metric === 'isp2' ? c.isp2 : metric === 'isp' ? c.isp : c.diario
+  const items = filas.map(f => ({ f, c: crec[f.piscinaId] || {} }))
+    .filter(x => !x.c.joven && val(x.c) != null)
+    .sort((a, b) => val(a.c) - val(b.c))
+  const vals = items.map(x => val(x.c))
+  const ymax = esSem ? Math.max(meta * 1.15, ...(vals.length ? vals : [meta])) : Math.max(...(vals.length ? vals : [1]))
   const tab = (id, txt) => (
-    <span onClick={() => setModo(id)} style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer',
-      border: '0.5px solid ' + (modo === id ? NAVY : BORDE), background: modo === id ? NAVY : '#fff', color: modo === id ? '#fff' : GRIS }}>{txt}</span>
+    <span onClick={() => setMetric(id)} style={{ fontSize: '12px', padding: '7px 13px', borderRadius: '8px', cursor: 'pointer',
+      border: '0.5px solid ' + (metric === id ? NAVY : BORDE), background: metric === id ? NAVY : '#fff', color: metric === id ? '#fff' : GRIS }}>{txt}</span>
   )
-  const chip = (id, txt, color, on) => (
-    <span key={id} onClick={() => (id === 'todas' ? setSel(null) : toggle(id))} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
-      fontSize: '12px', padding: '4px 10px', borderRadius: '20px', fontWeight: on ? 600 : 400,
-      border: '0.5px solid ' + (on ? '#cfe0ef' : 'transparent'), background: on ? '#eef6fc' : '#f4f7fa', color: on ? NAVY : GRIS }}>
-      {color && <span style={{ width: '16px', height: '3px', borderRadius: '2px', background: color, display: 'inline-block', opacity: on ? 1 : 0.4 }} />}{txt}
-    </span>
-  )
-
   return (
     <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
-      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · tendencia de crecimiento</div>
-      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Elige una o varias piscinas. Pasa el cursor por un punto para ver el detalle.</div>
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
-        {tab('peso', 'Peso (g)')}
-        {tab('isp', 'ISP · crecimiento semanal')}
+      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · crecimiento por piscina</div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Ordenado de peor a mejor. Doble clic en una piscina para ver su detalle semana a semana.</div>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+        {tab('isp2', 'ISP 2 sem')}{tab('isp', 'ISP prom.')}{tab('diario', 'Crec. diario')}
       </div>
-      {series.length === 0 ? (
-        <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Todavía no hay suficientes muestreos para el gráfico.</div>
-      ) : (
-        <>
-          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ fontFamily: 'inherit' }} onMouseLeave={() => setHint(null)}>
-            <line x1={PL} y1={PT} x2={PL} y2={H - PB} stroke={BORDE} />
-            <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} stroke={BORDE} />
-            {ticks.map((t, i) => (
-              <g key={i}>
-                <line x1={PL} y1={py(t)} x2={W - PR} y2={py(t)} stroke="#f0f4f8" />
-                <text x={PL - 6} y={py(t) + 3} textAnchor="end" fontSize="10" fill={GRIS}>{t.toFixed(t % 1 ? 1 : 0)}</text>
-              </g>
-            ))}
-            {modo === 'isp' && mVerde >= ymin && mVerde <= ymax && (
-              <line x1={PL} y1={py(mVerde)} x2={W - PR} y2={py(mVerde)} stroke={VERDE} strokeWidth="1" strokeDasharray="4 3" />
-            )}
-            {semanasX.map((x, i) => (
-              <text key={i} x={px(i)} y={H - PB + 16} textAnchor="middle" fontSize="10" fill={GRIS}>{x.label}</text>
-            ))}
-            {activos.map(sName => (
-              <g key={sName.id}>
-                <polyline points={linea(sName)} fill="none" stroke={sName.color} strokeWidth="2.5" />
-                {datos(sName).map((v, i) => v == null ? null : (
-                  <g key={i}>
-                    <circle cx={px(i)} cy={py(v)} r="2.5" fill={sName.color} />
-                    <circle cx={px(i)} cy={py(v)} r="9" fill="transparent" style={{ cursor: 'pointer' }}
-                      onMouseEnter={() => mostrar(sName, i)} />
-                  </g>
-                ))}
-              </g>
-            ))}
-            {hint && (
-              <g pointerEvents="none">
-                <rect x={hint.bx} y={hint.by} width={hint.bw} height={hint.bh} rx="7" fill="#022847" opacity="0.96" />
-                <circle cx={hint.bx + 12} cy={hint.by + 15} r="4" fill={hint.color} />
-                <text x={hint.bx + 22} y={hint.by + 19} fontSize="11.5" fontWeight="600" fill="#fff">{hint.nombre}</text>
-                <text x={hint.bx + 12} y={hint.by + 33} fontSize="11" fill="#cfe0ef">Peso: {hint.peso != null ? hint.peso + ' g' : '—'}</text>
-                {hint.isp != null && <text x={hint.bx + 12} y={hint.by + 47} fontSize="11" fill="#cfe0ef">ISP: {hint.isp.toFixed(1)} g/sem</text>}
-              </g>
-            )}
-          </svg>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' }}>
-            {chip('todas', 'Todas', null, sel === null)}
-            {series.map(sName => chip(sName.id, sName.nombre, sName.color, isSel(sName.id)))}
+      {items.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Todavía no hay datos para comparar.</div> : (
+        <div>
+          {items.map(({ f, c }) => {
+            const v = val(c), col = colBar(v)
+            const w = Math.max(2, Math.min(100, v / ymax * 100))
+            const metaPct = esSem ? Math.min(100, meta / ymax * 100) : null
+            return (
+              <div key={f.piscinaId} onDoubleClick={() => setDrill(f.piscinaId)} title="Doble clic para ver el detalle"
+                style={{ display: 'grid', gridTemplateColumns: '150px 1fr 52px', gap: '10px', alignItems: 'center', marginBottom: '11px', fontSize: '13px', cursor: 'pointer' }}>
+                <span><span style={{ fontWeight: 500 }}>{f.nombre}</span><span style={{ color: GRIS, fontSize: '11px' }}> · {c.dias}d</span></span>
+                <span style={{ position: 'relative', height: '20px', background: '#f2f6fa', borderRadius: '6px' }}>
+                  <span style={{ position: 'absolute', left: 0, top: 0, height: '20px', width: w + '%', background: col, borderRadius: '6px' }} />
+                  {metaPct != null && <span style={{ position: 'absolute', top: '-4px', height: '28px', width: '2px', background: VERDE, left: metaPct + '%' }} />}
+                </span>
+                <span style={{ textAlign: 'right', fontWeight: 600, color: col, fontVariantNumeric: 'tabular-nums' }}>{v.toFixed(metric === 'diario' ? 2 : 1)}</span>
+              </div>
+            )
+          })}
+          <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
+            {esSem ? 'Barra roja/ámbar/verde según la meta. La línea verde vertical es la meta (' + meta + ').' : 'Crecimiento diario (g/día).'} Doble clic en una piscina para su detalle semanal.
           </div>
-          <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
-            {modo === 'peso' ? 'Peso promedio (g) semana a semana.' : 'Crecimiento semanal (ISP, g/sem). La línea punteada es la meta (' + mVerde + ').'} Toca las piscinas para mostrarlas u ocultarlas.
-          </div>
-        </>
+        </div>
       )}
     </div>
   )
