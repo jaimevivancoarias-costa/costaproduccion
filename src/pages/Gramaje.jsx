@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, nombreDia,
-  esDiaDeMuestreo, diasCultivo, situacionDia, num, numDec,
+  esDiaDeMuestreo, diasCultivo, situacionDia, num, numDec, semanaISO,
 } from '../lib/fechas'
 
 // Gramaje · peso promedio del camaron
@@ -23,10 +23,11 @@ const HOYB = '#E6F1FB'
 const AMBAR = '#854F0B'
 const RBG = '#FBEAEA'   // fondo rojo suave
 const ABG = '#FAEEDA'   // fondo ambar suave
-// Semaforo de crecimiento semanal (g/semana, domingo->domingo).
-const CREC_OK = 1.0      // normal a partir de aqui
-const CREC_ALERTA = 0.5  // debajo de esto, muy lento (rojo)
+// Semaforo de crecimiento semanal (g/semana, domingo->domingo). Cada finca
+// fija su propia meta; estos son los valores por defecto si no la configuro.
 const JOVEN_DIAS = 30    // piscinas con menos dias no se evaluan
+const DEF_VERDE = 3.8    // meta por defecto si la finca no configuro la suya
+const DEF_ROJO = 3.0
 const VERDE = '#0F6E56'
 
 export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes }) {
@@ -43,10 +44,17 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const [userId, setUserId] = useState(null)
   const [cerrando, setCerrando] = useState('')  // fecha que se está cerrando/reabriendo
   const [guardadoOk, setGuardadoOk] = useState(false)
+  const [serie, setSerie] = useState({})        // cicloId -> muestreos [{fecha,peso}] asc (historial)
+  const [meta, setMeta] = useState(null)        // {verde, rojo} de la finca (null = usa defecto)
+  const [metaOpen, setMetaOpen] = useState(false)
+  const [metaForm, setMetaForm] = useState({ verde: '', rojo: '' })
+  const [metaMsg, setMetaMsg] = useState(null)
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const muestreos = useMemo(() => fechas.filter(esDiaDeMuestreo), [fechas])
   const hoy = hoyISO()
+  const mVerde = meta?.verde ?? DEF_VERDE
+  const mRojo = meta?.rojo ?? DEF_ROJO
   // Nunca se cuentan dias que no han pasado. Ver "6 días" en una
   // piscina sembrada ayer, solo porque el domingo queda lejos, es
   // mentira y ademas desalinea el gramaje esperado.
@@ -59,7 +67,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 
       const { data: ciclos, error } = await supabase
         .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, fecha_cierre, cantidad_larva, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
+        .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, cantidad_larva, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
         .eq('finca_id', finca.id)
         .lte('fecha_siembra', domingo)
         .or(`fecha_cierre.is.null,fecha_cierre.gte.${lunes}`)
@@ -70,7 +78,12 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         .map(c => ({
           cicloId: c.id, piscinaId: c.piscina.id, codigo: c.piscina.codigo,
           nombre: c.piscina.nombre, hectareas: Number(c.piscina.hectareas),
-          fechaSiembra: c.fecha_siembra, fechaCierre: c.fecha_cierre,
+          fechaSiembra: c.fecha_siembra,
+          // Dias de engorde = desde que el camaron entra a ESTA piscina. Para
+          // uno transferido es el dia que llego; para siembra directa es la
+          // misma siembra. Nunca la edad total (que incluiria la precria).
+          fechaOcupacion: c.fecha_ocupacion || c.fecha_siembra,
+          fechaCierre: c.fecha_cierre,
           larva: c.cantidad_larva,
         }))
         .sort(ordenar)
@@ -97,15 +110,25 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         .in('ciclo_id', lista.map(f => f.cicloId))
         .order('fecha')
 
-      const v = {}, prev = {}
+      const v = {}, prev = {}, serieMap = {}
       ;(ms || []).forEach(m => {
         if (m.fecha >= lunes && m.fecha <= domingo) {
           v[`${m.piscina_id}|${m.fecha}`] = String(m.peso_gramos)
         }
         // El ultimo muestreo anterior al lunes de esta semana.
         if (m.fecha < lunes) prev[m.ciclo_id] = { fecha: m.fecha, peso: Number(m.peso_gramos) }
+        // Historial completo por ciclo (ya viene ordenado por fecha asc): sirve
+        // para el ISP de las 2 ultimas semanas en el ranking.
+        ;(serieMap[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) })
       })
-      setValores(v); setPrevios(prev)
+      setValores(v); setPrevios(prev); setSerie(serieMap)
+
+      // Meta de crecimiento de la finca (si el jefe la configuro).
+      const { data: mrow } = await supabase.schema('produccion').from('meta_crecimiento')
+        .select('verde_desde, rojo_bajo').eq('finca_id', finca.id).maybeSingle()
+      const mObj = mrow ? { verde: Number(mrow.verde_desde), rojo: Number(mrow.rojo_bajo) } : null
+      setMeta(mObj)
+      setMetaForm({ verde: String(mObj?.verde ?? DEF_VERDE), rojo: String(mObj?.rojo ?? DEF_ROJO) })
 
       // Estado del día de gramaje (cerrado/reabierto) por muestreo.
       const { data: dr } = await supabase.schema('produccion').from('dia_registro')
@@ -171,20 +194,55 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   // Ranking de crecimiento semanal (g/sem, normalizado): toma el último
   // muestreo de la semana con crecimiento calculable, ordena de peor a mejor.
   // Las jóvenes (<30 días) no entran, igual que en el semáforo.
+  // ISP (incremento semanal de peso, g/sem) por piscina: se toma el ultimo
+  // muestreo de cada semana ISO y se compara con el de la semana anterior.
+  // Incluye lo que se esta escribiendo esta semana (aun sin guardar).
+  function serieSemanal(fila) {
+    const S = [...(serie[fila.cicloId] || [])].filter(m => m.fecha <= fechas[6])
+    muestreos.forEach(fe => {
+      const val = numDec(valores[`${fila.piscinaId}|${fe}`])
+      if (val === null) return
+      const i = S.findIndex(m => m.fecha === fe)
+      if (i >= 0) S[i] = { fecha: fe, peso: val }; else S.push({ fecha: fe, peso: val })
+    })
+    S.sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    const byW = {}
+    S.forEach(m => { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m })
+    return Object.keys(byW).sort().map(k => byW[k])   // un muestreo por semana, asc
+  }
+  function ispEntre(a, b) {
+    if (!a || !b) return null
+    const d = Math.round((new Date(b.fecha + 'T12:00:00') - new Date(a.fecha + 'T12:00:00')) / 86400000)
+    return d > 0 ? (b.peso - a.peso) / d * 7 : null
+  }
   const ranking = filas
     .filter(f => f.fechaSiembra)
     .map(f => {
-      const dCult = diasCultivo(f.fechaSiembra, corteDias)
-      let c = null
-      for (let i = muestreos.length - 1; i >= 0; i--) {
-        const cc = calculo(f, muestreos[i])
-        if (cc.crec != null) { c = cc; break }
-      }
-      return c ? { id: f.piscinaId, nombre: f.nombre, dias: dCult, wk: c.crec * 7, joven: dCult < JOVEN_DIAS } : null
+      const dCult = diasCultivo(f.fechaOcupacion || f.fechaSiembra, corteDias)
+      const sem = serieSemanal(f)
+      const n = sem.length
+      const isp = ispEntre(sem[n - 2], sem[n - 1])       // esta semana
+      const ispPrev = ispEntre(sem[n - 3], sem[n - 2])   // semana pasada
+      if (isp == null) return null
+      return { id: f.piscinaId, nombre: f.nombre, dias: dCult,
+               wk: isp, ispPrev, diario: isp / 7, joven: dCult < JOVEN_DIAS }
     })
     .filter(Boolean)
     // Las evaluadas primero (peor→mejor); las jóvenes al final.
     .sort((a, b) => (a.joven ? 1 : 0) - (b.joven ? 1 : 0) || a.wk - b.wk)
+
+  async function guardarMeta() {
+    setMetaMsg(null)
+    const verde = numDec(metaForm.verde), rojo = numDec(metaForm.rojo)
+    if (verde === null || rojo === null) { setMetaMsg({ tipo: 'error', texto: 'Escribe los dos números.' }); return }
+    if (rojo >= verde) { setMetaMsg({ tipo: 'error', texto: 'El rojo debe ser menor que el verde.' }); return }
+    const { error } = await supabase.schema('produccion').from('meta_crecimiento')
+      .upsert({ finca_id: finca.id, verde_desde: verde, rojo_bajo: rojo,
+                actualizado_en: new Date().toISOString(), actualizado_por: userId }, { onConflict: 'finca_id' })
+    if (error) { setMetaMsg({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setMeta({ verde, rojo }); setMetaOpen(false); setMetaMsg(null)
+    setAviso({ tipo: 'ok', texto: 'Meta de gramaje guardada.' })
+  }
 
   async function guardar() {
     setGuardando(true); setAviso(null)
@@ -294,10 +352,16 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       {!practica && filas.length > 0 && (
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '1rem' }}>
           <ChipG k="Piscinas" v={filas.length} />
-          <ChipG k="En meta" v={ranking.filter(r => !r.joven && r.wk >= CREC_OK).length} color={VERDE} />
-          <ChipG k="Van lento" v={ranking.filter(r => !r.joven && r.wk >= CREC_ALERTA && r.wk < CREC_OK).length} color={AMBAR} />
-          <ChipG k="Muy lento" v={ranking.filter(r => !r.joven && r.wk < CREC_ALERTA).length} color={ROJO} />
+          <ChipG k="En meta" v={ranking.filter(r => !r.joven && r.wk >= mVerde).length} color={VERDE} />
+          <ChipG k="Van lento" v={ranking.filter(r => !r.joven && r.wk >= mRojo && r.wk < mVerde).length} color={AMBAR} />
+          <ChipG k="Muy lento" v={ranking.filter(r => !r.joven && r.wk < mRojo).length} color={ROJO} />
         </div>
+      )}
+
+      {!practica && !cargando && (
+        <MetaBar meta={meta} mVerde={mVerde} mRojo={mRojo} esJefe={esJefe}
+          open={metaOpen} setOpen={setMetaOpen} form={metaForm} setForm={setMetaForm}
+          onGuardar={guardarMeta} msg={metaMsg} />
       )}
 
       {aviso && (
@@ -368,22 +432,23 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                   <Td pegado alineado="left">
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>{fila.nombre}</span>
                     <div style={{ fontSize: '11px', color: GRIS }}>
-                      {fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) + ' días' : fila.hectareas.toFixed(2) + ' ha'}
+                      {fila.fechaSiembra ? diasCultivo(fila.fechaOcupacion || fila.fechaSiembra, corteDias) + ' días' : fila.hectareas.toFixed(2) + ' ha'}
                     </div>
                   </Td>
 
                   {muestreos.map(f => {
-                    const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < fila.fechaSiembra
+                    const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < (fila.fechaOcupacion || fila.fechaSiembra)
                     const c = calculo(fila, f)
                     const ant = anterior(fila, f)
                     const diasBloque = ant ? Math.round((new Date(f + 'T12:00:00') - new Date(ant.fecha + 'T12:00:00')) / 86400000) : null
                     const puede = (practica ? situacionDia(f, hoy) !== 'futuro' : editable(f)) && !fuera
                     const futuro = situacionDia(f, hoy) === 'futuro'
-                    const joven = fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) < JOVEN_DIAS : true
+                    const joven = fila.fechaSiembra ? diasCultivo(fila.fechaOcupacion || fila.fechaSiembra, corteDias) < JOVEN_DIAS : true
                     return (
                       <Celdas
                         key={f} fecha={f} hoy={hoy} joven={joven} ant={ant} diasBloque={diasBloque}
                         fuera={fuera} futuro={futuro} puede={puede} calc={c}
+                        metaVerde={mVerde} metaRojo={mRojo}
                         valor={valores[`${fila.piscinaId}|${f}`] || ''}
                         onChange={v => setValores(x => ({ ...x, [`${fila.piscinaId}|${f}`]: v }))}
                       />
@@ -444,29 +509,43 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       {!cargando && !practica && ranking.length > 0 && (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                       padding: '14px 16px', marginTop: '14px' }}>
-          <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>Ranking · crecimiento semanal</div>
+          <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Ranking · crecimiento semanal</div>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '10px' }}>Al cierre del domingo. Ordenado de peor a mejor.</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 82px 78px 116px 92px', gap: '8px',
+                fontSize: '11px', color: GRIS, padding: '0 0 6px', borderBottom: '0.5px solid ' + BORDE }}>
+            <span>Piscina</span>
+            <span style={{ textAlign: 'right' }}>Crec. diario</span>
+            <span style={{ textAlign: 'right' }}>ISP semana</span>
+            <span style={{ textAlign: 'center' }}>ISP 2 sem.</span>
+            <span style={{ textAlign: 'right' }}>Estado</span>
+          </div>
           {ranking.map(r => {
-            const col = r.wk < CREC_ALERTA ? ROJO : r.wk < CREC_OK ? AMBAR : VERDE
-            const w = Math.min(100, Math.max(2, Math.round(r.wk / 5 * 100)))
+            const col = r.wk < mRojo ? ROJO : r.wk < mVerde ? AMBAR : VERDE
+            const txt = r.wk < mRojo ? 'Muy lento' : r.wk < mVerde ? 'Va lento' : 'En meta'
+            const bg = r.wk < mRojo ? RBG : r.wk < mVerde ? ABG : '#E1F5EE'
+            const subio = r.ispPrev != null ? r.wk - r.ispPrev : null
             return (
-              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '160px 1fr 88px', gap: '10px',
-                    alignItems: 'center', padding: '5px 0', fontSize: '13px' }}>
+              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 82px 78px 116px 92px', gap: '8px',
+                    alignItems: 'center', padding: '9px 0', fontSize: '13px', borderBottom: '0.5px solid #f2f6fa' }}>
                 <span>{r.nombre}<span style={{ color: GRIS, fontSize: '11px' }}> · {r.dias}d engorde</span></span>
-                {r.joven ? (
-                  <span style={{ color: GRIS, fontSize: '12px' }}>joven · aún no se evalúa</span>
-                ) : (
-                  <span style={{ position: 'relative', height: '14px', background: '#eef3f7', borderRadius: '7px' }}>
-                    <span style={{ position: 'absolute', left: 0, top: 0, height: '14px', width: w + '%', background: col, borderRadius: '7px' }} />
-                  </span>
-                )}
+                <span style={{ textAlign: 'right', color: r.joven ? GRIS : undefined, fontVariantNumeric: 'tabular-nums' }}>
+                  {r.joven ? '—' : r.diario.toFixed(2)}</span>
                 <span style={{ textAlign: 'right', fontWeight: 600, color: r.joven ? GRIS : col, fontVariantNumeric: 'tabular-nums' }}>
-                  {r.joven ? '—' : (r.wk >= 0 ? '+' : '') + r.wk.toFixed(1)}
+                  {r.joven ? '—' : r.wk.toFixed(1)}</span>
+                <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12px' }}>
+                  {r.joven || r.ispPrev == null ? '—' : (
+                    <>{r.ispPrev.toFixed(1)} → {r.wk.toFixed(1)}
+                      <span style={{ marginLeft: '4px', color: subio >= 0 ? VERDE : ROJO }}>{subio >= 0 ? '▲' : '▼'}</span></>
+                  )}</span>
+                <span style={{ textAlign: 'right' }}>
+                  {r.joven ? <span style={{ color: GRIS, fontSize: '11px' }}>joven</span>
+                    : <span style={{ fontSize: '11px', fontWeight: 600, padding: '3px 9px', borderRadius: '20px', background: bg, color: col }}>{txt}</span>}
                 </span>
               </div>
             )
           })}
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
-            g/semana (dom→dom). Jóvenes (&lt;{JOVEN_DIAS} días) no entran. Rojo &lt;{CREC_ALERTA} · ámbar &lt;{CREC_OK} · verde ≥{CREC_OK}.
+            ISP = incremento semanal de peso (g/sem, dom→dom). Crec. diario = ISP ÷ 7. ▲ mejoró vs la semana pasada · ▼ bajó. Jóvenes (&lt;{JOVEN_DIAS} días de engorde) no entran. Meta: rojo &lt;{mRojo} · ámbar {mRojo}–{mVerde} · verde ≥{mVerde}.
           </div>
         </div>
       )}
@@ -497,8 +576,61 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   )
 }
 
+// Panel de la meta de crecimiento de la finca: colapsado por defecto; el
+// jefe lo abre para editar los dos cortes (verde/rojo). El ambar es lo del medio.
+function MetaBar({ meta, mVerde, mRojo, esJefe, open, setOpen, form, setForm, onGuardar, msg }) {
+  const dot = c => <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: c, display: 'inline-block', marginRight: '6px', verticalAlign: 'middle' }} />
+  if (!open) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: '#fff',
+            border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 18px', marginBottom: '14px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '14px', fontWeight: 600 }}>Meta de Gramaje</span>
+        <span style={{ display: 'flex', gap: '16px', fontSize: '12.5px' }}>
+          <span>{dot(ROJO)}&lt; {mRojo}</span>
+          <span>{dot(AMBAR)}{mRojo} – {mVerde}</span>
+          <span>{dot(VERDE)}&ge; {mVerde}</span>
+        </span>
+        {esJefe && (
+          <span onClick={() => setOpen(true)} style={{ marginLeft: 'auto', fontSize: '13px', color: AZUL, fontWeight: 600, cursor: 'pointer' }}>Editar &#9662;</span>
+        )}
+      </div>
+    )
+  }
+  return (
+    <div style={{ border: '0.5px solid ' + AZUL, borderRadius: '12px', background: '#fff', overflow: 'hidden', marginBottom: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', background: '#f2f8fd', padding: '14px 18px', borderBottom: '0.5px solid ' + BORDE }}>
+        <span style={{ fontSize: '14px', fontWeight: 600 }}>Meta de Gramaje</span>
+        <span onClick={() => setOpen(false)} style={{ marginLeft: 'auto', fontSize: '13px', color: AZUL, fontWeight: 600, cursor: 'pointer' }}>Cerrar &#9652;</span>
+      </div>
+      <div style={{ padding: '22px 20px' }}>
+        <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <label style={{ fontSize: '12px', color: GRIS, display: 'block', marginBottom: '8px' }}>{dot(VERDE)}Verde · en meta desde</label>
+            <input value={form.verde} onChange={e => setForm(x => ({ ...x, verde: e.target.value }))} inputMode="decimal"
+              style={{ width: '80px', padding: '11px 10px', fontSize: '18px', textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '9px', fontFamily: 'inherit' }} />
+            <span style={{ fontSize: '12px', color: GRIS, marginLeft: '9px' }}>g/semana</span>
+          </div>
+          <div>
+            <label style={{ fontSize: '12px', color: GRIS, display: 'block', marginBottom: '8px' }}>{dot(ROJO)}Rojo · muy lento bajo de</label>
+            <input value={form.rojo} onChange={e => setForm(x => ({ ...x, rojo: e.target.value }))} inputMode="decimal"
+              style={{ width: '80px', padding: '11px 10px', fontSize: '18px', textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '9px', fontFamily: 'inherit' }} />
+            <span style={{ fontSize: '12px', color: GRIS, marginLeft: '9px' }}>g/semana</span>
+          </div>
+        </div>
+        {msg && <div style={{ fontSize: '12px', color: msg.tipo === 'error' ? ROJO : VERDE, marginTop: '14px' }}>{msg.texto}</div>}
+        <div style={{ display: 'flex', gap: '10px', marginTop: '24px', alignItems: 'center' }}>
+          <button onClick={onGuardar} style={{ padding: '11px 20px', background: NAVY, color: '#fff', border: 'none', borderRadius: '9px', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>Guardar</button>
+          <button onClick={() => setOpen(false)} style={{ padding: '11px 16px', background: '#fff', border: '0.5px solid ' + BORDE, color: GRIS, borderRadius: '9px', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
+          {meta && <span style={{ marginLeft: 'auto', fontSize: '11px', color: GRIS }}>Guardado: {meta.verde} / {meta.rojo}</span>}
+        </div>
+        <div style={{ fontSize: '11px', color: GRIS, marginTop: '18px' }}>Solo el jefe de la finca puede cambiar la meta.</div>
+      </div>
+    </div>
+  )
+}
+
 // Un bloque de día (Miércoles o Domingo): Peso ant. · Días · Peso · Crecimiento.
-function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, diasBloque }) {
+function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, diasBloque, metaVerde, metaRojo }) {
   const f = fecha === hoy ? HOYB : undefined
   if (fuera) return <><Td fondo={f} /><Td fondo={f} /><Td fondo={f}><Guion /></Td><Td fondo={f} /></>
   const baja = calc.inc !== undefined && calc.inc < 0
@@ -508,9 +640,9 @@ function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, d
   const semSem = esDom && !joven && calc.crec != null ? calc.crec * 7 : null
   const esSem = semSem != null
   const incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
-  const estadoTxt = !esSem ? '' : semSem < CREC_ALERTA ? 'muy lento' : semSem < CREC_OK ? 'va lento' : 'en meta'
-  const pillBg = !esSem ? null : semSem < CREC_ALERTA ? RBG : semSem < CREC_OK ? ABG : '#E1F5EE'
-  const pillColor = !esSem ? null : semSem < CREC_ALERTA ? ROJO : semSem < CREC_OK ? AMBAR : VERDE
+  const estadoTxt = !esSem ? '' : semSem < metaRojo ? 'Muy lento' : semSem < metaVerde ? 'Va lento' : 'En meta'
+  const pillBg = !esSem ? null : semSem < metaRojo ? RBG : semSem < metaVerde ? ABG : '#E1F5EE'
+  const pillColor = !esSem ? null : semSem < metaRojo ? ROJO : semSem < metaVerde ? AMBAR : VERDE
   return (
     <>
       <Td fondo={f}><span style={{ color: GRIS }}>{ant ? ant.peso + ' g' : <Guion />}</span></Td>
