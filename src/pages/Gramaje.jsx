@@ -49,6 +49,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const [metaOpen, setMetaOpen] = useState(false)
   const [metaForm, setMetaForm] = useState({ verde: '', rojo: '' })
   const [metaMsg, setMetaMsg] = useState(null)
+  const [orden, setOrden] = useState('piscina')  // 'piscina' | 'peor' | 'mejor'
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const muestreos = useMemo(() => fechas.filter(esDiaDeMuestreo), [fechas])
@@ -215,21 +216,6 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
     const d = Math.round((new Date(b.fecha + 'T12:00:00') - new Date(a.fecha + 'T12:00:00')) / 86400000)
     return d > 0 ? (b.peso - a.peso) / d * 7 : null
   }
-  const ranking = filas
-    .filter(f => f.fechaSiembra)
-    .map(f => {
-      const dCult = diasCultivo(f.fechaOcupacion || f.fechaSiembra, corteDias)
-      const sem = serieSemanal(f)
-      const n = sem.length
-      const isp = ispEntre(sem[n - 2], sem[n - 1])       // esta semana
-      const ispPrev = ispEntre(sem[n - 3], sem[n - 2])   // semana pasada
-      if (isp == null) return null
-      return { id: f.piscinaId, nombre: f.nombre, dias: dCult,
-               wk: isp, ispPrev, diario: isp / 7, joven: dCult < JOVEN_DIAS }
-    })
-    .filter(Boolean)
-    // Las evaluadas primero (peor→mejor); las jóvenes al final.
-    .sort((a, b) => (a.joven ? 1 : 0) - (b.joven ? 1 : 0) || a.wk - b.wk)
 
   async function guardarMeta() {
     setMetaMsg(null)
@@ -324,7 +310,29 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
     setAviso({ tipo: 'ok', texto: aprobar ? 'Día reabierto.' : 'Pedido rechazado.' }); await cargar()
   }
 
-  const COLS = `minmax(170px,1.3fr) ${muestreos.map(() => 'minmax(78px,1fr) 46px minmax(88px,1fr) minmax(118px,1.4fr)').join(' ')}`
+  // Crecimiento por piscina: alimenta las columnas de resultado, los chips
+  // y el orden. Reusa serieSemanal / ispEntre de arriba.
+  const crecPorPisc = {}
+  filas.forEach(f => {
+    const dCult = diasCultivo(f.fechaOcupacion || f.fechaSiembra, corteDias)
+    const sem = serieSemanal(f)
+    const n = sem.length
+    const isp = ispEntre(sem[n - 2], sem[n - 1])
+    const ispPrev = ispEntre(sem[n - 3], sem[n - 2])
+    crecPorPisc[f.piscinaId] = { dias: dCult, isp, ispPrev, diario: isp != null ? isp / 7 : null, joven: dCult < JOVEN_DIAS }
+  })
+  const evalC = Object.values(crecPorPisc).filter(c => c.isp != null && !c.joven)
+  const nMeta = evalC.filter(c => c.isp >= mVerde).length
+  const nLento = evalC.filter(c => c.isp >= mRojo && c.isp < mVerde).length
+  const nMuy = evalC.filter(c => c.isp < mRojo).length
+  const filasVista = orden === 'piscina' ? filas : (() => {
+    const k = f => { const c = crecPorPisc[f.piscinaId]; return (c && c.isp != null && !c.joven) ? c.isp : null }
+    const con = filas.filter(f => k(f) != null), sin = filas.filter(f => k(f) == null)
+    con.sort((a, b) => orden === 'peor' ? k(a) - k(b) : k(b) - k(a))
+    return [...con, ...sin]
+  })()
+
+  const COLS = `minmax(170px,1.3fr) ${muestreos.map(() => 'minmax(78px,1fr) 46px minmax(88px,1fr) minmax(96px,1.1fr)').join(' ')} 72px 84px 118px 100px`
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
@@ -352,9 +360,18 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       {!practica && filas.length > 0 && (
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '1rem' }}>
           <ChipG k="Piscinas" v={filas.length} />
-          <ChipG k="En meta" v={ranking.filter(r => !r.joven && r.wk >= mVerde).length} color={VERDE} />
-          <ChipG k="Van lento" v={ranking.filter(r => !r.joven && r.wk >= mRojo && r.wk < mVerde).length} color={AMBAR} />
-          <ChipG k="Muy lento" v={ranking.filter(r => !r.joven && r.wk < mRojo).length} color={ROJO} />
+          <ChipG k="En meta" v={nMeta} color={VERDE} />
+          <ChipG k="Van lento" v={nLento} color={AMBAR} />
+          <ChipG k="Muy lento" v={nMuy} color={ROJO} />
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: GRIS }}>
+            Orden:
+            <select value={orden} onChange={e => setOrden(e.target.value)}
+              style={{ padding: '7px 10px', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: '#fff', color: NAVY, fontFamily: 'inherit' }}>
+              <option value="piscina">Por piscina (normal)</option>
+              <option value="peor">Peor → mejor</option>
+              <option value="mejor">Mejor → peor</option>
+            </select>
+          </div>
         </div>
       )}
 
@@ -405,28 +422,32 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                 {muestreos.map((f, i) => (
                   <div key={f} style={{ gridColumn: 'span 4', textAlign: 'center', padding: '9px 0 5px',
                         fontSize: '12px', fontWeight: 600, color: NAVY,
-                        background: i === muestreos.length - 1 ? '#e7f5ee' : '#eef3f7',
-                        borderLeft: '0.5px solid ' + BORDE }}>
+                        background: i === muestreos.length - 1 ? '#eef6fc' : '#f7fafd',
+                        borderLeft: '2px solid #cfe0ef' }}>
                     {nombreDia(f)} {corta(f).slice(0, 5)}
                   </div>
                 ))}
+                <div style={{ gridColumn: 'span 4', textAlign: 'center', padding: '9px 0 5px',
+                      fontSize: '12px', fontWeight: 600, color: NAVY, background: '#eef3f7',
+                      borderLeft: '2px solid #cfe0ef' }}>Resultado</div>
               </div>
               {/* Sub-encabezados por columna */}
               <div style={{ display: 'grid', gridTemplateColumns: COLS, background: '#fafcfd',
                             borderBottom: '0.5px solid ' + BORDE }}>
                 <Th pegado>Piscina</Th>
-                {muestreos.flatMap(f => {
-                  const semanal = new Date(f + 'T12:00:00').getDay() === 0
-                  return [
-                    <Th key={f + 'a'}>Peso ant.</Th>,
-                    <Th key={f + 'b'}>Días</Th>,
-                    <Th key={f + 'c'}>Peso g</Th>,
-                    <Th key={f + 'd'}>{semanal ? 'Crec. semanal' : 'Crecim.'}</Th>,
-                  ]
-                })}
+                {muestreos.flatMap(f => ([
+                  <Th key={f + 'a'} bordeIzq>Peso ant.</Th>,
+                  <Th key={f + 'b'}>Días</Th>,
+                  <Th key={f + 'c'}>Peso g</Th>,
+                  <Th key={f + 'd'}>Crecim.</Th>,
+                ]))}
+                <Th key="rc" bordeIzq>Crec. diario</Th>
+                <Th key="ri">ISP semana</Th>
+                <Th key="rd">ISP 2 sem</Th>
+                <Th key="re">Estado</Th>
               </div>
 
-              {filas.map(fila => (
+              {filasVista.map(fila => (
                 <div key={fila.piscinaId} style={{ display: 'grid', gridTemplateColumns: COLS,
                       borderBottom: '0.5px solid #f1f6f9', alignItems: 'center' }}>
                   <Td pegado alineado="left">
@@ -436,7 +457,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     </div>
                   </Td>
 
-                  {muestreos.map(f => {
+                  {muestreos.map((f, gi) => {
                     const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < (fila.fechaOcupacion || fila.fechaSiembra)
                     const c = calculo(fila, f)
                     const ant = anterior(fila, f)
@@ -447,13 +468,45 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     return (
                       <Celdas
                         key={f} fecha={f} hoy={hoy} joven={joven} ant={ant} diasBloque={diasBloque}
-                        fuera={fuera} futuro={futuro} puede={puede} calc={c}
-                        metaVerde={mVerde} metaRojo={mRojo}
+                        fuera={fuera} futuro={futuro} puede={puede} calc={c} divide={gi > 0}
                         valor={valores[`${fila.piscinaId}|${f}`] || ''}
                         onChange={v => setValores(x => ({ ...x, [`${fila.piscinaId}|${f}`]: v }))}
                       />
                     )
                   })}
+
+                  {(() => {
+                    const rc = crecPorPisc[fila.piscinaId] || {}
+                    if (rc.joven || rc.isp == null) {
+                      return (
+                        <>
+                          <Td bordeIzq><Guion /></Td><Td><Guion /></Td><Td><Guion /></Td>
+                          <Td><span style={{ color: GRIS, fontSize: '11px' }}>{rc.joven ? 'joven' : 'aún no'}</span></Td>
+                        </>
+                      )
+                    }
+                    const col = rc.isp < mRojo ? ROJO : rc.isp < mVerde ? AMBAR : VERDE
+                    const bg = rc.isp < mRojo ? RBG : rc.isp < mVerde ? ABG : '#E1F5EE'
+                    const txt = rc.isp < mRojo ? 'Muy lento' : rc.isp < mVerde ? 'Va lento' : 'En meta'
+                    const subio = rc.ispPrev != null ? rc.isp - rc.ispPrev : null
+                    return (
+                      <>
+                        <Td bordeIzq><span style={{ color: GRIS }}>{rc.diario.toFixed(2)}</span></Td>
+                        <Td><span style={{ fontWeight: 600, color: col }}>{rc.isp.toFixed(1)}</span></Td>
+                        <Td>
+                          {rc.ispPrev == null ? <Guion /> : (
+                            <span style={{ fontSize: '12px', color: GRIS }}>
+                              {rc.ispPrev.toFixed(1)} → {rc.isp.toFixed(1)}
+                              <span style={{ marginLeft: '4px', color: subio >= 0 ? VERDE : ROJO }}>{subio >= 0 ? '▲' : '▼'}</span>
+                            </span>
+                          )}
+                        </Td>
+                        <Td>
+                          <span style={{ fontSize: '11px', fontWeight: 600, padding: '3px 9px', borderRadius: '20px', background: bg, color: col, whiteSpace: 'nowrap' }}>{txt}</span>
+                        </Td>
+                      </>
+                    )
+                  })()}
                 </div>
               ))}
             </div>
@@ -505,49 +558,9 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         </div>
       )}
 
-      {/* Ranking · crecimiento semanal (solo mirar; la tabla de arriba es para cargar) */}
-      {!cargando && !practica && ranking.length > 0 && (
-        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                      padding: '14px 16px', marginTop: '14px' }}>
-          <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '4px' }}>Ranking · crecimiento semanal</div>
-          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '10px' }}>Al cierre del domingo. Ordenado de peor a mejor.</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 82px 78px 116px 92px', gap: '8px',
-                fontSize: '11px', color: GRIS, padding: '0 0 6px', borderBottom: '0.5px solid ' + BORDE }}>
-            <span>Piscina</span>
-            <span style={{ textAlign: 'right' }}>Crec. diario</span>
-            <span style={{ textAlign: 'right' }}>ISP semana</span>
-            <span style={{ textAlign: 'center' }}>ISP 2 sem.</span>
-            <span style={{ textAlign: 'right' }}>Estado</span>
-          </div>
-          {ranking.map(r => {
-            const col = r.wk < mRojo ? ROJO : r.wk < mVerde ? AMBAR : VERDE
-            const txt = r.wk < mRojo ? 'Muy lento' : r.wk < mVerde ? 'Va lento' : 'En meta'
-            const bg = r.wk < mRojo ? RBG : r.wk < mVerde ? ABG : '#E1F5EE'
-            const subio = r.ispPrev != null ? r.wk - r.ispPrev : null
-            return (
-              <div key={r.id} style={{ display: 'grid', gridTemplateColumns: '1fr 82px 78px 116px 92px', gap: '8px',
-                    alignItems: 'center', padding: '9px 0', fontSize: '13px', borderBottom: '0.5px solid #f2f6fa' }}>
-                <span>{r.nombre}<span style={{ color: GRIS, fontSize: '11px' }}> · {r.dias}d engorde</span></span>
-                <span style={{ textAlign: 'right', color: r.joven ? GRIS : undefined, fontVariantNumeric: 'tabular-nums' }}>
-                  {r.joven ? '—' : r.diario.toFixed(2)}</span>
-                <span style={{ textAlign: 'right', fontWeight: 600, color: r.joven ? GRIS : col, fontVariantNumeric: 'tabular-nums' }}>
-                  {r.joven ? '—' : r.wk.toFixed(1)}</span>
-                <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12px' }}>
-                  {r.joven || r.ispPrev == null ? '—' : (
-                    <>{r.ispPrev.toFixed(1)} → {r.wk.toFixed(1)}
-                      <span style={{ marginLeft: '4px', color: subio >= 0 ? VERDE : ROJO }}>{subio >= 0 ? '▲' : '▼'}</span></>
-                  )}</span>
-                <span style={{ textAlign: 'right' }}>
-                  {r.joven ? <span style={{ color: GRIS, fontSize: '11px' }}>joven</span>
-                    : <span style={{ fontSize: '11px', fontWeight: 600, padding: '3px 9px', borderRadius: '20px', background: bg, color: col }}>{txt}</span>}
-                </span>
-              </div>
-            )
-          })}
-          <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
-            ISP = incremento semanal de peso (g/sem, dom→dom). Crec. diario = ISP ÷ 7. ▲ mejoró vs la semana pasada · ▼ bajó. Jóvenes (&lt;{JOVEN_DIAS} días de engorde) no entran. Meta: rojo &lt;{mRojo} · ámbar {mRojo}–{mVerde} · verde ≥{mVerde}.
-          </div>
-        </div>
+      {/* Análisis · tendencia de crecimiento (gráfico de lo sucedido) */}
+      {!cargando && !practica && filas.length > 0 && (
+        <ChartTendencia filas={filas} serie={serie} hasta={fechas[6]} mVerde={mVerde} mRojo={mRojo} />
       )}
 
       {/* Reaperturas por autorizar (jefe) */}
@@ -571,6 +584,111 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
             </div>
           ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+// Análisis gráfico: cómo viene cada piscina en las últimas semanas. Dos vistas
+// (peso y crecimiento semanal ISP) y se puede ver todas o una sola piscina.
+function ChartTendencia({ filas, serie, hasta, mVerde, mRojo }) {
+  const [modo, setModo] = useState('peso')   // 'peso' | 'isp'
+  const [sel, setSel] = useState('todas')
+  const NW = 6
+  const COLORES = ['#0D6CB0', '#0F6E56', '#A32D2D', '#854F0B', '#6C4BB0', '#0E7C86', '#B0570D', '#3C7A1E']
+
+  const semanasX = []
+  for (let i = NW - 1; i >= 0; i--) {
+    const d = sumarDias(hasta, -7 * i)
+    const w = semanaISO(d)
+    semanasX.push({ key: w.anio + '-' + String(w.semana).padStart(2, '0'), label: corta(d).slice(0, 5) })
+  }
+  const keys = semanasX.map(x => x.key)
+
+  const series = filas.map((f, idx) => {
+    const byW = {}
+    ;(serie[f.cicloId] || []).forEach(m => {
+      if (m.fecha <= hasta) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m.peso }
+    })
+    const pesos = keys.map(k => (byW[k] != null ? byW[k] : null))
+    const isp = keys.map((k, i) => {
+      if (byW[k] == null) return null
+      let j = i - 1
+      while (j >= 0 && byW[keys[j]] == null) j--
+      if (j < 0) return null
+      return (byW[k] - byW[keys[j]]) / (7 * (i - j)) * 7
+    })
+    return { id: f.piscinaId, nombre: f.nombre, color: COLORES[idx % COLORES.length], pesos, isp, tiene: pesos.some(v => v != null) }
+  }).filter(x => x.tiene)
+
+  const activos = sel === 'todas' ? series : series.filter(x => x.id === sel)
+  const datos = s => (modo === 'peso' ? s.pesos : s.isp)
+  const vals = activos.flatMap(datos).filter(v => v != null)
+  const ymin = 0
+  let ymax = vals.length ? Math.max(...vals) : 10
+  if (modo === 'isp') ymax = Math.max(ymax, mVerde)
+  ymax = Math.max(2, Math.ceil((ymax + 0.5) / 2) * 2)
+
+  const W = 640, H = 250, PL = 42, PR = 14, PT = 12, PB = 42
+  const px = i => PL + (keys.length <= 1 ? 0 : i * (W - PL - PR) / (keys.length - 1))
+  const py = v => (H - PB) - (v - ymin) / (ymax - ymin) * (H - PT - PB)
+  const ticks = [0, 1, 2, 3, 4].map(t => ymin + (ymax - ymin) * t / 4)
+  const linea = s => datos(s).map((v, i) => (v == null ? null : px(i) + ',' + py(v))).filter(Boolean).join(' ')
+
+  const tab = (id, txt) => (
+    <span onClick={() => setModo(id)} style={{ fontSize: '12px', padding: '7px 14px', borderRadius: '8px', cursor: 'pointer',
+      border: '0.5px solid ' + (modo === id ? NAVY : BORDE), background: modo === id ? NAVY : '#fff', color: modo === id ? '#fff' : GRIS }}>{txt}</span>
+  )
+  const chip = (id, txt, color) => (
+    <span key={id} onClick={() => setSel(id)} style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer',
+      fontSize: '12px', padding: '3px 9px', borderRadius: '20px', fontWeight: sel === id ? 600 : 400,
+      background: sel === id ? '#eef3f7' : 'transparent' }}>
+      {color && <span style={{ width: '16px', height: '3px', borderRadius: '2px', background: color, display: 'inline-block' }} />}{txt}
+    </span>
+  )
+
+  return (
+    <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
+      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · tendencia de crecimiento</div>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Cómo viene cada piscina en las últimas semanas.</div>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+        {tab('peso', 'Peso (g)')}
+        {tab('isp', 'ISP · crecimiento semanal')}
+      </div>
+      {series.length === 0 ? (
+        <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Todavía no hay suficientes muestreos para el gráfico.</div>
+      ) : (
+        <>
+          <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ fontFamily: 'inherit' }}>
+            <line x1={PL} y1={PT} x2={PL} y2={H - PB} stroke={BORDE} />
+            <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} stroke={BORDE} />
+            {ticks.map((t, i) => (
+              <g key={i}>
+                <line x1={PL} y1={py(t)} x2={W - PR} y2={py(t)} stroke="#f0f4f8" />
+                <text x={PL - 6} y={py(t) + 3} textAnchor="end" fontSize="10" fill={GRIS}>{t.toFixed(t % 1 ? 1 : 0)}</text>
+              </g>
+            ))}
+            {modo === 'isp' && mVerde >= ymin && mVerde <= ymax && (
+              <line x1={PL} y1={py(mVerde)} x2={W - PR} y2={py(mVerde)} stroke={VERDE} strokeWidth="1" strokeDasharray="4 3" />
+            )}
+            {semanasX.map((x, i) => (
+              <text key={i} x={px(i)} y={H - PB + 16} textAnchor="middle" fontSize="10" fill={GRIS}>{x.label}</text>
+            ))}
+            {activos.map(sName => (
+              <g key={sName.id}>
+                <polyline points={linea(sName)} fill="none" stroke={sName.color} strokeWidth="2.5" />
+                {datos(sName).map((v, i) => v == null ? null : <circle key={i} cx={px(i)} cy={py(v)} r="2.5" fill={sName.color} />)}
+              </g>
+            ))}
+          </svg>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' }}>
+            {chip('todas', 'Todas', null)}
+            {series.map(sName => chip(sName.id, sName.nombre, sName.color))}
+          </div>
+          <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
+            {modo === 'peso' ? 'Peso promedio (g) semana a semana.' : 'Crecimiento semanal (ISP, g/sem). La línea punteada es la meta (' + mVerde + ').'} Toca una piscina para verla sola.
+          </div>
+        </>
       )}
     </div>
   )
@@ -630,22 +748,14 @@ function MetaBar({ meta, mVerde, mRojo, esJefe, open, setOpen, form, setForm, on
 }
 
 // Un bloque de día (Miércoles o Domingo): Peso ant. · Días · Peso · Crecimiento.
-function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, diasBloque, metaVerde, metaRojo }) {
+function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, diasBloque, divide }) {
   const f = fecha === hoy ? HOYB : undefined
-  if (fuera) return <><Td fondo={f} /><Td fondo={f} /><Td fondo={f}><Guion /></Td><Td fondo={f} /></>
+  if (fuera) return <><Td fondo={f} bordeIzq={divide} /><Td fondo={f} /><Td fondo={f}><Guion /></Td><Td fondo={f} /></>
   const baja = calc.inc !== undefined && calc.inc < 0
-  // El semáforo solo aplica al domingo (semana completa Dom→Dom), normalizado
-  // a g/semana. Las jóvenes (<30 días) no se evalúan.
-  const esDom = new Date(fecha + 'T12:00:00').getDay() === 0
-  const semSem = esDom && !joven && calc.crec != null ? calc.crec * 7 : null
-  const esSem = semSem != null
   const incColor = baja ? ROJO : GRIS, incPeso = baja ? 500 : 400
-  const estadoTxt = !esSem ? '' : semSem < metaRojo ? 'Muy lento' : semSem < metaVerde ? 'Va lento' : 'En meta'
-  const pillBg = !esSem ? null : semSem < metaRojo ? RBG : semSem < metaVerde ? ABG : '#E1F5EE'
-  const pillColor = !esSem ? null : semSem < metaRojo ? ROJO : semSem < metaVerde ? AMBAR : VERDE
   return (
     <>
-      <Td fondo={f}><span style={{ color: GRIS }}>{ant ? ant.peso + ' g' : <Guion />}</span></Td>
+      <Td fondo={f} bordeIzq={divide}><span style={{ color: GRIS }}>{ant ? ant.peso + ' g' : <Guion />}</span></Td>
       <Td fondo={f}><span style={{ color: GRIS }}>{diasBloque ?? ''}</span></Td>
       <Td fondo={f}>
         {puede ? (
@@ -659,12 +769,7 @@ function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, d
         )}
       </Td>
       <Td fondo={f}>
-        {calc.inc === undefined ? '' : esSem ? (
-          <span style={{ display: 'inline-block', fontSize: '11.5px', fontWeight: 600, padding: '2px 9px',
-                         borderRadius: '20px', background: pillBg, color: pillColor, whiteSpace: 'nowrap' }}>
-            {(calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)} · {estadoTxt}
-          </span>
-        ) : (
+        {calc.inc === undefined ? '' : (
           <span style={{ color: incColor, fontWeight: incPeso }}>{(calc.inc > 0 ? '+' : '') + calc.inc.toFixed(2)}</span>
         )}
       </Td>
@@ -684,22 +789,24 @@ function ChipG({ k, v, color }) {
 
 const Guion = () => <span style={{ color: '#c3d0db', fontSize: '12px' }}>—</span>
 
-function Th({ children, pegado, fondo }) {
+function Th({ children, pegado, fondo, bordeIzq }) {
   return (
     <div style={{
       padding: '10px 9px', fontSize: '11px', color: GRIS, fontWeight: 500, textAlign: 'center',
       background: fondo || '#fafcfd',
+      ...(bordeIzq ? { borderLeft: '2px solid #cfe0ef' } : {}),
       ...(pegado ? { position: 'sticky', left: 0, zIndex: 3, textAlign: 'left',
                      paddingLeft: '16px', borderRight: '0.5px solid ' + BORDE } : {}),
     }}>{children}</div>
   )
 }
 
-function Td({ children, pegado, fondo, alineado }) {
+function Td({ children, pegado, fondo, alineado, bordeIzq }) {
   return (
     <div style={{
       padding: '9px', textAlign: alineado || 'center', fontSize: '13px',
       fontVariantNumeric: 'tabular-nums', background: fondo || 'white',
+      ...(bordeIzq ? { borderLeft: '2px solid #cfe0ef' } : {}),
       ...(pegado ? { position: 'sticky', left: 0, zIndex: 2, paddingLeft: '16px',
                      borderRight: '0.5px solid ' + BORDE } : {}),
     }}>{children}</div>
