@@ -448,7 +448,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       const vg = vigente(preBal, p.id, f.id, pz)
                       if (vg) { tiene = true; const v = Number(vg.precio_saco); preciosF[pz] = String(v); if (!desdeF) desdeF = vg.vigente_desde; if (v !== preciosAct[pz]) distinta = true }
                     }
-                    if (!tiene) continue
+                    // Sin precio todavía: igual entra en "todas" y recibe el general.
+                    if (!tiene) { fincasGen.push(f.id); continue }
                     if (distinta) { excIni.push({ fincaId: f.id, precios: preciosF, desde: desdeF, plazoRige: plz[k(p.id, f.id)]?.plazo ?? 0 }); if (!desdeAct) desdeAct = desdeF }
                     else { fincasGen.push(f.id); if (!desdeAct) desdeAct = desdeF }
                   }
@@ -1804,9 +1805,9 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
     setEnviando(true)
     try {
       const ids = activas.map(f => f.id)
-      // Fincas a las que aplica el precio GENERAL (las que ya lo usaban).
-      // Producto nuevo sin datos -> todas. Las que están abajo (distintas) se
-      // excluyen del general. Las que hoy no tienen precio NO se tocan.
+      // Fincas a las que aplica el precio GENERAL: TODAS las activas, incluidas
+      // las que hoy no tienen precio. Las únicas que se excluyen del general
+      // son las que el usuario puso abajo como distintas.
       const excFincaIds = exc.map(e => e.fincaId).filter(Boolean)
       const baseGen = (a.fincasGen && a.fincasGen.length) ? a.fincasGen
         : ((a.exc && a.exc.length) ? [] : ids)
