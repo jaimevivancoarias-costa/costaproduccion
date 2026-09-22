@@ -59,7 +59,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
 
       const { data: ciclos, error } = await supabase
         .schema('produccion').from('ciclo')
-        .select('id, fecha_siembra, fecha_cierre, cantidad_larva, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
+        .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, cantidad_larva, piscina:piscina_origen_id (id, codigo, nombre, hectareas, tipo)')
         .eq('finca_id', finca.id)
         .lte('fecha_siembra', domingo)
         .or(`fecha_cierre.is.null,fecha_cierre.gte.${lunes}`)
@@ -70,7 +70,12 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
         .map(c => ({
           cicloId: c.id, piscinaId: c.piscina.id, codigo: c.piscina.codigo,
           nombre: c.piscina.nombre, hectareas: Number(c.piscina.hectareas),
-          fechaSiembra: c.fecha_siembra, fechaCierre: c.fecha_cierre,
+          fechaSiembra: c.fecha_siembra,
+          // Dias de engorde = desde que el camaron entra a ESTA piscina. Para
+          // uno transferido es el dia que llego; para siembra directa es la
+          // misma siembra. Nunca la edad total (que incluiria la precria).
+          fechaOcupacion: c.fecha_ocupacion || c.fecha_siembra,
+          fechaCierre: c.fecha_cierre,
           larva: c.cantidad_larva,
         }))
         .sort(ordenar)
@@ -174,7 +179,7 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
   const ranking = filas
     .filter(f => f.fechaSiembra)
     .map(f => {
-      const dCult = diasCultivo(f.fechaSiembra, corteDias)
+      const dCult = diasCultivo(f.fechaOcupacion || f.fechaSiembra, corteDias)
       let c = null
       for (let i = muestreos.length - 1; i >= 0; i--) {
         const cc = calculo(f, muestreos[i])
@@ -368,18 +373,18 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                   <Td pegado alineado="left">
                     <span style={{ fontWeight: 500, fontSize: '14px' }}>{fila.nombre}</span>
                     <div style={{ fontSize: '11px', color: GRIS }}>
-                      {fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) + ' días' : fila.hectareas.toFixed(2) + ' ha'}
+                      {fila.fechaSiembra ? diasCultivo(fila.fechaOcupacion || fila.fechaSiembra, corteDias) + ' días' : fila.hectareas.toFixed(2) + ' ha'}
                     </div>
                   </Td>
 
                   {muestreos.map(f => {
-                    const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < fila.fechaSiembra
+                    const fuera = (fila.fechaCierre && f > fila.fechaCierre) || f < (fila.fechaOcupacion || fila.fechaSiembra)
                     const c = calculo(fila, f)
                     const ant = anterior(fila, f)
                     const diasBloque = ant ? Math.round((new Date(f + 'T12:00:00') - new Date(ant.fecha + 'T12:00:00')) / 86400000) : null
                     const puede = (practica ? situacionDia(f, hoy) !== 'futuro' : editable(f)) && !fuera
                     const futuro = situacionDia(f, hoy) === 'futuro'
-                    const joven = fila.fechaSiembra ? diasCultivo(fila.fechaSiembra, corteDias) < JOVEN_DIAS : true
+                    const joven = fila.fechaSiembra ? diasCultivo(fila.fechaOcupacion || fila.fechaSiembra, corteDias) < JOVEN_DIAS : true
                     return (
                       <Celdas
                         key={f} fecha={f} hoy={hoy} joven={joven} ant={ant} diasBloque={diasBloque}
