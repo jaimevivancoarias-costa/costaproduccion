@@ -25,7 +25,8 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
   const [primeraVez, setPrimeraVez] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
-  const [conteo, setConteo] = useState(null)   // { fecha, valores:{tipo_id:gal} } cuando se está contando
+  const [conteo, setConteo] = useState(null)   // { fecha, valores:{tipo_id:gal}, inicialId? } al contar/editar
+  const [inicial, setInicial] = useState(null) // inventario inicial existente { id, fecha, valores }
   const [guardando, setGuardando] = useState(false)
 
   const cargar = useCallback(async () => {
@@ -41,6 +42,16 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
     setSaldos(sal || [])
     setMovs(mv || [])
     setPrimeraVez((count || 0) === 0)
+    // Inventario inicial existente (para poder editarlo).
+    const { data: iniC } = await supabase.schema('produccion').from('diesel_conteo')
+      .select('id, fecha').eq('finca_id', finca.id).eq('es_inicial', true)
+      .order('fecha', { ascending: true }).limit(1).maybeSingle()
+    if (iniC) {
+      const { data: lin } = await supabase.schema('produccion').from('diesel_conteo_linea')
+        .select('tipo_id, galones').eq('conteo_id', iniC.id)
+      const vals = {}; (lin || []).forEach(l => { vals[l.tipo_id] = String(Number(l.galones)) })
+      setInicial({ id: iniC.id, fecha: iniC.fecha, valores: vals })
+    } else setInicial(null)
     setCargando(false)
   }, [finca.id, desde, hasta])
 
@@ -48,6 +59,17 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
 
   async function guardarConteo() {
     setGuardando(true); setAviso(null)
+    // Editar el inventario inicial: actualiza fecha y reemplaza sus líneas.
+    if (conteo.inicialId) {
+      const { error: eF } = await supabase.schema('produccion').from('diesel_conteo')
+        .update({ fecha: conteo.fecha }).eq('id', conteo.inicialId)
+      if (eF) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo. ' + eF.message }); return }
+      await supabase.schema('produccion').from('diesel_conteo_linea').delete().eq('conteo_id', conteo.inicialId)
+      const lin = tiposArr.map(t => ({ conteo_id: conteo.inicialId, tipo_id: t.id, galones: numDec(conteo.valores[t.id] || '') || 0 }))
+      const { error: eL } = await supabase.schema('produccion').from('diesel_conteo_linea').insert(lin)
+      if (eL) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudieron guardar las líneas. ' + eL.message }); return }
+      setGuardando(false); setConteo(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial actualizado.' }); await cargar(); return
+    }
     const { data: cab, error: e1 } = await supabase.schema('produccion').from('diesel_conteo')
       .insert({ finca_id: finca.id, fecha: conteo.fecha, es_inicial: primeraVez }).select('id').single()
     if (e1) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e1.message }); return }
@@ -83,6 +105,13 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
             {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
           </button>
         )}
+        {!soloLectura && !conteo && inicial && (
+          <button onClick={() => setConteo({ fecha: inicial.fecha, valores: { ...inicial.valores }, inicialId: inicial.id })}
+            style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                     padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+            Editar inventario inicial
+          </button>
+        )}
       </div>
 
       {aviso && (
@@ -96,7 +125,7 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
           <Caja>
             <div style={{ padding: '14px 16px' }}>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
-                <span style={{ fontSize: '14px', fontWeight: 500 }}>{primeraVez ? 'Inventario inicial de diesel' : 'Contar la bodega'}</span>
+                <span style={{ fontSize: '14px', fontWeight: 500 }}>{conteo.inicialId ? 'Editar inventario inicial' : primeraVez ? 'Inventario inicial de diesel' : 'Contar la bodega'}</span>
                 <span style={{ fontSize: '12px', color: GRIS }}>Fecha</span>
                 <input type="date" value={conteo.fecha} max={hoyISO()}
                   onChange={e => setConteo(c => ({ ...c, fecha: e.target.value }))} style={inp} />
@@ -118,7 +147,7 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
                   style={{ background: AZUL, color: 'white', border: '0.5px solid ' + AZUL, borderRadius: '9px',
                            padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500,
                            cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                  {guardando ? 'Guardando...' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
+                  {guardando ? 'Guardando...' : conteo.inicialId ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
                 </button>
                 <button onClick={() => setConteo(null)}
                   style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px',
