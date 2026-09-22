@@ -209,9 +209,11 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
       if (i >= 0) S[i] = { fecha: fe, peso: val }; else S.push({ fecha: fe, peso: val })
     })
     S.sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    // Crecimiento semanal = domingo a domingo: se toma SOLO el peso del domingo
+    // de cada semana. Una semana sin domingo medido no entra.
     const byW = {}
-    S.forEach(m => { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m })
-    return Object.keys(byW).sort().map(k => byW[k])   // un muestreo por semana, asc
+    S.forEach(m => { if (new Date(m.fecha + 'T12:00:00').getDay() === 0) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m } })
+    return Object.keys(byW).sort().map(k => byW[k])   // un domingo por semana, asc
   }
   function ispEntre(a, b) {
     if (!a || !b) return null
@@ -612,7 +614,7 @@ function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
     const fila = filas.find(f => f.piscinaId === drill)
     const byW = {}
     ;(serie[fila?.cicloId] || []).forEach(m => {
-      if (m.fecha <= hasta) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m }
+      if (m.fecha <= hasta && new Date(m.fecha + 'T12:00:00').getDay() === 0) { const w = semanaISO(m.fecha); byW[w.anio + '-' + String(w.semana).padStart(2, '0')] = m }
     })
     const sem = Object.keys(byW).sort().map(kk => byW[kk]).slice(-9)
     const barras = []
@@ -627,8 +629,11 @@ function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '2px' }}>
           <span onClick={() => setDrill(null)} style={{ fontSize: '13px', color: AZUL, fontWeight: 600, cursor: 'pointer' }}>‹ Volver</span>
           <span style={{ fontSize: '15px', fontWeight: 600 }}>Así creció {fila?.nombre}</span>
+          <select value={drill} onChange={e => setDrill(e.target.value)} style={{ marginLeft: 'auto', padding: '7px 10px', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: '#fff', color: NAVY, fontFamily: 'inherit' }}>
+            {filas.map(f => <option key={f.piscinaId} value={f.piscinaId}>{f.nombre}</option>)}
+          </select>
         </div>
-        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Crecimiento (ISP) de cada semana. La línea punteada es la meta ({meta}).</div>
+        <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Crecimiento semanal domingo a domingo. La línea punteada es la meta ({meta}).</div>
         {barras.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Sin datos suficientes.</div> : (
           <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-end', gap: '14px', height: '190px', borderBottom: '0.5px solid ' + BORDE, paddingTop: '10px' }}>
             <div style={{ position: 'absolute', left: 0, right: 0, borderTop: '1.5px dashed ' + VERDE, top: (10 + (1 - meta / ymax) * 170) + 'px' }} />
@@ -659,9 +664,13 @@ function ChartBarras({ filas, serie, hasta, mVerde, mRojo, crec }) {
   return (
     <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '14px', padding: '16px 18px', marginTop: '14px' }}>
       <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '2px' }}>Análisis · crecimiento por piscina</div>
-      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Ordenado de peor a mejor. Doble clic en una piscina para ver su detalle semana a semana.</div>
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Ordenado de peor a mejor. Elige una piscina (o doble clic) para ver su crecimiento semana a semana (domingo a domingo).</div>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
         {tab('isp2', 'ISP 2 sem')}{tab('isp', 'ISP prom.')}{tab('diario', 'Crec. diario')}
+        <select value="" onChange={e => e.target.value && setDrill(e.target.value)} style={{ marginLeft: 'auto', padding: '7px 10px', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: '#fff', color: NAVY, fontFamily: 'inherit' }}>
+          <option value="">Ver una piscina semana a semana…</option>
+          {filas.map(f => <option key={f.piscinaId} value={f.piscinaId}>{f.nombre}</option>)}
+        </select>
       </div>
       {items.length === 0 ? <div style={{ fontSize: '13px', color: GRIS, padding: '20px 0' }}>Todavía no hay datos para comparar.</div> : (
         <div>
