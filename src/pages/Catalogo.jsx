@@ -394,7 +394,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   const stdU = o?.unidad || p.unidad
                   const excIni = []
                   ;(fincas || []).forEach(f => {
-                    if (f.id === f0 || String(f.nombre).toUpperCase() === 'PRUEBA') return
+                    if (f.id === f0) return
                     const of = over[k(p.id, f.id)]
                     let unidadExc = ''
                     if (of?.unidad && of.unidad !== stdU) {
@@ -428,8 +428,10 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                 })()}
 
                 {editConfig === p.id && tab === 'balanceados' && (() => {
-                  const activasList = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
-                  const f0 = activasList[0]?.id || (fincas || [])[0]?.id
+                  // PRUEBA habilitada: entra como una finca más (para ponerle precio
+                  // distinto). La finca representativa del general sigue siendo una real.
+                  const activasList = (fincas || [])
+                  const f0 = activasList.find(f => String(f.nombre).toUpperCase() !== 'PRUEBA')?.id || activasList[0]?.id
                   // General = precio MÁS COMÚN por plazo (entre fincas que tienen precio).
                   const preciosAct = {}
                   PLAZOS.forEach(pz => {
@@ -1165,7 +1167,7 @@ function PopCopia({ tipo, origen, valor, otras, copia, setCopia, onAplicar, yaTi
 
 function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar }) {
   const a = actual || {}
-  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+  const activas = (fincas || [])
   const [presentacion, setPresentacion] = useState(cap1(a.unidad_compra || insumo.unidad_compra) || 'Saco')
   const [presLista, setPresLista] = useState([...new Set((presentaciones || []).map(cap1))])
   const [contenido, setContenido] = useState(
@@ -1761,7 +1763,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
 // mínimo y objetivo. A todas las fincas de un golpe (con excepciones).
 function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancelar }) {
   const a = actual || {}
-  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+  const activas = (fincas || [])
   const [precios, setPrecios] = useState(() => {
     const p = {}; PLAZOS.forEach(pz => { const v = a.precios?.[pz]; if (v != null) p[pz] = String(Math.round(v * 10000) / 10000) }); return p
   })
