@@ -452,23 +452,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span></> : 'sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
-                      {esJefeGlobal && <button onClick={() => corregir(f)} style={{ ...btn, padding: '5px 11px', fontSize: '12px', color: GRIS }}>Corregir</button>}
+                      {esJefeGlobal && <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>}
                     </div>}
                   </Fila>
                   {ab && (
                     <div style={{ padding: '10px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
                       {esJefe && (lotes[f.producto_id] || []).length > 0 && (
                         <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
-                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Lotes en bodega · el más viejo se gasta primero</div>
-                          {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
-                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '7px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                              <span style={{ width: '22px', height: '22px', flex: '0 0 auto', borderRadius: '50%', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: '#eef2f6', color: GRIS }) }}>{i + 1}</span>
-                              <div>
-                                <div style={{ fontSize: '14px' }}>{limpio(L.cantidad)} sacos{L.fecha == null ? '' : (L.costo == null ? ' · sin precio' : <span style={{ color: GRIS }}> · comprados a {dineroExacto(L.costo)}</span>)}</div>
-                                <div style={{ fontSize: '12px', color: '#9aa6b2' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'del conteo físico'}{i === 0 ? ' · próximo a usarse' : ''}</div>
+                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
+                              <div key={i} style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
+                                <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} sacos</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
+                                <div style={{ fontSize: '11px', color: GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}</div>
                               </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       )}
                       {dg.length > 0 && (
