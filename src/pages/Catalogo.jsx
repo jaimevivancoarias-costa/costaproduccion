@@ -1814,6 +1814,25 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
       const baseGen = (a.fincasGen && a.fincasGen.length) ? a.fincasGen
         : ((a.exc && a.exc.length) ? [] : ids)
       const idsGen = baseGen.filter(id => !excFincaIds.includes(id))
+
+      // Tema 2: si el precio general se pone con una fecha PASADA y hay compras
+      // de este producto desde esa fecha, avisar (esas compras se recostean).
+      let desdeGen = desde
+      if (idsGen.length && desde < hoyISO()) {
+        const { data: comp } = await supabase.schema('produccion').from('ingreso_balanceado')
+          .select('id, ingreso_balanceado_linea!inner(producto_id)')
+          .in('finca_id', idsGen).gte('fecha', desde)
+          .eq('ingreso_balanceado_linea.producto_id', producto.id)
+        const n = (comp || []).length
+        if (n > 0) {
+          const ok = window.confirm(
+            `Hay ${n} compra(s) de ${producto.nombre} desde el ${desde}.\n\n` +
+            `Este precio también cambia el costo de esas compras.\n\n` +
+            `Aceptar = aplicar desde el ${desde} (afecta esas compras)\n` +
+            `Cancelar = aplicar solo desde hoy`)
+          if (!ok) desdeGen = hoyISO()
+        }
+      }
       const idsConf = [...new Set([...idsGen, ...excFincaIds])]
 
       const cerrarYAbrir = async (fincaIds, pz, rows, dfe) => {
@@ -1844,7 +1863,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         if (!idsGen.length) return
         const raw = numDec(precios[pz] || '')
         if (raw > 0) {
-          await cerrarYAbrir(idsGen, pz, idsGen.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desde })), desde)
+          await cerrarYAbrir(idsGen, pz, idsGen.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: pz, precio_saco: raw, vigente_desde: desdeGen })), desdeGen)
         } else {
           await borrarAbierto(idsGen, pz)
         }
@@ -1867,7 +1886,7 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
           .insert(fincaIds.map(fid => ({ producto_id: producto.id, finca_id: fid, plazo: plazoVal, vigente_desde: dfe })))
         if (error) throw error
       }
-      const pPlazo = cerrarAbrirPlazo(idsGen, rigeStd, desde)
+      const pPlazo = cerrarAbrirPlazo(idsGen, rigeStd, desdeGen)
 
       await Promise.all([pMin, pPrecios, pPlazo])
 
