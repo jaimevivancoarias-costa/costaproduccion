@@ -1404,14 +1404,32 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         if (error) throw error
       }
 
+      // Tema 2 (insumos): precio con fecha pasada + compras desde esa fecha -> preguntar.
+      let desdeGen = desde
+      if (ids.length && desde < hoyISO()) {
+        const { data: comp } = await supabase.schema('produccion').from('ingreso_insumo')
+          .select('id, ingreso_insumo_linea!inner(insumo_id)')
+          .in('finca_id', ids).gte('fecha', desde)
+          .eq('ingreso_insumo_linea.insumo_id', insumo.id)
+        const n = (comp || []).length
+        if (n > 0) {
+          const ok = window.confirm(
+            `Hay ${n} compra(s) de ${insumo.nombre} desde el ${desde}.\n\n` +
+            `Este precio también cambia el costo de esas compras.\n\n` +
+            `Aceptar = aplicar desde el ${desde} (afecta esas compras)\n` +
+            `Cancelar = aplicar solo desde hoy`)
+          if (!ok) desdeGen = hoyISO()
+        }
+      }
+
       // 2) Precios estándar por plazo. Si el plazo tiene precio, se abre;
       //    si quedó vacío/0, se BORRA el precio vigente de ese plazo.
       for (const pz of PLAZOS) {
         const raw = numDec(precios[pz] || '')
         if (raw > 0) {
           const rows = ids.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz,
-            precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desde }))
-          await cerrarYAbrir(ids, pz, rows, desde)
+            precio_unitario: precioPor === 'presentacion' ? raw / facMap[fid] : raw, vigente_desde: desdeGen }))
+          await cerrarYAbrir(ids, pz, rows, desdeGen)
         } else {
           const { error: eDel } = await supabase.schema('produccion').from('precio_insumo').delete()
             .eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', ids).is('vigente_hasta', null)
@@ -1447,11 +1465,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         const stdIds = ids.filter(fid => !(fid in plazoRigeFinca))
         if (stdIds.length) {
           await supabase.schema('produccion').from('plazo_insumo').delete()
-            .eq('insumo_id', insumo.id).in('finca_id', stdIds).gte('vigente_desde', desde)
-          await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desde, -1) })
-            .eq('insumo_id', insumo.id).in('finca_id', stdIds).lt('vigente_desde', desde).or('vigente_hasta.is.null,vigente_hasta.gte.' + desde)
+            .eq('insumo_id', insumo.id).in('finca_id', stdIds).gte('vigente_desde', desdeGen)
+          await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(desdeGen, -1) })
+            .eq('insumo_id', insumo.id).in('finca_id', stdIds).lt('vigente_desde', desdeGen).or('vigente_hasta.is.null,vigente_hasta.gte.' + desdeGen)
           const { error: e4 } = await supabase.schema('produccion').from('plazo_insumo')
-            .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: rigeStd, vigente_desde: desde })))
+            .insert(stdIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: rigeStd, vigente_desde: desdeGen })))
           if (e4) throw e4
         }
       }
