@@ -98,7 +98,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta })
       .then(({ data, error }) => {
         if (!vivo || error) { if (!error) return; setPorPrecio({}); return }
-        const m = {}; (data || []).forEach(r => { (m[r.producto_id] = m[r.producto_id] || []).push({ precio: Number(r.precio_saco), sacos: Number(r.sacos), costo: Number(r.costo) }) })
+        const m = {}; (data || []).forEach(r => { (m[r.producto_id] = m[r.producto_id] || []).push({ precio: Number(r.precio_saco), sacos: Number(r.sacos), costo: Number(r.costo), desde: r.desde, hasta: r.hasta }) })
         setPorPrecio(m)
       })
       .catch(() => { if (vivo) setPorPrecio({}) })
@@ -477,8 +477,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               <div style={{ padding: '0 16px 10px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '11px', color: GRIS, alignSelf: 'center' }}>Por precio:</span>
                 {porPrecio[g.clave].map((x, i) => (
-                  <span key={i} style={{ fontSize: '11px', background: '#f2f6fa', border: '0.5px solid ' + BORDE, borderRadius: '20px', padding: '3px 10px', color: GRIS }}>
+                  <span key={i} style={{ fontSize: '11px', background: '#f2f6fa', border: '0.5px solid ' + BORDE, borderRadius: '20px', padding: '4px 11px', color: GRIS, lineHeight: 1.3 }}>
                     <b style={{ color: NAVY, fontWeight: 600 }}>{miles(x.sacos)} sacos</b> a {dinero(x.precio)}
+                    {x.desde && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1' }}>{corta(x.desde)}{x.hasta && x.hasta !== x.desde ? ' – ' + corta(x.hasta) : ''}</span>}
                   </span>
                 ))}
               </div>
