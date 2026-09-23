@@ -824,7 +824,7 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
             {!esTodas && (
               <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
                              color: Number(v.precio) ? NAVY : AMBAR }}>
-                {Number(v.precio) ? dinero(v.precio) : 'sin precio'}
+                {Number(v.precio) ? <>{dinero(v.precio)}{valTipo === 'balanceado' && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span>}</> : 'sin precio'}
               </span>
             )}
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
