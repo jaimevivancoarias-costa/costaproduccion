@@ -62,6 +62,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // Si se entra desde la barra de presupuesto, arranca en insumos.
   const [tipo, setTipo] = useState(enfoqueInsumos ? 'insumo' : 'todo')
   const [agrupar, setAgrupar] = useState('item') // 'item' | 'piscina' | 'finca'
+  const [porPrecio, setPorPrecio] = useState({})  // producto_id -> [{precio, sacos, costo}] (desglose por precio)
   const [cicloSel, setCicloSel] = useState('')
 
   const cargar = useCallback(async () => {
@@ -88,6 +89,21 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   }, [finca.id, desde, hasta, todasFincas])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Desglose del consumo de balanceado por precio (cuánto se gastó a cada
+  // precio). Va aparte y no rompe si la función aún no está en la base.
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').rpc('fn_reporte_consumo_por_precio',
+      { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta })
+      .then(({ data, error }) => {
+        if (!vivo || error) { if (!error) return; setPorPrecio({}); return }
+        const m = {}; (data || []).forEach(r => { (m[r.producto_id] = m[r.producto_id] || []).push({ precio: Number(r.precio_saco), sacos: Number(r.sacos), costo: Number(r.costo) }) })
+        setPorPrecio(m)
+      })
+      .catch(() => { if (vivo) setPorPrecio({}) })
+    return () => { vivo = false }
+  }, [finca.id, desde, hasta, todasFincas])
 
   // Diesel del rango (finca individual). En modo Todas se omite.
   useEffect(() => {
@@ -422,9 +438,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           </div>
 
           {grupos.map(g => (
-            <div key={g.clave} style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
-                    padding: '10px 16px', alignItems: 'center', fontSize: '13px',
-                    borderBottom: '0.5px solid #f1f6f9' }}>
+            <div key={g.clave} style={{ borderBottom: '0.5px solid #f1f6f9' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
+                    padding: '10px 16px', alignItems: 'center', fontSize: '13px' }}>
               <span>
                 {g.etiqueta}
                 {agrupar === 'item' && (
@@ -440,6 +456,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               {esJefe && (
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
                   {dinero(g.costo)}
+                  {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>{dinero(g.costo / g.cantidad)} /{UNIDAD[g.unidad] || g.unidad || ''}</span> : null}
                 </span>
               )}
               {esJefe && (
@@ -455,6 +472,17 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                   {g.hectareas ? dinero(g.costo / g.hectareas) : '—'}
                 </span>
               )}
+            </div>
+            {esJefe && agrupar === 'item' && (porPrecio[g.clave]?.length > 1) && (
+              <div style={{ padding: '0 16px 10px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '11px', color: GRIS, alignSelf: 'center' }}>Por precio:</span>
+                {porPrecio[g.clave].map((x, i) => (
+                  <span key={i} style={{ fontSize: '11px', background: '#f2f6fa', border: '0.5px solid ' + BORDE, borderRadius: '20px', padding: '3px 10px', color: GRIS }}>
+                    <b style={{ color: NAVY, fontWeight: 600 }}>{miles(x.sacos)} sacos</b> a {dinero(x.precio)}
+                  </span>
+                ))}
+              </div>
+            )}
             </div>
           ))}
 
