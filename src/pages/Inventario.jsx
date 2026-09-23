@@ -58,6 +58,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [precios, setPrecios] = useState({})
   const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
+  const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
@@ -250,6 +251,21 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     return saldoApp < m.min ? { saldoApp, ...m } : null
   }
   const porReponer = filas.map(f => ({ f, a: bajoMin(f) })).filter(x => x.a)
+
+  // Cargar inventario inicial de UN insumo (nuevo o sin inventario). Usa el
+  // mismo ajuste que "Corregir": seguro y por insumo.
+  async function guardarInicial() {
+    if (!iniForm) return
+    const cant = Number(String(iniForm.cantidad).replace(',', '.'))
+    if (!isFinite(cant) || cant <= 0) { setAviso({ tipo: 'error', texto: 'Escribe una cantidad válida.' }); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iniForm.fecha)) { setAviso({ tipo: 'error', texto: 'Fecha inválida.' }); return }
+    const sActual = Number(saldos.find(x => x.insumo_id === iniForm.insumoId)?.saldo || 0)
+    const delta = cant - sActual
+    const { error } = await supabase.schema('produccion').from('ajuste_insumo')
+      .insert({ finca_id: finca.id, fecha: iniForm.fecha, insumo_id: iniForm.insumoId, cantidad: delta, motivo: 'Inventario inicial' })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado.' }); await cargar()
+  }
 
   function abrirCorregir(f) {
     setEditando(f.insumo_id)
@@ -862,6 +878,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const dg = desglose[f.insumo_id] || []
               const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
               const ab = abierto === f.insumo_id
+              const sinInv = Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.insumo_id] || []).length)
               return (
               <div key={f.insumo_id}>
                 <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}>
@@ -873,6 +890,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <span style={{ color: GRIS, marginRight: '5px' }}>{ab ? '▾' : '▸'}</span>{f.insumo}
                       </button>
                     ) : f.insumo}
+                    {sinInv && <span style={{ fontSize: '12px', color: '#BA7517' }}> · Sin inventario</span>}
                   </Celda>
                   <Celda gris>
                     {(() => {
@@ -919,14 +937,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
                                   textAlign: 'right' }}>
-                      {esJefeGlobal && !edit && (
-                        <button onClick={() => abrirCorregir(f)} style={{
-                          background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
-                          padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
-                          color: GRIS, cursor: 'pointer' }}>
-                          Corregir
-                        </button>
-                      )}
+                      {esJefeGlobal && !edit && (sinInv
+                        ? <button onClick={() => setIniForm({ insumoId: f.insumo_id, cantidad: '', fecha: hoyISO() })} style={{
+                            background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px',
+                            padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>Cargar inicial</button>
+                        : <button onClick={() => abrirCorregir(f)} style={{
+                            background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                            fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>)}
                     </div>
                   )}
                 </Fila>
@@ -958,20 +975,28 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>
                 )}
 
+                {iniForm?.insumoId === f.insumo_id && (
+                  <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad ({cap1(UNIDAD[f.unidad] || f.unidad)})</div><input inputMode="decimal" autoFocus value={iniForm.cantidad} onChange={e => setIniForm(x => ({ ...x, cantidad: e.target.value }))} style={{ ...entrada, width: '110px', textAlign: 'right' }} /></div>
+                    <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Fecha</div><input type="date" value={iniForm.fecha} max={hoyISO()} onChange={e => setIniForm(x => ({ ...x, fecha: e.target.value }))} style={{ ...entrada, width: '150px' }} /></div>
+                    <Btn primario onClick={guardarInicial}>Guardar inicial</Btn>
+                    <Btn onClick={() => setIniForm(null)}>Cancelar</Btn>
+                  </div>
+                )}
+
                 {ab && !edit && (
                   <div style={{ padding: '10px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
                     {esJefe && (lotes[f.insumo_id] || []).length > 0 && (
                       <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
-                        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Lotes en bodega · el más viejo se gasta primero</div>
-                        {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '7px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                            <span style={{ width: '22px', height: '22px', flex: '0 0 auto', borderRadius: '50%', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', ...(i === 0 ? { background: '#E1F5EE', color: '#0F6E56' } : { background: '#eef2f6', color: GRIS }) }}>{i + 1}</span>
-                            <div>
-                              <div style={{ fontSize: '14px' }}>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}{L.fecha == null ? '' : (L.costo == null ? ' · sin precio' : <span style={{ color: GRIS }}> · comprados a {dineroExacto(L.costo)}</span>)}</div>
-                              <div style={{ fontSize: '12px', color: '#9aa6b2' }}>{L.fecha ? 'compra ' + L.fecha.slice(8, 10) + '/' + L.fecha.slice(5, 7) : 'del conteo físico'}{i === 0 ? ' · próximo a usarse' : ''}</div>
+                        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
+                            <div key={i} style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
+                              <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
+                              <div style={{ fontSize: '11px', color: GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}</div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     )}
                     {dg.length > 0 && (
