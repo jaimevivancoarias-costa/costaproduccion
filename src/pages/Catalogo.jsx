@@ -124,7 +124,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     }
     const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
       supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor, densidad').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('producto').select('id, nombre, marca, proveedor').eq('activo', true).order('nombre'),
+      supabase.schema('produccion').from('producto').select('id, nombre, nombre_corto, marca, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo, stock_objetivo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       allVigente('precio_insumo', 'id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta'),
       allVigente('precio_producto', 'id, producto_id, finca_id, precio_saco, plazo, vigente_desde, vigente_hasta'),
@@ -648,13 +648,13 @@ async function editarInsumo(actual, { nombre, proveedor }, setAviso) {
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Insumo actualizado.' }); return true
 }
-async function crearProducto({ nombre, marca, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('producto').insert({ nombre: nombre.trim(), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null })
+async function crearProducto({ nombre, nombreCorto, marca, proveedor }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('producto').insert({ nombre: nombre.trim(), nombre_corto: ((nombreCorto || '').trim() || nombre.trim()), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null })
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un balanceado con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Balanceado agregado.' }); return true
 }
-async function editarProducto(actual, { nombre, marca, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('producto').update({ nombre: nombre.trim(), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
+async function editarProducto(actual, { nombre, nombreCorto, marca, proveedor }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('producto').update({ nombre: nombre.trim(), nombre_corto: ((nombreCorto || '').trim() || nombre.trim()), marca: (marca || '').trim() || null, proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
   if (error) { setAviso({ tipo: 'error', texto: error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Balanceado actualizado.' }); return true
 }
@@ -2083,15 +2083,17 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
 
 function FormaProducto({ actual, onGuardar, onCancelar }) {
   const [nombre, setNombre] = useState(actual?.nombre || '')
+  const [nombreCorto, setNombreCorto] = useState(actual?.nombre_corto || '')
   const [marca, setMarca] = useState(actual?.marca || '')
   const [proveedor, setProveedor] = useState(actual?.proveedor || '')
   const [enviando, setEnviando] = useState(false)
   return (
     <div style={{ background: '#f7fafc', borderRadius: '10px', padding: '14px', marginTop: '10px', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
       <Campo label="Nombre del balanceado"><input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} placeholder="Ej. Nicovita 35" style={{ ...inp, width: '220px' }} /></Campo>
+      <Campo label="Nombre corto (opcional)"><input value={nombreCorto} onChange={e => setNombreCorto(e.target.value)} placeholder="Ej. Nico 35" style={{ ...inp, width: '140px' }} /></Campo>
       <Campo label="Marca (opcional)"><input value={marca} onChange={e => setMarca(e.target.value)} placeholder="Ej. Nicovita" style={{ ...inp, width: '150px' }} /></Campo>
       <Campo label="Proveedor (opcional)"><input value={proveedor} onChange={e => setProveedor(e.target.value)} placeholder="Ej. Vitapro" style={{ ...inp, width: '150px' }} /></Campo>
-      <button disabled={!nombre.trim() || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, marca, proveedor }); setEnviando(false) }}
+      <button disabled={!nombre.trim() || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, nombreCorto, marca, proveedor }); setEnviando(false) }}
         style={{ ...btnPri, opacity: (!nombre.trim() || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
       <button onClick={onCancelar} style={btn}>Cancelar</button>
     </div>
