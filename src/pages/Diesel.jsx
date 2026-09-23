@@ -20,7 +20,6 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
   const domingo = sumarDias(lunes, 6)
   const [tipos, setTipos] = useState([])
   const [saldos, setSaldos] = useState({})
-  const [saldosIni, setSaldosIni] = useState({})   // saldo al inicio de la semana (corte)
   const [pedidos, setPedidos] = useState([])
   const [consumos, setConsumos] = useState([])
   const [solis, setSolis] = useState([])        // correcciones pendientes de esta finca (diesel)
@@ -33,14 +32,12 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: sal0 }, { data: pe }, { data: co }, { data: sc }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: pe }, { data: co }, { data: sc }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
       // "Saldo actual" = hoy (o el fin de la semana vista si es futura), no
       // el domingo de una semana pasada.
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: (domingo < hoyISO() ? domingo : hoyISO()) }),
-      // Saldo al INICIO de la semana = lo que había el día antes del lunes.
-      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: sumarDias(lunes, -1) }),
       supabase.schema('produccion').from('diesel_pedido')
         .select('id, tipo_id, galones, fecha, estado').eq('finca_id', finca.id)
         .gte('fecha', lunes).lte('fecha', domingo).order('solicitado_en', { ascending: false }),
@@ -54,7 +51,6 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     setUserId(u?.user?.id || null)
     setTipos(tp || [])
     const s = {}; (sal || []).forEach(r => { s[r.tipo_id] = r }); setSaldos(s)
-    const s0 = {}; (sal0 || []).forEach(r => { s0[r.tipo_id] = r }); setSaldosIni(s0)
     setPedidos(pe || [])
     setConsumos(co || [])
     setSolis(sc || [])
@@ -201,7 +197,10 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
               const ped = galSemana(pedidos, t.id)
               const con = galSemana(consumos, t.id)
               const saldo = Number(saldos[t.id]?.saldo || 0)
-              const ini = Number(saldosIni[t.id]?.saldo || 0)
+              // Saldo al inicio = saldo del fin de la semana menos lo que entró y más
+              // lo que salió. Así incluye un inventario inicial que caiga dentro de
+              // la semana y la fila SIEMPRE cuadra (inicio + pedidos − consumo = saldo).
+              const ini = saldo - ped + con
               return (
                 <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr', gap: '10px',
                         padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9', alignItems: 'center', fontSize: '14px' }}>
