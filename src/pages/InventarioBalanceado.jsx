@@ -59,6 +59,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
+  const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -226,6 +227,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const { error } = await supabase.schema('produccion').from('toma_balanceado').delete().eq('id', t.id)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Conteo borrado.' }); await cargar()
+  }
+
+  // Cargar inventario inicial de UN producto (nuevo o sin inventario). Usa el
+  // mismo mecanismo de ajuste que "corregir": es seguro y por producto.
+  async function guardarInicial() {
+    if (!iniForm) return
+    const cant = Number(String(iniForm.cantidad).replace(',', '.'))
+    if (!isFinite(cant) || cant <= 0) { setAviso({ tipo: 'error', texto: 'Escribe una cantidad válida.' }); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(iniForm.fecha)) { setAviso({ tipo: 'error', texto: 'Fecha inválida.' }); return }
+    const sActual = Number(saldos.find(x => x.producto_id === iniForm.productoId)?.saldo || 0)
+    const delta = cant - sActual
+    const { error } = await supabase.schema('produccion').from('ajuste_balanceado')
+      .insert({ finca_id: finca.id, fecha: iniForm.fecha, producto_id: iniForm.productoId, cantidad: delta, motivo: 'Inventario inicial' })
+    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado.' }); await cargar()
   }
 
   async function corregir(f) {
@@ -438,6 +454,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   const dg = desglose[f.producto_id] || []
                   const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
                   const ab = abierto === f.producto_id
+                  const sinInv = Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
                   return (
                   <div key={f.producto_id}>
                   <Fila gtc={esJefe ? G_SALDO_J : G_SALDO_B}>
@@ -448,13 +465,23 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         </button>
                       ) : f.producto}
                     </Cel>
-                    <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></Cel>
+                    <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
                     {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span></> : 'sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
-                      {esJefeGlobal && <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>}
+                      {esJefeGlobal && (sinInv
+                        ? <button onClick={() => setIniForm({ productoId: f.producto_id, cantidad: '', fecha: hoyISO() })} style={{ background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px', padding: '5px 11px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Cargar inicial</button>
+                        : <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>)}
                     </div>}
                   </Fila>
+                  {iniForm?.productoId === f.producto_id && (
+                    <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad (sacos)</div><input inputMode="decimal" autoFocus value={iniForm.cantidad} onChange={e => setIniForm(x => ({ ...x, cantidad: e.target.value }))} style={{ padding: '8px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', width: '100px', textAlign: 'right' }} /></div>
+                      <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Fecha</div><input type="date" value={iniForm.fecha} max={hoyISO()} onChange={e => setIniForm(x => ({ ...x, fecha: e.target.value }))} style={{ padding: '8px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px' }} /></div>
+                      <button onClick={guardarInicial} style={{ ...btn, background: AZUL, color: '#fff', borderColor: AZUL }}>Guardar inicial</button>
+                      <button onClick={() => setIniForm(null)} style={btn}>Cancelar</button>
+                    </div>
+                  )}
                   {ab && (
                     <div style={{ padding: '10px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
                       {esJefe && (lotes[f.producto_id] || []).length > 0 && (
