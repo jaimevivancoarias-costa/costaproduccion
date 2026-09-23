@@ -130,9 +130,17 @@ export async function eliminarEvento({ evento, cicloId }) {
   }
 
   if (tipo === 'cosecha') {
-    // Reabrir el ciclo: vuelve a estar vivo y la piscina ocupada.
-    await supabase.schema('produccion').from('ciclo')
+    // Reabrir el ciclo: vuelve a estar vivo y la piscina ocupada. Si la
+    // piscina ya tiene un cultivo nuevo (siembra o transferencia posterior),
+    // la base no deja dos ciclos abiertos: se avisa y NO se borra el evento,
+    // para no dejar el ciclo cerrado sin cosecha (estado fantasma).
+    const { error: eReabrir } = await supabase.schema('produccion').from('ciclo')
       .update({ estado: 'abierto', fecha_cierre: null, libras_cosechadas: null }).eq('id', cicloId)
+    if (eReabrir) {
+      if (/ciclo_uno_abierto_por_piscina/.test(eReabrir.message))
+        throw new Error('No se puede deshacer esta cosecha: la piscina ya tiene un cultivo nuevo (una siembra o transferencia posterior). Deshaz primero ese cultivo nuevo.')
+      throw new Error(eReabrir.message)
+    }
     await supabase.schema('produccion').from('ciclo_piscina')
       .update({ fecha_hasta: null }).eq('ciclo_id', cicloId).eq('fecha_hasta', fecha)
     await supabase.schema('produccion').from('evento').delete().eq('id', id)
@@ -164,9 +172,15 @@ export async function eliminarEvento({ evento, cicloId }) {
     await supabase.schema('produccion').from('ciclo').delete().in('id', idsHijos)
   }
 
-  // Reabrir el ciclo padre y devolverle la ocupacion del origen.
-  await supabase.schema('produccion').from('ciclo')
+  // Reabrir el ciclo padre y devolverle la ocupacion del origen. Si el
+  // origen ya tiene un cultivo nuevo, la base no deja dos abiertos: se avisa.
+  const { error: eReabrir } = await supabase.schema('produccion').from('ciclo')
     .update({ estado: 'abierto', fecha_cierre: null }).eq('id', cicloId)
+  if (eReabrir) {
+    if (/ciclo_uno_abierto_por_piscina/.test(eReabrir.message))
+      throw new Error('No se puede deshacer esta transferencia: la piscina de origen ya tiene un cultivo nuevo. Deshaz primero ese.')
+    throw new Error(eReabrir.message)
+  }
   await supabase.schema('produccion').from('ciclo_piscina')
     .update({ fecha_hasta: null }).eq('ciclo_id', cicloId).eq('fecha_hasta', fecha)
   await supabase.schema('produccion').from('evento_destino').delete().eq('evento_id', id)
