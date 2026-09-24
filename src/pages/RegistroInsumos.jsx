@@ -334,7 +334,15 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                    ciclo_id: p.cicloId, cantidad: cant }
     const { data, error } = await supabase.schema('produccion').from('consumo_insumo')
       .insert(fila).select('id').single()
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    if (error) {
+      // Ya existe un consumo de ese insumo en esa piscina/fecha (guardado antes,
+      // no cargado en pantalla): se avisa claro y se recarga para poder editarlo.
+      if (/duplicate|unique/i.test(error.message)) {
+        setAviso({ tipo: 'error', texto: 'Ya hay un consumo de ese insumo en esa piscina y día (estaba guardado pero no se veía). Recargué la pantalla: edita la cantidad existente en vez de agregarlo de nuevo.' })
+        setAbierta(null); await cargar(); return
+      }
+      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return
+    }
     setLineas(m => ({ ...m, [k]: [...(m[k] || []), { id: data.id, insumoId, cantidad: cant }] }))
     // Descuenta del saldo en vivo (en unidad de compra), para el próximo chequeo.
     setSaldoIns(s => ({ ...s, [insumoId]: (s[insumoId] || 0) - cant / (factorIns[insumoId] || 1) }))
