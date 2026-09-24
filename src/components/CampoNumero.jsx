@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 
 // Campo numérico con formato automático (estilo Ecuador).
 // - Los MILES se ponen solos con punto: escribes "1650" y se ve "1.650".
-// - Un separador cuenta como DECIMAL solo si le siguen 1–2 cifras (o es coma);
-//   si le siguen 3, son miles. Así "1.5" y "1,5" = 1,5, pero "1.111" = 1111.
+// - La COMA es el decimal; el PUNTO son miles. Así al borrar no se confunde.
+//   "1.111" = 1111 · "1,5" = 1,5 · maxDec configurable (precios con 5–6).
 // - value / onChange usan un texto NORMALIZADO ("1650.5"): decimal con punto y
 //   sin miles, así numDec()/Number() lo parsean sin ambigüedad.
 
@@ -18,26 +18,20 @@ export function aTexto(norm) {
   return (neg ? '-' : '') + entFmt + (dec != null ? ',' + dec : '')
 }
 
-// Lo que el usuario escribe -> normalizado ("1650.5").
+// Lo que el usuario escribe -> normalizado ("1650.5"). La COMA es el decimal;
+// el PUNTO son miles (se quitan). Un punto al final se toma como decimal en
+// progreso (se vuelve coma), para poder escribir "1." y seguir con decimales.
 export function aNormal(texto, maxDec = 2) {
-  let s = String(texto).replace(/[^\d.,-]/g, '')
+  let s = String(texto).replace(/\.$/, ',').replace(/[^\d.,-]/g, '')
   const neg = s.startsWith('-')
   s = s.replace(/-/g, '')
-  const lastSep = Math.max(s.lastIndexOf(','), s.lastIndexOf('.'))
+  const ci = s.indexOf(',')
   let ent, dec = null
-  if (lastSep >= 0) {
-    const sepChar = s[lastSep]
-    const after = s.slice(lastSep + 1).replace(/[.,]/g, '')
-    // Es decimal si es coma, o si al punto le siguen pocas cifras (no miles).
-    const esDecimal = sepChar === ',' || after.length <= maxDec
-    if (esDecimal) {
-      ent = s.slice(0, lastSep).replace(/[.,]/g, '')
-      dec = after.slice(0, maxDec)
-    } else {
-      ent = s.replace(/[.,]/g, '')
-    }
+  if (ci >= 0) {
+    ent = s.slice(0, ci).replace(/\./g, '')
+    dec = s.slice(ci + 1).replace(/[.,]/g, '').slice(0, maxDec)
   } else {
-    ent = s.replace(/[.,]/g, '')
+    ent = s.replace(/\./g, '')
   }
   ent = ent.replace(/^0+(?=\d)/, '')
   if (!ent && dec == null) return neg ? '-' : ''
