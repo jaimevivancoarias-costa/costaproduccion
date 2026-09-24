@@ -168,8 +168,13 @@ export async function eliminarEvento({ evento, cicloId }) {
     if ((cAlim || 0) > 0 || (cIns || 0) > 0) {
       throw new Error('Alguna piscina destino ya tiene consumo registrado. Borra primero ese consumo.')
     }
+    // Los muestreos de gramaje no borran en cascada: hay que quitarlos antes
+    // o la base rechaza el borrado del ciclo hijo (y quedaría un cultivo
+    // huérfano en la piscina destino, como pasó en Marexport).
+    await supabase.schema('produccion').from('muestreo').delete().in('ciclo_id', idsHijos)
     await supabase.schema('produccion').from('ciclo_piscina').delete().in('ciclo_id', idsHijos)
-    await supabase.schema('produccion').from('ciclo').delete().in('id', idsHijos)
+    const { error: eHijos } = await supabase.schema('produccion').from('ciclo').delete().in('id', idsHijos)
+    if (eHijos) throw new Error('No se pudo borrar el cultivo destino: ' + eHijos.message)
   }
 
   // Reabrir el ciclo padre y devolverle la ocupacion del origen. Si el
