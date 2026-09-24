@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento, mensajeError } from './DialogoEvento'
+import CampoNumero from '../components/CampoNumero'
 import BuscadorAplicacion from './BuscadorAplicacion'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
@@ -1487,12 +1488,12 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       {selBal(c?.productoId, onProducto)}
-      <input
-        inputMode="numeric" placeholder="0"
+      <CampoNumero
+        maxDec={0} placeholder="0"
         value={c?.libras || ''}
         ref={inputRef}
         onKeyDown={onKeyDown}
-        onChange={e => onLibras(e.target.value)}
+        onChange={v => onLibras(v)}
         style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', width: '100%',
                  textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
                  fontVariantNumeric: 'tabular-nums' }}
