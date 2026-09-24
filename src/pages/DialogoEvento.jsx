@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, num, miles } from '../lib/fechas'
+import { hoyISO, num, numDec, miles } from '../lib/fechas'
 
 // Los cuatro eventos, en un dialogo que se abre desde la fila de la
 // piscina en el registro diario. No es una pantalla aparte: en el Excel
@@ -250,7 +250,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
   // Gramaje obligatorio: al sembrar una precría (PLs/gramos) y en toda
   // transferencia (gramaje de transferencia).
-  const gramajeOk = num(gramaje) > 0
+  const gramajeOk = numDec(gramaje) > 0
   const listo = fecha && (
     tipo === 'transferencia'
       ? ((esPrecria ? cantOk : pctOk) && gramajeOk)
@@ -286,7 +286,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                              porcentaje: totalCant > 0 ? (num(d.cantidad) / totalCant) * 100 : 0 }))
       : destinos.map(d => ({ piscinaId: d.piscinaId, porcentaje: Number(d.porcentaje) || 0 }))
     await onGuardar({
-      fecha, laboratorioId: lab || null, larva: num(larva), gramaje: num(gramaje),
+      fecha, laboratorioId: lab || null, larva: num(larva), gramaje: numDec(gramaje),
       libras: num(libras), destinos: dest, observacion: obs,
     })
     setEnviando(false)
