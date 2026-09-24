@@ -4,6 +4,7 @@ import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, semanaISO, situacionDia, numDec, miles, dinero,
 } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 import BuscadorAplicacion from './BuscadorAplicacion'
 
 // Registro diario de insumos · modulo Produccion
@@ -496,8 +497,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                           </div>
                           {edit ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                              <input inputMode="decimal" value={l.cantidad}
-                                onChange={e => cambiarCantidad(k, l.id, e.target.value)}
+                              <CampoNumero value={l.cantidad}
+                                onChange={v => cambiarCantidad(k, l.id, v)}
                                 style={{ width: '56px', fontFamily: 'inherit', fontSize: '12px',
                                          padding: '4px 6px', textAlign: 'right', border: '0.5px solid ' + BORDE,
                                          borderRadius: '6px', fontVariantNumeric: 'tabular-nums' }} />
@@ -752,10 +753,10 @@ function Agregar({ insumos, usados, onGuardar, onCerrar }) {
         ))}
       </select>
       <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-        <input inputMode="decimal" value={cant}
+        <CampoNumero value={cant} pista
           placeholder={elegido ? `Cantidad en ${UNIDAD[elegido.unidad] || elegido.unidad}` : 'Cantidad'}
           autoFocus
-          onChange={e => setCant(e.target.value)}
+          onChange={v => setCant(v)}
           onKeyDown={e => e.key === 'Enter' && (onGuardar(insumoId, cant))}
           style={{ flex: 1, fontFamily: 'inherit', fontSize: '11px', padding: '4px',
                    border: '0.5px solid ' + BORDE, borderRadius: '6px', minWidth: 0 }} />
