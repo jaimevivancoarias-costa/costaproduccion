@@ -172,6 +172,9 @@ export async function eliminarEvento({ evento, cicloId }) {
     // o la base rechaza el borrado del ciclo hijo (y quedaría un cultivo
     // huérfano en la piscina destino, como pasó en Marexport).
     await supabase.schema('produccion').from('muestreo').delete().in('ciclo_id', idsHijos)
+    // El evento_destino apunta al ciclo hijo (ciclo_destino_id): hay que quitar
+    // esa referencia ANTES o la base rechaza el borrado del ciclo (FK).
+    await supabase.schema('produccion').from('evento_destino').delete().in('ciclo_destino_id', idsHijos)
     await supabase.schema('produccion').from('ciclo_piscina').delete().in('ciclo_id', idsHijos)
     const { error: eHijos } = await supabase.schema('produccion').from('ciclo').delete().in('id', idsHijos)
     if (eHijos) throw new Error('No se pudo borrar el cultivo destino: ' + eHijos.message)
