@@ -5,7 +5,7 @@ import CampoNumero from '../components/CampoNumero'
 import BuscadorAplicacion from './BuscadorAplicacion'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
-  nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, miles,
+  nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, numDec, miles,
 } from '../lib/fechas'
 
 // Registro diario · modulo Produccion
@@ -429,7 +429,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   }
   // Libras totales de una celda (principal + extras).
   const librasCelda = c => c && !c.sinAlimentacion
-    ? (num(c.libras) || 0) + (c.extras || []).reduce((s, e) => s + (num(e.libras) || 0), 0)
+    ? (numDec(c.libras) || 0) + (c.extras || []).reduce((s, e) => s + (numDec(e.libras) || 0), 0)
     : 0
 
   function copiarDiaAnterior(f) {
@@ -543,7 +543,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     if (!p.cicloId) return false
     if (p.tipo === 'precria') return false
     const c = cel(p, hoy)
-    return !c || (!c.sinAlimentacion && !num(c.libras))
+    return !c || (!c.sinAlimentacion && !numDec(c.libras))
   })
   const atrasadas = []
   fechas.forEach(f => {
@@ -553,7 +553,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       if (p.fechaOcupacion && f < p.fechaOcupacion) return
       if (p.fechaCierre && f > p.fechaCierre) return
       const c = cel(p, f)
-      if (!c || (!c.sinAlimentacion && !num(c.libras))) atrasadas.push({ p, f })
+      if (!c || (!c.sinAlimentacion && !numDec(c.libras))) atrasadas.push({ p, f })
     })
   })
   // Celdas por llenar (para resaltarlas en la cuadrícula y poder cerrar).
@@ -635,8 +635,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             // dos veces (evita el duplicado en el índice único).
             const porProducto = new Map()
             const acum = (pid, lb) => { if (pid && lb) porProducto.set(pid, (porProducto.get(pid) || 0) + lb) }
-            acum(c.productoId, num(c.libras))
-            for (const e of (c.extras || [])) acum(e.productoId, num(e.libras))
+            acum(c.productoId, numDec(c.libras))
+            for (const e of (c.extras || [])) acum(e.productoId, numDec(e.libras))
             for (const [pid, lb] of porProducto) {
               insertar.push({ ciclo_id: p.cicloId, piscina_id: p.piscinaId,
                               fecha: f, producto_id: pid, libras: lb, sin_alimentacion: false })
@@ -1446,12 +1446,12 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
   const extras = (c?.extras || [])
 
   if (!editable) {
-    const conExtras = extras.filter(e => num(e.libras) && e.productoId)
-    if ((!c || !num(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>sin registrar</div>
+    const conExtras = extras.filter(e => numDec(e.libras) && e.productoId)
+    if ((!c || !numDec(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>sin registrar</div>
     const filas = []
-    if (num(c?.libras)) filas.push({ productoId: c.productoId, libras: c.libras })
+    if (numDec(c?.libras)) filas.push({ productoId: c.productoId, libras: c.libras })
     conExtras.forEach(e => filas.push(e))
-    const total = filas.reduce((s, x) => s + (num(x.libras) || 0), 0)
+    const total = filas.reduce((s, x) => s + (numDec(x.libras) || 0), 0)
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
         {filas.map((x, i) => {
@@ -1459,7 +1459,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
           return (
             <div key={i}>
               <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
-              <div style={{ fontSize: '15px' }}>{miles(num(x.libras))}</div>
+              <div style={{ fontSize: '15px' }}>{miles(numDec(x.libras))}</div>
             </div>
           )
         })}
@@ -1513,17 +1513,17 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
             </button>
           </div>
           {selBal(e.productoId, v => onExtra(i, 'productoId', v))}
-          <input
-            inputMode="numeric" placeholder="0"
+          <CampoNumero
+            maxDec={2} placeholder="0"
             value={e.libras || ''}
-            onChange={ev => onExtra(i, 'libras', ev.target.value)}
+            onChange={v => onExtra(i, 'libras', v)}
             style={{ fontFamily: 'inherit', fontSize: '15px', padding: '6px', width: '100%',
                      textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '7px',
                      fontVariantNumeric: 'tabular-nums' }}
           />
         </div>
       ))}
-      {num(c?.libras) && c?.productoId && extras.every(e => num(e.libras) && e.productoId) ? (
+      {numDec(c?.libras) && c?.productoId && extras.every(e => numDec(e.libras) && e.productoId) ? (
         <button
           onClick={onAddExtra}
           title="Registrar otro balanceado en esta misma piscina y día"
@@ -1533,7 +1533,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
           + Otro balanceado
         </button>
       ) : null}
-      {!num(c?.libras) && extras.length === 0 && (
+      {!numDec(c?.libras) && extras.length === 0 && (
         <button
           onClick={onSin}
           title="Declarar que esta piscina no comió ese día"
