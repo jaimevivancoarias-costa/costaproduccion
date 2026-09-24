@@ -204,7 +204,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
             <Lineas>
               {(g.ingreso_insumo_linea || []).map((l, i) => (
                 <Linea key={i} nombre={nombreInsumo(l.insumo_id)}
-                       cantidad={`+${miles(num(l.cantidad))} ${unidadInsumo(l.insumo_id)}${l.plazo ? ` · ${PLAZO_LBL[l.plazo]}` : ''}`}
+                       cantidad={`+${miles(numDec(l.cantidad))} ${unidadInsumo(l.insumo_id)}${l.plazo ? ` · ${PLAZO_LBL[l.plazo]}` : ''}`}
                        color={VERDE} />
               ))}
             </Lineas>
@@ -247,7 +247,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
                           gap: '12px', alignItems: 'center', padding: '5px 0', fontSize: '13px' }}>
                       <span>{nombreInsumo(l.insumo_id)}</span>
                       <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
-                        {miles(num(l.cantidad))} {unidadInsumo(l.insumo_id)}
+                        {miles(numDec(l.cantidad))} {unidadInsumo(l.insumo_id)}
                       </span>
                       <span style={{ fontVariantNumeric: 'tabular-nums', minWidth: '120px',
                                      textAlign: 'right', color: falta <= 0.0001 ? VERDE : AMBAR }}>
@@ -278,7 +278,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
               <div>
                 <div style={{ fontWeight: 500 }}>{corta(d.fecha)}</div>
                 <div style={{ fontSize: '13px', color: NAVY, marginTop: '3px' }}>
-                  {nombreInsumo(d.insumo_id)}: <b style={{ fontWeight: 600 }}>−{miles(num(d.cantidad))}</b> {unidadInsumo(d.insumo_id)}
+                  {nombreInsumo(d.insumo_id)}: <b style={{ fontWeight: 600 }}>−{miles(numDec(d.cantidad))}</b> {unidadInsumo(d.insumo_id)}
                 </div>
                 {d.motivo && <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '2px' }}>{d.motivo}</div>}
                 {autoria(d) && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '2px' }}>{autoria(d)}</div>}
@@ -356,7 +356,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const agregarLinea = () => setLineas(ls => [...ls, { insumoId: '', cantidad: '', unidad: '' }])
   const quitarLinea = i => setLineas(ls => ls.filter((_, j) => j !== i))
 
-  const validas = lineas.filter(l => l.insumoId && (num(l.cantidad) || num(l.sobrante)))
+  const validas = lineas.filter(l => l.insumoId && (numDec(l.cantidad) || numDec(l.sobrante)))
 
   // Convierte la cantidad digitada a la unidad de compra (como se guarda).
   // Suma el sobrante (en unidad de aplicación) dividido por el factor.
@@ -468,7 +468,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         // Unidades en que puede cargar: la de compra (saco) y la de conteo (kg), si difieren.
         const unidades = ins ? [...new Set([uCompra, uCons])] : []
         const uElegida = l.unidad || uCompra
-        const enCompra = ins && num(l.cantidad) ? cantidadEnCompra(l) : null
+        const enCompra = ins && numDec(l.cantidad) ? cantidadEnCompra(l) : null
         const mostrarEquiv = ins && uElegida !== uCompra && enCompra != null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
@@ -588,7 +588,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
   const UNI = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'gramos', libras: 'libras', kg: 'kilos',
                 unidad: 'unidades', tambor: 'tambores', botella: 'botellas' }
   const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
-  const validas = lineas.filter(l => l.insumoId && num(l.cantidad))
+  const validas = lineas.filter(l => l.insumoId && numDec(l.cantidad))
 
   async function guardarJefe() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
@@ -598,7 +598,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
     if (error) { setEnviando(false); setAviso({ tipo: 'error', texto: error.message }); return }
     await supabase.schema('produccion').from('ingreso_insumo_linea').delete().eq('ingreso_id', g.id)
     const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
-      .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: num(l.cantidad) })))
+      .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: numDec(l.cantidad) })))
     setEnviando(false)
     if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
     onHecho('Ingreso actualizado.')
@@ -612,7 +612,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
       lineas: (g.ingreso_insumo_linea || []).map(l => ({ insumo_id: l.insumo_id, cantidad: Number(l.cantidad) })) }
     const propuesto = borrar ? { borrar: true }
       : { borrar: false, fecha, numero_guia: guia || null, proveedor: proveedor || null,
-          lineas: validas.map(l => ({ insumo_id: l.insumoId, cantidad: num(l.cantidad) })) }
+          lineas: validas.map(l => ({ insumo_id: l.insumoId, cantidad: numDec(l.cantidad) })) }
     const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
       finca_id: finca.id, tabla: 'ingreso_insumo', registro_id: g.id,
       valor_anterior: anterior, valor_propuesto: propuesto, motivo: motivo.trim(), solicitado_por: userId })
