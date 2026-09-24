@@ -6,7 +6,7 @@ import { useState, useEffect, forwardRef } from 'react'
 //   maxDec = decimales permitidos (0 = sin decimales, enteros; 6 para precios).
 // - value / onChange usan un texto NORMALIZADO ("1650.5"): decimal con punto y
 //   sin miles, para que numDec()/Number() lo parseen sin ambigüedad.
-// - pista = muestra una ayuda pequeña ". miles · , decimales".
+// - pista = muestra una ayuda pequeña ". Miles · , Decimales".
 
 export function aTexto(norm) {
   if (norm === '' || norm === null || norm === undefined) return ''
@@ -62,7 +62,7 @@ const CampoNumero = forwardRef(function CampoNumero(
     <span style={{ display: 'inline-flex', flexDirection: 'column' }}>
       {input}
       <span style={{ fontSize: '10px', color: '#a7b4c1', marginTop: '2px', whiteSpace: 'nowrap' }}>
-        . miles · , decimales
+        . Miles · , Decimales
       </span>
     </span>
   )
