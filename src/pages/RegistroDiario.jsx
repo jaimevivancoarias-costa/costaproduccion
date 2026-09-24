@@ -1489,7 +1489,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       {selBal(c?.productoId, onProducto)}
       <CampoNumero
-        maxDec={0} placeholder="0"
+        maxDec={2} placeholder="0"
         value={c?.libras || ''}
         ref={inputRef}
         onKeyDown={onKeyDown}
