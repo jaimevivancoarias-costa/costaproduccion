@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, sumarDias, corta, semanaISO, numDec, miles } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Registro de diesel · semanal, separado del registro diario.
 // Flujo: el bodeguero pide galones -> el jefe aprueba -> recién ahí suma
@@ -234,8 +235,8 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
                     </select>
                   </Campo>
                   <Campo label="Galones">
-                    <input inputMode="decimal" value={form.galones} placeholder="ej. 200"
-                      onChange={e => setForm(f => ({ ...f, galones: e.target.value }))}
+                    <CampoNumero value={form.galones} placeholder="ej. 200"
+                      onChange={v => setForm(f => ({ ...f, galones: v }))}
                       style={{ ...inp, width: '110px', textAlign: 'right' }} />
                   </Campo>
                   <Campo label="Fecha">
