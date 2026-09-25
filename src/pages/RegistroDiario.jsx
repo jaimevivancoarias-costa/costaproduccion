@@ -1070,6 +1070,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         puede={!soloLectura && modo === 'registrar'}
                         onElegir={tipo => abrirEvento(tipo, p)}
                         onDeshacer={ev => borrarEvento(p, ev)}
+                        onEditar={() => { setAbierta(p.piscinaId); setEditSiembra(p.piscinaId) }}
                       />
                     </Td>
                     {fechas.map((f, j) => {
@@ -1583,7 +1584,7 @@ function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
 // Columna de estado: es la columna ESTADO PISCINA del Excel.
 // Si la piscina no tiene ciclo, lo unico posible es sembrarla.
 // ---------------------------------------------------------------------
-function Estado({ fila, eventos, puede, onElegir, onDeshacer }) {
+function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
   // Tras cosechar o transferir, la piscina queda vacia y puede volver a
   // sembrarse esta misma semana.
   const vacia = !fila.cicloId || fila.cosechadaEstaSemana
@@ -1600,6 +1601,13 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer }) {
                            background: t.fondo, color: t.color }}>{t.nombre}</span>
             <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
               {corta(ev.fecha)}{ev.libras ? ` · ${miles(ev.libras)} lb` : ''}
+              {puede && onEditar && ev.tipo === 'siembra' && (
+                <button onClick={onEditar} title="Corregir fecha, larva o gramaje de la siembra"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                           fontSize: '11px', color: AZUL, padding: '0 0 0 7px' }}>
+                  Editar
+                </button>
+              )}
               {puede && onDeshacer && (
                 <button onClick={() => onDeshacer(ev)} title="Deshacer, me equivoqué"
                   style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
