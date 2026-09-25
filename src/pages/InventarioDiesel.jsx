@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, miles, numDec } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Inventario de diesel · lectura. Tres vistas: cuánto hay, qué se movió
 // y la subbodega de ingresos y pedidos. El registro (pedir/consumir) vive
@@ -135,8 +136,8 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
                         gap: '10px', padding: '9px 0', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
                   <span style={{ fontWeight: 500 }}>{t.nombre}</span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <input inputMode="decimal" placeholder="0" value={conteo.valores[t.id] || ''}
-                      onChange={e => setConteo(c => ({ ...c, valores: { ...c.valores, [t.id]: e.target.value } }))}
+                    <CampoNumero maxDec={2} placeholder="0" value={conteo.valores[t.id] || ''}
+                      onChange={v => setConteo(c => ({ ...c, valores: { ...c.valores, [t.id]: v } }))}
                       style={{ ...inp, width: '100px', textAlign: 'right' }} />
                     <span style={{ color: GRIS, fontSize: '13px' }}>gal</span>
                   </span>

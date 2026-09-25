@@ -679,8 +679,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <input value={n.unidadCompra} placeholder="ej. tambor"
                           onChange={e => setNuevo(i, 'unidadCompra', e.target.value)}
                           style={{ ...entrada, width: '110px' }} />
-                        <input inputMode="decimal" value={n.factor} placeholder={`${UNIDAD[n.unidad]} por unidad`}
-                          onChange={e => setNuevo(i, 'factor', e.target.value)}
+                        <CampoNumero maxDec={6} value={n.factor} placeholder={`${UNIDAD[n.unidad]} por unidad`}
+                          onChange={v => setNuevo(i, 'factor', v)}
                           style={{ ...entrada, width: '140px' }} />
                       </>
                     )}

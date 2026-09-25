@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, dinero, miles } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Etiqueta corta de cada unidad, para el desglose del bodeguero.
 const UNIDAD = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
@@ -157,8 +158,8 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
           <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '10px' }}>Fijar presupuesto de insumos · varias fincas y meses</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
             <span style={{ fontSize: '16px', color: GRIS }}>$</span>
-            <input inputMode="decimal" value={bulk.monto} placeholder="25000"
-              onChange={e => setBulk(b => ({ ...b, monto: e.target.value }))}
+            <CampoNumero maxDec={2} value={bulk.monto} placeholder="25000"
+              onChange={v => setBulk(b => ({ ...b, monto: v }))}
               style={{ ...sel, width: '150px', textAlign: 'right' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
@@ -212,8 +213,8 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span style={{ fontSize: '18px', color: GRIS }}>$</span>
-                <input inputMode="decimal" value={nuevo} placeholder="25000" autoFocus
-                  onChange={e => setNuevo(e.target.value)}
+                <CampoNumero maxDec={2} value={nuevo} placeholder="25000" autoFocus
+                  onChange={v => setNuevo(v)}
                   style={{ padding: '10px 12px', fontSize: '17px', fontFamily: 'inherit', width: '170px',
                            border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right',
                            fontVariantNumeric: 'tabular-nums' }} />

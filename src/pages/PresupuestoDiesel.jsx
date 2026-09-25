@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, dinero, numDec, miles } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Presupuesto de diesel · por finca y mes. Un monto en $ por tipo
 // (Diesel B, Premium) y uno global. El jefe lo ve dolarizado; el
@@ -301,8 +302,8 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
             {tipos.map(t => (
               <div key={t.id}>
                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '5px' }}>{t.nombre} · {bulk.modo === 'gal' ? 'galones' : '$'}</div>
-                <input inputMode="decimal" value={bulk.valores[t.id] || ''} placeholder={bulk.modo === 'gal' ? '450' : '2500'}
-                  onChange={e => setBulk(b => ({ ...b, valores: { ...b.valores, [t.id]: e.target.value } }))}
+                <CampoNumero maxDec={2} value={bulk.valores[t.id] || ''} placeholder={bulk.modo === 'gal' ? '450' : '2500'}
+                  onChange={v => setBulk(b => ({ ...b, valores: { ...b.valores, [t.id]: v } }))}
                   style={{ ...sel, width: '120px', textAlign: 'right' }} />
               </div>
             ))}
@@ -412,8 +413,8 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                     {editModo === 'gal' ? (
                       <>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                          <input inputMode="decimal" value={editGal} placeholder="450" autoFocus
-                            onChange={e => setEditGal(e.target.value)}
+                          <CampoNumero maxDec={2} value={editGal} placeholder="450" autoFocus
+                            onChange={v => setEditGal(v)}
                             style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
                                      border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
                           {precios[c.clave] != null
@@ -433,8 +434,8 @@ export default function PresupuestoDiesel({ finca, fincas, esJefe }) {
                     ) : (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
                         <span style={{ fontSize: '16px', color: GRIS }}>$</span>
-                        <input inputMode="decimal" value={nuevo} placeholder="2500" autoFocus
-                          onChange={e => setNuevo(e.target.value)}
+                        <CampoNumero maxDec={2} value={nuevo} placeholder="2500" autoFocus
+                          onChange={v => setNuevo(v)}
                           style={{ padding: '8px 10px', fontSize: '15px', fontFamily: 'inherit', width: '110px',
                                    border: '0.5px solid ' + BORDE, borderRadius: '8px', textAlign: 'right' }} />
                       </div>
