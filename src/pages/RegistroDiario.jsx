@@ -1426,10 +1426,16 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
   // Come desde que ocupa la piscina (siembra, o transferencia si vino de
-  // otra) hasta que el ciclo cierra.
-  if (f < (p.fechaOcupacion || p.fechaSiembra) || (p.fechaCierre && f > p.fechaCierre)) {
+  // otra) hasta que el ciclo cierra. PERO si hay consumo registrado fuera de
+  // esa ventana (de un ciclo anterior que se transfirió/cerró antes en la
+  // misma semana), se MUESTRA de todos modos — no se edita aquí, porque es de
+  // otro ciclo, pero no se puede ocultar (si no, "desaparece" del día).
+  const fueraDeCiclo = f < (p.fechaOcupacion || p.fechaSiembra) || (p.fechaCierre && f > p.fechaCierre)
+  const hayConsumo = c && (numDec(c.libras) || (c.extras || []).some(e => numDec(e.libras)) || c.sinAlimentacion)
+  if (fueraDeCiclo && !hayConsumo) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
+  if (fueraDeCiclo) editable = false
   if (situacion === 'futuro') {
     return <div style={{ color: GRIS, fontSize: '13px' }}>—</div>
   }
