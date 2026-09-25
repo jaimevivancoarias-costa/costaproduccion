@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero, dineroExacto } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
+import CampoNumero from '../components/CampoNumero'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -731,15 +732,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                           <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[f.unidad] || f.unidad)} completas</span>
-                          <input inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="0"
-                            onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
+                          <CampoNumero maxDec={2} value={contado[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={v => setContado(c => ({ ...c, [f.insumo_id]: v }))}
                             style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                         </div>
                         <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                           <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[facF.uApp] || facF.uApp)} sueltos</span>
-                          <input inputMode="decimal" value={sobrante[f.insumo_id] ?? ''} placeholder="0"
-                            onChange={e => setSobrante(s => ({ ...s, [f.insumo_id]: e.target.value }))}
+                          <CampoNumero maxDec={2} value={sobrante[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={v => setSobrante(s => ({ ...s, [f.insumo_id]: v }))}
                             style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                         </div>
                       </div>
@@ -750,8 +751,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       )}
                     </>
                   ) : (
-                    <input inputMode="decimal" value={contado[f.insumo_id] ?? ''} placeholder="—"
-                      onChange={e => setContado(c => ({ ...c, [f.insumo_id]: e.target.value }))}
+                    <CampoNumero maxDec={2} value={contado[f.insumo_id] ?? ''} placeholder="—"
+                      onChange={v => setContado(c => ({ ...c, [f.insumo_id]: v }))}
                       style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                   )}
                 </div>
@@ -953,8 +954,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </Celda>
                   {edit ? (
                     <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f6f9fb' }}>
-                      <input autoFocus inputMode="decimal" value={nuevoSaldo}
-                        onChange={e => setNuevoSaldo(e.target.value)}
+                      <CampoNumero autoFocus maxDec={2} value={nuevoSaldo}
+                        onChange={v => setNuevoSaldo(v)}
                         style={{ ...entrada, width: '100%', textAlign: 'right',
                                  fontVariantNumeric: 'tabular-nums',
                                  borderColor: '#9cc4e8' }} />
@@ -1036,7 +1037,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
                 {iniForm?.insumoId === f.insumo_id && (
                   <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                    <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad ({cap1(UNIDAD[f.unidad] || f.unidad)})</div><input inputMode="decimal" autoFocus value={iniForm.cantidad} onChange={e => setIniForm(x => ({ ...x, cantidad: e.target.value }))} style={{ ...entrada, width: '110px', textAlign: 'right' }} /></div>
+                    <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad ({cap1(UNIDAD[f.unidad] || f.unidad)})</div><CampoNumero maxDec={2} autoFocus value={iniForm.cantidad} onChange={v => setIniForm(x => ({ ...x, cantidad: v }))} style={{ ...entrada, width: '110px', textAlign: 'right' }} /></div>
                     <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Fecha</div><input type="date" value={iniForm.fecha} max={hoyISO()} onChange={e => setIniForm(x => ({ ...x, fecha: e.target.value }))} style={{ ...entrada, width: '150px' }} /></div>
                     <Btn primario onClick={guardarInicial}>Guardar inicial</Btn>
                     <Btn onClick={() => setIniForm(null)}>Cancelar</Btn>

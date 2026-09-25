@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, miles, dinero, dineroExacto } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
+import CampoNumero from '../components/CampoNumero'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -398,23 +399,23 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               <Cel der gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Cel>
               <div style={{ padding: '5px 10px' }}>
                 {primeraVez ? (
-                  <input inputMode="decimal" value={contado[f.producto_id] ?? ''} placeholder="Sacos"
-                    onChange={e => setContado(c => ({ ...c, [f.producto_id]: e.target.value }))}
+                  <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="Sacos"
+                    onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))}
                     style={{ ...inp, width: '100%', textAlign: 'right' }} />
                 ) : (
                   <>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                         <span style={{ fontSize: '10px', color: GRIS }}>Sacos completos</span>
-                        <input inputMode="decimal" value={contado[f.producto_id] ?? ''} placeholder="0"
-                          onChange={e => setContado(c => ({ ...c, [f.producto_id]: e.target.value }))}
+                        <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="0"
+                          onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))}
                           style={{ ...inp, width: '100%', textAlign: 'right' }} />
                       </div>
                       <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
                         <span style={{ fontSize: '10px', color: GRIS }}>Libras sueltas</span>
-                        <input inputMode="decimal" value={sueltas[f.producto_id] ?? ''} placeholder="0"
-                          onChange={e => setSueltas(c => ({ ...c, [f.producto_id]: e.target.value }))}
+                        <CampoNumero maxDec={2} value={sueltas[f.producto_id] ?? ''} placeholder="0"
+                          onChange={v => setSueltas(c => ({ ...c, [f.producto_id]: v }))}
                           style={{ ...inp, width: '100%', textAlign: 'right' }} />
                       </div>
                     </div>
@@ -560,7 +561,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   )}
                   {iniForm?.productoId === f.producto_id && (
                     <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                      <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad (sacos)</div><input inputMode="decimal" autoFocus value={iniForm.cantidad} onChange={e => setIniForm(x => ({ ...x, cantidad: e.target.value }))} style={{ padding: '8px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', width: '100px', textAlign: 'right' }} /></div>
+                      <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad (sacos)</div><CampoNumero maxDec={2} autoFocus value={iniForm.cantidad} onChange={v => setIniForm(x => ({ ...x, cantidad: v }))} style={{ padding: '8px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', width: '100px', textAlign: 'right' }} /></div>
                       <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Fecha</div><input type="date" value={iniForm.fecha} max={hoyISO()} onChange={e => setIniForm(x => ({ ...x, fecha: e.target.value }))} style={{ padding: '8px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px' }} /></div>
                       <button onClick={guardarInicial} style={{ ...btn, background: AZUL, color: '#fff', borderColor: AZUL }}>Guardar inicial</button>
                       <button onClick={() => setIniForm(null)} style={btn}>Cancelar</button>
