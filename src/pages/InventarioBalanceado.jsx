@@ -102,7 +102,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           .sort((a, b) => a.plazo - b.plazo)
         const rigeSinPrecio = rigeP[pid] != null && !plazos[rige]
         pr[pid] = aplicado ? aplicado.precio : 0
-        pinfo[pid] = { aplicado, otros, semaforo: (otros.length > 0 || rigeSinPrecio) ? 'warn' : 'ok', rigeSinPrecio }
+        // Solo se marca "Revisar" cuando el plazo que rige NO tiene precio (se
+        // aplica un respaldo equivocado). Tener precios en varios plazos es
+        // normal y NO es un problema.
+        pinfo[pid] = { aplicado, otros, semaforo: rigeSinPrecio ? 'warn' : 'ok', rigeSinPrecio }
       })
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
@@ -496,7 +499,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
                     {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
                       {pi?.aplicado ? `${PLAZO_LBL[pi.aplicado.plazo] || 'catálogo'}${pi.aplicado.desde ? ' · desde ' + corta(pi.aplicado.desde) : ''}` : 'catálogo'}
-                      {warn && <span style={{ color: AMBAR }}> · revisar</span>}
+                      {warn && <span style={{ color: AMBAR }}> · Revisar</span>}
                     </span></> : 'Sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(Number(valorFifo[f.producto_id] || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
