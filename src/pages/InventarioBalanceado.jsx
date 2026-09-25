@@ -63,6 +63,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
   const [recosForm, setRecosForm] = useState(null)     // producto_id con la confirmación de recosteo abierta
   const [recosteando, setRecosteando] = useState(false)
+  const [verSinInv, setVerSinInv] = useState(false)    // mostrar también los productos sin inventario
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -150,6 +151,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   }), [saldos, precios, contado, sueltas, lps])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
+  // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
+  const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
+  const nSinInv = filas.filter(f => coincide(f.producto) && esSinInvFila(f)).length
 
   const filaNueva = () => ({ nombre: '', marca: '' })
   const setNuevo = (i, campo, val) => setNuevos(ns => ns.map((n, j) => j === i ? { ...n, [campo]: val } : n))
@@ -458,6 +462,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           <div style={{ display: 'flex', gap: '9px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
             <Chip pequeno on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
             <Chip pequeno on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+            {vista === 'saldo' && nSinInv > 0 && (
+              <Chip pequeno on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+                {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInv})`}
+              </Chip>
+            )}
             <select value={busq} onChange={e => setBusq(e.target.value)}
                     style={{ ...inp, marginLeft: 'auto', minWidth: '210px' }}>
               <option value="">Todos los balanceados</option>
@@ -496,7 +505,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               )}
               <Caja>
                 <Encabezado gtc={esJefe ? G_SALDO_J : G_SALDO_B} cols={esJefe ? ['Balanceado', 'Saldo', 'Precio saco', 'Valor', ''] : ['Balanceado', 'Saldo']} />
-                {filas.filter(f => coincide(f.producto)).map(f => {
+                {filas.filter(f => coincide(f.producto) && (verSinInv || !esSinInvFila(f)))
+                      .sort((a, b) => (esSinInvFila(a) ? 1 : 0) - (esSinInvFila(b) ? 1 : 0))
+                      .map(f => {
                   const dg = desglose[f.producto_id] || []
                   const pi = precioInfo[f.producto_id]
                   const warn = esJefe && pi?.semaforo === 'warn'
