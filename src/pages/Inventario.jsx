@@ -603,8 +603,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           </select>
           {esJefe && (
             <div style={{ display: 'flex', gap: '6px' }}>
-              <button onClick={exportarExcel} title="Descargar en Excel" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Excel</button>
-              <button onClick={exportarPDF} title="Ver/guardar en PDF" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>PDF</button>
+              <button onClick={exportarExcel} title="Descargar en Excel" style={expBtn}>Excel</button>
+              <button onClick={exportarPDF} title="Ver/guardar en PDF" style={expBtn}>PDF</button>
             </div>
           )}
         </div>
@@ -1315,6 +1315,7 @@ function limpio(n) {
   return s === '' || s === '-' ? '0' : s
 }
 
+const expBtn = { background: 'white', border: '0.5px solid #dce6ef', borderRadius: '9px', padding: '6px 11px', fontSize: '12px', fontFamily: 'inherit', color: '#022847', cursor: 'pointer' }
 const entrada = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
                   border: '0.5px solid ' + BORDE, borderRadius: '9px',
                   boxSizing: 'border-box', background: 'white' }
