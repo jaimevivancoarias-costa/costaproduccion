@@ -93,6 +93,43 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
   if (error) throw error
 }
 
+// Cuenta el consumo REAL posterior a una fecha, para uno o varios ciclos.
+// Es la regla que decide si se puede deshacer: la preparación de antes y
+// las marcas "Sin alimentación" NO son consumo real y no deben bloquear;
+// solo el cultivo de verdad (balanceado con libras, o insumos) posterior
+// a la fecha del evento impide deshacerlo.
+async function consumoRealDespues(cicloIds, fecha) {
+  const ids = (Array.isArray(cicloIds) ? cicloIds : [cicloIds]).filter(Boolean)
+  if (!ids.length) return { balanceado: 0, insumos: 0 }
+  const [{ count: bal }, { count: ins }] = await Promise.all([
+    supabase.schema('produccion').from('alimentacion')
+      .select('id', { count: 'exact', head: true })
+      .in('ciclo_id', ids).eq('sin_alimentacion', false).gt('libras', 0).gt('fecha', fecha),
+    supabase.schema('produccion').from('consumo_insumo')
+      .select('id', { count: 'exact', head: true })
+      .in('ciclo_id', ids).gt('fecha', fecha),
+  ])
+  return { balanceado: bal || 0, insumos: ins || 0 }
+}
+
+// Deja el ciclo listo para borrarlo sin perder datos que no le pertenecen:
+//  - Borra las marcas "Sin alimentación" (son solo notas, no consumo).
+//  - Borra los muestreos de gramaje (no se borran en cascada; la base
+//    rechazaría el borrado del ciclo si quedan).
+//  - Suelta la preparación anterior (consumo de insumos con fecha <= la del
+//    evento) dejándola SIN ciclo: no se pierde y queda disponible para el
+//    cultivo que entre después. Es el caso "se cosecha, se cierra el ciclo,
+//    y luego empieza la preparación del siguiente" (Sevilla).
+async function soltarPreparacionYMarcas(cicloIds, fecha) {
+  const ids = (Array.isArray(cicloIds) ? cicloIds : [cicloIds]).filter(Boolean)
+  if (!ids.length) return
+  await supabase.schema('produccion').from('alimentacion')
+    .delete().in('ciclo_id', ids).eq('sin_alimentacion', true)
+  await supabase.schema('produccion').from('muestreo').delete().in('ciclo_id', ids)
+  await supabase.schema('produccion').from('consumo_insumo')
+    .update({ ciclo_id: null }).in('ciclo_id', ids).lte('fecha', fecha)
+}
+
 // Deshacer un evento ya registrado. Es lo que permite corregir "me
 // confundi": se borra el evento y se revierte lo que dejo hecho.
 export async function eliminarEvento({ evento, cicloId }) {
@@ -101,31 +138,27 @@ export async function eliminarEvento({ evento, cicloId }) {
   const tipo = evento.tipo
 
   if (tipo === 'siembra') {
-    // Deshacer una siembra borra el ciclo entero. No se puede si tiene
-    // consumo colgando (quedarian registros huerfanos), ni si tiene otra
-    // novedad sobre el mismo ciclo: en ese caso hay que deshacer esa
-    // primero, para que quede claro que se esta borrando.
-    const [{ count: cAlim }, { count: cIns }, { count: cEv }] = await Promise.all([
-      supabase.schema('produccion').from('alimentacion')
-        .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId),
-      supabase.schema('produccion').from('consumo_insumo')
-        .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId),
-      supabase.schema('produccion').from('evento')
-        .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId).neq('id', id),
-    ])
-    if ((cAlim || 0) > 0 || (cIns || 0) > 0) {
-      throw new Error('Esta siembra ya tiene consumo registrado. Borra primero el consumo de esos días.')
+    // Deshacer una siembra borra el ciclo entero. Solo se bloquea si el
+    // cultivo ya vivió de verdad (balanceado o insumos DESPUÉS de la
+    // siembra), o si tiene otra novedad sobre el mismo ciclo (esa se
+    // deshace primero). La preparación anterior y las marcas no bloquean.
+    const { count: cEv } = await supabase.schema('produccion').from('evento')
+      .select('id', { count: 'exact', head: true }).eq('ciclo_id', cicloId).neq('id', id)
+    const r = await consumoRealDespues(cicloId, fecha)
+    if (r.balanceado > 0) {
+      throw new Error('Este cultivo ya tiene balanceado registrado después de la siembra. Borra primero ese consumo.')
+    }
+    if (r.insumos > 0) {
+      throw new Error('Este cultivo ya tiene consumo de insumos después de la siembra. Borra primero ese consumo.')
     }
     if ((cEv || 0) > 0) {
       throw new Error('Esta piscina tiene otra novedad (cosecha, raleo o transferencia) sobre el mismo ciclo. Deshaz esa primero.')
     }
-    // Los muestreos de gramaje no borran en cascada: hay que quitarlos
-    // a mano antes de borrar el ciclo, o la base lo rechaza (error 409).
-    await supabase.schema('produccion').from('muestreo').delete().eq('ciclo_id', cicloId)
+    await soltarPreparacionYMarcas(cicloId, fecha)
     await supabase.schema('produccion').from('evento').delete().eq('id', id)
     await supabase.schema('produccion').from('ciclo_piscina').delete().eq('ciclo_id', cicloId)
     const { error } = await supabase.schema('produccion').from('ciclo').delete().eq('id', cicloId)
-    if (error) throw new Error(error.message)
+    if (error) throw new Error(mensajeError(error))
     return
   }
 
@@ -159,25 +192,24 @@ export async function eliminarEvento({ evento, cicloId }) {
   const idsHijos = (hijos || []).map(h => h.id)
 
   if (idsHijos.length) {
-    const [{ count: cAlim }, { count: cIns }] = await Promise.all([
-      supabase.schema('produccion').from('alimentacion')
-        .select('id', { count: 'exact', head: true }).in('ciclo_id', idsHijos),
-      supabase.schema('produccion').from('consumo_insumo')
-        .select('id', { count: 'exact', head: true }).in('ciclo_id', idsHijos),
-    ])
-    if ((cAlim || 0) > 0 || (cIns || 0) > 0) {
-      throw new Error('Alguna piscina destino ya tiene consumo registrado. Borra primero ese consumo.')
+    // Solo bloquea el cultivo REAL posterior a la transferencia. La
+    // preparación de la piscina destino (secado/insumos de antes) no
+    // bloquea: se suelta y queda para el cultivo que corresponda. Las
+    // marcas "Sin alimentación" tampoco bloquean.
+    const r = await consumoRealDespues(idsHijos, fecha)
+    if (r.balanceado > 0) {
+      throw new Error('Alguna piscina destino ya tiene balanceado registrado después de la transferencia. Borra primero ese consumo.')
     }
-    // Los muestreos de gramaje no borran en cascada: hay que quitarlos antes
-    // o la base rechaza el borrado del ciclo hijo (y quedaría un cultivo
-    // huérfano en la piscina destino, como pasó en Marexport).
-    await supabase.schema('produccion').from('muestreo').delete().in('ciclo_id', idsHijos)
+    if (r.insumos > 0) {
+      throw new Error('Alguna piscina destino ya tiene consumo de insumos después de la transferencia. Borra primero ese consumo.')
+    }
+    await soltarPreparacionYMarcas(idsHijos, fecha)
     // El evento_destino apunta al ciclo hijo (ciclo_destino_id): hay que quitar
     // esa referencia ANTES o la base rechaza el borrado del ciclo (FK).
     await supabase.schema('produccion').from('evento_destino').delete().in('ciclo_destino_id', idsHijos)
     await supabase.schema('produccion').from('ciclo_piscina').delete().in('ciclo_id', idsHijos)
     const { error: eHijos } = await supabase.schema('produccion').from('ciclo').delete().in('id', idsHijos)
-    if (eHijos) throw new Error('No se pudo borrar el cultivo destino: ' + eHijos.message)
+    if (eHijos) throw new Error('No se pudo borrar el cultivo destino: ' + mensajeError(eHijos))
   }
 
   // Reabrir el ciclo padre y devolverle la ocupacion del origen. Si el
