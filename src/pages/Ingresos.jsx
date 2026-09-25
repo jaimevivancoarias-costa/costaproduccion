@@ -434,7 +434,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
                 <select value={pedidoId} onChange={e => setPedidoId(e.target.value)} style={entrada}>
                   <option value="">No</option>
                   {pedidosAbiertos.map(p => (
-                    <option key={p.id} value={p.id}>{corta(p.fecha)} · {p.proveedor || 'sin proveedor'}</option>
+                    <option key={p.id} value={p.id}>{corta(p.fecha)} · {p.proveedor || 'Sin proveedor'}</option>
                   ))}
                 </select>
               </Campo>

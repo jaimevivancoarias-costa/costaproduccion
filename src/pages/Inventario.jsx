@@ -932,7 +932,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'sin precio'}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'Sin precio'}</Celda>}
                   {esJefe && <Celda derecha>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',

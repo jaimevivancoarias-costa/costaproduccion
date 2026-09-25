@@ -198,7 +198,7 @@ export default function PreciosBalanceado({ finca, esJefe, esJefeGlobal }) {
               {f.marca && <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}> · {f.marca}</span>}
             </span>
             <span style={{ fontSize: '16px', fontWeight: 500, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-              {f.precio ? dinero(f.precio.precio_saco) : <span style={{ fontSize: '13px', color: '#BA7517' }}>sin precio</span>}
+              {f.precio ? dinero(f.precio.precio_saco) : <span style={{ fontSize: '13px', color: '#BA7517' }}>Sin precio</span>}
             </span>
             <span style={{ fontSize: '13px', color: GRIS }}>
               {f.precio ? corta(f.precio.vigente_desde) : '—'}
