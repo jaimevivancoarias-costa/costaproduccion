@@ -63,6 +63,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
   const [recosForm, setRecosForm] = useState(null)     // producto_id con la confirmación de recosteo abierta
   const [recosteando, setRecosteando] = useState(false)
+  const [verSinInv, setVerSinInv] = useState(false)    // mostrar también los productos sin inventario
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -150,6 +151,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   }), [saldos, precios, contado, sueltas, lps])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
+  // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
+  const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
+  const nSinInv = filas.filter(f => coincide(f.producto) && esSinInvFila(f)).length
 
   const filaNueva = () => ({ nombre: '', marca: '' })
   const setNuevo = (i, campo, val) => setNuevos(ns => ns.map((n, j) => j === i ? { ...n, [campo]: val } : n))
@@ -458,6 +462,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           <div style={{ display: 'flex', gap: '9px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
             <Chip pequeno on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
             <Chip pequeno on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+            {vista === 'saldo' && nSinInv > 0 && (
+              <Chip pequeno on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+                {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInv})`}
+              </Chip>
+            )}
             <select value={busq} onChange={e => setBusq(e.target.value)}
                     style={{ ...inp, marginLeft: 'auto', minWidth: '210px' }}>
               <option value="">Todos los balanceados</option>
@@ -496,14 +505,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               )}
               <Caja>
                 <Encabezado gtc={esJefe ? G_SALDO_J : G_SALDO_B} cols={esJefe ? ['Balanceado', 'Saldo', 'Precio saco', 'Valor', ''] : ['Balanceado', 'Saldo']} />
-                {filas.filter(f => coincide(f.producto)).map(f => {
+                {filas.filter(f => coincide(f.producto) && (verSinInv || !esSinInvFila(f)))
+                      .sort((a, b) => (esSinInvFila(a) ? 1 : 0) - (esSinInvFila(b) ? 1 : 0))
+                      .map(f => {
                   const dg = desglose[f.producto_id] || []
                   const pi = precioInfo[f.producto_id]
                   const warn = esJefe && pi?.semaforo === 'warn'
-                  // Recosteable: hay algún lote a un precio distinto al que rige.
+                  // Recosteable: hay algún lote SIN precio, o a un precio distinto
+                  // al que rige. Los lotes sin precio son los que más lo necesitan.
                   const ruling = Number(f.precio) || 0
                   const recostable = esJefeGlobal && ruling > 0 &&
-                    (lotes[f.producto_id] || []).some(L => L.costo != null && Math.abs(Number(L.costo) - ruling) > 0.005)
+                    (lotes[f.producto_id] || []).some(L => L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
                   const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0) || warn || recostable
                   const ab = abierto === f.producto_id
                   const sinInv = Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
@@ -586,11 +598,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                             {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => {
-                              const distinto = L.costo != null && ruling > 0 && Math.abs(Number(L.costo) - ruling) > 0.005
+                              const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
                               return (
                               <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
                                 <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} sacos</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
-                                <div style={{ fontSize: '11px', color: distinto ? AMBAR : GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}{distinto ? ' · no es el que rige' : ''}</div>
+                                <div style={{ fontSize: '11px', color: distinto ? AMBAR : GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}{distinto && L.costo != null ? ' · no es el que rige' : ''}</div>
                                 {distinto && esJefeGlobal && (
                                   <button onClick={() => setRecosForm(recosForm === f.producto_id ? null : f.producto_id)}
                                     style={{ marginTop: '7px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
