@@ -853,7 +853,7 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
             {!esTodas && (
               <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums',
                              color: Number(v.precio) ? NAVY : AMBAR }}>
-                {Number(v.precio) ? <>{dinero(v.precio)}{valTipo === 'balanceado' && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span>}</> : 'sin precio'}
+                {Number(v.precio) ? <>{dinero(v.precio)}{valTipo === 'balanceado' && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span>}</> : 'Sin precio'}
               </span>
             )}
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
@@ -1151,7 +1151,7 @@ function ReporteDescuadres({ descs, tipo, onTipo, todasFincas }) {
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500, color: dif < 0 ? '#c0504d' : '#9a6a12' }}>
               {(dif < 0 ? 'Faltó ' : 'Sobró ') + miles(Math.abs(dif))}
             </span>
-            <span style={{ color: d.motivo ? NAVY : '#c3d0db' }}>{d.motivo || 'sin motivo'}</span>
+            <span style={{ color: d.motivo ? NAVY : '#c3d0db' }}>{d.motivo || 'Sin motivo'}</span>
             <span style={{ color: GRIS, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.autor || '—'}</span>
           </div>
           )

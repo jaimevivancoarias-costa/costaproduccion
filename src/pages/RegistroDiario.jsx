@@ -1447,7 +1447,7 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
 
   if (!editable) {
     const conExtras = extras.filter(e => numDec(e.libras) && e.productoId)
-    if ((!c || !numDec(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>sin registrar</div>
+    if ((!c || !numDec(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>Sin registrar</div>
     const filas = []
     if (numDec(c?.libras)) filas.push({ productoId: c.productoId, libras: c.libras })
     conExtras.forEach(e => filas.push(e))

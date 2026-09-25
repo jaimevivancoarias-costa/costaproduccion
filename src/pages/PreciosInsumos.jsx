@@ -281,7 +281,7 @@ export default function PreciosInsumos({ finca, esJefe, esJefeGlobal }) {
                     {dinero(f.precio.precio_unitario)}
                     {f.heredado && <div style={{ fontSize: '10px', color: GRIS, fontWeight: 400 }}>general (heredado)</div>}
                   </>
-                : <span style={{ fontSize: '13px', color: '#BA7517' }}>sin precio</span>}
+                : <span style={{ fontSize: '13px', color: '#BA7517' }}>Sin precio</span>}
             </span>
             <span style={{ fontSize: '13px', color: GRIS }}>
               {f.precio ? corta(f.precio.vigente_desde) : '—'}

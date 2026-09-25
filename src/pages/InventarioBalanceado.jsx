@@ -466,7 +466,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       ) : f.producto}
                     </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
-                    {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span></> : 'sin precio'}</Cel>}
+                    {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span></> : 'Sin precio'}</Cel>}
                     {esJefe && <Cel der>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && (sinInv
