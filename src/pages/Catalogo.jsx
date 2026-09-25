@@ -229,17 +229,27 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
     const esIns = tab === 'insumos'
     const tablaC = esIns ? 'consumo_insumo' : 'alimentacion'
     const colC = esIns ? 'insumo_id' : 'producto_id'
+    const tablaG = esIns ? 'ingreso_insumo' : 'ingreso_balanceado'
+    const lineaG = esIns ? 'ingreso_insumo_linea' : 'ingreso_balanceado_linea'
     const nombre = (esIns ? insumos : productos).find(p => p.id === prodId)?.nombre || ''
     const afectadas = []
-    for (const fid of fincaIds) {
+    for (const fid of [...new Set(fincaIds)]) {
       const { data: pis } = await supabase.schema('produccion').from('piscina').select('id').eq('finca_id', fid)
       const ids = (pis || []).map(p => p.id)
-      if (!ids.length) continue
-      let q = supabase.schema('produccion').from(tablaC).select('id', { count: 'exact', head: true })
-        .eq(colC, prodId).in('piscina_id', ids).gte('fecha', desde)
-      if (!esIns) q = q.eq('sin_alimentacion', false).gt('libras', 0)
-      const { count } = await q
-      if ((count || 0) > 0) afectadas.push({ id: fid, nombre: (fincas.find(f => f.id === fid)?.nombre) || '', consumos: count })
+      let consumos = 0
+      if (ids.length) {
+        let q = supabase.schema('produccion').from(tablaC).select('id', { count: 'exact', head: true })
+          .eq(colC, prodId).in('piscina_id', ids).gte('fecha', desde)
+        if (!esIns) q = q.eq('sin_alimentacion', false).gt('libras', 0)
+        const { count } = await q; consumos = count || 0
+      }
+      // Compras (lotes) del producto en esa finca desde la fecha.
+      const { data: comp } = await supabase.schema('produccion').from(tablaG)
+        .select(`id, ${lineaG}!inner(${colC})`).eq('finca_id', fid).gte('fecha', desde).eq(`${lineaG}.${colC}`, prodId)
+      const compras = (comp || []).length
+      if (consumos > 0 || compras > 0) {
+        afectadas.push({ id: fid, nombre: (fincas.find(f => f.id === fid)?.nombre) || '', consumos, compras })
+      }
     }
     if (!afectadas.length) return
     const ch = {}; afectadas.forEach(a => { ch[a.id] = 'recostear' })
@@ -309,7 +319,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                         borderBottom: i < recostModal.fincas.length - 1 ? '0.5px solid ' + BORDE : 'none' }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '14px', fontWeight: 500 }}>{f.nombre}</div>
-                    <div style={{ fontSize: '11px', color: GRIS }}>{f.consumos} {f.consumos === 1 ? 'día' : 'días'} de consumo</div>
+                    <div style={{ fontSize: '11px', color: GRIS }}>{[f.consumos ? `${f.consumos} ${f.consumos === 1 ? 'día' : 'días'} de consumo` : '', f.compras ? `${f.compras} ${f.compras === 1 ? 'compra' : 'compras'}` : ''].filter(Boolean).join(' · ') || 'sin movimientos'}</div>
                   </div>
                   <div style={{ display: 'inline-flex', background: '#f6f9fb', borderRadius: '8px', padding: '2px' }}>
                     {['recostear', 'mantener'].map(op => (
@@ -528,6 +538,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
+                      onRecosteo={ofrecerRecosteo}
                       onCancelar={() => setEditConfig(null)} />
                   )
                 })()}
@@ -567,6 +578,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct, exc: excIni, fincasGen }}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
+                      onRecosteo={ofrecerRecosteo}
                       onCancelar={() => setEditConfig(null)} />
                   )
                 })()}
@@ -1270,7 +1282,7 @@ function PopCopia({ tipo, origen, valor, otras, copia, setCopia, onAplicar, yaTi
   )
 }
 
-function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar }) {
+function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar, onRecosteo }) {
   const a = actual || {}
   const activas = (fincas || [])
   const [presentacion, setPresentacion] = useState(cap1(a.unidad_compra || insumo.unidad_compra) || 'Saco')
@@ -1509,23 +1521,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         if (error) throw error
       }
 
-      // Tema 2 (insumos): precio con fecha pasada + compras desde esa fecha -> preguntar.
-      let desdeGen = desde
-      if (ids.length && desde < hoyISO()) {
-        const { data: comp } = await supabase.schema('produccion').from('ingreso_insumo')
-          .select('id, ingreso_insumo_linea!inner(insumo_id)')
-          .in('finca_id', ids).gte('fecha', desde)
-          .eq('ingreso_insumo_linea.insumo_id', insumo.id)
-        const n = (comp || []).length
-        if (n > 0) {
-          const ok = window.confirm(
-            `Hay ${n} compra(s) de ${insumo.nombre} desde el ${desde}.\n\n` +
-            `Este precio también cambia el costo de esas compras.\n\n` +
-            `Aceptar = aplicar desde el ${desde} (afecta esas compras)\n` +
-            `Cancelar = aplicar solo desde hoy`)
-          if (!ok) desdeGen = hoyISO()
-        }
-      }
+      // El precio se aplica desde la fecha elegida. Si es hacia atrás, el
+      // pop-up de recosteo (por finca) se ofrece al terminar de guardar.
+      const desdeGen = desde
 
       // 2) Precios estándar por plazo. Si el plazo tiene precio, se abre;
       //    si quedó vacío/0, se BORRA el precio vigente de ese plazo.
@@ -1587,7 +1585,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           .insert([{ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfe }])
         if (e5) throw e5
       }
-      onHecho(`Configurado en ${activas.length} fincas.`)
+      await onHecho(`Configurado en ${activas.length} fincas.`)
+      if (onRecosteo && desde < hoyISO()) await onRecosteo(insumo.id, activas.map(f => f.id), desde)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
     finally { setEnviando(false) }
   }
@@ -1884,7 +1883,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
 
 // Configurar balanceado: precio por plazo (por saco), plazo activo,
 // mínimo y objetivo. A todas las fincas de un golpe (con excepciones).
-function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancelar }) {
+function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancelar, onRecosteo }) {
   const a = actual || {}
   const activas = (fincas || [])
   const [precios, setPrecios] = useState(() => {
@@ -1938,24 +1937,9 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         : ((a.exc && a.exc.length) ? [] : ids)
       const idsGen = baseGen.filter(id => !excFincaIds.includes(id))
 
-      // Tema 2: si el precio general se pone con una fecha PASADA y hay compras
-      // de este producto desde esa fecha, avisar (esas compras se recostean).
-      let desdeGen = desde
-      if (idsGen.length && desde < hoyISO()) {
-        const { data: comp } = await supabase.schema('produccion').from('ingreso_balanceado')
-          .select('id, ingreso_balanceado_linea!inner(producto_id)')
-          .in('finca_id', idsGen).gte('fecha', desde)
-          .eq('ingreso_balanceado_linea.producto_id', producto.id)
-        const n = (comp || []).length
-        if (n > 0) {
-          const ok = window.confirm(
-            `Hay ${n} compra(s) de ${producto.nombre} desde el ${desde}.\n\n` +
-            `Este precio también cambia el costo de esas compras.\n\n` +
-            `Aceptar = aplicar desde el ${desde} (afecta esas compras)\n` +
-            `Cancelar = aplicar solo desde hoy`)
-          if (!ok) desdeGen = hoyISO()
-        }
-      }
+      // El precio se aplica desde la fecha elegida. Si es hacia atrás, el
+      // pop-up de recosteo (por finca) se ofrece al terminar de guardar.
+      const desdeGen = desde
       const idsConf = [...new Set([...idsGen, ...excFincaIds])]
 
       const cerrarYAbrir = async (fincaIds, pz, rows, dfe) => {
@@ -2029,7 +2013,8 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         ])
       }))
 
-      onHecho(`Configurado en ${idsConf.length} fincas.`)
+      await onHecho(`Configurado en ${idsConf.length} fincas.`)
+      if (onRecosteo && desde < hoyISO()) await onRecosteo(producto.id, idsConf, desde)
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
     finally { setEnviando(false) }
   }
