@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
@@ -477,9 +478,9 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
-            <input inputMode="decimal" value={l.cantidad}
+            <CampoNumero maxDec={2} value={l.cantidad}
               placeholder="Cantidad"
-              onChange={e => setLinea(i, 'cantidad', e.target.value)}
+              onChange={v => setLinea(i, 'cantidad', v)}
               style={{ ...entrada, width: '110px' }} />
             {unidades.length > 1 ? (
               <select value={uElegida} onChange={e => setLinea(i, 'unidad', e.target.value)} style={{ ...entrada, width: '110px' }}>
@@ -500,8 +501,8 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
               <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '2px' }}>
                 {l.sobranteOn ? (
                   <>
-                    <input inputMode="decimal" value={l.sobrante ?? ''} placeholder={'+ sobrante en ' + (UNI[uCons] || cap1(uCons))}
-                      onChange={e => setLinea(i, 'sobrante', e.target.value)} style={{ ...entrada, width: '150px' }} />
+                    <CampoNumero maxDec={2} value={l.sobrante ?? ''} placeholder={'+ sobrante en ' + (UNI[uCons] || cap1(uCons))}
+                      onChange={v => setLinea(i, 'sobrante', v)} style={{ ...entrada, width: '150px' }} />
                     <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(cantidadEnCompra(l) * 100) / 100)} {UNI[uCompra] || cap1(uCompra)}</span>
                     <button onClick={() => { setLinea(i, 'sobranteOn', false); setLinea(i, 'sobrante', '') }}
                       style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontFamily: 'inherit', fontSize: '11px' }}>quitar sobrante</button>
@@ -641,8 +642,8 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
-            <input inputMode="decimal" value={l.cantidad} placeholder={uni ? `Cantidad en ${uni}` : 'Cantidad'}
-              onChange={e => setLinea(i, 'cantidad', e.target.value)} style={{ ...entrada, width: '170px' }} />
+            <CampoNumero maxDec={2} value={l.cantidad} placeholder={uni ? `Cantidad en ${uni}` : 'Cantidad'}
+              onChange={v => setLinea(i, 'cantidad', v)} style={{ ...entrada, width: '170px' }} />
             {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))}
               style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>}
           </div>

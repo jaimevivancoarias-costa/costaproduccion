@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, miles, dinero, dineroExacto } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 
@@ -784,7 +784,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   useEffect(() => { cargar() }, [cargar])
 
   const nombre = id => productos.find(p => p.id === id)?.nombre || ''
-  const validas = lineas.filter(l => l.productoId && num(l.cantidad))
+  const validas = lineas.filter(l => l.productoId && numDec(l.cantidad))
   const autoria = row => {
     const n = row?.creado_por ? usuarios[row.creado_por] : null
     const cuando = row?.creado_en ? new Date(row.creado_en).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
@@ -815,7 +815,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     const pend = (pendientes[p.id] || []).filter(x => Number(x.pendiente) > 0.0001)
     const lineasIng = pend.length
       ? pend.map(x => ({ producto_id: x.producto_id, cantidad: Number(x.pendiente) }))
-      : (p.pedido_balanceado_linea || []).map(l => ({ producto_id: l.producto_id, cantidad: num(l.cantidad) }))
+      : (p.pedido_balanceado_linea || []).map(l => ({ producto_id: l.producto_id, cantidad: numDec(l.cantidad) }))
     if (!lineasIng.length) { setAviso({ tipo: 'error', texto: 'El pedido no tiene líneas.' }); return }
     if (!window.confirm(`Marcar como entregado y sumar a bodega:\n${lineasIng.map(l => `${nombre(l.producto_id)}: ${miles(l.cantidad)} sacos`).join('\n')}\n\n¿Confirmar?`)) return
     try {
@@ -856,18 +856,18 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           .insert({ finca_id: finca.id, fecha, numero_guia: guia || null, proveedor: prov || null }).select('id').single()
         if (error) throw error
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
-          .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: num(l.cantidad) })))
+          .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) })))
         if (e2) throw e2
       } else if (nuevo === 'devolucion') {
         const { error } = await supabase.schema('produccion').from('devolucion_balanceado')
-          .insert(validas.map(l => ({ finca_id: finca.id, fecha, producto_id: l.productoId, cantidad: num(l.cantidad), motivo: obs || null })))
+          .insert(validas.map(l => ({ finca_id: finca.id, fecha, producto_id: l.productoId, cantidad: numDec(l.cantidad), motivo: obs || null })))
         if (error) throw error
       } else { // pedido
         const { data: p, error } = await supabase.schema('produccion').from('pedido_balanceado')
           .insert({ finca_id: finca.id, fecha, fecha_esperada: esperada || null, proveedor: prov || null }).select('id').single()
         if (error) throw error
         const { error: e2 } = await supabase.schema('produccion').from('pedido_balanceado_linea')
-          .insert(validas.map(l => ({ pedido_id: p.id, producto_id: l.productoId, cantidad: num(l.cantidad) })))
+          .insert(validas.map(l => ({ pedido_id: p.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) })))
         if (e2) throw e2
       }
       const msg = nuevo === 'ingreso' ? 'Ingreso registrado.' : nuevo === 'pedido' ? 'Pedido registrado.' : 'Devolución registrada.'
@@ -938,8 +938,8 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
                 <option value="">Elegir balanceado</option>
                 {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
               </select>
-              <input inputMode="decimal" value={l.cantidad} placeholder="Sacos"
-                onChange={e => setLineas(ls => ls.map((x, j) => j === i ? { ...x, cantidad: e.target.value } : x))} style={{ ...inp, width: '150px' }} />
+              <CampoNumero maxDec={2} value={l.cantidad} placeholder="Sacos"
+                onChange={v => setLineas(ls => ls.map((x, j) => j === i ? { ...x, cantidad: v } : x))} style={{ ...inp, width: '150px' }} />
               {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
             </div>
           ))}
@@ -983,7 +983,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
             <div style={{ marginTop: '9px', borderTop: '0.5px solid #f1f6f9', paddingTop: '8px' }}>
               {(g.ingreso_balanceado_linea || []).map((l, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0' }}>
-                  <span>{nombre(l.producto_id)}</span><span style={{ color: VERDE }}>+{miles(num(l.cantidad))} sacos</span>
+                  <span>{nombre(l.producto_id)}</span><span style={{ color: VERDE }}>+{miles(numDec(l.cantidad))} sacos</span>
                 </div>
               ))}
             </div>
@@ -1022,7 +1022,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
                 return (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '12px', alignItems: 'center', fontSize: '13px', padding: '3px 0' }}>
                     <span>{nombre(l.producto_id)}</span>
-                    <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{miles(num(l.cantidad))} sacos</span>
+                    <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{miles(numDec(l.cantidad))} sacos</span>
                     <span style={{ minWidth: '110px', textAlign: 'right', color: falta <= 0.0001 ? VERDE : AMBAR }}>{falta <= 0.0001 ? 'llegó todo' : `faltan ${miles(falta)}`}</span>
                   </div>
                 )
@@ -1070,7 +1070,7 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
   const [motivo, setMotivo] = useState('')
   const [enviando, setEnviando] = useState(false)
   const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
-  const validas = lineas.filter(l => l.productoId && num(l.cantidad))
+  const validas = lineas.filter(l => l.productoId && numDec(l.cantidad))
 
   async function guardarJefe() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
@@ -1080,7 +1080,7 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
     if (error) { setEnviando(false); setAviso({ tipo: 'error', texto: error.message }); return }
     await supabase.schema('produccion').from('ingreso_balanceado_linea').delete().eq('ingreso_id', g.id)
     const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
-      .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: num(l.cantidad) })))
+      .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) })))
     setEnviando(false)
     if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
     onHecho('Ingreso actualizado.')
@@ -1093,7 +1093,7 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
       lineas: (g.ingreso_balanceado_linea || []).map(l => ({ producto_id: l.producto_id, cantidad: Number(l.cantidad) })) }
     const propuesto = borrar ? { borrar: true }
       : { borrar: false, fecha, numero_guia: guia || null, proveedor: prov || null,
-          lineas: validas.map(l => ({ producto_id: l.productoId, cantidad: num(l.cantidad) })) }
+          lineas: validas.map(l => ({ producto_id: l.productoId, cantidad: numDec(l.cantidad) })) }
     const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
       finca_id: finca.id, tabla: 'ingreso_balanceado', registro_id: g.id,
       valor_anterior: anterior, valor_propuesto: propuesto, motivo: motivo.trim(), solicitado_por: userId })
@@ -1117,7 +1117,7 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
             <option value="">Elegir balanceado</option>
             {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
           </select>
-          <input inputMode="decimal" value={l.cantidad} placeholder="Sacos" onChange={e => setLinea(i, 'cantidad', e.target.value)} style={{ ...inp, width: '150px' }} />
+          <CampoNumero maxDec={2} value={l.cantidad} placeholder="Sacos" onChange={v => setLinea(i, 'cantidad', v)} style={{ ...inp, width: '150px' }} />
           {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
         </div>
       ))}

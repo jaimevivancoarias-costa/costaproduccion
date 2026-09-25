@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Precio del galón con 6 decimales (así lo pidió el negocio).
 const precio6 = n => '$' + (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 })
@@ -127,8 +128,8 @@ export default function CatalogoDiesel({ fincas }) {
           <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             {tipos.map(t => (
               <Campo key={t.id} label={`${t.nombre} · $/gal`}>
-                <input inputMode="decimal" value={bulk.valores[t.id] || ''} placeholder="ej. 1.80"
-                  onChange={e => setBulk(x => ({ ...x, valores: { ...x.valores, [t.id]: e.target.value } }))}
+                <CampoNumero maxDec={6} value={bulk.valores[t.id] || ''} placeholder="ej. 1.80"
+                  onChange={v => setBulk(x => ({ ...x, valores: { ...x.valores, [t.id]: v } }))}
                   style={{ ...inp, width: '100px', textAlign: 'right' }} />
               </Campo>
             ))}
@@ -181,8 +182,8 @@ export default function CatalogoDiesel({ fincas }) {
                     <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       {tipos.map(t => (
                         <Campo key={t.id} label={`${t.nombre} · $/gal`}>
-                          <input inputMode="decimal" value={edit.valores[t.id] || ''} placeholder="ej. 1.80"
-                            onChange={e => setEdit(x => ({ ...x, valores: { ...x.valores, [t.id]: e.target.value } }))}
+                          <CampoNumero maxDec={6} value={edit.valores[t.id] || ''} placeholder="ej. 1.80"
+                            onChange={v => setEdit(x => ({ ...x, valores: { ...x.valores, [t.id]: v } }))}
                             style={{ ...inp, width: '100px', textAlign: 'right' }} />
                         </Campo>
                       ))}

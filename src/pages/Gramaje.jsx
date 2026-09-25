@@ -4,6 +4,7 @@ import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, nombreDia,
   esDiaDeMuestreo, diasCultivo, situacionDia, num, numDec, semanaISO,
 } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Gramaje · peso promedio del camaron
 //
@@ -733,13 +734,13 @@ function MetaBar({ meta, mVerde, mRojo, esJefe, open, setOpen, form, setForm, on
         <div style={{ display: 'flex', gap: '40px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
             <label style={{ fontSize: '12px', color: GRIS, display: 'block', marginBottom: '8px' }}>{dot(VERDE)}Verde · en meta desde</label>
-            <input value={form.verde} onChange={e => setForm(x => ({ ...x, verde: e.target.value }))} inputMode="decimal"
+            <CampoNumero maxDec={2} value={form.verde} onChange={v => setForm(x => ({ ...x, verde: v }))}
               style={{ width: '80px', padding: '11px 10px', fontSize: '18px', textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '9px', fontFamily: 'inherit' }} />
             <span style={{ fontSize: '12px', color: GRIS, marginLeft: '9px' }}>g/semana</span>
           </div>
           <div>
             <label style={{ fontSize: '12px', color: GRIS, display: 'block', marginBottom: '8px' }}>{dot(ROJO)}Rojo · muy lento bajo de</label>
-            <input value={form.rojo} onChange={e => setForm(x => ({ ...x, rojo: e.target.value }))} inputMode="decimal"
+            <CampoNumero maxDec={2} value={form.rojo} onChange={v => setForm(x => ({ ...x, rojo: v }))}
               style={{ width: '80px', padding: '11px 10px', fontSize: '18px', textAlign: 'center', border: '0.5px solid ' + BORDE, borderRadius: '9px', fontFamily: 'inherit' }} />
             <span style={{ fontSize: '12px', color: GRIS, marginLeft: '9px' }}>g/semana</span>
           </div>
@@ -768,8 +769,8 @@ function Celdas({ fecha, hoy, fuera, puede, calc, valor, onChange, joven, ant, d
       <Td fondo={f}><span style={{ color: GRIS }}>{diasBloque ?? ''}</span></Td>
       <Td fondo={f}>
         {puede ? (
-          <input inputMode="decimal" value={valor} placeholder="-"
-            onChange={e => onChange(e.target.value)}
+          <CampoNumero maxDec={2} value={valor} placeholder="-"
+            onChange={v => onChange(v)}
             style={{ width: '100%', padding: '6px', fontSize: '15px', textAlign: 'center',
                      fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '7px',
                      fontVariantNumeric: 'tabular-nums' }} />
