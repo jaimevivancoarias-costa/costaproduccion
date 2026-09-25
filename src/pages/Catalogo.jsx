@@ -237,6 +237,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
         El jefe define productos y presentaciones; el precio lo ponen el jefe y las contadoras.
       </p>
 
+      <InformeDoblePrecio fincas={fincas} />
+
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
         {[['insumos', 'Insumos'], ['balanceados', 'Balanceados'], ['diesel', 'Diesel']].map(([id, txt]) => (
           <button key={id} onClick={() => { setTab(id); setAbierto(null); setNuevo(false); setBusqCat('') }} style={{
@@ -2143,3 +2145,101 @@ const btn = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius:
 const btnPri = { background: AZUL, color: 'white', border: 'none', borderRadius: '9px', padding: '9px 18px', fontFamily: 'inherit', fontSize: '14px', fontWeight: 500, cursor: 'pointer' }
 const miniLink = { background: 'none', border: 'none', padding: '0 0 0 6px', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px' }
 const linkAccion = color => ({ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color, fontFamily: 'inherit', fontSize: '13px' })
+
+// Informe de "doble precio": lista los productos (balanceado e insumos) que
+// tienen precio puesto en un plazo que NO rige, o cuyo plazo que rige no
+// tiene precio (se costea con un respaldo). Es el mapa para recostear: el
+// caso LIMONVERDE, pero de todas las fincas de un vistazo. Solo lectura.
+const PLAZO_LBL_DP = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
+
+function InformeDoblePrecio({ fincas }) {
+  const [abierto, setAbierto] = useState(false)
+  const [casos, setCasos] = useState(null)   // null = cargando; [] = sin casos
+  const fincaIds = (fincas || []).map(f => f.id)
+  const nombreFinca = id => (fincas || []).find(f => f.id === id)?.nombre || ''
+
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      if (!fincaIds.length) { setCasos([]); return }
+      const [{ data: pp }, { data: zp }, { data: pi }, { data: zi }, { data: prods }, { data: insu }] = await Promise.all([
+        supabase.schema('produccion').from('precio_producto').select('producto_id, finca_id, plazo, precio_saco, vigente_desde').in('finca_id', fincaIds).is('vigente_hasta', null),
+        supabase.schema('produccion').from('plazo_producto').select('producto_id, finca_id, plazo').in('finca_id', fincaIds).is('vigente_hasta', null),
+        supabase.schema('produccion').from('precio_insumo').select('insumo_id, finca_id, plazo, precio_unitario, vigente_desde').in('finca_id', fincaIds).is('vigente_hasta', null),
+        supabase.schema('produccion').from('plazo_insumo').select('insumo_id, finca_id, plazo').in('finca_id', fincaIds).is('vigente_hasta', null),
+        supabase.schema('produccion').from('producto').select('id, nombre'),
+        supabase.schema('produccion').from('insumo').select('id, nombre'),
+      ])
+      const nomProd = {}; (prods || []).forEach(p => { nomProd[p.id] = p.nombre })
+      const nomIns = {}; (insu || []).forEach(p => { nomIns[p.id] = p.nombre })
+
+      const detecta = (precios, rigeRows, idCol, precioCol, nombres, tipo) => {
+        const preP = {}
+        ;(precios || []).forEach(x => {
+          const k = x[idCol] + '|' + x.finca_id
+          ;(preP[k] = preP[k] || {})[Number(x.plazo)] = { precio: Number(x[precioCol]), desde: x.vigente_desde }
+        })
+        const rigeP = {}
+        ;(rigeRows || []).forEach(x => { rigeP[x[idCol] + '|' + x.finca_id] = Number(x.plazo) })
+        const out = []
+        Object.keys(preP).forEach(k => {
+          const [itemId, fincaId] = k.split('|')
+          const plazos = preP[k]
+          if (!Object.keys(plazos).length) return
+          const rige = rigeP[k] != null ? rigeP[k] : 0
+          const usaPlazo = plazos[rige] ? rige : (plazos[0] ? 0 : null)
+          const otros = Object.keys(plazos).map(Number).filter(pz => pz !== usaPlazo)
+          const rigeSinPrecio = rigeP[k] != null && !plazos[rige]
+          if (otros.length > 0 || rigeSinPrecio) {
+            const ap = usaPlazo != null ? plazos[usaPlazo] : null
+            out.push({
+              tipo, fincaId, nombre: nombres[itemId] || '—',
+              aplica: ap ? { precio: ap.precio, plazo: usaPlazo, desde: ap.desde } : null,
+              otros: otros.sort((a, b) => a - b).map(pz => ({ plazo: pz, precio: plazos[pz].precio, desde: plazos[pz].desde })),
+              rigeSinPrecio,
+            })
+          }
+        })
+        return out
+      }
+      const res = [
+        ...detecta(pp, zp, 'producto_id', 'precio_saco', nomProd, 'Balanceado'),
+        ...detecta(pi, zi, 'insumo_id', 'precio_unitario', nomIns, 'Insumo'),
+      ]
+      if (vivo) setCasos(res)
+    })()
+    return () => { vivo = false }
+  }, [JSON.stringify(fincaIds)])
+
+  if (casos === null) return null
+  const n = casos.length
+  if (n === 0) {
+    return <div style={{ fontSize: '12px', color: VERDE, margin: '0 0 14px' }}>✓ Todos los precios cuadran con el plazo que rige.</div>
+  }
+  const porFinca = {}
+  casos.forEach(c => { (porFinca[c.fincaId] = porFinca[c.fincaId] || []).push(c) })
+  return (
+    <div style={{ border: '0.5px solid #ecd9b3', background: '#FBF5E9', borderRadius: '10px', margin: '0 0 14px', overflow: 'hidden' }}>
+      <button onClick={() => setAbierto(v => !v)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 15px', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <span style={{ color: AMBAR, fontWeight: 500, fontSize: '14px' }}>{abierto ? '▾' : '▸'} Precios a revisar ({n})</span>
+        <span style={{ fontSize: '12px', color: GRIS }}>tienen precio en un plazo que no rige — revisa para recostear</span>
+      </button>
+      {abierto && (
+        <div style={{ padding: '0 15px 12px' }}>
+          {Object.keys(porFinca).map(fid => (
+            <div key={fid} style={{ marginBottom: '8px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 500, color: NAVY, margin: '6px 0 4px' }}>{nombreFinca(fid)}</div>
+              {porFinca[fid].map((c, i) => (
+                <div key={i} style={{ fontSize: '12.5px', color: NAVY, padding: '5px 0', borderTop: i ? '0.5px solid #ecd9b3' : 'none', display: 'flex', flexWrap: 'wrap', gap: '3px 10px' }}>
+                  <span style={{ minWidth: '220px' }}><span style={{ color: GRIS, fontSize: '11px' }}>{c.tipo}</span> {c.nombre}</span>
+                  <span>aplica <b style={{ fontWeight: 500 }}>{c.aplica ? dineroExacto(c.aplica.precio) : 'sin precio'}</b>{c.aplica ? ` (${PLAZO_LBL_DP[c.aplica.plazo]})` : ''}</span>
+                  <span style={{ color: AMBAR }}>{c.rigeSinPrecio ? 'el plazo que rige no tiene precio' : 'también: ' + c.otros.map(o => `${dineroExacto(o.precio)} (${PLAZO_LBL_DP[o.plazo]})`).join(', ')}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
