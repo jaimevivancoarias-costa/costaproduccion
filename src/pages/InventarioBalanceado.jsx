@@ -61,6 +61,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
+  const [recosForm, setRecosForm] = useState(null)     // producto_id con la confirmación de recosteo abierta
+  const [recosteando, setRecosteando] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -273,6 +275,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado.' }); await cargar()
   }
 
+  // Recostear un producto: sus lotes y su consumo pasan al precio que rige
+  // (los lotes conservan su fecha de compra; cambia precio y plazo). Manual,
+  // por producto: el jefe decide cuándo. No se puede deshacer solo, pero es
+  // determinístico (siempre recalcula desde el catálogo actual).
+  async function recostear(f) {
+    setRecosteando(true)
+    const { error } = await supabase.schema('produccion')
+      .rpc('fn_recostear_producto_finca', { p_finca: finca.id, p_producto: f.producto_id })
+    setRecosteando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo recostear. ' + error.message }); return }
+    setRecosForm(null)
+    setAviso({ tipo: 'ok', texto: `${f.producto} recosteado al precio que rige.` })
+    await cargar()
+  }
+
   async function corregir(f) {
     const escrito = window.prompt(`${f.producto}\n\nEl sistema dice ${limpio(f.saldo)} sacos.\n¿Cuánto debe decir?`, limpio(f.saldo))
     if (escrito === null) return
@@ -483,7 +500,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   const dg = desglose[f.producto_id] || []
                   const pi = precioInfo[f.producto_id]
                   const warn = esJefe && pi?.semaforo === 'warn'
-                  const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0) || warn
+                  // Recosteable: hay algún lote a un precio distinto al que rige.
+                  const ruling = Number(f.precio) || 0
+                  const recostable = esJefeGlobal && ruling > 0 &&
+                    (lotes[f.producto_id] || []).some(L => L.costo != null && Math.abs(Number(L.costo) - ruling) > 0.005)
+                  const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0) || warn || recostable
                   const ab = abierto === f.producto_id
                   const sinInv = Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
                   return (
@@ -505,9 +526,29 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && (sinInv
                         ? <button onClick={() => setIniForm({ productoId: f.producto_id, cantidad: '', fecha: hoyISO() })} style={{ background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px', padding: '5px 11px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Cargar inicial</button>
-                        : <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>)}
+                        : <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
+                            {recostable && <button onClick={() => { setAbierto(f.producto_id); setRecosForm(recosForm === f.producto_id ? null : f.producto_id) }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, color: AMBAR }}>Recostear</button>}
+                            <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>
+                          </div>)}
                     </div>}
                   </Fila>
+                  {recosForm === f.producto_id && (
+                    <div style={{ background: '#f6f9fb', padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9' }}>
+                      <div style={{ fontSize: '13px', color: NAVY, marginBottom: '6px' }}>
+                        Recostear <b>{f.producto}</b> al precio que rige: <b>{dineroExacto(ruling)}</b>{pi?.aplicado ? ` · ${PLAZO_LBL[pi.aplicado.plazo]}` : ''}.
+                      </div>
+                      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px', lineHeight: 1.5 }}>
+                        Los lotes a otro precio pasan a {dineroExacto(ruling)} (mantienen su fecha de compra; cambia precio y plazo) y se recostea el consumo de este balanceado. Es re-ejecutable, pero no se deshace solo.
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => recostear(f)} disabled={recosteando}
+                          style={{ ...btn, background: AZUL, color: '#fff', borderColor: AZUL, opacity: recosteando ? 0.5 : 1 }}>
+                          {recosteando ? 'Recosteando...' : `Recostear a ${dineroExacto(ruling)}`}
+                        </button>
+                        <button onClick={() => setRecosForm(null)} style={btn}>Mantener</button>
+                      </div>
+                    </div>
+                  )}
                   {iniForm?.productoId === f.producto_id && (
                     <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad (sacos)</div><input inputMode="decimal" autoFocus value={iniForm.cantidad} onChange={e => setIniForm(x => ({ ...x, cantidad: e.target.value }))} style={{ padding: '8px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', width: '100px', textAlign: 'right' }} /></div>
