@@ -107,9 +107,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   useEffect(() => { cargar() }, [cargar])
 
   const primeraVez = tomas.length === 0
-  // Valor a PRECIO ACTUAL (saldo × precio vigente): al cambiar el precio, el
-  // valor de la bodega se actualiza enseguida.
-  const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(s.saldo || 0) * Number(precios[s.producto_id] || 0), 0), [saldos, precios])
+  // Valor de la bodega = costo REAL de lo que hay (FIFO, lo que se pagó por
+  // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
+  // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
+  const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifo[s.producto_id] || 0), 0), [saldos, valorFifo])
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
@@ -467,7 +468,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
                     {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span></> : 'Sin precio'}</Cel>}
-                    {esJefe && <Cel der>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Cel>}
+                    {esJefe && <Cel der>{dinero(Number(valorFifo[f.producto_id] || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && (sinInv
                         ? <button onClick={() => setIniForm({ productoId: f.producto_id, cantidad: '', fecha: hoyISO() })} style={{ background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px', padding: '5px 11px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Cargar inicial</button>
