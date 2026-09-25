@@ -2281,14 +2281,20 @@ const PLAZO_LBL_DP = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 dí
 
 function InformeDoblePrecio({ fincas }) {
   const [abierto, setAbierto] = useState(false)
-  const [casos, setCasos] = useState(null)   // null = cargando; [] = sin casos
+  const [casos, setCasos] = useState(null)   // null = no cargado todavía
+  const [cargando, setCargando] = useState(false)
   const fincaIds = (fincas || []).map(f => f.id)
   const nombreFinca = id => (fincas || []).find(f => f.id === id)?.nombre || ''
 
-  useEffect(() => {
-    let vivo = true
-    ;(async () => {
+  // Perezoso: no carga nada hasta que se abre (así no demora el Catálogo).
+  function abrir() {
+    setAbierto(v => !v)
+    if (casos === null && !cargando) cargarCasos()
+  }
+
+  async function cargarCasos() {
       if (!fincaIds.length) { setCasos([]); return }
+      setCargando(true)
       const [{ data: pp }, { data: zp }, { data: pi }, { data: zi }, { data: prods }, { data: insu }] = await Promise.all([
         supabase.schema('produccion').from('precio_producto').select('producto_id, finca_id, plazo, precio_saco, vigente_desde').in('finca_id', fincaIds).is('vigente_hasta', null),
         supabase.schema('produccion').from('plazo_producto').select('producto_id, finca_id, plazo').in('finca_id', fincaIds).is('vigente_hasta', null),
@@ -2335,25 +2341,19 @@ function InformeDoblePrecio({ fincas }) {
         ...detecta(pp, zp, 'producto_id', 'precio_saco', nomProd, 'Balanceado'),
         ...detecta(pi, zi, 'insumo_id', 'precio_unitario', nomIns, 'Insumo'),
       ]
-      if (vivo) setCasos(res)
-    })()
-    return () => { vivo = false }
-  }, [JSON.stringify(fincaIds)])
-
-  if (casos === null) return null
-  const n = casos.length
-  if (n === 0) {
-    return <div style={{ fontSize: '12px', color: VERDE, margin: '0 0 14px' }}>✓ Todos los precios cuadran con el plazo que rige.</div>
+      setCasos(res); setCargando(false)
   }
+
+  const n = casos ? casos.length : null
   const porFinca = {}
-  casos.forEach(c => { (porFinca[c.fincaId] = porFinca[c.fincaId] || []).push(c) })
+  ;(casos || []).forEach(c => { (porFinca[c.fincaId] = porFinca[c.fincaId] || []).push(c) })
   return (
-    <div style={{ border: '0.5px solid #ecd9b3', background: '#FBF5E9', borderRadius: '10px', margin: '0 0 14px', overflow: 'hidden' }}>
-      <button onClick={() => setAbierto(v => !v)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 15px', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-        <span style={{ color: AMBAR, fontWeight: 500, fontSize: '14px' }}>{abierto ? '▾' : '▸'} Precios a revisar ({n})</span>
-        <span style={{ fontSize: '12px', color: GRIS }}>el plazo que rige no tiene precio — se costea con un respaldo</span>
+    <div style={{ border: '0.5px solid ' + (n ? '#ecd9b3' : BORDE), background: n ? '#FBF5E9' : 'white', borderRadius: '10px', margin: '0 0 14px', overflow: 'hidden' }}>
+      <button onClick={abrir} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 15px', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <span style={{ color: n ? AMBAR : NAVY, fontWeight: 500, fontSize: '14px' }}>{abierto ? '▾' : '▸'} Revisar precios{n != null ? ` (${n})` : ''}</span>
+        <span style={{ fontSize: '12px', color: GRIS }}>{cargando ? 'revisando…' : n === 0 ? 'todos cuadran con el plazo que rige' : n > 0 ? 'el plazo que rige no tiene precio — se costea con un respaldo' : 'clic para revisar'}</span>
       </button>
-      {abierto && (
+      {abierto && casos && casos.length > 0 && (
         <div style={{ padding: '0 15px 12px' }}>
           {Object.keys(porFinca).map(fid => (
             <div key={fid} style={{ marginBottom: '8px' }}>
@@ -2368,6 +2368,9 @@ function InformeDoblePrecio({ fincas }) {
             </div>
           ))}
         </div>
+      )}
+      {abierto && casos && casos.length === 0 && (
+        <div style={{ padding: '0 15px 12px', fontSize: '12.5px', color: VERDE }}>✓ Todos los precios cuadran con el plazo que rige.</div>
       )}
     </div>
   )
