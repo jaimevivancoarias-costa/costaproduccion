@@ -2190,7 +2190,9 @@ function InformeDoblePrecio({ fincas }) {
           const usaPlazo = plazos[rige] ? rige : (plazos[0] ? 0 : null)
           const otros = Object.keys(plazos).map(Number).filter(pz => pz !== usaPlazo)
           const rigeSinPrecio = rigeP[k] != null && !plazos[rige]
-          if (otros.length > 0 || rigeSinPrecio) {
+          // Solo es problema cuando el plazo que rige NO tiene precio (se
+          // costea con un respaldo). Tener precios en varios plazos es normal.
+          if (rigeSinPrecio) {
             const ap = usaPlazo != null ? plazos[usaPlazo] : null
             out.push({
               tipo, fincaId, nombre: nombres[itemId] || '—',
@@ -2222,7 +2224,7 @@ function InformeDoblePrecio({ fincas }) {
     <div style={{ border: '0.5px solid #ecd9b3', background: '#FBF5E9', borderRadius: '10px', margin: '0 0 14px', overflow: 'hidden' }}>
       <button onClick={() => setAbierto(v => !v)} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: '12px 15px', fontFamily: 'inherit', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
         <span style={{ color: AMBAR, fontWeight: 500, fontSize: '14px' }}>{abierto ? '▾' : '▸'} Precios a revisar ({n})</span>
-        <span style={{ fontSize: '12px', color: GRIS }}>tienen precio en un plazo que no rige — revisa para recostear</span>
+        <span style={{ fontSize: '12px', color: GRIS }}>el plazo que rige no tiene precio — se costea con un respaldo</span>
       </button>
       {abierto && (
         <div style={{ padding: '0 15px 12px' }}>
