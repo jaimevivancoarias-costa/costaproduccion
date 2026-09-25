@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec, dinero } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Precios de balanceado · modulo Produccion
 //
@@ -239,7 +240,7 @@ function Forma({ actual, onGuardar, fincas, fincaActual }) {
       <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Precio nuevo por saco</div>
-          <input inputMode="decimal" value={nuevo} onChange={e => setNuevo(e.target.value)}
+          <CampoNumero maxDec={6} value={nuevo} onChange={v => setNuevo(v)}
             style={{ ...inp, width: '140px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
         </div>
         <div>

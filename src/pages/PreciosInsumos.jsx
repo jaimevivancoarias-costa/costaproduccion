@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, dinero, miles } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Precios de insumos · modulo Produccion
 //
@@ -331,7 +332,7 @@ function Forma({ actual, onGuardar, fincas, fincaActual }) {
           <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>
             Precio nuevo por {UNIDAD[actual.unidad] || actual.unidad}
           </div>
-          <input inputMode="decimal" value={nuevo} onChange={e => setNuevo(e.target.value)}
+          <CampoNumero maxDec={6} value={nuevo} onChange={v => setNuevo(v)}
             style={{ padding: '9px 11px', fontSize: '15px', fontFamily: 'inherit', width: '140px',
                      border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right',
                      fontVariantNumeric: 'tabular-nums' }} />
@@ -444,7 +445,7 @@ function AltaInsumo({ onCrear, onCancelar }) {
           </div>
           <div>
             <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Cada uno trae ({UNIDAD[unidad]})</div>
-            <input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)}
+            <CampoNumero maxDec={6} value={factor} onChange={v => setFactor(v)}
               placeholder="Ej. 25000" style={{ ...campo, width: '150px', textAlign: 'right' }} />
           </div>
         </div>
@@ -519,7 +520,7 @@ function EditarInsumo({ actual, onGuardar, onCancelar }) {
           </div>
           <div>
             <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Cada uno trae ({UNIDAD[unidad]})</div>
-            <input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)} placeholder="ej. 25000" style={{ ...campo, width: '150px', textAlign: 'right' }} />
+            <CampoNumero maxDec={6} value={factor} onChange={v => setFactor(v)} placeholder="ej. 25000" style={{ ...campo, width: '150px', textAlign: 'right' }} />
           </div>
         </div>
       )}
