@@ -121,9 +121,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
-        supabase.schema('produccion').from('vw_usuario').select('id, nombre, email'),
+        supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
-      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre || u.email })
+      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
         cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
@@ -518,18 +518,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       ) : f.producto}
                     </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
-                    {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
+                    {esJefe && <Cel der>{f.precio ? <><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dineroExacto(f.precio)}</span><span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
                       {pi?.aplicado ? `${PLAZO_LBL[pi.aplicado.plazo] || 'catálogo'}${pi.aplicado.desde ? ' · desde ' + corta(pi.aplicado.desde) : ''}` : 'catálogo'}
                       {warn && <span style={{ color: AMBAR }}> · Revisar</span>}
-                    </span></> : 'Sin precio'}</Cel>}
-                    {esJefe && <Cel der>{dinero(Number(valorFifo[f.producto_id] || 0))}</Cel>}
+                    </span></> : <span style={{ color: GRIS }}>Sin precio</span>}</Cel>}
+                    {esJefe && <Cel der><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.producto_id] || 0))}</span></Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && (sinInv
                         ? <button onClick={() => setIniForm({ productoId: f.producto_id, cantidad: '', fecha: hoyISO() })} style={{ background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px', padding: '5px 11px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Cargar inicial</button>
-                        : <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '3px' }}>
-                            {recostable && <button onClick={() => { setAbierto(f.producto_id); setRecosForm(recosForm === f.producto_id ? null : f.producto_id) }} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, color: AMBAR }}>Recostear</button>}
-                            <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>
-                          </div>)}
+                        : <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>Corregir</button>)}
                     </div>}
                   </Fila>
                   {recosForm === f.producto_id && (
@@ -588,12 +585,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
                           <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
-                              <div key={i} style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
+                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => {
+                              const distinto = L.costo != null && ruling > 0 && Math.abs(Number(L.costo) - ruling) > 0.005
+                              return (
+                              <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
                                 <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} sacos</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
-                                <div style={{ fontSize: '11px', color: GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}</div>
+                                <div style={{ fontSize: '11px', color: distinto ? AMBAR : GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}{distinto ? ' · no es el que rige' : ''}</div>
+                                {distinto && esJefeGlobal && (
+                                  <button onClick={() => setRecosForm(recosForm === f.producto_id ? null : f.producto_id)}
+                                    style={{ marginTop: '7px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+                                    Recostear a {dineroExacto(ruling)}
+                                  </button>
+                                )}
                               </div>
-                            ))}
+                            )})}
                           </div>
                         </div>
                       )}
