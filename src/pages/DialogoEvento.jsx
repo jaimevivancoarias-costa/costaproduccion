@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, num, numDec, miles } from '../lib/fechas'
+import CampoNumero from '../components/CampoNumero'
 
 // Los cuatro eventos, en un dialogo que se abre desde la fila de la
 // piscina en el registro diario. No es una pantalla aparte: en el Excel
@@ -57,7 +58,7 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
 
   // Vacio se guarda como null, no como cero. Cero significaria que se
   // coseho y no salio nada; null significa que el dato no ha llegado.
-  const lb = num(libras) > 0 ? num(libras) : null
+  const lb = numDec(libras) > 0 ? numDec(libras) : null
 
   if (tipo === 'raleo') {
     const { error } = await supabase.schema('produccion').from('evento')
@@ -322,7 +323,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
       : destinos.map(d => ({ piscinaId: d.piscinaId, porcentaje: Number(d.porcentaje) || 0 }))
     await onGuardar({
       fecha, laboratorioId: lab || null, larva: num(larva), gramaje: numDec(gramaje),
-      libras: num(libras), destinos: dest, observacion: obs,
+      libras: numDec(libras), destinos: dest, observacion: obs,
     })
     setEnviando(false)
   }
@@ -364,8 +365,8 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
               )}
             </Campo>
             <Campo label="Cantidad de larva">
-              <input inputMode="numeric" value={larva} placeholder="Por ejemplo 2500000"
-                     onChange={e => setLarva(e.target.value)} style={entrada} />
+              <CampoNumero maxDec={0} value={larva} placeholder="Por ejemplo 2500000"
+                     onChange={v => setLarva(v)} style={entrada} />
             </Campo>
             {densidad && (
               <div style={{ fontSize: '12px', color: GRIS, margin: '-6px 0 12px' }}>
@@ -373,9 +374,9 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
               </div>
             )}
             <Campo label={esPrecria ? 'PLs por gramo' : 'Gramaje de siembra (g)'}>
-              <input inputMode="decimal" value={gramaje}
+              <CampoNumero maxDec={6} value={gramaje}
                      placeholder={esPrecria ? 'ej. 80 · Obligatorio' : 'Opcional'}
-                     onChange={e => setGramaje(e.target.value)} style={entrada} />
+                     onChange={v => setGramaje(v)} style={entrada} />
               {esPrecria && (
                 <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
                   Cuántas post-larvas (PLs) hay por gramo. Es obligatorio para sembrar la precría.
@@ -387,10 +388,10 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
         {pideLibras && (
           <Campo label={tipo === 'raleo' ? 'Libras raleadas' : 'Libras cosechadas'}>
-            <input inputMode="numeric" value={libras} placeholder="Si todavía no las sabes, déjalo vacío"
-                   onChange={e => setLibras(e.target.value)} style={entrada} />
+            <CampoNumero maxDec={2} value={libras} placeholder="Si todavía no las sabes, déjalo vacío"
+                   onChange={v => setLibras(v)} style={entrada} />
             <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
-              {num(libras) > 0
+              {numDec(libras) > 0
                 ? 'Con este dato el sistema calcula el costo por libra del ciclo.'
                 : 'Puedes registrarla ahora y cargar las libras cuando llegue el dato de la empacadora. Mientras esté vacía, el costo por libra queda pendiente.'}
             </div>
@@ -460,9 +461,9 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                   return (
                     <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
                       <span style={{ flex: 1, fontSize: '14px' }}>{nombre}</span>
-                      <input inputMode="decimal" value={d.cantidad}
+                      <CampoNumero maxDec={0} value={d.cantidad}
                         placeholder={larvasSembradas > 0 ? String(Math.round(larvasSembradas * 0.9)) : 'número'}
-                        onChange={e => setCant(d.piscinaId, e.target.value)}
+                        onChange={v => setCant(d.piscinaId, v)}
                         style={{ ...entrada, width: '150px', textAlign: 'right' }} />
                       <span style={{ fontSize: '13px', color: GRIS, width: '52px' }}>animales</span>
                     </div>
@@ -491,8 +492,8 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
                     <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px',
                           marginBottom: '7px' }}>
                       <span style={{ flex: 1, fontSize: '14px' }}>{nombre}</span>
-                      <input inputMode="decimal" value={d.porcentaje}
-                        onChange={e => setPct(d.piscinaId, e.target.value)}
+                      <CampoNumero maxDec={2} value={d.porcentaje}
+                        onChange={v => setPct(d.piscinaId, v)}
                         style={{ ...entrada, width: '90px', textAlign: 'right' }} />
                       <span style={{ fontSize: '13px', color: GRIS, width: '14px' }}>%</span>
                     </div>
@@ -508,8 +509,8 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
             {destinos.length > 0 && (
               <Campo label="Gramaje de transferencia (g)">
-                <input inputMode="decimal" value={gramaje} placeholder="Obligatorio"
-                       onChange={e => setGramaje(e.target.value)} style={entrada} />
+                <CampoNumero maxDec={6} value={gramaje} placeholder="Obligatorio"
+                       onChange={v => setGramaje(v)} style={entrada} />
                 <div style={{ fontSize: '12px', color: GRIS, marginTop: '5px' }}>
                   El tamaño (gramaje) del camarón al momento de pasarlo. Es obligatorio.
                 </div>
@@ -517,8 +518,8 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
             )}
 
             <Campo label="Libras transferidas">
-              <input inputMode="numeric" value={libras} placeholder="Opcional"
-                     onChange={e => setLibras(e.target.value)} style={entrada} />
+              <CampoNumero maxDec={2} value={libras} placeholder="Opcional"
+                     onChange={v => setLibras(v)} style={entrada} />
             </Campo>
           </>
         )}

@@ -1785,13 +1785,13 @@ function EditorSiembra({ p, onGuardar, onCancelar }) {
       </div>
       <div>
         <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Larva sembrada</div>
-        <input inputMode="numeric" value={larva} onChange={e => setLarva(e.target.value)} placeholder="ej. 850000"
+        <CampoNumero maxDec={0} value={larva} onChange={v => setLarva(v)} placeholder="ej. 850000"
           style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit', width: '150px',
                    border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
       </div>
       <div>
         <div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>Gramaje de siembra (g)</div>
-        <input inputMode="decimal" value={gramaje} onChange={e => setGramaje(e.target.value)} placeholder="ej. 0.02"
+        <CampoNumero maxDec={6} value={gramaje} onChange={v => setGramaje(v)} placeholder="ej. 0.02"
           style={{ padding: '8px 11px', fontSize: '14px', fontFamily: 'inherit', width: '130px',
                    border: '0.5px solid ' + BORDE, borderRadius: '9px', textAlign: 'right' }} />
       </div>
