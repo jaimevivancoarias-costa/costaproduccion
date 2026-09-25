@@ -59,6 +59,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
+  const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
@@ -196,9 +197,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .select('fecha, creado_por, toma_inventario_linea(insumo_id)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
-        supabase.schema('produccion').from('vw_usuario').select('id, nombre, email'),
+        supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
-      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre || u.email })
+      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}
       ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
         cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null }
@@ -219,11 +220,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // El valor se calcula a PRECIO ACTUAL: saldo × precio vigente. Así, al
   // cambiar el precio (con su "rige desde"), el valor de la bodega se
   // actualiza enseguida y cuadra con las columnas Saldo y Precio.
+  // Valor de la bodega = costo REAL FIFO (lo que se pagó por cada lote), no
+  // precio de catálogo. Así cuadra con el desglose "cuánto queda a cada precio".
   const valorBodega = useMemo(
-    () => saldos.reduce((t, s) => t + Number(s.saldo || 0) * Number(precios[s.insumo_id] || 0), 0),
-    [saldos, precios])
+    () => saldos.reduce((t, s) => t + Number(valorFifo[s.insumo_id] || 0), 0),
+    [saldos, valorFifo])
   const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
   const negativos = saldos.filter(s => Number(s.saldo) < 0).length
+  // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
+  const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.insumo_id] || []).length)
   const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
   const nombreInsumo = id => saldos.find(s => s.insumo_id === id)?.insumo || ''
 
@@ -492,6 +497,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       marginBottom: '14px' }}>
           <Chip on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
           <Chip on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+          {vista === 'saldo' && filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length > 0 && (
+            <Chip on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+              {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length})`}
+            </Chip>
+          )}
 
           {vista === 'saldo' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
@@ -873,7 +883,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               : ['Insumo', 'Llega / se aplica', 'Saldo']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
-            {filas.filter(f => coincide(f.insumo)).map(f => {
+            {filas.filter(f => coincide(f.insumo) && (verSinInv || !esSinInvFila(f)))
+                  .sort((a, b) => (esSinInvFila(a) ? 1 : 0) - (esSinInvFila(b) ? 1 : 0))
+                  .map(f => {
               const edit = editando === f.insumo_id
               const dg = desglose[f.insumo_id] || []
               const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
@@ -932,8 +944,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : 'Sin precio'}</Celda>}
-                  {esJefe && <Celda derecha>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dineroExacto(f.precio)}</span><span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
+                  {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
                                   textAlign: 'right' }}>
@@ -943,7 +955,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                             padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>Cargar inicial</button>
                         : <button onClick={() => abrirCorregir(f)} style={{
                             background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
-                            fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>corregir</button>)}
+                            fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>Corregir</button>)}
                     </div>
                   )}
                 </Fila>
