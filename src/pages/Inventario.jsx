@@ -60,6 +60,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
   const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
+  const [recosForm, setRecosForm] = useState(null)   // insumo_id con la confirmación de recosteo abierta
+  const [recosteando, setRecosteando] = useState(false)
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
@@ -270,6 +272,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       .insert({ finca_id: finca.id, fecha: iniForm.fecha, insumo_id: iniForm.insumoId, cantidad: delta, motivo: 'Inventario inicial' })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado.' }); await cargar()
+  }
+
+  // Recostear un insumo: sus lotes y su consumo pasan al precio que rige
+  // (los lotes conservan su fecha de compra; cambia precio y plazo). Manual.
+  async function recostear(f) {
+    setRecosteando(true)
+    const { error } = await supabase.schema('produccion')
+      .rpc('fn_recostear_producto_finca_insumo', { p_finca: finca.id, p_insumo: f.insumo_id })
+    setRecosteando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo recostear. ' + error.message }); return }
+    setRecosForm(null)
+    setAviso({ tipo: 'ok', texto: `${f.insumo} recosteado al precio que rige.` })
+    await cargar()
   }
 
   function abrirCorregir(f) {
@@ -888,9 +903,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   .map(f => {
               const edit = editando === f.insumo_id
               const dg = desglose[f.insumo_id] || []
-              const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
               const ab = abierto === f.insumo_id
               const sinInv = Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.insumo_id] || []).length)
+              // Recosteable: hay algún lote SIN precio, o a un precio distinto al que rige.
+              const ruling = Number(f.precio) || 0
+              const recostable = esJefeGlobal && ruling > 0 &&
+                (lotes[f.insumo_id] || []).some(L => L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
+              const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0) || recostable
               return (
               <div key={f.insumo_id}>
                 <Fila anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}>
@@ -987,6 +1006,23 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>
                 )}
 
+                {recosForm === f.insumo_id && (
+                  <div style={{ background: '#f6f9fb', padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9' }}>
+                    <div style={{ fontSize: '13px', color: NAVY, marginBottom: '6px' }}>
+                      Recostear <b>{f.insumo}</b> al precio que rige: <b>{dineroExacto(ruling)}</b> /{cap1(UNIDAD[f.unidad] || f.unidad)}.
+                    </div>
+                    <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px', lineHeight: 1.5 }}>
+                      Los lotes a otro precio (o sin precio) pasan a {dineroExacto(ruling)} (mantienen su fecha de compra; cambia precio y plazo) y se recostea el consumo de este insumo. Es re-ejecutable, pero no se deshace solo.
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <Btn primario onClick={() => recostear(f)} disabled={recosteando}>
+                        {recosteando ? 'Recosteando...' : `Recostear a ${dineroExacto(ruling)}`}
+                      </Btn>
+                      <Btn onClick={() => setRecosForm(null)}>Mantener</Btn>
+                    </div>
+                  </div>
+                )}
+
                 {iniForm?.insumoId === f.insumo_id && (
                   <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     <div><div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Cantidad ({cap1(UNIDAD[f.unidad] || f.unidad)})</div><input inputMode="decimal" autoFocus value={iniForm.cantidad} onChange={e => setIniForm(x => ({ ...x, cantidad: e.target.value }))} style={{ ...entrada, width: '110px', textAlign: 'right' }} /></div>
@@ -1002,12 +1038,20 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
                         <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => (
-                            <div key={i} style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
+                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => {
+                            const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
+                            return (
+                            <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
                               <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
-                              <div style={{ fontSize: '11px', color: GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}</div>
+                              <div style={{ fontSize: '11px', color: distinto ? '#9a6a12' : GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}{distinto && L.costo != null ? ' · no es el que rige' : ''}</div>
+                              {distinto && esJefeGlobal && (
+                                <button onClick={() => setRecosForm(recosForm === f.insumo_id ? null : f.insumo_id)}
+                                  style={{ marginTop: '7px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+                                  Recostear a {dineroExacto(ruling)}
+                                </button>
+                              )}
                             </div>
-                          ))}
+                          )})}
                         </div>
                       </div>
                     )}
