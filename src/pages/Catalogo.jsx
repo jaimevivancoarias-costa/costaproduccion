@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec, dinero, dineroExacto } from '../lib/fechas'
 import CatalogoDiesel from './CatalogoDiesel'
+import CampoNumero from '../components/CampoNumero'
 
 // Catálogo · maestro de productos + detalle por finca.
 //
@@ -838,7 +839,7 @@ function EditorPrecio({ tab, fincas, fincaActual, uCons, uCompra, factor, actual
           </select>
         </Campo>
         <Campo label={`Precio por ${unidadTxt}`}>
-          <input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)}
+          <CampoNumero maxDec={6} autoFocus value={v} onChange={val => setV(val)}
             placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
           {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
             = {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
@@ -938,7 +939,7 @@ function EditorPrecioPlazo({ tab, fincas, fincaActual, uCons, uCompra, factor, p
           <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <Campo label="Este precio es de"><select value={plazoP} onChange={e => cambiarPlazoP(Number(e.target.value))} style={{ ...inp, width: '130px' }}>{PLAZOS.map(pz => <option key={pz} value={pz}>{PLAZO_LBL[pz]}</option>)}</select></Campo>
             <Campo label={`Precio por ${entrada === 'compra' ? (UNIDAD[uCompra] || cap(uCompra)) : (UNIDAD[uCons] || cap(uCons))}`}>
-              <input inputMode="decimal" autoFocus value={v} onChange={e => setV(e.target.value)} placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
+              <CampoNumero maxDec={6} autoFocus value={v} onChange={val => setV(val)} placeholder="—" style={{ ...inp, width: '120px', textAlign: 'right' }} />
               {equiv != null && <div style={{ fontSize: '10px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>= {dinero(equiv)}/{entrada === 'compra' ? (UNIDAD[uCons] || uCons) : (UNIDAD[uCompra] || uCompra)}</div>}
             </Campo>
             <Campo label="Rige desde"><input type="date" value={desdeP} onChange={e => setDesdeP(e.target.value)} style={inp} /></Campo>
@@ -1089,7 +1090,7 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
           </select>
         </Campo>
         <Campo label="Cada una trae">
-          <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+          <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 25" style={{ ...inp, width: '90px', textAlign: 'right' }} />
         </Campo>
         <Campo label="Unidad del contenido">
           <select value={uCont} onChange={e => cambiarUCont(e.target.value)} style={{ ...inp, width: '190px' }}>
@@ -1119,7 +1120,7 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
             <span>1 {UNIDAD[uCont] || uCont} =</span>
-            <input inputMode="decimal" value={dens} onChange={e => setDens(e.target.value)}
+            <CampoNumero maxDec={6} value={dens} onChange={v => setDens(v)}
               placeholder="ej. 0.71" style={{ ...inp, width: '90px', textAlign: 'right' }} />
             <span>{UNIDAD[unidad] || unidad}</span>
           </div>
@@ -1134,10 +1135,10 @@ function EditorUnidadFinca({ insumo, finca, fincas, presentaciones, actual, onNu
 
       <div style={{ marginTop: '10px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
         <Campo label={`Mínimo para alerta (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+          <CampoNumero maxDec={2} value={minimo} onChange={v => setMinimo(v)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
         </Campo>
         <Campo label={`Objetivo / inventario ideal (${UNIDAD[unidad] || unidad})`}>
-          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+          <CampoNumero maxDec={2} value={objetivo} onChange={v => setObjetivo(v)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
         </Campo>
       </div>
       {numDec(minimo) > 0 && numDec(objetivo) > 0 && numDec(objetivo) < numDec(minimo) && (
@@ -1201,10 +1202,10 @@ function EditorMinBal({ producto, finca, fincas, actual, onHecho, onError, onCan
     <div style={{ background: '#eef3f7', padding: '12px', borderBottom: '0.5px solid #eef3f7' }}>
       <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <Campo label="Mínimo para alerta (sacos)">
-          <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+          <CampoNumero maxDec={2} value={minimo} onChange={v => setMinimo(v)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
         </Campo>
         <Campo label="Objetivo / inventario ideal (sacos)">
-          <input inputMode="decimal" value={objetivo} onChange={e => setObjetivo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+          <CampoNumero maxDec={2} value={objetivo} onChange={v => setObjetivo(v)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
         </Campo>
       </div>
       {numDec(minimo) > 0 && numDec(objetivo) > 0 && numDec(objetivo) < numDec(minimo) && (
@@ -1629,7 +1630,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
             </select>
           </Campo>
           <Campo label={esComp ? 'Peso del envase (ref.)' : 'Cada envase trae'}>
-            <input inputMode="decimal" value={contenido} onChange={e => setContenido(e.target.value)} placeholder="ej. 45" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+            <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 45" style={{ ...inp, width: '90px', textAlign: 'right' }} />
           </Campo>
           <Campo label={esComp ? 'Unidad del peso' : 'Unidad del contenido'}>
             <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '175px' }}>
@@ -1715,8 +1716,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
                     return (
                       <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
                         <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                        <input inputMode="decimal" value={bulk.precios[pz] ?? ''} placeholder="—"
-                          onChange={e => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: e.target.value }, plazoRige: b.plazoRige == null && numDec(e.target.value) > 0 ? pz : b.plazoRige }))}
+                        <CampoNumero maxDec={6} value={bulk.precios[pz] ?? ''} placeholder="—"
+                          onChange={val => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: val }, plazoRige: b.plazoRige == null && numDec(val) > 0 ? pz : b.plazoRige }))}
                           style={{ ...inp, textAlign: 'right', padding: '6px' }} />
                         <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
                           <input type="radio" name="bulk-rige" checked={on} onChange={() => setBulk(b => ({ ...b, plazoRige: pz }))} /> Rige
@@ -1791,8 +1792,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12.5px' }}>
                   <span>1 {UNIDAD[uCont] || uCont} =</span>
-                  <input inputMode="decimal" value={densTxt}
-                    onChange={ev => { setDensTxt(ev.target.value); setDensD(densInterna(numDec(ev.target.value), uCont, e.unidad)) }}
+                  <CampoNumero maxDec={6} value={densTxt}
+                    onChange={val => { setDensTxt(val); setDensD(densInterna(numDec(val), uCont, e.unidad)) }}
                     placeholder="ej. 0.71" style={{ ...inp, width: '80px', textAlign: 'right' }} />
                   <span>{UNIDAD[e.unidad] || e.unidad}</span>
                 </div>
@@ -1819,7 +1820,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
                     return (
                     <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
                       <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                      <input inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—" onChange={ev => setRowPrecio(i, pz, ev.target.value)} style={{ ...inp, textAlign: 'right', padding: '6px' }} />
+                      <CampoNumero maxDec={6} value={e.precios?.[pz] ?? ''} placeholder="—" onChange={val => setRowPrecio(i, pz, val)} style={{ ...inp, textAlign: 'right', padding: '6px' }} />
                       <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
                         <input type="radio" name={`rige-${i}`} checked={on} onChange={() => setRow(i, 'plazoRige', pz)} /> Rige
                       </label>
@@ -1864,8 +1865,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           {PLAZOS.map(pz => (
             <Campo key={pz} label={PLAZO_LBL[pz]}>
-              <input inputMode="decimal" value={precios[pz] ?? ''} placeholder="—"
-                onChange={e => setPrecios(p => ({ ...p, [pz]: e.target.value }))}
+              <CampoNumero maxDec={6} value={precios[pz] ?? ''} placeholder="—"
+                onChange={val => setPrecios(p => ({ ...p, [pz]: val }))}
                 style={{ ...inp, width: '95px', textAlign: 'right' }} />
             </Campo>
           ))}
@@ -1882,10 +1883,10 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         <div style={tit}>4 · Alertas de inventario</div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <Campo label={`Mínimo (${UNIDAD[uStd] || uStd})`}>
-            <input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} />
+            <CampoNumero maxDec={2} value={minimo} onChange={v => setMinimo(v)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} />
           </Campo>
           <Campo label={`Cantidad deseable (${UNIDAD[uStd] || uStd})`}>
-            <input inputMode="decimal" value={deseable} onChange={e => setDeseable(e.target.value)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
+            <CampoNumero maxDec={2} value={deseable} onChange={v => setDeseable(v)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
           </Campo>
         </div>
         <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '8px' }}>Bajo el mínimo = “Bajo”. En o sobre la cantidad deseable = “Suficiente”. En medio = “Medio”.</div>
@@ -2081,8 +2082,8 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
         <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           {PLAZOS.map(pz => (
             <Campo key={pz} label={PLAZO_LBL[pz]}>
-              <input inputMode="decimal" value={precios[pz] ?? ''} placeholder="—"
-                onChange={e => setPrecios(p => ({ ...p, [pz]: e.target.value }))} style={{ ...inp, width: '95px', textAlign: 'right' }} />
+              <CampoNumero maxDec={6} value={precios[pz] ?? ''} placeholder="—"
+                onChange={val => setPrecios(p => ({ ...p, [pz]: val }))} style={{ ...inp, width: '95px', textAlign: 'right' }} />
             </Campo>
           ))}
         </div>
@@ -2123,8 +2124,8 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
                 return (
                   <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
                     <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                    <input inputMode="decimal" value={bulk.precios[pz] ?? ''} placeholder="—"
-                      onChange={e => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: e.target.value }, plazoRige: b.plazoRige == null && numDec(e.target.value) > 0 ? pz : b.plazoRige }))}
+                    <CampoNumero maxDec={6} value={bulk.precios[pz] ?? ''} placeholder="—"
+                      onChange={val => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: val }, plazoRige: b.plazoRige == null && numDec(val) > 0 ? pz : b.plazoRige }))}
                       style={{ ...inp, textAlign: 'right', padding: '6px' }} />
                     <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
                       <input type="radio" name="bulkbal-rige" checked={on} onChange={() => setBulk(b => ({ ...b, plazoRige: pz }))} /> Rige
@@ -2166,8 +2167,8 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
                     {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
                   </select>
                   {PLAZOS.map(pz => (
-                    <input key={pz} inputMode="decimal" value={e.precios?.[pz] ?? ''} placeholder="—"
-                      onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, precios: { ...(r.precios || {}), [pz]: ev.target.value } } : r))}
+                    <CampoNumero key={pz} maxDec={6} value={e.precios?.[pz] ?? ''} placeholder="—"
+                      onChange={val => setExc(x => x.map((r, j) => j === i ? { ...r, precios: { ...(r.precios || {}), [pz]: val } } : r))}
                       style={{ ...inp, textAlign: 'right', padding: '8px 6px' }} />
                   ))}
                   <select value={e.plazoRige ?? 0} onChange={ev => setExc(x => x.map((r, j) => j === i ? { ...r, plazoRige: Number(ev.target.value) } : r))} style={inp}>
@@ -2186,8 +2187,8 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
       <div style={seccion}>
         <div style={tit}>3 · Alertas de inventario (sacos)</div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label="Mínimo (sacos)"><input inputMode="decimal" value={minimo} onChange={e => setMinimo(e.target.value)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} /></Campo>
-          <Campo label="Cantidad deseable (sacos)"><input inputMode="decimal" value={deseable} onChange={e => setDeseable(e.target.value)} placeholder="opcional" style={{ ...inp, width: '160px', textAlign: 'right' }} /></Campo>
+          <Campo label="Mínimo (sacos)"><CampoNumero maxDec={2} value={minimo} onChange={v => setMinimo(v)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} /></Campo>
+          <Campo label="Cantidad deseable (sacos)"><CampoNumero maxDec={2} value={deseable} onChange={v => setDeseable(v)} placeholder="opcional" style={{ ...inp, width: '160px', textAlign: 'right' }} /></Campo>
         </div>
         <div style={{ fontSize: '11px', color: GRIS, marginTop: '7px' }}>Requiere haber corrido el SQL de balanceado (producto_finca). Si no, el mínimo/objetivo no se guarda (el precio sí).</div>
       </div>
@@ -2231,7 +2232,7 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
           {compraDistinta && (
             <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap', marginTop: '10px' }}>
               <Campo label="Se compra por"><input value={unidadCompra} onChange={e => setUnidadCompra(e.target.value)} placeholder="ej. saco" style={{ ...inp, width: '150px' }} /></Campo>
-              <Campo label={`Cada uno trae (${UNIDAD[unidad]})`}><input inputMode="decimal" value={factor} onChange={e => setFactor(e.target.value)} placeholder="ej. 25" style={{ ...inp, width: '150px', textAlign: 'right' }} /></Campo>
+              <Campo label={`Cada uno trae (${UNIDAD[unidad]})`}><CampoNumero maxDec={6} value={factor} onChange={v => setFactor(v)} placeholder="ej. 25" style={{ ...inp, width: '150px', textAlign: 'right' }} /></Campo>
             </div>
           )}
           <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Esta es la presentación por defecto. Cada finca puede ajustarla en su fila.</div>
