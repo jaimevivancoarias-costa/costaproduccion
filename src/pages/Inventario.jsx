@@ -56,6 +56,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [saldos, setSaldos] = useState([])
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
+  const [precioInfo, setPrecioInfo] = useState({})  // insumoId -> { plazo, desde } del que rige
   const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
@@ -114,7 +115,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         supabase.schema('produccion').rpc('fn_movimiento_insumo',
           { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').from('precio_insumo')
-          .select('insumo_id, finca_id, precio_unitario, plazo')
+          .select('insumo_id, finca_id, precio_unitario, plazo, vigente_desde')
           .is('vigente_hasta', null)
           .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
         supabase.schema('produccion').from('toma_inventario')
@@ -165,18 +166,28 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       })
       // El precio de la finca le gana al general, Y se toma el del plazo que
       // rige (no cualquiera). Si no hay precio en ese plazo, se usa el que haya.
-      const pr = {}, prRespaldo = {}
+      const pr = {}, prRespaldo = {}, pinfo = {}, pinfoResp = {}
       ;(p || []).forEach(x => {
         const val = Number(x.precio_unitario) * (factor[x.insumo_id] || 1)
         const rige = plazoRige[x.insumo_id] ?? 0
         const esFinca = !!x.finca_id
-        // Precio del plazo que rige (preferir finca sobre general).
-        if (Number(x.plazo) === rige && (pr[x.insumo_id] == null || esFinca)) pr[x.insumo_id] = val
+        // Precio del plazo que rige (preferir finca sobre general). Guardamos
+        // también el plazo y "desde cuándo rige" para mostrarlo.
+        if (Number(x.plazo) === rige && (pr[x.insumo_id] == null || esFinca)) {
+          pr[x.insumo_id] = val; pinfo[x.insumo_id] = { plazo: rige, desde: x.vigente_desde }
+        }
         // Respaldo: cualquier precio (preferir finca), por si el plazo que
         // rige no tiene precio cargado.
-        if (prRespaldo[x.insumo_id] == null || esFinca) prRespaldo[x.insumo_id] = val
+        if (prRespaldo[x.insumo_id] == null || esFinca) {
+          prRespaldo[x.insumo_id] = val; pinfoResp[x.insumo_id] = { plazo: Number(x.plazo), desde: x.vigente_desde }
+        }
       })
-      ;(p || []).forEach(x => { if (pr[x.insumo_id] == null && prRespaldo[x.insumo_id] != null) pr[x.insumo_id] = prRespaldo[x.insumo_id] })
+      ;(p || []).forEach(x => {
+        if (pr[x.insumo_id] == null && prRespaldo[x.insumo_id] != null) {
+          pr[x.insumo_id] = prRespaldo[x.insumo_id]; pinfo[x.insumo_id] = pinfoResp[x.insumo_id]
+        }
+      })
+      setPrecioInfo(pinfo)
 
       const vfMap = {}
       ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
@@ -963,7 +974,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </Celda>
                   )}
                   {/* Precio y valor en dolares: solo el jefe. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dineroExacto(f.precio)}</span><span style={{ display: 'block', fontSize: '10px', color: '#c3d0db' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}</span></> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dineroExacto(f.precio)}</span><span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1' }}>/{cap1(UNIDAD[f.unidad] || f.unidad)}{precioInfo[f.insumo_id] ? ` · ${PLAZO_LBL[precioInfo[f.insumo_id].plazo]}${precioInfo[f.insumo_id].desde ? ' · desde ' + corta(precioInfo[f.insumo_id].desde) : ''}` : ''}</span></> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
                   {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
