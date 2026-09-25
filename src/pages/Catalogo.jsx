@@ -103,6 +103,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [editConfig, setEditConfig] = useState(null)  // id de insumo en "Configurar todo de una"
   const [presentaciones, setPresentaciones] = useState([])
   const [busqCat, setBusqCat] = useState('')   // filtro por nombre en el catálogo
+  const [recostModal, setRecostModal] = useState(null)  // { prodId, nombre, esIns, fincas:[{id,nombre,consumos}] }
+  const [recostChoice, setRecostChoice] = useState({})  // fincaId -> 'recostear' | 'mantener'
+  const [aplicandoRecost, setAplicandoRecost] = useState(false)
 
   const fincaIds = (fincas || []).map(f => f.id)
 
@@ -200,6 +203,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       }
     }
     setEditP(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Precios actualizados.' : `Precios aplicados a ${fincaIds.length} fincas.` }); await cargar()
+    await ofrecerRecosteo(prodId, fincaIds, desde)
   }
 
   // Guardar el plazo de compra vigente para una o varias fincas, desde una fecha.
@@ -214,6 +218,50 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el plazo. ' + error.message }); return }
     }
     setEditPz(null); setAviso({ tipo: 'ok', texto: fincaIds.length === 1 ? 'Plazo actualizado.' : `Plazo aplicado a ${fincaIds.length} fincas.` }); await cargar()
+    await ofrecerRecosteo(prodId, fincaIds, desde)
+  }
+
+  // Tras cambiar un precio/plazo con fecha PASADA, detecta qué fincas tienen
+  // consumo del producto afectado y ofrece recostear cada una (pop-up). El
+  // recosteo pasa lotes y consumo al precio que rige.
+  async function ofrecerRecosteo(prodId, fincaIds, desde) {
+    if (!desde || desde >= hoyISO()) return   // solo si es hacia atrás
+    const esIns = tab === 'insumos'
+    const tablaC = esIns ? 'consumo_insumo' : 'alimentacion'
+    const colC = esIns ? 'insumo_id' : 'producto_id'
+    const nombre = (esIns ? insumos : productos).find(p => p.id === prodId)?.nombre || ''
+    const afectadas = []
+    for (const fid of fincaIds) {
+      const { data: pis } = await supabase.schema('produccion').from('piscina').select('id').eq('finca_id', fid)
+      const ids = (pis || []).map(p => p.id)
+      if (!ids.length) continue
+      let q = supabase.schema('produccion').from(tablaC).select('id', { count: 'exact', head: true })
+        .eq(colC, prodId).in('piscina_id', ids).gte('fecha', desde)
+      if (!esIns) q = q.eq('sin_alimentacion', false).gt('libras', 0)
+      const { count } = await q
+      if ((count || 0) > 0) afectadas.push({ id: fid, nombre: (fincas.find(f => f.id === fid)?.nombre) || '', consumos: count })
+    }
+    if (!afectadas.length) return
+    const ch = {}; afectadas.forEach(a => { ch[a.id] = 'recostear' })
+    setRecostChoice(ch)
+    setRecostModal({ prodId, nombre, esIns, fincas: afectadas })
+  }
+
+  async function aplicarRecosteo() {
+    if (!recostModal) return
+    setAplicandoRecost(true)
+    const fn = recostModal.esIns ? 'fn_recostear_producto_finca_insumo' : 'fn_recostear_producto_finca'
+    const arg = recostModal.esIns ? 'p_insumo' : 'p_producto'
+    let n = 0
+    for (const f of recostModal.fincas) {
+      if (recostChoice[f.id] === 'recostear') {
+        const { error } = await supabase.schema('produccion').rpc(fn, { p_finca: f.id, [arg]: recostModal.prodId })
+        if (!error) n++
+      }
+    }
+    setAplicandoRecost(false); setRecostModal(null)
+    setAviso({ tipo: 'ok', texto: n ? `Recosteado en ${n} ${n === 1 ? 'finca' : 'fincas'}.` : 'No se recosteó ninguna finca.' })
+    await cargar()
   }
 
   async function quitar(tabla, id, nombre) {
@@ -238,6 +286,61 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       </p>
 
       <InformeDoblePrecio fincas={fincas} />
+
+      {recostModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 80 }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div style={{ fontSize: '16px', fontWeight: 500, marginBottom: '4px' }}>Cambiaste un precio hacia atrás</div>
+            <div style={{ fontSize: '13px', color: GRIS, marginBottom: '14px' }}>
+              {recostModal.esIns ? 'Insumo' : 'Balanceado'} · {recostModal.nombre}
+            </div>
+            <div style={{ fontSize: '13px', color: NAVY, marginBottom: '11px' }}>
+              Estas fincas tienen consumo con el precio anterior. ¿Recostear al que rige?
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginBottom: '9px', fontSize: '11px', color: GRIS, alignItems: 'center' }}>
+              Todas:
+              <button onClick={() => setRecostChoice(Object.fromEntries(recostModal.fincas.map(f => [f.id, 'recostear'])))} style={{ ...btn, padding: '3px 9px', fontSize: '11px' }}>Recostear</button>
+              <button onClick={() => setRecostChoice(Object.fromEntries(recostModal.fincas.map(f => [f.id, 'mantener'])))} style={{ ...btn, padding: '3px 9px', fontSize: '11px' }}>Mantener</button>
+            </div>
+            <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '11px', overflow: 'hidden', marginBottom: '16px' }}>
+              {recostModal.fincas.map((f, i) => (
+                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '11px 13px',
+                        borderBottom: i < recostModal.fincas.length - 1 ? '0.5px solid ' + BORDE : 'none' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '14px', fontWeight: 500 }}>{f.nombre}</div>
+                    <div style={{ fontSize: '11px', color: GRIS }}>{f.consumos} {f.consumos === 1 ? 'día' : 'días'} de consumo</div>
+                  </div>
+                  <div style={{ display: 'inline-flex', background: '#f6f9fb', borderRadius: '8px', padding: '2px' }}>
+                    {['recostear', 'mantener'].map(op => (
+                      <button key={op} onClick={() => setRecostChoice(c => ({ ...c, [f.id]: op }))}
+                        style={{ fontSize: '12px', padding: '5px 11px', borderRadius: '6px', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                                 background: recostChoice[f.id] === op ? (op === 'recostear' ? '#E6F1FB' : 'white') : 'transparent',
+                                 color: recostChoice[f.id] === op ? (op === 'recostear' ? AZUL : NAVY) : '#8fa2b3',
+                                 fontWeight: recostChoice[f.id] === op ? 500 : 400,
+                                 boxShadow: recostChoice[f.id] === op && op === 'mantener' ? 'inset 0 0 0 0.5px ' + BORDE : 'none' }}>
+                        {op === 'recostear' ? 'Recostear' : 'Mantener'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '12px', color: GRIS }}>
+                Recostear {recostModal.fincas.filter(f => recostChoice[f.id] === 'recostear').length} · mantener {recostModal.fincas.filter(f => recostChoice[f.id] !== 'recostear').length}
+              </span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button onClick={() => setRecostModal(null)} style={btn}>Ahora no</button>
+                <button onClick={aplicarRecosteo} disabled={aplicandoRecost}
+                  style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: aplicandoRecost ? 0.5 : 1 }}>
+                  {aplicandoRecost ? 'Aplicando...' : 'Aplicar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
         {[['insumos', 'Insumos'], ['balanceados', 'Balanceados'], ['diesel', 'Diesel']].map(([id, txt]) => (
