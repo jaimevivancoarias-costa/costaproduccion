@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec, dinero, dineroExacto } from '../lib/fechas'
 import CatalogoDiesel from './CatalogoDiesel'
@@ -1323,6 +1323,10 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
   const [plazoActivo, setPlazoActivo] = useState(a.plazoActivo ?? 0)   // qué plazo rige ahora
   const [desde, setDesde] = useState(a.desde || hoyISO())   // precarga la fecha del precio actual
   const [enviando, setEnviando] = useState(false)
+  // Snapshot de lo cargado al abrir, para recostear solo las fincas que cambiaron.
+  const iniRef = useRef(null)
+  if (iniRef.current === null) iniRef.current = { precios: { ...precios }, plazoActivo,
+    exc: (exc || []).map(e => ({ fincaId: e.fincaId, plazoRige: e.plazoRige, precios: { ...(e.precios || {}) } })) }
 
   // Densidad del producto (kg/L). Se usa cuando alguna finca aplica en una
   // familia distinta (peso<->volumen). Global al producto.
@@ -1586,7 +1590,22 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         if (e5) throw e5
       }
       await onHecho(`Configurado en ${activas.length} fincas.`)
-      if (onRecosteo && desde < hoyISO()) await onRecosteo(insumo.id, activas.map(f => f.id), desde)
+      // Recosteo: solo las fincas cuyo precio realmente cambió.
+      if (onRecosteo && desde < hoyISO()) {
+        const ini = iniRef.current || {}
+        const numEq = (x, y) => Math.abs((numDec(String(x ?? '')) || 0) - (numDec(String(y ?? '')) || 0)) < 0.0001
+        const excFincaIds = exc.filter(e => e.fincaId).map(e => e.fincaId)
+        const generalIds = ids.filter(id => !excFincaIds.includes(id))
+        const cambioGen = (plazoActivo ?? 0) !== (ini.plazoActivo ?? 0) || PLAZOS.some(pz => !numEq(precios[pz], ini.precios?.[pz]))
+        const cambiadas = new Set()
+        if (cambioGen) generalIds.forEach(id => cambiadas.add(id))
+        exc.filter(e => e.fincaId).forEach(e => {
+          const prev = (ini.exc || []).find(x => x.fincaId === e.fincaId)
+          if (!prev || (e.plazoRige ?? 0) !== (prev.plazoRige ?? 0) || PLAZOS.some(pz => !numEq(e.precios?.[pz], prev.precios?.[pz]))) cambiadas.add(e.fincaId)
+        })
+        if (bulk.open) bulkFincas().forEach(id => cambiadas.add(id))
+        if (cambiadas.size) await onRecosteo(insumo.id, [...cambiadas], desde)
+      }
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
     finally { setEnviando(false) }
   }
@@ -1895,6 +1914,11 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
   const [deseable, setDeseable] = useState(a.stock_objetivo != null ? String(a.stock_objetivo) : '')
   const [exc, setExc] = useState(() => (a.exc || []))   // [{fincaId, precio, plazo, desde}]
   const [enviando, setEnviando] = useState(false)
+  // Snapshot de lo que se cargó al abrir, para saber QUÉ cambió (y recostear
+  // solo esas fincas, no todas las que reciben el general).
+  const iniRef = useRef(null)
+  if (iniRef.current === null) iniRef.current = { precios: { ...precios }, plazoActivo,
+    exc: exc.map(e => ({ fincaId: e.fincaId, plazoRige: e.plazoRige, precios: { ...(e.precios || {}) } })) }
   // Panel "Aplicar a varias fincas" (precio por saco a las fincas elegidas).
   const bulkVacio = { open: false, fincas: {}, precios: {}, plazoRige: 0, desde: '' }
   const [bulk, setBulk] = useState(bulkVacio)
@@ -2014,7 +2038,21 @@ function EditorConfigBal({ producto, fincas, actual, onHecho, onError, onCancela
       }))
 
       await onHecho(`Configurado en ${idsConf.length} fincas.`)
-      if (onRecosteo && desde < hoyISO()) await onRecosteo(producto.id, idsConf, desde)
+      // Recosteo: solo se ofrece para las fincas cuyo precio REALMENTE cambió
+      // (no todas las que reciben el general sin cambio).
+      if (onRecosteo && desde < hoyISO()) {
+        const ini = iniRef.current || {}
+        const numEq = (x, y) => Math.abs((numDec(String(x ?? '')) || 0) - (numDec(String(y ?? '')) || 0)) < 0.0001
+        const cambioGen = (plazoActivo ?? 0) !== (ini.plazoActivo ?? 0) || PLAZOS.some(pz => !numEq(precios[pz], ini.precios?.[pz]))
+        const cambiadas = new Set()
+        if (cambioGen) idsGen.forEach(id => cambiadas.add(id))
+        exc.filter(e => e.fincaId).forEach(e => {
+          const prev = (ini.exc || []).find(x => x.fincaId === e.fincaId)
+          if (!prev || (e.plazoRige ?? 0) !== (prev.plazoRige ?? 0) || PLAZOS.some(pz => !numEq(e.precios?.[pz], prev.precios?.[pz]))) cambiadas.add(e.fincaId)
+        })
+        if (bulk.open) bulkFincas().forEach(id => cambiadas.add(id))
+        if (cambiadas.size) await onRecosteo(producto.id, [...cambiadas], desde)
+      }
     } catch (err) { onError(err.message || 'No se pudo guardar.') }
     finally { setEnviando(false) }
   }
