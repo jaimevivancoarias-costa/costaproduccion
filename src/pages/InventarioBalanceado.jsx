@@ -38,6 +38,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [abierto, setAbierto] = useState(null)
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
+  const [precioInfo, setPrecioInfo] = useState({})   // producto_id -> { aplicado, otros, semaforo, rigeSinPrecio }
   const [tomas, setTomas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -64,25 +65,49 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }] = await Promise.all([
+      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').from('precio_producto')
-          .select('producto_id, precio_saco').eq('finca_id', finca.id).is('vigente_hasta', null),
+          .select('producto_id, plazo, precio_saco, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
         supabase.schema('produccion').from('toma_balanceado')
           .select('id, fecha, observacion').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('parametro').select('valor').eq('clave', 'libras_por_saco').maybeSingle(),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
         esJefe ? supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: alDia }) : Promise.resolve({ data: [] }),
+        // Plazo que rige por producto (para verificar QUÉ precio se aplica).
+        supabase.schema('produccion').from('plazo_producto')
+          .select('producto_id, plazo, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
       ])
       if (e) throw e
-      const pr = {}; (p || []).forEach(x => { pr[x.producto_id] = Number(x.precio_saco) })
+      // Precios por plazo (con su "desde") + plazo que rige. Con esto sabemos
+      // QUÉ precio se aplica y avisamos si pusiste precio en otro plazo que no
+      // rige (el caso "puse 30,68 pero aplica otro"). precios[pid] = el que se
+      // aplica realmente; precioInfo[pid] = detalle para el doble-check.
+      const preP = {}
+      ;(p || []).forEach(x => { (preP[x.producto_id] = preP[x.producto_id] || {})[Number(x.plazo)] = { precio: Number(x.precio_saco), desde: x.vigente_desde } })
+      const rigeP = {}
+      ;(pzr || []).forEach(x => { rigeP[x.producto_id] = Number(x.plazo) })
+      const pr = {}, pinfo = {}
+      Object.keys(preP).forEach(pid => {
+        const plazos = preP[pid]
+        const rige = rigeP[pid] != null ? rigeP[pid] : 0
+        const usaPlazo = plazos[rige] ? rige : (plazos[0] ? 0 : null)
+        const row = usaPlazo != null ? plazos[usaPlazo] : null
+        const aplicado = row ? { precio: row.precio, plazo: usaPlazo, desde: row.desde } : null
+        const otros = Object.keys(plazos).map(Number).filter(pz => pz !== usaPlazo)
+          .map(pz => ({ plazo: pz, precio: plazos[pz].precio, desde: plazos[pz].desde }))
+          .sort((a, b) => a.plazo - b.plazo)
+        const rigeSinPrecio = rigeP[pid] != null && !plazos[rige]
+        pr[pid] = aplicado ? aplicado.precio : 0
+        pinfo[pid] = { aplicado, otros, semaforo: (otros.length > 0 || rigeSinPrecio) ? 'warn' : 'ok', rigeSinPrecio }
+      })
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor) }) })
-      setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm)
+      setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo)
       if (par && Number(par.valor) > 0) setLps(Number(par.valor))
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
@@ -107,9 +132,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   useEffect(() => { cargar() }, [cargar])
 
   const primeraVez = tomas.length === 0
-  // Valor a PRECIO ACTUAL (saldo × precio vigente): al cambiar el precio, el
-  // valor de la bodega se actualiza enseguida.
-  const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(s.saldo || 0) * Number(precios[s.producto_id] || 0), 0), [saldos, precios])
+  // Valor de la bodega = costo REAL de lo que hay (FIFO, lo que se pagó por
+  // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
+  // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
+  const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifo[s.producto_id] || 0), 0), [saldos, valorFifo])
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
@@ -452,7 +478,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 <Encabezado gtc={esJefe ? G_SALDO_J : G_SALDO_B} cols={esJefe ? ['Balanceado', 'Saldo', 'Precio saco', 'Valor', ''] : ['Balanceado', 'Saldo']} />
                 {filas.filter(f => coincide(f.producto)).map(f => {
                   const dg = desglose[f.producto_id] || []
-                  const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0)
+                  const pi = precioInfo[f.producto_id]
+                  const warn = esJefe && pi?.semaforo === 'warn'
+                  const varios = dg.length > 1 || (dg.length === 1 && dg[0].plazo !== 0) || warn
                   const ab = abierto === f.producto_id
                   const sinInv = Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
                   return (
@@ -466,8 +494,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       ) : f.producto}
                     </Cel>
                     <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
-                    {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>catálogo</span></> : 'Sin precio'}</Cel>}
-                    {esJefe && <Cel der>{dinero(Number(f.saldo || 0) * Number(f.precio || 0))}</Cel>}
+                    {esJefe && <Cel der gris>{f.precio ? <>{dineroExacto(f.precio)}<span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
+                      {pi?.aplicado ? `${PLAZO_LBL[pi.aplicado.plazo] || 'catálogo'}${pi.aplicado.desde ? ' · desde ' + corta(pi.aplicado.desde) : ''}` : 'catálogo'}
+                      {warn && <span style={{ color: AMBAR }}> · revisar</span>}
+                    </span></> : 'Sin precio'}</Cel>}
+                    {esJefe && <Cel der>{dinero(Number(valorFifo[f.producto_id] || 0))}</Cel>}
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && (sinInv
                         ? <button onClick={() => setIniForm({ productoId: f.producto_id, cantidad: '', fecha: hoyISO() })} style={{ background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px', padding: '5px 11px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Cargar inicial</button>
@@ -484,6 +515,31 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   )}
                   {ab && (
                     <div style={{ padding: '10px 14px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      {esJefe && warn && pi && (
+                        <div style={{ marginBottom: '12px', background: '#fff', border: '0.5px solid #e8d5b0', borderRadius: '12px', padding: '12px 14px' }}>
+                          <div style={{ fontSize: '11px', fontWeight: 500, color: AMBAR, marginBottom: '9px', textTransform: 'uppercase', letterSpacing: '.03em' }}>Verificación de precio</div>
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                            <div style={{ background: '#f6f9fb', borderRadius: '10px', padding: '8px 12px' }}>
+                              <div style={{ fontSize: '10px', color: GRIS }}>Se aplica</div>
+                              <div style={{ fontSize: '16px', fontWeight: 600 }}>{pi.aplicado ? dineroExacto(pi.aplicado.precio) : 'sin precio'}</div>
+                              <div style={{ fontSize: '11px', color: GRIS }}>{pi.aplicado ? `${PLAZO_LBL[pi.aplicado.plazo]}${pi.aplicado.desde ? ' · desde ' + corta(pi.aplicado.desde) : ''}` : 'el plazo que rige no tiene precio'}</div>
+                            </div>
+                            {pi.otros.map((o, i) => (
+                              <div key={i} style={{ background: '#FAEEDA', borderRadius: '10px', padding: '8px 12px' }}>
+                                <div style={{ fontSize: '10px', color: AMBAR }}>También pusiste</div>
+                                <div style={{ fontSize: '16px', fontWeight: 600, color: AMBAR }}>{dineroExacto(o.precio)}</div>
+                                <div style={{ fontSize: '11px', color: AMBAR }}>{PLAZO_LBL[o.plazo]}{o.desde ? ' · desde ' + corta(o.desde) : ''} · no rige</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div style={{ fontSize: '12px', color: NAVY, lineHeight: 1.5 }}>
+                            {pi.rigeSinPrecio
+                              ? 'El plazo que rige no tiene precio puesto, por eso se usa un respaldo. Pon el precio en ese plazo o cambia el plazo que rige.'
+                              : 'Se costea con el plazo que rige. Si querías otro precio, cambia el plazo que rige o pon ese valor en el plazo correcto.'}
+                            {abrirPrecios && <>{' '}<button onClick={() => abrirPrecios()} style={{ background: 'none', border: 'none', padding: 0, color: AZUL, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', textDecoration: 'underline' }}>Ir a precios</button></>}
+                          </div>
+                        </div>
+                      )}
                       {esJefe && (lotes[f.producto_id] || []).length > 0 && (
                         <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
                           <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
