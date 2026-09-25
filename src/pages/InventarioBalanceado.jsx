@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
+import { descargarCSV, imprimirPDF } from '../lib/exportar'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -155,6 +156,40 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
   const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
   const nSinInv = filas.filter(f => coincide(f.producto) && esSinInvFila(f)).length
+
+  // Datos para exportar (Excel/PDF) según la vista actual.
+  function datosExport() {
+    if (vista === 'saldo') {
+      const cols = [
+        { titulo: 'Balanceado', valor: f => f.producto },
+        { titulo: 'Saldo (sacos)', der: true, valor: f => limpio(f.saldo) },
+        ...(esJefe ? [
+          { titulo: 'Precio saco', der: true, valor: f => f.precio ? dineroExacto(f.precio) : '' },
+          { titulo: 'Valor', der: true, valor: f => dinero(Number(valorFifo[f.producto_id] || 0)) },
+        ] : []),
+      ]
+      const fs = filas.filter(f => coincide(f.producto) && (verSinInv || !esSinInvFila(f)))
+      return { titulo: `Bodega de balanceado - ${finca.nombre}`, sub: `Al ${corta(alDia)}`, cols, filas: fs }
+    }
+    const cols = [
+      { titulo: 'Balanceado', valor: m => m.producto },
+      { titulo: 'Saldo ini.', der: true, valor: m => limpio(m.saldo_inicial) },
+      { titulo: 'Ingresos', der: true, valor: m => limpio(m.ingresos) },
+      { titulo: 'Consumo', der: true, valor: m => limpio(m.consumo) },
+      { titulo: 'Devuelto', der: true, valor: m => limpio(m.devuelto) },
+      { titulo: 'Ajustes', der: true, valor: m => limpio(m.ajustes) },
+      { titulo: 'Conteo', der: true, valor: m => m.conteo == null ? '' : limpio(m.conteo) },
+      { titulo: 'Saldo fin.', der: true, valor: m => limpio(m.saldo_final) },
+      ...(esJefe ? [{ titulo: 'Consumo $', der: true, valor: m => dinero(Number(m.consumo_dolares)) }] : []),
+    ]
+    const fs = movs.filter(m => coincide(m.producto))
+    return { titulo: `Movimientos de balanceado - ${finca.nombre}`, sub: `Del ${corta(desde)} al ${corta(hasta)}`, cols, filas: fs }
+  }
+  function exportarExcel() { const d = datosExport(); descargarCSV(d.titulo, d.cols, d.filas) }
+  function exportarPDF() {
+    const d = datosExport()
+    if (!imprimirPDF(d.titulo, d.cols, d.filas, d.sub)) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+  }
 
   const filaNueva = () => ({ nombre: '', marca: '' })
   const setNuevo = (i, campo, val) => setNuevos(ns => ns.map((n, j) => j === i ? { ...n, [campo]: val } : n))
@@ -482,6 +517,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 del <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
                 al <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
               </label>
+            )}
+            {esJefe && (
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button onClick={exportarExcel} title="Descargar en Excel" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Excel</button>
+                <button onClick={exportarPDF} title="Ver/guardar en PDF" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>PDF</button>
+              </div>
             )}
           </div>
 

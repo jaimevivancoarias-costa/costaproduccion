@@ -4,6 +4,7 @@ import { hoyISO, corta, dinero, dineroExacto } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
+import { descargarCSV, imprimirPDF } from '../lib/exportar'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -261,6 +262,40 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
+
+  // Datos para exportar (Excel/PDF) según la vista actual.
+  function datosExport() {
+    if (vista === 'saldo') {
+      const cols = [
+        { titulo: 'Insumo', valor: f => f.insumo },
+        { titulo: 'Saldo', der: true, valor: f => `${limpio(f.saldo)} ${cap1(UNIDAD[f.unidad] || f.unidad)}` },
+        ...(esJefe ? [
+          { titulo: 'Precio', der: true, valor: f => f.precio ? dineroExacto(f.precio) : '' },
+          { titulo: 'Valor', der: true, valor: f => dinero(Number(valorFifo[f.insumo_id] || 0)) },
+        ] : []),
+      ]
+      const fs = filas.filter(f => coincide(f.insumo) && (verSinInv || !esSinInvFila(f)))
+      return { titulo: `Bodega de insumos - ${finca.nombre}`, sub: `Al ${corta(alDia)}`, cols, filas: fs }
+    }
+    const cols = [
+      { titulo: 'Insumo', valor: m => m.insumo },
+      { titulo: 'Saldo ini.', der: true, valor: m => limpio(m.saldo_inicial) },
+      { titulo: 'Ingresos', der: true, valor: m => limpio(m.ingresos) },
+      { titulo: 'Consumo', der: true, valor: m => limpio(m.consumo) },
+      { titulo: 'Devuelto', der: true, valor: m => limpio(m.devuelto) },
+      { titulo: 'Ajustes', der: true, valor: m => limpio(m.ajustes) },
+      { titulo: 'Conteo', der: true, valor: m => m.conteo == null ? '' : limpio(m.conteo) },
+      { titulo: 'Saldo fin.', der: true, valor: m => limpio(m.saldo_final) },
+      ...(esJefe ? [{ titulo: 'Consumo $', der: true, valor: m => dinero(Number(m.consumo_dolares)) }] : []),
+    ]
+    const fs = movs.filter(m => coincide(m.insumo))
+    return { titulo: `Movimientos de insumos - ${finca.nombre}`, sub: `Del ${corta(desde)} al ${corta(hasta)}`, cols, filas: fs }
+  }
+  function exportarExcel() { const d = datosExport(); descargarCSV(d.titulo, d.cols, d.filas) }
+  function exportarPDF() {
+    const d = datosExport()
+    if (!imprimirPDF(d.titulo, d.cols, d.filas, d.sub)) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+  }
 
   // ¿Bajo mínimo? El saldo está en unidad de compra; el mínimo en unidad de
   // aplicación. Convierto el saldo a aplicación (saldo × factor) y comparo.
@@ -566,6 +601,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             <option value="">Todos los insumos</option>
             {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n}>{n}</option>)}
           </select>
+          {esJefe && (
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <button onClick={exportarExcel} title="Descargar en Excel" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Excel</button>
+              <button onClick={exportarPDF} title="Ver/guardar en PDF" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>PDF</button>
+            </div>
+          )}
         </div>
       )}
 
