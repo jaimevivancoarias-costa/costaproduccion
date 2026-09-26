@@ -29,6 +29,8 @@ const UNIDAD = {
   tambor: 'tambores', botella: 'botellas',
 }
 
+const primerDelMes = () => { const h = hoyISO(); return h.slice(0, 8) + '01' }
+
 export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [modo, setModo] = useState('ingresos')   // 'ingresos' | 'pedidos'
   const [insumos, setInsumos] = useState([])
@@ -43,6 +45,8 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [aviso, setAviso] = useState(null)
   const [nuevo, setNuevo] = useState(null)   // 'ingreso' | 'pedido' | null
   const [editando, setEditando] = useState(null)   // id del ingreso en edición/solicitud
+  const [desde, setDesde] = useState(primerDelMes())
+  const [hasta, setHasta] = useState(hoyISO())
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -60,7 +64,8 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           }),
         supabase.schema('produccion').from('ingreso_insumo')
           .select('id, fecha, numero_guia, proveedor, observacion, creado_por, creado_en, ingreso_insumo_linea(insumo_id, cantidad, plazo)')
-          .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
+          .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+          .order('fecha', { ascending: false }).limit(200),
         supabase.schema('produccion').from('pedido_insumo')
           .select('id, fecha, fecha_esperada, proveedor, estado, creado_por, creado_en, pedido_insumo_linea(insumo_id, cantidad)')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
@@ -78,7 +83,8 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
       setPedidos(pd || [])
       const { data: dev } = await supabase.schema('produccion').from('devolucion_insumo')
         .select('id, fecha, insumo_id, cantidad, motivo, creado_por, creado_en')
-        .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40)
+        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+        .order('fecha', { ascending: false }).limit(200)
       setDevoluciones(dev || [])
       // Mapa id -> nombre para mostrar "quién" registró cada cosa.
       const { data: us } = await supabase.schema('produccion').from('vw_usuario').select('id, nombre')
@@ -94,7 +100,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
     } finally {
       setCargando(false)
     }
-  }, [finca.id])
+  }, [finca.id, desde, hasta])
 
   useEffect(() => { cargar() }, [cargar])
 
@@ -126,6 +132,15 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         <Chip on={modo === 'devoluciones'} onClick={() => { setModo('devoluciones'); setNuevo(null) }}>
           Devoluciones
         </Chip>
+        {modo !== 'pedidos' && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginLeft: '4px' }}>
+            <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...entrada, padding: "6px 9px" }} />
+            <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
+            <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: "6px 9px" }} />
+            <Chip on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</Chip>
+            <Chip on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</Chip>
+          </span>
+        )}
         <div style={{ marginLeft: 'auto' }}>
           {!nuevo && (
             <Btn primario onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}>
