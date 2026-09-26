@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, miles, numDec } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import BotonDescargar from '../components/BotonDescargar'
+import { Seg } from '../components/controles'
 
 // Inventario de diesel · lectura. Tres vistas: cuánto hay, qué se movió
 // y la subbodega de ingresos y pedidos. El registro (pedir/consumir) vive
@@ -172,47 +174,31 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
   return (
     <div style={{ padding: '1.2rem 1.5rem', maxWidth: '1080px' }}>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
-        {[['hay', 'Cuánto hay'], ['movio', 'Qué se movió']].map(([id, txt]) => (
-          <button key={id} onClick={() => setVista(id)} style={{
-            border: '0.5px solid ' + (vista === id ? '#9cc4e8' : BORDE), cursor: 'pointer', fontFamily: 'inherit',
-            fontSize: '13px', padding: '7px 13px', borderRadius: '20px',
-            background: vista === id ? '#E6F1FB' : 'white', color: vista === id ? AZUL : NAVY,
-            fontWeight: vista === id ? 500 : 400 }}>{txt}</button>
-        ))}
-        {vista !== 'hay' ? (
+        <Seg valor={vista} onCambio={setVista} opciones={[['hay', 'Cuánto hay'], ['movio', 'Qué se movió']]} />
+        {vista !== 'hay' && (
           <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
             <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
             <input type="date" value={hasta} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
           </span>
-        ) : esJefe && (
-          <span title="Rango de fechas que usa el reporte" style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <span style={{ color: GRIS, fontSize: '13px' }}>reporte:</span>
-            <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
-            <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
-            <input type="date" value={hasta} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
-          </span>
         )}
-        {vista === 'hay' && esJefe && (
-          <span style={{ display: 'flex', gap: '6px' }}>
-            <button onClick={exportarExcel} title="Reporte completo de bodega en Excel" style={expBtn}>Excel</button>
-            <button onClick={exportarPDF} title="Reporte completo de bodega en PDF" style={expBtn}>PDF</button>
-          </span>
-        )}
-        {!soloLectura && !conteo && (
-          <button onClick={() => setConteo({ fecha: hoyISO(), valores: {} })}
-            style={{ marginLeft: 'auto', background: AZUL, color: 'white', border: '0.5px solid ' + AZUL,
-                     borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
-            {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
-          </button>
-        )}
-        {!soloLectura && !conteo && inicial && (
-          <button onClick={() => setConteo({ fecha: inicial.fecha, valores: { ...inicial.valores }, inicialId: inicial.id })}
-            style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px',
-                     padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
-            Editar inventario inicial
-          </button>
-        )}
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+          {!soloLectura && !conteo && (
+            <button onClick={() => setConteo({ fecha: hoyISO(), valores: {} })}
+              style={{ background: AZUL, color: 'white', border: '0.5px solid ' + AZUL,
+                       borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+              {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
+            </button>
+          )}
+          {!soloLectura && !conteo && inicial && (
+            <button onClick={() => setConteo({ fecha: inicial.fecha, valores: { ...inicial.valores }, inicialId: inicial.id })}
+              style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px',
+                       padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+              Editar inventario inicial
+            </button>
+          )}
+        </span>
       </div>
 
       {aviso && (
