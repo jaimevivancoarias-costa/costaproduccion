@@ -99,36 +99,52 @@ function celda(col, fila, chico) {
 }
 
 function reporteBodegaHTML(opts, paraExcel) {
-  const cols = opts.columnas || []
-  const th = cols.map(c => `<th class="${c.der ? 'r' : ''}">${esc(c.titulo)}</th>`).join('')
-  const filaHTML = (f, clase) => '<tr' + (clase ? ` class="${clase}"` : '') + '>' +
-    cols.map(c => `<td class="${c.der ? 'r' : ''}">${celda(c, f, 'sm')}</td>`).join('') + '</tr>'
-  const cuerpo = (opts.filas || []).map(f => filaHTML(f)).join('')
-  const total = opts.total ? filaHTML(opts.total, 'total') : ''
+  // Uno o varios bloques (secciones). Cada bloque tiene sus propias columnas.
+  const bloques = opts.bloques || [{ columnas: opts.columnas, filas: opts.filas, total: opts.total }]
   const meta = (opts.meta || []).map(m => `${esc(m.k)}: <b>${esc(m.v)}</b>`).join('<br>')
   const cards = (opts.cards || []).map(c =>
     `<div class="rcard${c.alerta ? ' alerta' : ''}"><div class="k">${esc(c.k)}</div><div class="v">${esc(c.v)}</div></div>`
   ).join('')
+  const subtitulo = opts.subtitulo != null ? opts.subtitulo : 'Inventario que hay y que se movió'
+  const pie = opts.pie != null ? opts.pie : '<b>Cómo se lee:</b> Inicial + Ingresos − Devuelto − Consumo = <b>Saldo hoy</b> (lo que debería haber). &nbsp; <b>Diferencia</b> = Contado − Saldo hoy. &nbsp; En <b>Lotes</b> ves cada precio con su fecha de compra.'
 
   // El Excel abre HTML como hoja de cálculo con columnas separadas.
   if (paraExcel) {
-    const filasX = [...(opts.filas || []), ...(opts.total ? [opts.total] : [])]
     const celX = (c, f) => {
       if (c.lotes) return (f[c.campo] || []).map(l => l.t).join(' · ')
       const sub = c.sub ? f[c.sub] : null
       return (f[c.campo] == null ? '' : f[c.campo]) + (sub ? ' (' + sub + ')' : '')
     }
+    const ancho = Math.max(2, ...bloques.map(b => (b.columnas || []).length))
+    const secciones = bloques.map(b => {
+      const cols = b.columnas || []
+      const filasX = [...(b.filas || []), ...(b.total ? [b.total] : [])]
+      return (b.titulo ? `<tr><td colspan="${cols.length}" style="border:none;font-weight:bold;font-size:12px">${esc(b.titulo)}</td></tr>` : '')
+        + `<tr>${cols.map(c => `<th>${esc(c.titulo)}</th>`).join('')}</tr>`
+        + filasX.map(f => '<tr>' + cols.map(c => `<td>${esc(celX(c, f))}</td>`).join('') + '</tr>').join('')
+        + `<tr><td colspan="${cols.length}" style="border:none">&nbsp;</td></tr>`
+    }).join('')
     return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">
 <style>td,th{border:0.5px solid #cccccc;padding:4px 6px;font-family:Arial;font-size:11px;mso-number-format:"\\@"}th{background:#e6edf3;font-weight:bold}</style></head><body>
 <table>
-<tr><td colspan="${cols.length}" style="border:none;font-size:14px;font-weight:bold">${esc(opts.titulo)}</td></tr>
-${(opts.meta || []).map(m => `<tr><td colspan="${cols.length}" style="border:none;color:#5f7284">${esc(m.k)}: ${esc(m.v)}</td></tr>`).join('')}
-<tr><td colspan="${cols.length}" style="border:none">&nbsp;</td></tr>
+<tr><td colspan="${ancho}" style="border:none;font-size:14px;font-weight:bold">${esc(opts.titulo)}</td></tr>
+${(opts.meta || []).map(m => `<tr><td colspan="${ancho}" style="border:none;color:#5f7284">${esc(m.k)}: ${esc(m.v)}</td></tr>`).join('')}
+<tr><td colspan="${ancho}" style="border:none">&nbsp;</td></tr>
 ${(opts.cards || []).map(c => `<tr><td colspan="2" style="border:none;font-weight:bold">${esc(c.k)}: ${esc(c.v)}</td></tr>`).join('')}
-<tr><td colspan="${cols.length}" style="border:none">&nbsp;</td></tr>
-<tr>${cols.map(c => `<th>${esc(c.titulo)}</th>`).join('')}</tr>
-${filasX.map(f => '<tr>' + cols.map(c => `<td>${esc(celX(c, f))}</td>`).join('') + '</tr>').join('')}
+<tr><td colspan="${ancho}" style="border:none">&nbsp;</td></tr>
+${secciones}
 </table></body></html>`
+  }
+
+  const filaHTML = (cols, f, clase) => '<tr' + (clase ? ` class="${clase}"` : '') + '>' +
+    cols.map(c => `<td class="${c.der ? 'r' : ''}">${celda(c, f, 'sm')}</td>`).join('') + '</tr>'
+  const tabla = b => {
+    const cols = b.columnas || []
+    const th = cols.map(c => `<th class="${c.der ? 'r' : ''}">${esc(c.titulo)}</th>`).join('')
+    const cuerpo = (b.filas || []).map(f => filaHTML(cols, f)).join('')
+    const total = b.total ? filaHTML(cols, b.total, 'total') : ''
+    return (b.titulo ? `<h2>${esc(b.titulo)}</h2>` : '') +
+      `<table><thead><tr>${th}</tr></thead><tbody>${cuerpo}${total}</tbody></table>`
   }
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(opts.titulo)}</title>
@@ -153,17 +169,18 @@ ${filasX.map(f => '<tr>' + cols.map(c => `<td>${esc(celX(c, f))}</td>`).join('')
   .m { color:#a7b4c1; }
   .sm { font-size:8.5px; color:#a7b4c1; }
   tr.total td { border-top:1.5px solid #022847; border-bottom:none; font-weight:bold; background:#f9fbfc; padding-top:8px; }
+  h2 { font-size:13px; font-weight:bold; margin:22px 0 8px; padding-left:8px; border-left:3px solid #1f7a8c; }
   .pie { font-size:10px; color:#7d8fa0; margin-top:18px; border-top:1px solid #e2e9f0; padding-top:10px; }
   @media print { body { margin:0; } }
 </style></head>
 <body onload="setTimeout(function(){window.print()},350)">
   <div class="cab">
-    <div><h1>${esc(opts.titulo)}</h1><div class="sub">Finca ${esc(opts.finca)} · Inventario que hay y que se movió</div></div>
+    <div><h1>${esc(opts.titulo)}</h1>${subtitulo ? `<div class="sub">Finca ${esc(opts.finca)} · ${esc(subtitulo)}</div>` : `<div class="sub">Finca ${esc(opts.finca)}</div>`}</div>
     <div class="meta">${meta}</div>
   </div>
   ${cards ? `<div class="resumen">${cards}</div>` : ''}
-  <table><thead><tr>${th}</tr></thead><tbody>${cuerpo}${total}</tbody></table>
-  <div class="pie"><b>Cómo se lee:</b> Inicial + Ingresos − Devuelto − Consumo = <b>Saldo hoy</b> (lo que debería haber). &nbsp; <b>Diferencia</b> = Contado − Saldo hoy. &nbsp; En <b>Lotes</b> ves cada precio con su fecha de compra.</div>
+  ${bloques.map(tabla).join('')}
+  ${pie ? `<div class="pie">${pie}</div>` : ''}
 </body></html>`
 }
 
