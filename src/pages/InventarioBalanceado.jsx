@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
-import { descargarCSV, imprimirPDF } from '../lib/exportar'
+import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -60,6 +60,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [nuevos, setNuevos] = useState([])
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
   const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
+  const [descMotivo, setDescMotivo] = useState({})     // producto_id -> motivo del descuadre (para el reporte)
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
@@ -121,17 +122,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_balanceado')
-          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id)')
+          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, motivo_descuadre, diferencia)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
-      const cq = {}
+      const cq = {}, dm = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
         cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
+        // El último motivo del rango con descuadre (las tomas vienen en orden ascendente).
+        if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
       }))
-      setConteoQuien(cq)
+      setConteoQuien(cq); setDescMotivo(dm)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
@@ -157,38 +160,103 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
   const nSinInv = filas.filter(f => coincide(f.producto) && esSinInvFila(f)).length
 
-  // Datos para exportar (Excel/PDF) según la vista actual.
-  function datosExport() {
-    if (vista === 'saldo') {
-      const cols = [
-        { titulo: 'Balanceado', valor: f => f.producto },
-        { titulo: 'Saldo (sacos)', der: true, valor: f => limpio(f.saldo) },
-        ...(esJefe ? [
-          { titulo: 'Precio saco', der: true, valor: f => f.precio ? dineroExacto(f.precio) : '' },
-          { titulo: 'Valor', der: true, valor: f => dinero(Number(valorFifo[f.producto_id] || 0)) },
-        ] : []),
-      ]
-      const fs = filas.filter(f => coincide(f.producto) && (verSinInv || !esSinInvFila(f)))
-      return { titulo: `Bodega de balanceado - ${finca.nombre}`, sub: `Al ${corta(alDia)}`, cols, filas: fs }
-    }
-    const cols = [
-      { titulo: 'Balanceado', valor: m => m.producto },
-      { titulo: 'Saldo ini.', der: true, valor: m => limpio(m.saldo_inicial) },
-      { titulo: 'Ingresos', der: true, valor: m => limpio(m.ingresos) },
-      { titulo: 'Consumo', der: true, valor: m => limpio(m.consumo) },
-      { titulo: 'Devuelto', der: true, valor: m => limpio(m.devuelto) },
-      { titulo: 'Ajustes', der: true, valor: m => limpio(m.ajustes) },
-      { titulo: 'Conteo', der: true, valor: m => m.conteo == null ? '' : limpio(m.conteo) },
-      { titulo: 'Saldo fin.', der: true, valor: m => limpio(m.saldo_final) },
-      ...(esJefe ? [{ titulo: 'Consumo $', der: true, valor: m => dinero(Number(m.consumo_dolares)) }] : []),
+  // Reporte de bodega: junta "Cuánto hay" y "Qué se movió" en un solo documento.
+  // Cruza saldos (al día) con movimientos (del rango), lotes, precio·vigencia y
+  // el conteo con su motivo. Un mismo botón para Excel y PDF.
+  function construirReporte() {
+    const mas = n => { const x = numDec(n); return x > 0.001 ? '+' + limpio(x) : '—' }
+    const menos = n => { const x = numDec(n); return x > 0.001 ? '−' + limpio(x) : '—' }
+    const conSigno = n => { const x = numDec(n); if (Math.abs(x) < 0.001) return '0'; return (x > 0 ? '+' : '−') + limpio(Math.abs(x)) }
+    const movById = {}; (movs || []).forEach(m => { movById[m.producto_id] = m })
+    const sById = {}; (saldos || []).forEach(s => { sById[s.producto_id] = s })
+
+    // Universo: productos con saldo/lotes o con movimiento en el rango.
+    const ids = [...new Set([...(saldos || []).map(s => s.producto_id), ...(movs || []).map(m => m.producto_id)])]
+    const filaTieneMov = m => m && (numDec(m.ingresos) || numDec(m.consumo) || numDec(m.devuelto) || numDec(m.ajustes) || m.conteo != null)
+
+    let totIni = 0, totIng = 0, totDev = 0, totCon = 0, totConUsd = 0, totAlaFecha = 0, totValor = 0, totDif = 0, totDesc = 0, nDesc = 0
+    const filasRep = []
+    ids.forEach(id => {
+      const s = sById[id]; const m = movById[id]
+      const nombre = (s && s.producto) || (m && m.producto) || ''
+      if (!coincide(nombre)) return
+      const saldoAlDia = s ? Number(s.saldo) : 0
+      const sinInv = Math.abs(saldoAlDia) < 0.001 && !((lotes[id] || []).length)
+      if (sinInv && !filaTieneMov(m) && !verSinInv) return
+
+      const precio = precios[id] || 0
+      const desde = precioInfo[id]?.aplicado?.desde
+      const valor = Number(valorFifo[id] || 0)
+      const conteo = m && m.conteo != null ? Number(m.conteo) : null
+      const teorico = m ? Number(m.saldo_final) : saldoAlDia
+      const dif = conteo != null ? conteo - teorico : null
+      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
+      const cq = conteoQuien[id]
+      const ls = (lotes[id] || []).flatMap(L => ([
+        { t: `${limpio(L.cantidad)} a ${L.costo == null ? 's/precio' : dineroExacto(L.costo)}` },
+        { t: L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico', sm: true },
+      ]))
+
+      totIni += numDec(m?.saldo_inicial); totIng += numDec(m?.ingresos); totDev += numDec(m?.devuelto)
+      totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoAlDia; totValor += valor
+      if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
+
+      filasRep.push({
+        nombre, viaTop: 'Saco → lb', viaSub: '' + (lps || 55),
+        inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
+        consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
+        alafecha: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
+        valor: dinero(valor), lotes: ls,
+        contado: conteo != null ? limpio(conteo) : '', contadoFecha: cq?.fecha ? corta(cq.fecha) : '',
+        dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
+        motivo: descMotivo[id] || '',
+      })
+    })
+    filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+
+    const columnas = [
+      { titulo: 'Balanceado', campo: 'nombre' },
+      { titulo: 'Llega / aplica', campo: 'viaTop', sub: 'viaSub' },
+      { titulo: 'Inicial', der: true, campo: 'inicial' },
+      { titulo: 'Ingresos', der: true, campo: 'ingresos' },
+      { titulo: 'Devuelto', der: true, campo: 'devuelto' },
+      { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
+      { titulo: 'A la fecha', der: true, campo: 'alafecha' },
+      { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
+      { titulo: 'Valor', der: true, campo: 'valor' },
+      { titulo: 'Lotes', campo: 'lotes', lotes: true },
+      { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoFecha' },
+      { titulo: 'Dif.', der: true, campo: 'dif' },
+      { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
+      { titulo: 'Motivo', campo: 'motivo' },
     ]
-    const fs = movs.filter(m => coincide(m.producto))
-    return { titulo: `Movimientos de balanceado - ${finca.nombre}`, sub: `Del ${corta(desde)} al ${corta(hasta)}`, cols, filas: fs }
+    const total = {
+      nombre: 'Total', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
+      devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
+      consumoUsd: dinero(totConUsd), alafecha: limpio(totAlaFecha), precio: '', precioDesde: '',
+      valor: dinero(totValor), lotes: [], contado: '', contadoFecha: '',
+      dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
+      descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
+    }
+    const cards = [
+      { k: 'Valor total en bodega', v: dinero(totValor) },
+      { k: 'Consumo del rango', v: dinero(totConUsd) },
+      { k: 'Descuadre total', v: dinero(totDesc), alerta: Math.abs(totDesc) > 0.001 },
+      { k: 'Ítems con descuadre', v: '' + nDesc, alerta: nDesc > 0 },
+    ]
+    return {
+      titulo: `Reporte de Bodega — Balanceado`, finca: finca.nombre, categoria: 'Balanceado',
+      meta: [
+        { k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` },
+        { k: 'Impreso', v: corta(hoyISO()) },
+      ],
+      cards, columnas, filas: filasRep, total,
+    }
   }
-  function exportarExcel() { const d = datosExport(); descargarCSV(d.titulo, d.cols, d.filas) }
+  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
   function exportarPDF() {
-    const d = datosExport()
-    if (!imprimirPDF(d.titulo, d.cols, d.filas, d.sub)) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
   }
 
   const filaNueva = () => ({ nombre: '', marca: '' })
@@ -520,8 +588,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             )}
             {esJefe && (
               <div style={{ display: 'flex', gap: '6px' }}>
-                <button onClick={exportarExcel} title="Descargar en Excel" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Excel</button>
-                <button onClick={exportarPDF} title="Ver/guardar en PDF" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>PDF</button>
+                <button onClick={exportarExcel} title="Reporte completo de bodega en Excel" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Excel</button>
+                <button onClick={exportarPDF} title="Reporte completo de bodega en PDF" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>PDF</button>
               </div>
             )}
           </div>
