@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
+import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
@@ -121,6 +122,86 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
     return i ? (UNIDAD[i.unidad_compra] || cap1(i.unidad_compra)) : ''
   }
 
+  // Reporte de Ingresos + Devoluciones (del rango). Dos secciones, cantidades
+  // en unidad de compra. Un mismo botón para Excel y PDF.
+  function construirReporte() {
+    const quien = id => (id ? usuarios[id] : '') || ''
+    // Ingresos: una fila por insumo de cada guía; los datos de la guía salen
+    // una sola vez (las filas de continuación los dejan en blanco).
+    const filasIng = []
+    let nItems = 0
+    const provs = new Set()
+    ;[...ingresos].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach(g => {
+      if (g.proveedor) provs.add(g.proveedor)
+      const lineas = g.ingreso_insumo_linea || []
+      lineas.forEach((l, i) => {
+        nItems++
+        filasIng.push({
+          fecha: i === 0 ? corta(g.fecha) : '',
+          guia: i === 0 ? (g.numero_guia || 'Sin guía') : '',
+          proveedor: i === 0 ? (g.proveedor || '') : '',
+          insumo: nombreInsumo(l.insumo_id),
+          cantidad: `${miles(numDec(l.cantidad))} ${unidadInsumo(l.insumo_id)}`,
+          plazo: l.plazo != null ? (PLAZO_LBL[l.plazo] || '') : '',
+          registro: i === 0 ? quien(g.creado_por) : '',
+        })
+      })
+    })
+    const filasDev = [...devoluciones].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map(d => ({
+      fecha: corta(d.fecha), insumo: nombreInsumo(d.insumo_id),
+      cantidad: `${miles(numDec(d.cantidad))} ${unidadInsumo(d.insumo_id)}`,
+      motivo: d.motivo || '', registro: quien(d.creado_por),
+    }))
+
+    const bloques = [
+      {
+        titulo: 'Ingresos a bodega',
+        columnas: [
+          { titulo: 'Fecha', campo: 'fecha' },
+          { titulo: 'Guía', campo: 'guia' },
+          { titulo: 'Proveedor', campo: 'proveedor' },
+          { titulo: 'Insumo', campo: 'insumo' },
+          { titulo: 'Cantidad', der: true, campo: 'cantidad' },
+          { titulo: 'Plazo', campo: 'plazo' },
+          { titulo: 'Registró', campo: 'registro' },
+        ],
+        filas: filasIng,
+        total: { fecha: '', guia: '', proveedor: '', insumo: 'Total ingresos', cantidad: `${nItems} ítems`, plazo: '', registro: '' },
+      },
+      {
+        titulo: 'Devoluciones',
+        columnas: [
+          { titulo: 'Fecha', campo: 'fecha' },
+          { titulo: 'Insumo', campo: 'insumo' },
+          { titulo: 'Cantidad', der: true, campo: 'cantidad' },
+          { titulo: 'Motivo', campo: 'motivo' },
+          { titulo: 'Registró', campo: 'registro' },
+        ],
+        filas: filasDev,
+        total: { fecha: '', insumo: 'Total devoluciones', cantidad: `${filasDev.length}`, motivo: '', registro: '' },
+      },
+    ]
+    const cards = [
+      { k: 'Ingresos (guías)', v: '' + ingresos.length },
+      { k: 'Ítems ingresados', v: '' + nItems },
+      { k: 'Devoluciones', v: '' + devoluciones.length },
+      { k: 'Proveedores', v: '' + provs.size },
+    ]
+    return {
+      titulo: 'Ingresos y Devoluciones — Insumos', finca: finca.nombre, subtitulo: '',
+      meta: [
+        { k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` },
+        { k: 'Impreso', v: corta(hoyISO()) },
+      ],
+      cards, bloques,
+      pie: 'Los ingresos se listan una fila por insumo de cada guía. Las cantidades están en unidad de compra (Funda, Envase, Saco).',
+    }
+  }
+  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
+  function exportarPDF() {
+    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+  }
+
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
 
@@ -139,6 +220,12 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
             <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: "6px 9px" }} />
             <Chip on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</Chip>
             <Chip on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</Chip>
+          </span>
+        )}
+        {modo !== 'pedidos' && !cargando && (ingresos.length > 0 || devoluciones.length > 0) && (
+          <span style={{ display: 'flex', gap: '6px', marginLeft: modo !== 'pedidos' ? '0' : 'auto' }}>
+            <button onClick={exportarExcel} title="Reporte de ingresos y devoluciones en Excel" style={{ ...entrada, padding: '6px 11px', fontSize: '12px', cursor: 'pointer', color: NAVY }}>Excel</button>
+            <button onClick={exportarPDF} title="Reporte de ingresos y devoluciones en PDF" style={{ ...entrada, padding: '6px 11px', fontSize: '12px', cursor: 'pointer', color: NAVY }}>PDF</button>
           </span>
         )}
         <div style={{ marginLeft: 'auto' }}>
