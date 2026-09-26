@@ -5,6 +5,8 @@ import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import BotonDescargar from '../components/BotonDescargar'
+import { TabU, Seg, GhostBtn, selChip } from '../components/controles'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -601,17 +603,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           </p>
         </div>
         {seccion === 'bodega' && !contando && !cargando && (
-          <Btn primario onClick={() => setContando(true)}>
-            {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
-          </Btn>
+          <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
+            {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            <Btn primario onClick={() => setContando(true)}>
+              {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
+            </Btn>
+          </div>
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: '9px', marginBottom: '16px' }}>
-        <Chip on={seccion === 'bodega'} onClick={() => { setSeccion('bodega'); cargar() }}>Bodega</Chip>
-        <Chip on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>
-          Ingresos
-        </Chip>
+      <div style={{ display: 'flex', gap: '22px', marginBottom: '18px', alignItems: 'center' }}>
+        <TabU on={seccion === 'bodega'} onClick={() => { setSeccion('bodega'); cargar() }}>Bodega</TabU>
+        <TabU on={seccion === 'movimiento'} onClick={() => { setSeccion('movimiento'); setContando(false) }}>Ingresos</TabU>
       </div>
 
       {seccion === 'movimiento' ? (
@@ -631,16 +634,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       {!contando && (
         <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
                       marginBottom: '14px' }}>
-          <Chip on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
-          <Chip on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+          <Seg valor={vista} onCambio={setVista} opciones={[['saldo', 'Cuánto hay'], ['movimientos', 'Qué se movió']]} />
           {vista === 'saldo' && filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length > 0 && (
-            <Chip on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+            <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
               {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length})`}
-            </Chip>
+            </GhostBtn>
           )}
-
+          <select value={busq} onChange={e => setBusq(e.target.value)}
+                  style={{ ...selChip, marginLeft: 'auto', minWidth: '220px' }}>
+            <option value="">Todos los insumos</option>
+            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
           {vista === 'saldo' ? (
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>al</span>
               <input type="date" value={alDia} max={hoyISO()}
                      onChange={e => setAlDia(e.target.value)} style={entrada} />
@@ -651,18 +657,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   volver a hoy
                 </button>
               )}
-              {esJefe && (
-                <span title="Rango de fechas que usa el reporte" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '10px', fontSize: '13px', color: GRIS }}>
-                  reporte:
-                  <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={entrada} />
-                  a
-                  <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={entrada} />
-                </span>
-              )}
             </label>
           ) : (
             <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '13px', color: GRIS }}>del</span>
                 <input type="date" value={desde} max={hasta}
                        onChange={e => setDesde(e.target.value)} style={entrada} />
@@ -670,24 +668,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <input type="date" value={hasta} min={desde} max={hoyISO()}
                        onChange={e => setHasta(e.target.value)} style={entrada} />
               </label>
-              <Chip pequeno onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>
-                Este mes
-              </Chip>
-              <Chip pequeno onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>
-                Este año
-              </Chip>
+              <GhostBtn onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+              <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
             </>
-          )}
-          <select value={busq} onChange={e => setBusq(e.target.value)}
-                  style={{ ...entrada, marginLeft: 'auto', minWidth: '220px' }}>
-            <option value="">Todos los insumos</option>
-            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
-          {esJefe && (
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <button onClick={exportarExcel} title="Reporte completo de bodega en Excel" style={expBtn}>Excel</button>
-              <button onClick={exportarPDF} title="Reporte completo de bodega en PDF" style={expBtn}>PDF</button>
-            </div>
           )}
         </div>
       )}

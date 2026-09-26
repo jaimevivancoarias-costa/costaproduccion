@@ -5,6 +5,7 @@ import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
+import { TabU, Seg, GhostBtn, selChip } from '../components/controles'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -574,9 +575,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           <div style={{ display: 'flex', gap: '10px', marginBottom: '18px', flexWrap: 'wrap', alignItems: 'center' }}>
             <Seg valor={vista} onCambio={setVista} opciones={[['saldo', 'Cuánto hay'], ['movimientos', 'Qué se movió']]} />
             {vista === 'saldo' && nSinInv > 0 && (
-              <button onClick={() => setVerSinInv(v => !v)} style={ghostBtn(verSinInv)}>
+              <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
                 {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInv})`}
-              </button>
+              </GhostBtn>
             )}
             <select value={busq} onChange={e => setBusq(e.target.value)}
                     style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
@@ -987,9 +988,9 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        <Chip on={modo === 'ingresos'} onClick={() => { setModo('ingresos'); setNuevo(null) }}>Ingresos a bodega</Chip>
-        <Chip on={modo === 'devoluciones'} onClick={() => { setModo('devoluciones'); setNuevo(null) }}>Devoluciones</Chip>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <Seg valor={modo} onCambio={m => { setModo(m); setNuevo(null) }}
+             opciones={[['ingresos', 'Ingresos a bodega'], ['devoluciones', 'Devoluciones']]} />
         {!nuevo && (
           <button onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}
             style={{ ...btn, marginLeft: 'auto', background: AZUL, color: 'white', borderColor: AZUL }}>
@@ -1264,27 +1265,6 @@ function Kpi({ k, v, alerta }) {
     <div style={{ fontSize: '23px', fontWeight: 700, marginTop: '5px', letterSpacing: '-.01em', color: alerta ? AMBAR : NAVY }}>{v}</div>
   </div>
 }
-// Pestaña con subrayado (Bodega / Ingresos).
-function TabU({ children, on, onClick }) {
-  return <button onClick={onClick} style={{ fontFamily: 'inherit', fontSize: '14px', background: 'none', cursor: 'pointer',
-    color: on ? NAVY : GRIS, padding: '0 0 9px', border: 'none', borderBottom: '2px solid ' + (on ? AZUL : 'transparent'),
-    fontWeight: on ? 600 : 400 }}>{children}</button>
-}
-// Control segmentado (Cuánto hay | Qué se movió).
-function Seg({ opciones, valor, onCambio }) {
-  return <div style={{ display: 'inline-flex', background: '#f1f5f9', border: '1px solid ' + BORDE, borderRadius: '11px', padding: '3px' }}>
-    {opciones.map(([val, txt]) => {
-      const on = valor === val
-      return <button key={val} onClick={() => onCambio(val)} style={{ fontFamily: 'inherit', fontSize: '13.5px',
-        color: on ? NAVY : GRIS, padding: '7px 15px', borderRadius: '8px', border: 'none', cursor: 'pointer',
-        background: on ? '#fff' : 'transparent', fontWeight: on ? 600 : 400,
-        boxShadow: on ? '0 1px 2px rgba(12,39,66,.08)' : 'none' }}>{txt}</button>
-    })}
-  </div>
-}
-const ghostBtn = on => ({ fontFamily: 'inherit', fontSize: '13px', color: on ? AZUL : GRIS, background: 'none',
-  border: 'none', cursor: 'pointer', padding: '6px 4px', fontWeight: on ? 600 : 400 })
-const selChip = { padding: '9px 13px', fontSize: '13.5px', fontFamily: 'inherit', border: '1px solid ' + BORDE, borderRadius: '10px', boxSizing: 'border-box', background: 'white', color: NAVY }
 function Nota({ children, color, bg }) { return <div style={{ background: bg, color, borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>{children}</div> }
 function Caja({ children }) { return <div style={cajaS}>{children}</div> }
 const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'auto', maxHeight: '68vh' }

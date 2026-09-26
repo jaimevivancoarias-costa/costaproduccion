@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import BotonDescargar from '../components/BotonDescargar'
+import { Seg, GhostBtn } from '../components/controles'
 
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
@@ -48,6 +50,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [editando, setEditando] = useState(null)   // id del ingreso en edición/solicitud
   const [desde, setDesde] = useState(primerDelMes())
   const [hasta, setHasta] = useState(hoyISO())
+  const [filtroIns, setFiltroIns] = useState('')   // filtro por insumo (nombre)
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -122,6 +125,10 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
     return i ? (UNIDAD[i.unidad_compra] || cap1(i.unidad_compra)) : ''
   }
 
+  // Filtro por insumo (por nombre). Afecta la lista y el reporte.
+  const ingresosF = ingresos.filter(g => !filtroIns || (g.ingreso_insumo_linea || []).some(l => nombreInsumo(l.insumo_id) === filtroIns))
+  const devolucionesF = devoluciones.filter(d => !filtroIns || nombreInsumo(d.insumo_id) === filtroIns)
+
   // Reporte de Ingresos + Devoluciones (del rango). Dos secciones, cantidades
   // en unidad de compra. Un mismo botón para Excel y PDF.
   function construirReporte() {
@@ -131,7 +138,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
     const filasIng = []
     let nItems = 0
     const provs = new Set()
-    ;[...ingresos].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach(g => {
+    ;[...ingresosF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach(g => {
       if (g.proveedor) provs.add(g.proveedor)
       const lineas = g.ingreso_insumo_linea || []
       lineas.forEach((l, i) => {
@@ -147,7 +154,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         })
       })
     })
-    const filasDev = [...devoluciones].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map(d => ({
+    const filasDev = [...devolucionesF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map(d => ({
       fecha: corta(d.fecha), insumo: nombreInsumo(d.insumo_id),
       cantidad: `${miles(numDec(d.cantidad))} ${unidadInsumo(d.insumo_id)}`,
       motivo: d.motivo || '', registro: quien(d.creado_por),
@@ -182,9 +189,9 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
       },
     ]
     const cards = [
-      { k: 'Ingresos (guías)', v: '' + ingresos.length },
+      { k: 'Ingresos (guías)', v: '' + ingresosF.length },
       { k: 'Ítems ingresados', v: '' + nItems },
-      { k: 'Devoluciones', v: '' + devoluciones.length },
+      { k: 'Devoluciones', v: '' + devolucionesF.length },
       { k: 'Proveedores', v: '' + provs.size },
     ]
     return {
@@ -205,36 +212,33 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
-                    marginBottom: '16px' }}>
-        <Chip on={modo === 'ingresos'} onClick={() => { setModo('ingresos'); setNuevo(null) }}>
-          Ingresos a bodega
-        </Chip>
-        <Chip on={modo === 'devoluciones'} onClick={() => { setModo('devoluciones'); setNuevo(null) }}>
-          Devoluciones
-        </Chip>
-        {modo !== 'pedidos' && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginLeft: '4px' }}>
-            <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...entrada, padding: "6px 9px" }} />
-            <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
-            <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: "6px 9px" }} />
-            <Chip on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</Chip>
-            <Chip on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</Chip>
-          </span>
-        )}
-        {modo !== 'pedidos' && !cargando && (ingresos.length > 0 || devoluciones.length > 0) && (
-          <span style={{ display: 'flex', gap: '6px', marginLeft: modo !== 'pedidos' ? '0' : 'auto' }}>
-            <button onClick={exportarExcel} title="Reporte de ingresos y devoluciones en Excel" style={{ ...entrada, padding: '6px 11px', fontSize: '12px', cursor: 'pointer', color: NAVY }}>Excel</button>
-            <button onClick={exportarPDF} title="Reporte de ingresos y devoluciones en PDF" style={{ ...entrada, padding: '6px 11px', fontSize: '12px', cursor: 'pointer', color: NAVY }}>PDF</button>
-          </span>
-        )}
-        <div style={{ marginLeft: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <Seg valor={modo} onCambio={m => { setModo(m); setNuevo(null) }}
+             opciones={[['ingresos', 'Ingresos a bodega'], ['devoluciones', 'Devoluciones']]} />
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
+          {!cargando && (ingresos.length > 0 || devoluciones.length > 0) && (
+            <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} conRango={false} />
+          )}
           {!nuevo && (
-            <Btn primario onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}>
-              {modo === 'ingresos' ? 'Registrar ingreso' : modo === 'pedidos' ? 'Registrar pedido' : 'Registrar devolución'}
+            <Btn primario onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : 'devolucion')}>
+              {modo === 'ingresos' ? 'Registrar ingreso' : 'Registrar devolución'}
             </Btn>
           )}
         </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <span style={{ color: GRIS, fontSize: '13px' }}>Del</span>
+        <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
+        <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
+        <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
+        <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
+        <GhostBtn on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+        <select value={filtroIns} onChange={e => setFiltroIns(e.target.value)}
+                style={{ ...entrada, marginLeft: 'auto', minWidth: '210px', padding: '9px 12px' }}>
+          <option value="">Todos los insumos</option>
+          {[...insumos].map(i => i.nombre).sort().map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
       </div>
 
       {aviso && (
@@ -273,9 +277,9 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         <Vacio>Cargando...</Vacio>
 
       ) : modo === 'ingresos' ? (
-        !ingresos.length ? (
-          <Vacio>Todavía no hay ingresos registrados. Cuando llegue producto a bodega, regístralo aquí con su guía.</Vacio>
-        ) : ingresos.map(g => {
+        !ingresosF.length ? (
+          <Vacio>{filtroIns ? 'No hay ingresos de ese insumo en el rango.' : 'Todavía no hay ingresos registrados. Cuando llegue producto a bodega, regístralo aquí con su guía.'}</Vacio>
+        ) : ingresosF.map(g => {
           const solPend = solicitudes.find(s => s.registro_id === g.id && s.estado === 'pendiente')
           return (
           <Tarjeta key={g.id}>
@@ -373,9 +377,9 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           )
         })
       ) : (
-        !devoluciones.length ? (
-          <Vacio>Todavía no hay devoluciones. Una devolución a CostaMarket resta del saldo de la bodega.</Vacio>
-        ) : devoluciones.map(d => (
+        !devolucionesF.length ? (
+          <Vacio>{filtroIns ? 'No hay devoluciones de ese insumo en el rango.' : 'Todavía no hay devoluciones. Una devolución a CostaMarket resta del saldo de la bodega.'}</Vacio>
+        ) : devolucionesF.map(d => (
           <Tarjeta key={d.id}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
               <div>
