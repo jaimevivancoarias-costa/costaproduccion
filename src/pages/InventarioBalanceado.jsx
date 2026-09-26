@@ -4,6 +4,7 @@ import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import BotonDescargar from '../components/BotonDescargar'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -426,14 +427,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
-      <div style={{ display: 'flex', gap: '9px', marginBottom: '14px', flexWrap: 'wrap' }}>
-        <Chip on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</Chip>
-        <Chip on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</Chip>
+      <div style={{ display: 'flex', gap: '22px', marginBottom: '18px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <TabU on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</TabU>
+        <TabU on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</TabU>
         {seccion === 'bodega' && !contando && !cargando && (
-          <button onClick={() => setContando(true)} style={{ ...btn, marginLeft: 'auto',
-            background: AZUL, color: 'white', borderColor: AZUL }}>
-            {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
+            {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            <button onClick={() => setContando(true)} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>
+              {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -568,40 +571,27 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div></Caja>
       ) : (
         <>
-          <div style={{ display: 'flex', gap: '9px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <Chip pequeno on={vista === 'saldo'} onClick={() => setVista('saldo')}>Cuánto hay</Chip>
-            <Chip pequeno on={vista === 'movimientos'} onClick={() => setVista('movimientos')}>Qué se movió</Chip>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '18px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <Seg valor={vista} onCambio={setVista} opciones={[['saldo', 'Cuánto hay'], ['movimientos', 'Qué se movió']]} />
             {vista === 'saldo' && nSinInv > 0 && (
-              <Chip pequeno on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+              <button onClick={() => setVerSinInv(v => !v)} style={ghostBtn(verSinInv)}>
                 {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInv})`}
-              </Chip>
+              </button>
             )}
             <select value={busq} onChange={e => setBusq(e.target.value)}
-                    style={{ ...inp, marginLeft: 'auto', minWidth: '210px' }}>
+                    style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
               <option value="">Todos los balanceados</option>
               {[...new Set(saldos.map(s => s.producto))].sort().map(n => <option key={n} value={n}>{n}</option>)}
             </select>
             {vista === 'saldo' ? (
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px', fontSize: '13px', color: GRIS }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
               </label>
             ) : (
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px', fontSize: '13px', color: GRIS }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
                 del <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
                 al <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
               </label>
-            )}
-            {vista === 'saldo' && esJefe && (
-              <label title="Rango de fechas que usa el reporte" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
-                reporte: <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
-                a <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
-              </label>
-            )}
-            {esJefe && (
-              <div style={{ display: 'flex', gap: '6px' }}>
-                <button onClick={exportarExcel} title="Reporte completo de bodega en Excel" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Excel</button>
-                <button onClick={exportarPDF} title="Reporte completo de bodega en PDF" style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>PDF</button>
-              </div>
             )}
           </div>
 
@@ -1269,11 +1259,32 @@ function Chip({ children, on, pequeno, onClick }) {
     background: on ? '#E6F1FB' : 'white', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}>{children}</button>
 }
 function Kpi({ k, v, alerta }) {
-  return <div style={{ background: 'white', border: '0.5px solid ' + (alerta ? '#e8d5b0' : BORDE), borderRadius: '12px', padding: '13px 15px', minWidth: '160px' }}>
-    <div style={{ fontSize: '12px', color: GRIS, marginBottom: '4px' }}>{k}</div>
-    <div style={{ fontSize: '19px', fontWeight: 500, color: alerta ? AMBAR : NAVY }}>{v}</div>
+  return <div style={{ background: '#fbfcfe', border: '1px solid ' + (alerta ? '#e8d5b0' : BORDE), borderRadius: '14px', padding: '15px 18px', minWidth: '190px' }}>
+    <div style={{ fontSize: '11.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.04em' }}>{k}</div>
+    <div style={{ fontSize: '23px', fontWeight: 700, marginTop: '5px', letterSpacing: '-.01em', color: alerta ? AMBAR : NAVY }}>{v}</div>
   </div>
 }
+// Pestaña con subrayado (Bodega / Ingresos).
+function TabU({ children, on, onClick }) {
+  return <button onClick={onClick} style={{ fontFamily: 'inherit', fontSize: '14px', background: 'none', cursor: 'pointer',
+    color: on ? NAVY : GRIS, padding: '0 0 9px', border: 'none', borderBottom: '2px solid ' + (on ? AZUL : 'transparent'),
+    fontWeight: on ? 600 : 400 }}>{children}</button>
+}
+// Control segmentado (Cuánto hay | Qué se movió).
+function Seg({ opciones, valor, onCambio }) {
+  return <div style={{ display: 'inline-flex', background: '#f1f5f9', border: '1px solid ' + BORDE, borderRadius: '11px', padding: '3px' }}>
+    {opciones.map(([val, txt]) => {
+      const on = valor === val
+      return <button key={val} onClick={() => onCambio(val)} style={{ fontFamily: 'inherit', fontSize: '13.5px',
+        color: on ? NAVY : GRIS, padding: '7px 15px', borderRadius: '8px', border: 'none', cursor: 'pointer',
+        background: on ? '#fff' : 'transparent', fontWeight: on ? 600 : 400,
+        boxShadow: on ? '0 1px 2px rgba(12,39,66,.08)' : 'none' }}>{txt}</button>
+    })}
+  </div>
+}
+const ghostBtn = on => ({ fontFamily: 'inherit', fontSize: '13px', color: on ? AZUL : GRIS, background: 'none',
+  border: 'none', cursor: 'pointer', padding: '6px 4px', fontWeight: on ? 600 : 400 })
+const selChip = { padding: '9px 13px', fontSize: '13.5px', fontFamily: 'inherit', border: '1px solid ' + BORDE, borderRadius: '10px', boxSizing: 'border-box', background: 'white', color: NAVY }
 function Nota({ children, color, bg }) { return <div style={{ background: bg, color, borderRadius: '10px', padding: '12px 14px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>{children}</div> }
 function Caja({ children }) { return <div style={cajaS}>{children}</div> }
 const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'auto', maxHeight: '68vh' }
