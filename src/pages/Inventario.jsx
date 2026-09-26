@@ -4,7 +4,7 @@ import { hoyISO, corta, dinero, dineroExacto } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
-import { descargarCSV, imprimirPDF } from '../lib/exportar'
+import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -74,7 +74,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
-  const [conteoQuien, setConteoQuien] = useState({})  // insumo_id -> {fecha, autor} del conteo
+  const [conteoQuien, setConteoQuien] = useState({})  // insumo_id -> {fecha, autor, esInicial} del conteo
+  const [descMotivo, setDescMotivo] = useState({})    // insumo_id -> motivo del descuadre (para el reporte)
   const [conteoDet, setConteoDet] = useState(null)    // insumo_id con el detalle del conteo abierto
   const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
   const coincide = nom => !busq || nom === busq
@@ -209,17 +210,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       // columna Conteo / Inicial de "Qué se movió".
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_inventario')
-          .select('fecha, creado_por, toma_inventario_linea(insumo_id)')
+          .select('fecha, creado_por, es_inicial, toma_inventario_linea(insumo_id, motivo_descuadre, diferencia)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
-      const cq = {}
+      const cq = {}, dm = {}
       ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
-        cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null }
+        cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
+        if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.insumo_id] = l.motivo_descuadre
       }))
-      setConteoQuien(cq)
+      setConteoQuien(cq); setDescMotivo(dm)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -263,38 +265,110 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
 
-  // Datos para exportar (Excel/PDF) según la vista actual.
-  function datosExport() {
-    if (vista === 'saldo') {
-      const cols = [
-        { titulo: 'Insumo', valor: f => f.insumo },
-        { titulo: 'Saldo', der: true, valor: f => `${limpio(f.saldo)} ${cap1(UNIDAD[f.unidad] || f.unidad)}` },
-        ...(esJefe ? [
-          { titulo: 'Precio', der: true, valor: f => f.precio ? dineroExacto(f.precio) : '' },
-          { titulo: 'Valor', der: true, valor: f => dinero(Number(valorFifo[f.insumo_id] || 0)) },
-        ] : []),
-      ]
-      const fs = filas.filter(f => coincide(f.insumo) && (verSinInv || !esSinInvFila(f)))
-      return { titulo: `Bodega de insumos - ${finca.nombre}`, sub: `Al ${corta(alDia)}`, cols, filas: fs }
-    }
-    const cols = [
-      { titulo: 'Insumo', valor: m => m.insumo },
-      { titulo: 'Saldo ini.', der: true, valor: m => limpio(m.saldo_inicial) },
-      { titulo: 'Ingresos', der: true, valor: m => limpio(m.ingresos) },
-      { titulo: 'Consumo', der: true, valor: m => limpio(m.consumo) },
-      { titulo: 'Devuelto', der: true, valor: m => limpio(m.devuelto) },
-      { titulo: 'Ajustes', der: true, valor: m => limpio(m.ajustes) },
-      { titulo: 'Conteo', der: true, valor: m => m.conteo == null ? '' : limpio(m.conteo) },
-      { titulo: 'Saldo fin.', der: true, valor: m => limpio(m.saldo_final) },
-      ...(esJefe ? [{ titulo: 'Consumo $', der: true, valor: m => dinero(Number(m.consumo_dolares)) }] : []),
+  // Reporte de bodega: junta "Cuánto hay" y "Qué se movió" en un solo documento.
+  // Cruza saldos (al día) con movimientos (del rango), lotes, precio·vigencia y
+  // el conteo con su motivo. Un mismo botón para Excel y PDF.
+  function construirReporte() {
+    const nd = v => Number(v) || 0
+    const mas = v => { const x = nd(v); return x > 0.001 ? '+' + limpio(x) : '—' }
+    const menos = v => { const x = nd(v); return x > 0.001 ? '−' + limpio(x) : '—' }
+    const conSigno = v => { const x = nd(v); if (Math.abs(x) < 0.001) return '0'; return (x > 0 ? '+' : '−') + limpio(Math.abs(x)) }
+    const movById = {}; (movs || []).forEach(m => { movById[m.insumo_id] = m })
+    const sById = {}; (saldos || []).forEach(s => { sById[s.insumo_id] = s })
+    const ids = [...new Set([...(saldos || []).map(s => s.insumo_id), ...(movs || []).map(m => m.insumo_id)])]
+    const tieneMov = m => m && (nd(m.ingresos) || nd(m.consumo) || nd(m.devuelto) || nd(m.ajustes) || m.conteo != null)
+
+    let totIni = 0, totIng = 0, totDev = 0, totCon = 0, totConUsd = 0, totSaldo = 0, totValor = 0, totDif = 0, totDesc = 0, nDesc = 0
+    const filasRep = []
+    ids.forEach(id => {
+      const s = sById[id]; const m = movById[id]
+      const nombre = (s && s.insumo) || (m && m.insumo) || ''
+      if (!coincide(nombre)) return
+      const saldoAlDia = s ? Number(s.saldo) : 0
+      const sinInv = Math.abs(saldoAlDia) < 0.001 && !((lotes[id] || []).length)
+      if (sinInv && !tieneMov(m) && !verSinInv) return
+
+      const fac = factores[id]
+      const uPres = cap1(UNIDAD[(s && s.unidad) || (m && m.unidad)] || (s && s.unidad) || (m && m.unidad) || '')
+      const uApp = fac && fac.uApp ? cap1(UNIDAD[fac.uApp] || fac.uApp) : ''
+      const factorN = fac?.factor || 1
+      const precio = precios[id] || 0
+      const pdesde = precioInfo[id]?.desde
+      const valor = Number(valorFifo[id] || 0)
+      const conteo = m && m.conteo != null ? Number(m.conteo) : null
+      const teorico = m ? Number(m.saldo_final) : saldoAlDia
+      const dif = conteo != null ? conteo - teorico : null
+      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
+      const cq = conteoQuien[id]
+      const ls = (lotes[id] || []).flatMap(L => ([
+        { t: `${limpio(L.cantidad)} a ${L.costo == null ? 's/precio' : dineroExacto(L.costo)}` },
+        { t: L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico', sm: true },
+      ]))
+      const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
+
+      totIni += nd(m?.saldo_inicial); totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
+      totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoAlDia; totValor += valor
+      if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
+
+      filasRep.push({
+        nombre, viaTop: uApp && uApp !== uPres ? `${uPres} → ${uApp}` : uPres, viaSub: factorN !== 1 ? limpio(factorN) : '',
+        inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
+        consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
+        saldoHoy: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
+        valor: dinero(valor), lotes: ls,
+        contado: conteo != null ? limpio(conteo) : '', contadoInfo,
+        dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
+        motivo: descMotivo[id] || '',
+      })
+    })
+    filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+    const hayConteo = filasRep.some(f => f.contado !== '')
+
+    const columnas = [
+      { titulo: 'Insumo', campo: 'nombre' },
+      { titulo: 'Llega / aplica', campo: 'viaTop', sub: 'viaSub' },
+      { titulo: 'Inicial', der: true, campo: 'inicial' },
+      { titulo: 'Ingresos', der: true, campo: 'ingresos' },
+      { titulo: 'Devuelto', der: true, campo: 'devuelto' },
+      { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Saldo hoy', der: true, campo: 'saldoHoy' },
+      { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
+      { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
+      { titulo: 'Valor', der: true, campo: 'valor' },
+      { titulo: 'Lotes', campo: 'lotes', lotes: true },
+      ...(hayConteo ? [
+        { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
+        { titulo: 'Dif.', der: true, campo: 'dif' },
+        { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
+        { titulo: 'Motivo', campo: 'motivo' },
+      ] : []),
     ]
-    const fs = movs.filter(m => coincide(m.insumo))
-    return { titulo: `Movimientos de insumos - ${finca.nombre}`, sub: `Del ${corta(desde)} al ${corta(hasta)}`, cols, filas: fs }
+    const total = {
+      nombre: 'Total', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
+      devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
+      saldoHoy: limpio(totSaldo), consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
+      valor: dinero(totValor), lotes: [], contado: '', contadoInfo: '',
+      dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
+      descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
+    }
+    const cards = [
+      { k: 'Valor total en bodega', v: dinero(totValor) },
+      { k: 'Consumo del rango', v: dinero(totConUsd) },
+      { k: 'Descuadre total', v: dinero(totDesc), alerta: Math.abs(totDesc) > 0.001 },
+      { k: 'Ítems con descuadre', v: '' + nDesc, alerta: nDesc > 0 },
+    ]
+    return {
+      titulo: 'Reporte de Bodega — Insumos', finca: finca.nombre, categoria: 'Insumos',
+      meta: [
+        { k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` },
+        { k: 'Impreso', v: corta(hoyISO()) },
+      ],
+      cards, columnas, filas: filasRep, total,
+    }
   }
-  function exportarExcel() { const d = datosExport(); descargarCSV(d.titulo, d.cols, d.filas) }
+  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
   function exportarPDF() {
-    const d = datosExport()
-    if (!imprimirPDF(d.titulo, d.cols, d.filas, d.sub)) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
   }
 
   // ¿Bajo mínimo? El saldo está en unidad de compra; el mínimo en unidad de
@@ -577,6 +651,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   volver a hoy
                 </button>
               )}
+              {esJefe && (
+                <span title="Rango de fechas que usa el reporte" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '10px', fontSize: '13px', color: GRIS }}>
+                  reporte:
+                  <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={entrada} />
+                  a
+                  <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={entrada} />
+                </span>
+              )}
             </label>
           ) : (
             <>
@@ -603,8 +685,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           </select>
           {esJefe && (
             <div style={{ display: 'flex', gap: '6px' }}>
-              <button onClick={exportarExcel} title="Descargar en Excel" style={expBtn}>Excel</button>
-              <button onClick={exportarPDF} title="Ver/guardar en PDF" style={expBtn}>PDF</button>
+              <button onClick={exportarExcel} title="Reporte completo de bodega en Excel" style={expBtn}>Excel</button>
+              <button onClick={exportarPDF} title="Reporte completo de bodega en PDF" style={expBtn}>PDF</button>
             </div>
           )}
         </div>
