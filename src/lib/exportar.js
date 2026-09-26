@@ -163,7 +163,7 @@ ${filasX.map(f => '<tr>' + cols.map(c => `<td>${esc(celX(c, f))}</td>`).join('')
   </div>
   ${cards ? `<div class="resumen">${cards}</div>` : ''}
   <table><thead><tr>${th}</tr></thead><tbody>${cuerpo}${total}</tbody></table>
-  <div class="pie"><b>Cómo se lee:</b> Inicial + Ingresos − Devuelto − Consumo = <b>A la fecha</b> (lo que debería haber). &nbsp; <b>Diferencia</b> = Contado − A la fecha. &nbsp; En <b>Lotes</b> ves cada precio con su fecha de compra.</div>
+  <div class="pie"><b>Cómo se lee:</b> Inicial + Ingresos − Devuelto − Consumo = <b>Saldo hoy</b> (lo que debería haber). &nbsp; <b>Diferencia</b> = Contado − Saldo hoy. &nbsp; En <b>Lotes</b> ves cada precio con su fecha de compra.</div>
 </body></html>`
 }
 

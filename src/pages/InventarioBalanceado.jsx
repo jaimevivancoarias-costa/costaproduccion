@@ -201,18 +201,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoAlDia; totValor += valor
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
+      const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       filasRep.push({
         nombre, viaTop: 'Saco → lb', viaSub: '' + (lps || 55),
         inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
-        alafecha: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
+        saldoHoy: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
         valor: dinero(valor), lotes: ls,
-        contado: conteo != null ? limpio(conteo) : '', contadoFecha: cq?.fecha ? corta(cq.fecha) : '',
+        contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
         motivo: descMotivo[id] || '',
       })
     })
     filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+    // Solo mostramos las columnas del conteo si hay al menos un producto contado.
+    const hayConteo = filasRep.some(f => f.contado !== '')
 
     const columnas = [
       { titulo: 'Balanceado', campo: 'nombre' },
@@ -221,21 +224,23 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       { titulo: 'Ingresos', der: true, campo: 'ingresos' },
       { titulo: 'Devuelto', der: true, campo: 'devuelto' },
       { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Saldo hoy', der: true, campo: 'saldoHoy' },
       { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
-      { titulo: 'A la fecha', der: true, campo: 'alafecha' },
       { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
       { titulo: 'Valor', der: true, campo: 'valor' },
       { titulo: 'Lotes', campo: 'lotes', lotes: true },
-      { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoFecha' },
-      { titulo: 'Dif.', der: true, campo: 'dif' },
-      { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
-      { titulo: 'Motivo', campo: 'motivo' },
+      ...(hayConteo ? [
+        { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
+        { titulo: 'Dif.', der: true, campo: 'dif' },
+        { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
+        { titulo: 'Motivo', campo: 'motivo' },
+      ] : []),
     ]
     const total = {
       nombre: 'Total', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
       devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
-      consumoUsd: dinero(totConUsd), alafecha: limpio(totAlaFecha), precio: '', precioDesde: '',
-      valor: dinero(totValor), lotes: [], contado: '', contadoFecha: '',
+      saldoHoy: limpio(totAlaFecha), consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
+      valor: dinero(totValor), lotes: [], contado: '', contadoInfo: '',
       dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
       descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
     }
@@ -584,6 +589,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '6px', fontSize: '13px', color: GRIS }}>
                 del <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
                 al <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+              </label>
+            )}
+            {vista === 'saldo' && esJefe && (
+              <label title="Rango de fechas que usa el reporte" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
+                reporte: <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
+                a <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
               </label>
             )}
             {esJefe && (
