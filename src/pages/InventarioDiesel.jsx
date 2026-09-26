@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, miles, numDec } from '../lib/fechas'
+import { hoyISO, corta, miles, numDec } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
+import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 
 // Inventario de diesel · lectura. Tres vistas: cuánto hay, qué se movió
 // y la subbodega de ingresos y pedidos. El registro (pedir/consumir) vive
@@ -29,6 +30,7 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
   const [conteo, setConteo] = useState(null)   // { fecha, valores:{tipo_id:gal}, inicialId? } al contar/editar
   const [inicial, setInicial] = useState(null) // inventario inicial existente { id, fecha, valores }
   const [guardando, setGuardando] = useState(false)
+  const [conteoRango, setConteoRango] = useState({})  // tipo_id -> {galones, fecha, esInicial} del conteo en el rango (para el reporte)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -53,6 +55,17 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
       const vals = {}; (lin || []).forEach(l => { vals[l.tipo_id] = String(Number(l.galones)) })
       setInicial({ id: iniC.id, fecha: iniC.fecha, valores: vals })
     } else setInicial(null)
+
+    // Conteos del rango (para el reporte): el último por tipo con su fecha.
+    const { data: cts } = await supabase.schema('produccion').from('diesel_conteo')
+      .select('fecha, es_inicial, diesel_conteo_linea(tipo_id, galones)')
+      .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+      .order('fecha', { ascending: true })
+    const cr = {}
+    ;(cts || []).forEach(c => (c.diesel_conteo_linea || []).forEach(l => {
+      cr[l.tipo_id] = { galones: Number(l.galones), fecha: c.fecha, esInicial: !!c.es_inicial }
+    }))
+    setConteoRango(cr)
     setCargando(false)
   }, [finca.id, desde, hasta])
 
@@ -82,6 +95,80 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
     await cargar()
   }
 
+  // Reporte de bodega de gasolina (galones). Junta el saldo actual y los
+  // movimientos del rango, con el conteo físico si lo hay. Un mismo botón
+  // para Excel y PDF.
+  function construirReporte() {
+    const gal = v => miles(Number(v) || 0)
+    const mas = v => { const x = Number(v) || 0; return x > 0.001 ? '+' + gal(x) : '—' }
+    const menos = v => { const x = Number(v) || 0; return x > 0.001 ? '−' + gal(x) : '—' }
+    const conSigno = v => { const x = Number(v) || 0; if (Math.abs(x) < 0.001) return '0'; return (x > 0 ? '+' : '−') + gal(Math.abs(x)) }
+    const movById = {}; (movs || []).forEach(m => { movById[m.tipo_id] = m })
+    const sById = {}; (saldos || []).forEach(s => { sById[s.tipo_id] = s })
+    const ids = [...new Set([...(saldos || []).map(s => s.tipo_id), ...(movs || []).map(m => m.tipo_id)])]
+
+    let totIni = 0, totIng = 0, totCon = 0, totSaldo = 0, totDif = 0, nDesc = 0
+    const filasRep = []
+    ids.forEach(id => {
+      const s = sById[id]; const m = movById[id]
+      const nombre = (s && s.tipo) || (m && m.tipo) || ''
+      const saldoHoy = s ? Number(s.saldo) : (m ? Number(m.saldo_final) : 0)
+      const ct = conteoRango[id]
+      const contado = ct ? Number(ct.galones) : null
+      const teorico = m ? Number(m.saldo_final) : saldoHoy
+      const dif = contado != null ? contado - teorico : null
+      totIni += Number(m?.saldo_inicial) || 0; totIng += Number(m?.ingresos) || 0
+      totCon += Number(m?.consumo) || 0; totSaldo += saldoHoy
+      if (dif != null) { totDif += dif; if (Math.abs(dif) > 0.001) nDesc++ }
+      filasRep.push({
+        nombre, inicial: gal(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), consumo: menos(m?.consumo),
+        saldoHoy: gal(saldoHoy),
+        contado: contado != null ? gal(contado) : '',
+        contadoInfo: ct?.fecha ? corta(ct.fecha) + (ct.esInicial ? ' (inicial)' : '') : '',
+        dif: dif != null ? conSigno(dif) : '',
+      })
+    })
+    filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+    const hayConteo = filasRep.some(f => f.contado !== '')
+
+    const columnas = [
+      { titulo: 'Diesel', campo: 'nombre' },
+      { titulo: 'Inicial', der: true, campo: 'inicial' },
+      { titulo: 'Ingresos', der: true, campo: 'ingresos' },
+      { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Saldo hoy (gal)', der: true, campo: 'saldoHoy' },
+      ...(hayConteo ? [
+        { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
+        { titulo: 'Dif.', der: true, campo: 'dif' },
+      ] : []),
+    ]
+    const total = {
+      nombre: 'Total', inicial: gal(totIni), ingresos: '+' + gal(totIng), consumo: totCon ? '−' + gal(totCon) : '—',
+      saldoHoy: gal(totSaldo), contado: '', contadoInfo: '',
+      dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + gal(Math.abs(totDif)),
+    }
+    const cards = [
+      { k: 'Saldo hoy (gal)', v: gal(totSaldo) },
+      { k: 'Ingresos del rango', v: gal(totIng) },
+      { k: 'Consumo del rango', v: gal(totCon) },
+      hayConteo
+        ? { k: 'Con descuadre', v: '' + nDesc, alerta: nDesc > 0 }
+        : { k: 'Tipos de diesel', v: '' + filasRep.length },
+    ]
+    return {
+      titulo: 'Reporte de Bodega — Gasolina', finca: finca.nombre, categoria: 'Gasolina',
+      meta: [
+        { k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` },
+        { k: 'Impreso', v: corta(hoyISO()) },
+      ],
+      cards, columnas, filas: filasRep, total,
+    }
+  }
+  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
+  function exportarPDF() {
+    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+  }
+
   return (
     <div style={{ padding: '1.2rem 1.5rem', maxWidth: '1080px' }}>
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
@@ -92,11 +179,24 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
             background: vista === id ? '#E6F1FB' : 'white', color: vista === id ? AZUL : NAVY,
             fontWeight: vista === id ? 500 : 400 }}>{txt}</button>
         ))}
-        {vista !== 'hay' && (
+        {vista !== 'hay' ? (
           <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
             <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
             <input type="date" value={hasta} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+          </span>
+        ) : esJefe && (
+          <span title="Rango de fechas que usa el reporte" style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+            <span style={{ color: GRIS, fontSize: '13px' }}>reporte:</span>
+            <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
+            <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
+            <input type="date" value={hasta} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+          </span>
+        )}
+        {vista === 'hay' && esJefe && (
+          <span style={{ display: 'flex', gap: '6px' }}>
+            <button onClick={exportarExcel} title="Reporte completo de bodega en Excel" style={expBtn}>Excel</button>
+            <button onClick={exportarPDF} title="Reporte completo de bodega en PDF" style={expBtn}>PDF</button>
           </span>
         )}
         {!soloLectura && !conteo && (
@@ -191,6 +291,8 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
 
 const inp = { padding: '7px 9px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
               borderRadius: '8px', background: 'white', color: NAVY }
+const expBtn = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '6px 11px',
+                 fontSize: '12px', fontFamily: 'inherit', color: NAVY, cursor: 'pointer' }
 
 function Caja({ children }) {
   return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>{children}</div>
