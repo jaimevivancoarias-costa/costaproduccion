@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, miles, numDec, dinero, dineroExacto } from '../lib/fechas'
+import { hoyISO, corta, miles, numDec, dinero } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
@@ -18,6 +18,9 @@ const VERDE = '#0F6E56'
 const ROJO = '#A32D2D'
 
 const primerDelMes = () => { const h = hoyISO(); return h.slice(0, 8) + '01' }
+// El precio del diesel se lleva por galón con hasta 6 decimales (como el Catálogo).
+const precio6 = n => (n === null || n === undefined || n === '') ? '' :
+  '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
 const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 
@@ -139,7 +142,7 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
       filasRep.push({
         nombre, inicial: gal(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), consumo: menos(m?.consumo),
         saldoHoy: gal(saldoHoy),
-        precio: p ? dineroExacto(p.precio) : '—', precioDesde: p?.desde ? corta(p.desde) : '', valor: dinero(valor),
+        precio: p ? precio6(p.precio) : '—', precioDesde: p?.desde ? corta(p.desde) : '', valor: dinero(valor),
         contado: contado != null ? gal(contado) : '',
         contadoInfo: ct?.fecha ? corta(ct.fecha) + (ct.esInicial ? ' (inicial)' : '') : '',
         dif: dif != null ? conSigno(dif) : '',
@@ -288,7 +291,7 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
                     <Fila key={s.tipo_id} gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
                       <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
                       <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
-                      p ? <span>{dineroExacto(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
+                      p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
                       <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
                     ]} />
                   )
