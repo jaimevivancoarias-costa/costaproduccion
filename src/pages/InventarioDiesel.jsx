@@ -18,9 +18,9 @@ const VERDE = '#0F6E56'
 const ROJO = '#A32D2D'
 
 const primerDelMes = () => { const h = hoyISO(); return h.slice(0, 8) + '01' }
-// El precio del diesel se lleva por galón con hasta 6 decimales (como el Catálogo).
+// El precio del diesel se lleva por galón con 6 decimales (como el Catálogo).
 const precio6 = n => (n === null || n === undefined || n === '') ? '' :
-  '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
+  '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 })
 const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 
