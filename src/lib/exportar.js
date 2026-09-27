@@ -100,7 +100,18 @@ function celda(col, fila, chico) {
 
 function reporteBodegaHTML(opts, paraExcel) {
   // Uno o varios bloques (secciones). Cada bloque tiene sus propias columnas.
-  const bloques = opts.bloques || [{ columnas: opts.columnas, filas: opts.filas, total: opts.total }]
+  const crudos = opts.bloques || [{ columnas: opts.columnas, filas: opts.filas, total: opts.total }]
+  // ¿La celda está vacía? (sin valor y sin segunda línea, o lista de lotes vacía)
+  const vacia = (col, f) => {
+    if (col.lotes) return !((f[col.campo] || []).length)
+    const v = f[col.campo]; const sub = col.sub ? f[col.sub] : null
+    return (v == null || v === '') && (sub == null || sub === '')
+  }
+  // Quita las columnas sin ningún dato en las filas, y las secciones sin filas.
+  const bloques = crudos.map(b => ({
+    ...b,
+    columnas: (b.columnas || []).filter(c => (b.filas || []).some(f => !vacia(c, f))),
+  })).filter(b => (b.filas || []).length > 0)
   const meta = (opts.meta || []).map(m => `${esc(m.k)}: <b>${esc(m.v)}</b>`).join('<br>')
   const cards = (opts.cards || []).map(c =>
     `<div class="rcard${c.alerta ? ' alerta' : ''}"><div class="k">${esc(c.k)}</div><div class="v">${esc(c.v)}</div></div>`
