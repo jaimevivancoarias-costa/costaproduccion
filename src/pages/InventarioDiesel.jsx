@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, miles, numDec } from '../lib/fechas'
+import { hoyISO, corta, miles, numDec, dinero, dineroExacto } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
@@ -18,6 +18,8 @@ const VERDE = '#0F6E56'
 const ROJO = '#A32D2D'
 
 const primerDelMes = () => { const h = hoyISO(); return h.slice(0, 8) + '01' }
+const G_HAY = '2fr 1fr'
+const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 
 export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
   const [vista, setVista] = useState('hay')   // 'hay' | 'movio' | 'ingresos'
@@ -33,20 +35,31 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
   const [inicial, setInicial] = useState(null) // inventario inicial existente { id, fecha, valores }
   const [guardando, setGuardando] = useState(false)
   const [conteoRango, setConteoRango] = useState({})  // tipo_id -> {galones, fecha, esInicial} del conteo en el rango (para el reporte)
+  const [precios, setPrecios] = useState({})          // tipo_id -> { precio, desde } (precio por galón que rige)
 
   const cargar = useCallback(async () => {
     setCargando(true)
-    const [{ data: tp }, { data: sal }, { data: mv }, { count }] = await Promise.all([
+    const [{ data: tp }, { data: sal }, { data: mv }, { count }, { data: pr }] = await Promise.all([
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hasta }),
       supabase.schema('produccion').rpc('fn_movimiento_diesel', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').from('diesel_conteo')
         .select('id', { count: 'exact', head: true }).eq('finca_id', finca.id),
+      supabase.schema('produccion').from('diesel_precio')
+        .select('tipo_id, finca_id, precio_galon, vigente_desde').is('vigente_hasta', null)
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
     ])
     setTiposArr(tp || [])
     setSaldos(sal || [])
     setMovs(mv || [])
     setPrimeraVez((count || 0) === 0)
+    // Precio por galón que rige (prefiere el de la finca sobre el general).
+    const pm = {}
+    ;(pr || []).forEach(r => {
+      const esFinca = !!r.finca_id
+      if (pm[r.tipo_id] == null || esFinca) pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
+    })
+    setPrecios(pm)
     // Inventario inicial existente (para poder editarlo).
     const { data: iniC } = await supabase.schema('produccion').from('diesel_conteo')
       .select('id, fecha').eq('finca_id', finca.id).eq('es_inicial', true)
@@ -109,22 +122,24 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
     const sById = {}; (saldos || []).forEach(s => { sById[s.tipo_id] = s })
     const ids = [...new Set([...(saldos || []).map(s => s.tipo_id), ...(movs || []).map(m => m.tipo_id)])]
 
-    let totIni = 0, totIng = 0, totCon = 0, totSaldo = 0, totDif = 0, nDesc = 0
+    let totIni = 0, totIng = 0, totCon = 0, totSaldo = 0, totDif = 0, totValor = 0, nDesc = 0
     const filasRep = []
     ids.forEach(id => {
       const s = sById[id]; const m = movById[id]
       const nombre = (s && s.tipo) || (m && m.tipo) || ''
       const saldoHoy = s ? Number(s.saldo) : (m ? Number(m.saldo_final) : 0)
+      const p = precios[id]; const valor = p ? saldoHoy * p.precio : 0
       const ct = conteoRango[id]
       const contado = ct ? Number(ct.galones) : null
       const teorico = m ? Number(m.saldo_final) : saldoHoy
       const dif = contado != null ? contado - teorico : null
       totIni += Number(m?.saldo_inicial) || 0; totIng += Number(m?.ingresos) || 0
-      totCon += Number(m?.consumo) || 0; totSaldo += saldoHoy
+      totCon += Number(m?.consumo) || 0; totSaldo += saldoHoy; totValor += valor
       if (dif != null) { totDif += dif; if (Math.abs(dif) > 0.001) nDesc++ }
       filasRep.push({
         nombre, inicial: gal(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), consumo: menos(m?.consumo),
         saldoHoy: gal(saldoHoy),
+        precio: p ? dineroExacto(p.precio) : '—', precioDesde: p?.desde ? corta(p.desde) : '', valor: dinero(valor),
         contado: contado != null ? gal(contado) : '',
         contadoInfo: ct?.fecha ? corta(ct.fecha) + (ct.esInicial ? ' (inicial)' : '') : '',
         dif: dif != null ? conSigno(dif) : '',
@@ -139,6 +154,10 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
       { titulo: 'Ingresos', der: true, campo: 'ingresos' },
       { titulo: 'Consumo', der: true, campo: 'consumo' },
       { titulo: 'Saldo hoy (gal)', der: true, campo: 'saldoHoy' },
+      ...(esJefe ? [
+        { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
+        { titulo: 'Valor', der: true, campo: 'valor' },
+      ] : []),
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
         { titulo: 'Dif.', der: true, campo: 'dif' },
@@ -146,16 +165,16 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
     ]
     const total = {
       nombre: 'Total', inicial: gal(totIni), ingresos: '+' + gal(totIng), consumo: totCon ? '−' + gal(totCon) : '—',
-      saldoHoy: gal(totSaldo), contado: '', contadoInfo: '',
+      saldoHoy: gal(totSaldo), precio: '', precioDesde: '', valor: dinero(totValor), contado: '', contadoInfo: '',
       dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + gal(Math.abs(totDif)),
     }
     const cards = [
-      { k: 'Saldo hoy (gal)', v: gal(totSaldo) },
+      ...(esJefe ? [{ k: 'Valor de la gasolina', v: dinero(totValor) }] : [{ k: 'Saldo hoy (gal)', v: gal(totSaldo) }]),
       { k: 'Ingresos del rango', v: gal(totIng) },
       { k: 'Consumo del rango', v: gal(totCon) },
       hayConteo
         ? { k: 'Con descuadre', v: '' + nDesc, alerta: nDesc > 0 }
-        : { k: 'Tipos de diesel', v: '' + filasRep.length },
+        : { k: 'Saldo hoy (gal)', v: gal(totSaldo) },
     ]
     return {
       titulo: 'Reporte de Bodega — Gasolina', finca: finca.nombre, categoria: 'Gasolina',
@@ -166,6 +185,8 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
       cards, columnas, filas: filasRep, total,
     }
   }
+  const valorTotal = saldos.reduce((t, s) => { const p = precios[s.tipo_id]; return t + Number(s.saldo) * (p ? p.precio : 0) }, 0)
+
   function exportarExcel() { reporteBodegaExcel(construirReporte()) }
   function exportarPDF() {
     if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
@@ -248,15 +269,44 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
       {cargando ? (
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div></Caja>
       ) : vista === 'hay' ? (
-        <Caja>
-          <Fila cabecera cols={['Diesel', 'Saldo actual (gal)']} />
-          {saldos.map(s => (
-            <Fila key={s.tipo_id} cols={[
-              <b style={{ fontWeight: 500 }}>{s.tipo}</b>,
-              <span style={{ fontWeight: 500, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
-            ]} der={[false, true]} />
-          ))}
-        </Caja>
+        <>
+          {esJefe && (
+            <div style={{ display: 'flex', gap: '11px', marginBottom: '14px', flexWrap: 'wrap' }}>
+              <div style={{ background: '#fbfcfe', border: '1px solid ' + BORDE, borderRadius: '14px', padding: '15px 18px', minWidth: '190px' }}>
+                <div style={{ fontSize: '11.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.04em' }}>Valor de la gasolina</div>
+                <div style={{ fontSize: '23px', fontWeight: 700, marginTop: '5px', color: NAVY }}>{dinero(valorTotal)}</div>
+              </div>
+            </div>
+          )}
+          <Caja>
+            {esJefe ? (
+              <>
+                <Fila cabecera gtc={G_HAY_J} cols={['Diesel', 'Saldo actual (gal)', 'Precio/gal · desde', 'Valor']} der={[false, true, true, true]} />
+                {saldos.map((s, i) => {
+                  const p = precios[s.tipo_id]
+                  return (
+                    <Fila key={s.tipo_id} gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
+                      <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
+                      <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                      p ? <span>{dineroExacto(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
+                      <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
+                    ]} />
+                  )
+                })}
+              </>
+            ) : (
+              <>
+                <Fila cabecera gtc={G_HAY} cols={['Diesel', 'Saldo actual (gal)']} der={[false, true]} />
+                {saldos.map((s, i) => (
+                  <Fila key={s.tipo_id} gtc={G_HAY} cebra={i % 2 === 1} der={[false, true]} cols={[
+                    <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
+                    <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                  ]} />
+                ))}
+              </>
+            )}
+          </Caja>
+        </>
       ) : (
         <Caja>
           <Fila cabecera cols={['Diesel', 'Saldo ini.', 'Ingresos', 'Consumo', 'Saldo fin.']} der={[false, true, true, true, true]} />
@@ -283,14 +333,14 @@ const expBtn = { background: 'white', border: '0.5px solid ' + BORDE, borderRadi
 function Caja({ children }) {
   return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>{children}</div>
 }
-function Fila({ cols, der = [], cabecera }) {
-  const gtc = cols.length === 2 ? '1.6fr 1fr' : cols.length === 3 ? '1.4fr 1fr 1fr' : '1.4fr 1fr 1fr 1fr 1fr'
+function Fila({ cols, der = [], cabecera, gtc, cebra }) {
+  const auto = cols.length === 2 ? '1.6fr 1fr' : cols.length === 3 ? '1.4fr 1fr 1fr' : '1.4fr 1fr 1fr 1fr 1fr'
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: cabecera ? '11px 16px' : '13px 16px',
+    <div style={{ display: 'grid', gridTemplateColumns: gtc || auto, gap: '10px', padding: cabecera ? '11px 16px' : '13px 16px',
                   borderBottom: '0.5px solid ' + (cabecera ? BORDE : '#f1f6f9'),
-                  background: cabecera ? '#f6f9fb' : 'white',
+                  background: cabecera ? '#f6f9fb' : (cebra ? '#fbfcfe' : 'white'),
                   fontSize: cabecera ? '12px' : '14px', color: cabecera ? GRIS : NAVY, alignItems: 'center' }}>
-      {cols.map((c, i) => <span key={i} style={{ textAlign: der[i] ? 'right' : 'left' }}>{c}</span>)}
+      {cols.map((c, i) => <span key={i} style={{ textAlign: der[i] ? 'right' : 'left', fontVariantNumeric: der[i] ? 'tabular-nums' : 'normal' }}>{c}</span>)}
     </div>
   )
 }
