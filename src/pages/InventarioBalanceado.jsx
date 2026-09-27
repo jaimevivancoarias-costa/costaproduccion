@@ -866,13 +866,16 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   const [solicitudes, setSolicitudes] = useState([])
   const [userId, setUserId] = useState(null)
   const [editando, setEditando] = useState(null)
+  const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
+  const [hasta, setHasta] = useState(hoyISO())
+  const [filtroProd, setFiltroProd] = useState('')   // filtro por balanceado (nombre)
 
   const cargar = useCallback(async () => {
     const [{ data: pr }, { data: g }, { data: pd }, { data: pend }, { data: dev }, { data: sol }, { data: auth }, { data: us }] = await Promise.all([
       supabase.schema('produccion').from('producto').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('ingreso_balanceado')
         .select('id, fecha, numero_guia, proveedor, creado_por, creado_en, ingreso_balanceado_linea(producto_id, cantidad)')
-        .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
+        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
       supabase.schema('produccion').from('pedido_balanceado')
         .select('id, fecha, fecha_esperada, proveedor, estado, creado_por, creado_en, pedido_balanceado_linea(producto_id, cantidad)')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
@@ -880,7 +883,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
         .select('pedido_id, producto_id, producto, pedida, recibida, pendiente').eq('finca_id', finca.id),
       supabase.schema('produccion').from('devolucion_balanceado')
         .select('id, fecha, producto_id, cantidad, motivo, creado_por, creado_en')
-        .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
+        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
       supabase.schema('produccion').from('solicitud_correccion')
         .select('id, registro_id, valor_propuesto, motivo, estado')
         .eq('finca_id', finca.id).eq('tabla', 'ingreso_balanceado').eq('estado', 'pendiente'),
@@ -891,10 +894,60 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     setSolicitudes(sol || []); setUserId(auth?.user?.id || null)
     const pp = {}; (pend || []).forEach(r => { (pp[r.pedido_id] = pp[r.pedido_id] || []).push(r) }); setPendientes(pp)
     const um = {}; (us || []).forEach(u => { um[u.id] = u.nombre }); setUsuarios(um)
-  }, [finca.id])
+  }, [finca.id, desde, hasta])
   useEffect(() => { cargar() }, [cargar])
 
   const nombre = id => productos.find(p => p.id === id)?.nombre || ''
+  // Filtro por balanceado (por nombre). Afecta la lista y el reporte.
+  const listaF = lista.filter(g => !filtroProd || (g.ingreso_balanceado_linea || []).some(l => nombre(l.producto_id) === filtroProd))
+  const devolucionesF = devoluciones.filter(d => !filtroProd || nombre(d.producto_id) === filtroProd)
+
+  // Reporte de Ingresos + Devoluciones de balanceado (mismo formato que insumos).
+  function construirReporte() {
+    const quien = id => (id ? usuarios[id] : '') || ''
+    const filasIng = []; let nItems = 0; const provs = new Set()
+    ;[...listaF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach(g => {
+      if (g.proveedor) provs.add(g.proveedor)
+      ;(g.ingreso_balanceado_linea || []).forEach((l, i) => {
+        nItems++
+        filasIng.push({
+          fecha: i === 0 ? corta(g.fecha) : '', guia: i === 0 ? (g.numero_guia || 'Sin guía') : '',
+          proveedor: i === 0 ? (g.proveedor || '') : '', producto: nombre(l.producto_id),
+          cantidad: `${miles(numDec(l.cantidad))} sacos`, registro: i === 0 ? quien(g.creado_por) : '',
+        })
+      })
+    })
+    const filasDev = [...devolucionesF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map(d => ({
+      fecha: corta(d.fecha), producto: nombre(d.producto_id), cantidad: `${miles(numDec(d.cantidad))} sacos`,
+      motivo: d.motivo || '', registro: quien(d.creado_por),
+    }))
+    const bloques = [
+      { titulo: 'Ingresos a bodega',
+        columnas: [{ titulo: 'Fecha', campo: 'fecha' }, { titulo: 'Guía', campo: 'guia' }, { titulo: 'Proveedor', campo: 'proveedor' },
+          { titulo: 'Balanceado', campo: 'producto' }, { titulo: 'Cantidad', der: true, campo: 'cantidad' }, { titulo: 'Registró', campo: 'registro' }],
+        filas: filasIng,
+        total: { fecha: '', guia: '', proveedor: '', producto: 'Total ingresos', cantidad: `${nItems} ítems`, registro: '' } },
+      { titulo: 'Devoluciones',
+        columnas: [{ titulo: 'Fecha', campo: 'fecha' }, { titulo: 'Balanceado', campo: 'producto' },
+          { titulo: 'Cantidad', der: true, campo: 'cantidad' }, { titulo: 'Motivo', campo: 'motivo' }, { titulo: 'Registró', campo: 'registro' }],
+        filas: filasDev,
+        total: { fecha: '', producto: 'Total devoluciones', cantidad: `${filasDev.length}`, motivo: '', registro: '' } },
+    ]
+    const cards = [
+      { k: 'Ingresos (guías)', v: '' + listaF.length }, { k: 'Ítems ingresados', v: '' + nItems },
+      { k: 'Devoluciones', v: '' + devolucionesF.length }, { k: 'Proveedores', v: '' + provs.size },
+    ]
+    return {
+      titulo: 'Ingresos y Devoluciones — Balanceado', finca: finca.nombre, subtitulo: '',
+      meta: [{ k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` }, { k: 'Impreso', v: corta(hoyISO()) }],
+      cards, bloques,
+      pie: 'Los ingresos se listan una fila por balanceado de cada guía. Cantidades en sacos.',
+    }
+  }
+  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
+  function exportarPDF() {
+    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+  }
   const validas = lineas.filter(l => l.productoId && numDec(l.cantidad))
   const autoria = row => {
     const n = row?.creado_por ? usuarios[row.creado_por] : null
@@ -991,12 +1044,31 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <Seg valor={modo} onCambio={m => { setModo(m); setNuevo(null) }}
              opciones={[['ingresos', 'Ingresos a bodega'], ['devoluciones', 'Devoluciones']]} />
-        {!nuevo && (
-          <button onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}
-            style={{ ...btn, marginLeft: 'auto', background: AZUL, color: 'white', borderColor: AZUL }}>
-            {modo === 'ingresos' ? 'Registrar ingreso' : modo === 'pedidos' ? 'Registrar pedido' : 'Registrar devolución'}
-          </button>
-        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
+          {esJefe && (lista.length > 0 || devoluciones.length > 0) && (
+            <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} conRango={false} />
+          )}
+          {!nuevo && (
+            <button onClick={() => setNuevo(modo === 'ingresos' ? 'ingreso' : modo === 'pedidos' ? 'pedido' : 'devolucion')}
+              style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>
+              {modo === 'ingresos' ? 'Registrar ingreso' : modo === 'pedidos' ? 'Registrar pedido' : 'Registrar devolución'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <span style={{ color: GRIS, fontSize: '13px' }}>Del</span>
+        <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
+        <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
+        <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+        <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
+        <GhostBtn on={desde === primeroDelMes(hoyISO()) && hasta === hoyISO()} onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+        <select value={filtroProd} onChange={e => setFiltroProd(e.target.value)}
+                style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
+          <option value="">Todos los balanceados</option>
+          {[...productos].map(p => p.nombre).sort().map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
       </div>
 
       {aviso && <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
@@ -1066,9 +1138,9 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
 
       {/* LISTAS */}
       {modo === 'ingresos' ? (
-        lista.length === 0 ? (
-          <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay ingresos. Cuando llegue balanceado, regístralo con su guía.</div></Caja>
-        ) : lista.map(g => {
+        listaF.length === 0 ? (
+          <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>{filtroProd ? 'No hay ingresos de ese balanceado en el rango.' : 'Todavía no hay ingresos. Cuando llegue balanceado, regístralo con su guía.'}</div></Caja>
+        ) : listaF.map(g => {
           const solPend = solicitudes.find(s => s.registro_id === g.id)
           return (
           <div key={g.id} style={{ ...cajaS, padding: '15px 17px', marginBottom: '10px' }}>
@@ -1152,9 +1224,9 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           )
         })
       ) : (
-        devoluciones.length === 0 ? (
-          <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay devoluciones. Una devolución a CostaMarket resta del saldo.</div></Caja>
-        ) : devoluciones.map(d => (
+        devolucionesF.length === 0 ? (
+          <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>{filtroProd ? 'No hay devoluciones de ese balanceado en el rango.' : 'Todavía no hay devoluciones. Una devolución a CostaMarket resta del saldo.'}</div></Caja>
+        ) : devolucionesF.map(d => (
           <div key={d.id} style={{ ...cajaS, padding: '15px 17px', marginBottom: '10px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
               <div>
