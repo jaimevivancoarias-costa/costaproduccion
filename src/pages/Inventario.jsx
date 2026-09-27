@@ -38,8 +38,8 @@ const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días'
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
-const ANCHOS_SALDO_JEFE = '1.3fr 200px 130px 120px 130px 110px'
-const ANCHOS_SALDO_BOD  = '1.2fr 210px 170px'   // bodeguero: sin dolares
+const ANCHOS_SALDO_JEFE = '1.2fr 160px 240px 130px 120px 90px'
+const ANCHOS_SALDO_BOD  = '1.2fr 160px 250px'   // bodeguero: sin dolares
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
@@ -1046,8 +1046,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const fac = factores[f.insumo_id]
                       const pres = cap1(UNIDAD[f.unidad] || f.unidad)
                       const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      // Muestra la unidad de aplicación si difiere del envase,
-                      // aunque el factor sea 1 (ej. Funda → Kg, 1 Funda = 1 Kg).
                       const conv = fac && ((fac.factor || 1) !== 1 || (fac.uApp && app !== pres))
                       return (
                         <span>
@@ -1068,14 +1066,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </div>
                   ) : (
                     <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
-                      {limpio(f.saldo)}
                       {(() => {
                         const fac = factores[f.insumo_id]
-                        if (!fac || !fac.uApp) return null
-                        const app = cap1(UNIDAD[fac.uApp] || fac.uApp)
+                        const uPres = (UNIDAD[f.unidad] || f.unidad || '').toLowerCase()
+                        const uApp = fac?.uApp ? (UNIDAD[fac.uApp] || fac.uApp || '').toLowerCase() : ''
+                        const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
                         const pres = cap1(UNIDAD[f.unidad] || f.unidad)
-                        if ((fac.factor || 1) === 1 && app === pres) return null
-                        return <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>({limpio(Number(f.saldo) * (fac.factor || 1))} {app})</span>
+                        const conv = fac && fac.uApp && ((fac.factor || 1) !== 1 || app !== pres)
+                        return (
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {limpio(f.saldo)} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uPres}</span>
+                            {conv && <> <span style={{ color: '#c3d0db', margin: '0 3px' }}>=</span> <span style={{ color: AZUL, fontWeight: 600 }}>{limpio(Number(f.saldo) * (fac.factor || 1))}</span> <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uApp}</span></>}
+                          </span>
+                        )
                       })()}
                       {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
