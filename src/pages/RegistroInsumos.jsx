@@ -378,7 +378,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const COLS = `180px repeat(7, minmax(190px, 1fr))`
 
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#eef2f6', minHeight: '100%' }}>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
@@ -454,7 +454,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           Cargando la semana...
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white' }}>
+        <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
           <div style={{ minWidth: '1500px' }}>
             {/* Encabezado */}
             <div style={{ display: 'grid', gridTemplateColumns: COLS, borderBottom: '0.5px solid ' + BORDE,
@@ -548,7 +548,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
       {!cargando && consumoSemana.length > 0 && (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                      padding: '16px 18px', marginTop: '14px' }}>
+                      padding: '16px 18px', marginTop: '34px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
           <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 3px' }}>Consumo de la semana</h3>
           <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 12px' }}>
             Total de cada insumo aplicado en las piscinas del {corta(lunes)} al {corta(domingo)}.
