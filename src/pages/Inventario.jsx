@@ -249,6 +249,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const negativos = saldos.filter(s => Number(s.saldo) < 0).length
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
   const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.insumo_id] || []).length)
+  // En "Qué se movió": sin inventario = quedó en 0 y sin lotes, y tampoco se movió nada en el rango.
+  const esSinInvMov = m => Math.abs(Number(m.saldo_final)) < 0.001 && !((lotes[m.insumo_id] || []).length) &&
+    !Number(m.ingresos) && !Number(m.consumo) && !Number(m.devuelto) && !Number(m.ajustes) && (m.conteo === null || m.conteo === undefined)
   const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
   const nombreInsumo = id => saldos.find(s => s.insumo_id === id)?.insumo || ''
 
@@ -314,7 +317,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       filasRep.push({
-        nombre, viaTop: uApp && uApp !== uPres ? `${uPres} → ${uApp}` : uPres, viaSub: factorN !== 1 ? limpio(factorN) : '',
+        nombre, viaTop: (uApp && factorN !== 1) ? `${uPres} → ${uApp}` : uPres, viaSub: factorN !== 1 ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
         inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
         saldoHoy: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
@@ -919,16 +922,24 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             <span style={{ fontSize: '12.5px', color: GRIS }}>Ver en:</span>
             <Seg valor={unidadMov} onCambio={setUnidadMov}
                  opciones={[['compra', 'Como se compra'], ['aplica', 'Como se aplica']]} />
+            {(() => {
+              const n = movs.filter(m => coincide(m.insumo) && esSinInvMov(m)).length
+              return n > 0 && (
+                <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+                  {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${n})`}
+                </GhostBtn>
+              )
+            })()}
           </div>
           <Tabla
             caja min="1040px"
             columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
-            {movs.filter(m => coincide(m.insumo)).map(m => {
+            {movs.filter(m => coincide(m.insumo) && (verSinInv || !esSinInvMov(m))).map(m => {
               const fac = factores[m.insumo_id]
-              const distintaU = fac && fac.uApp && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[m.unidad] || m.unidad)
-              const conv = fac && ((fac.factor || 1) !== 1 || distintaU)
+              // Solo hay conversión cuando el factor cambia el número (≠ 1).
+              const conv = fac && fac.uApp && (fac.factor || 1) !== 1
               // El interruptor decide en qué unidad se ven los números.
               const enUso = unidadMov === 'aplica' && conv
               const factor = enUso ? (fac.factor || 1) : 1
@@ -955,7 +966,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda>{m.insumo}</Celda>
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
-                  {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
+                  {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}
+                    <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {fac.factor} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</span></>}
                 </Celda>
                 <Celda derecha gris>{iniMostrar === null ? '—' : <>{val(iniMostrar)}{contInicial && porQuien}</>}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
