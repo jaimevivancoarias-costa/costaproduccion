@@ -36,6 +36,8 @@ const dTdL = { ...dTd, textAlign: 'left', fontWeight: 600 }
 const dTdR = { ...dTd, textAlign: 'right' }
 const dTot = { borderTop: '2px solid ' + NAVY, borderBottom: 'none', fontWeight: 'bold', background: '#f9fbfc', paddingTop: '12px' }
 const dU = { color: '#9fb0bf', fontWeight: 400, fontSize: '11px' }
+// Etiqueta de campo en el detalle del ciclo (flechita).
+const etq = { fontSize: '9px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, marginBottom: '3px' }
 
 export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setLunes }) {
   const [piscinas, setPiscinas] = useState([])
@@ -1123,10 +1125,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     })()}
                   </div>
                   {abierta === p.piscinaId && (
-                    <div style={{ background: '#f7fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 14px 34px' }}>
-                      <div style={{ display: 'flex', gap: '22px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                    <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '16px 22px 18px 44px' }}>
+                      <div style={{ display: 'flex', gap: '34px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
                         <div>
-                          <div style={{ fontSize: '11px', color: GRIS }}>Sembrada</div>
+                          <div style={etq}>Fecha de siembra</div>
                           <div style={{ fontSize: '14px' }}>
                             {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
                             {p.cicloId && !soloLectura && modo === 'registrar' && (
@@ -1141,13 +1143,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         </div>
                         {p.cicloId && (
                           <div>
-                            <div style={{ fontSize: '11px', color: GRIS }}>Larva</div>
+                            <div style={etq}>Larva</div>
                             <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</div>
                           </div>
                         )}
                         {p.cicloId && (
                           <div>
-                            <div style={{ fontSize: '11px', color: GRIS }}>Gramaje</div>
+                            <div style={etq}>Gramaje</div>
                             <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.gramajePrecria != null ? p.gramajePrecria + (p.tipo === 'precria' ? ' PLs/g' : ' g') : '—'}</div>
                           </div>
                         )}
@@ -1162,13 +1164,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           if (secado > 0) partes.push(`${secado} de secado`)
                           return (
                             <div>
-                              <div style={{ fontSize: '11px', color: GRIS }}>Fases</div>
+                              <div style={etq}>Fases</div>
                               <div style={{ fontSize: '14px' }}>{partes.join(' · ')}</div>
                             </div>
                           )
                         })()}
                         <div style={{ minWidth: '160px' }}>
-                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Laboratorio</div>
+                          <div style={{ ...etq, marginBottom: '5px' }}>Laboratorio</div>
                           <Laboratorio fila={p} laboratorios={laboratorios}
                             puede={!soloLectura && modo === 'registrar' && !semanaCerrada}
                             onElegir={id => cambiarLaboratorio(p, id)} onNuevo={() => nuevoLaboratorio(p)} />
