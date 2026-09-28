@@ -21,6 +21,9 @@ const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 const HOYB = '#F3F8FD'
 const VERDE = '#0F6E56'
+// Genérica = contar envases (unidad/unidades). kilos/litros/gramos SÍ son
+// unidades de uso reales aunque el factor sea 1.
+const esUnidadGenerica = u => { const x = String(u || '').toLowerCase(); return !x || x === 'unidad' || x === 'unidades' || x === 'u' || x === 'un' || x === 'unid' }
 
 const UNIDAD = {
   sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
@@ -50,6 +53,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [userId, setUserId] = useState(null)
   const [cerrandoDia, setCerrandoDia] = useState(false)
   const [saldoIns, setSaldoIns] = useState({})    // insumo_id -> saldo (unidad de compra)
+  const [uCompraIns, setUCompraIns] = useState({})  // insumo_id -> unidad como se compra (saco, tambor…)
   const [filtros, setFiltros] = useState([])  // ids de insumos a filtrar (varios)
   const [factorIns, setFactorIns] = useState({})  // insumo_id -> factor (app por compra)
 
@@ -95,8 +99,9 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       const facM = {}; (ins || []).forEach(i => { facM[i.id] = Number(i.factor) || 1 })
       ;(ov || []).forEach(x => { if (x.factor != null) facM[x.insumo_id] = Number(x.factor) || 1 })
       setFactorIns(facM)
-      const si = {}; (saldosI || []).forEach(r => { si[r.insumo_id] = Number(r.saldo) })
-      setSaldoIns(si)
+      const si = {}; const uc = {}
+      ;(saldosI || []).forEach(r => { si[r.insumo_id] = Number(r.saldo); if (r.unidad) uc[r.insumo_id] = r.unidad })
+      setSaldoIns(si); setUCompraIns(uc)
 
       const lista = (ps || []).map(p => {
         // El ciclo que cubre la semana, para colgarle el consumo. Si no
@@ -333,14 +338,16 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     }
     return UNIDAD[ins.unidad] || ins.unidad
   }
-  // "Equivale a": la misma cantidad pero como se compra (cant / factor). Solo
-  // cuando la unidad de uso es real (no "unidad" genérica) y distinta de la de
-  // compra; si no, no hay conversión que mostrar.
+  // "Equivale a": la misma cantidad pero COMO LLEGA a bodega (cant / factor,
+  // en la unidad de compra del saldo — saco, tambor…). Solo cuando la unidad de
+  // uso es real (no genérica) y distinta de la de compra; si no, no hay
+  // conversión que mostrar. Misma regla que la bodega de insumos.
   const equivaleCompra = (id, cant) => {
     const ins = insumos.find(x => x.id === id)
-    if (!ins || ins.unidad === 'unidad' || !ins.unidad_compra || ins.unidad_compra === ins.unidad) return null
+    const uCompra = uCompraIns[id]
+    if (!ins || esUnidadGenerica(ins.unidad) || !uCompra || uCompra === ins.unidad) return null
     const fac = factorIns[id] || 1
-    return { cant: cant / fac, u: UNIDAD[ins.unidad_compra] || ins.unidad_compra }
+    return { cant: cant / fac, u: UNIDAD[uCompra] || uCompra }
   }
   const cel = (p, f) => lineas[`${p.piscinaId}|${f}`] || []
   // Filtro: piscinas que aplicaron alguno de los insumos elegidos en la semana.
@@ -673,7 +680,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                       <b style={{ fontWeight: 600 }}>{miles(c.cant)}</b> <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{unidadInsumo(c.id)}</span>
                     </td>
                     <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
-                      {eq ? <>{miles(eq.cant)} {eq.u}</> : '—'}
+                      {eq ? <>{Number(eq.cant).toLocaleString('es-EC', { maximumFractionDigits: 2 })} {eq.u}</> : '—'}
                     </td>
                   </tr>
                 )
