@@ -1265,45 +1265,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     ? `${atrasadas[0].p.nombre} quedó sin registrar el ${nombreDia(atrasadas[0].f).toLowerCase()}.`
                     : `Hay ${atrasadas.length} celdas sin registrar en días anteriores.`}
                   {' '}Ponles las libras o márcalas sin alimentación.
+                  {[...new Set(atrasadas.map(a => a.f))].some(f => dias[f] === 'cerrado') && ' Reábrelos desde el panel de Cierre.'}
                 </span>
-                {/* Reabrir los días cerrados que tienen celdas atrasadas */}
-                {!soloLectura && !semanaCerrada && [...new Set(atrasadas.map(a => a.f))]
-                  .filter(f => dias[f] === 'cerrado')
-                  .map(f => (
-                    <span key={f} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                      {esJefe
-                        ? <button onClick={() => reabrirDia(f)} style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: '#854F0B', cursor: 'pointer' }}>Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>
-                        : solReapertura.some(x => x.registro_id === diasId[f])
-                          ? <span style={{ fontSize: '12px' }}>Pedido de {nombreDia(f).slice(0, 3)} enviado</span>
-                          : <button onClick={() => pedirReabrir(f)} style={{ background: 'white', border: '0.5px solid #ecd9b3', borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: '#854F0B', cursor: 'pointer' }}>Pedir reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>}
-                    </span>
-                  ))}
               </div>
             )}
-
-            {/* Reabrir CUALQUIER día cerrado de la semana (aunque esté
-                completo), para poder corregir. Independiente de si tiene
-                celdas sin registrar. */}
-            {!soloLectura && !semanaCerrada && modo === 'registrar' && (() => {
-              const yaArriba = new Set(atrasadas.map(a => a.f))
-              const cerrados = fechas.filter(f => dias[f] === 'cerrado' && !yaArriba.has(f))
-              if (cerrados.length === 0) return null
-              return (
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
-                              padding: '9px 16px', background: '#F4F7FA', color: GRIS, borderTop: '0.5px solid ' + BORDE }}>
-                  <span>¿Necesitas corregir un día ya cerrado?</span>
-                  {cerrados.map(f => (
-                    <span key={f}>
-                      {esJefe
-                        ? <button onClick={() => reabrirDia(f)} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>
-                        : solReapertura.some(x => x.registro_id === diasId[f])
-                          ? <span style={{ fontSize: '12px' }}>Pedido de {nombreDia(f).slice(0, 3)} enviado</span>
-                          : <button onClick={() => pedirReabrir(f)} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>Pedir reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}</button>}
-                    </span>
-                  ))}
-                </div>
-              )
-            })()}
 
           </div>
 
@@ -1363,6 +1328,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             onCerrarDia={cerrarUnDia}
             onCerrarTodos={cerrarDiasPendientes}
             puedeCerrarDias={!soloLectura && !semanaCerrada}
+            puedeReabrirDias={!soloLectura && !semanaCerrada}
+            esJefe={esJefe}
+            onReabrirDia={reabrirDia}
+            onPedirReabrir={pedirReabrir}
+            reaperturaPedida={f => solReapertura.some(x => x.registro_id === diasId[f])}
             onReabrirSemana={esJefe && !soloLectura ? reabrirSemana : null}
           />
         </>
@@ -1699,7 +1669,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
 // ---------------------------------------------------------------------
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias, onReabrirSemana }) {
+function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias, onReabrirSemana, puedeReabrirDias, esJefe, onReabrirDia, onPedirReabrir, reaperturaPedida = () => false }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   // Si la semana está cerrada, todos los días cuentan como cerrados. Si no,
   // solo "cerrado" cuenta ("reabierto" es un día que se volvió a abrir → está
@@ -1731,9 +1701,19 @@ function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fecha
               <div style={{ fontSize: '12.5px', fontWeight: 600, color: cer ? VERDE : NAVY }}>
                 {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
               </div>
-              <div style={{ fontSize: '11px', marginTop: '3px' }}>
-                {cer ? <span style={{ color: VERDE }}>✓ Cerrado</span>
-                  : esHoy ? <span style={{ color: AZUL }}>Hoy</span>
+              <div style={{ fontSize: '11px', marginTop: '4px' }}>
+                {cer ? (
+                    <>
+                      <span style={{ color: VERDE }}>✓ Cerrado</span>
+                      {!cerrada && puedeReabrirDias && (
+                        esJefe
+                          ? <button onClick={() => onReabrirDia(f)} style={{ display: 'block', margin: '5px auto 0', background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Reabrir</button>
+                          : reaperturaPedida(f)
+                            ? <span style={{ display: 'block', marginTop: '4px', color: '#BA7517', fontSize: '10px' }}>Pedido enviado</span>
+                            : <button onClick={() => onPedirReabrir(f)} style={{ display: 'block', margin: '5px auto 0', background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Pedir reabrir</button>
+                      )}
+                    </>
+                  ) : esHoy ? <span style={{ color: AZUL }}>Hoy</span>
                   : fut ? <span style={{ color: '#c3d0db' }}>Próximo</span>
                   : cerrableAqui ? (
                     <>
