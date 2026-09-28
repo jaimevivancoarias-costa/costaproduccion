@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, semanaISO, situacionDia, numDec, miles, dinero, diasCultivo,
 } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
-import BuscadorAplicacion from './BuscadorAplicacion'
 
 // Registro diario de insumos · modulo Produccion
 //
@@ -50,7 +49,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [userId, setUserId] = useState(null)
   const [cerrandoDia, setCerrandoDia] = useState(false)
   const [saldoIns, setSaldoIns] = useState({})    // insumo_id -> saldo (unidad de compra)
-  const [filtroProd, setFiltroProd] = useState('')  // ver solo piscinas/días con este insumo
+  const [filtros, setFiltros] = useState([])  // ids de insumos a filtrar (varios)
   const [factorIns, setFactorIns] = useState({})  // insumo_id -> factor (app por compra)
 
   // Disponible en unidad de aplicación, y nombre del insumo.
@@ -324,8 +323,10 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
   const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
   const cel = (p, f) => lineas[`${p.piscinaId}|${f}`] || []
-  // Filtro: piscinas que aplicaron el insumo elegido en la semana.
-  const piscTieneIns = (p) => fechas.some(f => cel(p, f).some(l => l.insumoId === filtroProd))
+  // Filtro: piscinas que aplicaron alguno de los insumos elegidos en la semana.
+  const hayFiltro = filtros.length > 0
+  const piscTieneIns = (p) => fechas.some(f => cel(p, f).some(l => filtros.includes(l.insumoId)))
+  const visibles = hayFiltro ? piscinas.filter(piscTieneIns) : piscinas
 
   // Se guarda linea por linea: son pocas por celda y evita el baile de
   // diffing de todo el grid. Optimista: se pinta y si falla se revierte.
@@ -457,10 +458,11 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
       </div>
 
-      <div style={{ marginBottom: '18px' }}>
-        <BuscadorAplicacion ambito="insumos" opciones={insumos}
-          valor={filtroProd} onCambio={setFiltroProd}
-          nPisc={(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).length} />
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
+        <div style={{ marginLeft: 'auto' }}>
+          <FiltroInsumos opciones={insumos} valor={filtros} onCambio={setFiltros} nPisc={visibles.length} />
+        </div>
       </div>
 
       {cargando ? (
@@ -482,7 +484,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               ))}
             </div>
 
-            {(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).map(p => {
+            {visibles.map(p => {
               const hayFases = !!(p.cicloId && p.fechaSiembra)
               const abiertoP = abiertaP === p.piscinaId
               return (
@@ -508,14 +510,14 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                   const ls = cel(p, f)
                   const edit = puedeEditar(f)
                   const abriendo = abierta === k
-                  const marca = !!filtroProd && ls.some(l => l.insumoId === filtroProd)
+                  // Con filtro activo, en lectura solo se ven los insumos filtrados.
+                  const lsLect = hayFiltro ? ls.filter(l => filtros.includes(l.insumoId)) : ls
                   return (
                     <div key={f} style={{ padding: '7px 8px',
-                          background: marca ? '#E1F5EE'
-                                    : situacionDia(f, hoy) === 'hoy' ? HOYB
+                          background: situacionDia(f, hoy) === 'hoy' ? HOYB
                                     : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : 'white',
                           borderLeft: '0.5px solid #f6f9fb' }}>
-                      {ls.map((l, li) => edit ? (
+                      {edit && ls.map(l => (
                         <div key={l.id} style={{ background: 'white', border: '1px solid ' + BORDE,
                               borderRadius: '9px', padding: '7px 9px', marginBottom: '6px' }}>
                           <div style={{ fontSize: '11px', color: NAVY, fontWeight: 600,
@@ -536,7 +538,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                                        color: '#c3d0db', fontSize: '15px', lineHeight: 1, padding: 0 }}>×</button>
                           </div>
                         </div>
-                      ) : (
+                      ))}
+                      {!edit && lsLect.map((l, li) => (
                         <div key={l.id} style={{ textAlign: 'center', lineHeight: 1.3,
                               ...(li > 0 ? { borderTop: '1px dashed ' + BORDE, paddingTop: '6px', marginTop: '6px' } : {}) }}>
                           <div style={{ fontSize: '11px', color: GRIS }}>{nombreInsumo(l.insumoId)}</div>
@@ -562,7 +565,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                         </button>
                       ))}
 
-                      {!ls.length && !edit && (
+                      {!lsLect.length && !edit && (
                         <div style={{ fontSize: '11px', color: '#c3d0db', textAlign: 'center' }}>—</div>
                       )}
                     </div>
@@ -790,6 +793,64 @@ function Cierre({ validaciones, cerrada, puedeCerrar, puedeReabrir, onRevisar, o
 }
 
 // El agregador de una celda: elegir insumo y poner cantidad.
+// Filtro multi-select de insumos (varios a la vez, con chips). Sin color en
+// la cuadrícula: al filtrar solo se ven esos insumos, los demás quedan en "—".
+function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
+  const [abierto, setAbierto] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!abierto) return
+    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false) }
+    document.addEventListener('mousedown', fuera)
+    return () => document.removeEventListener('mousedown', fuera)
+  }, [abierto])
+  const activo = valor.length > 0
+  const toggle = id => onCambio(valor.includes(id) ? valor.filter(x => x !== id) : [...valor, id])
+  const nombre = id => opciones.find(o => o.id === id)?.nombre || ''
+  const sel = { border: '1px solid ' + (activo ? '#9cc4e8' : BORDE), background: activo ? '#f4f9ff' : 'white',
+                borderRadius: '10px', padding: '9px 13px', fontSize: '13px', color: activo ? NAVY : GRIS,
+                fontFamily: 'inherit', cursor: 'pointer', fontWeight: activo ? 500 : 400 }
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      {valor.map(id => (
+        <span key={id} style={{ background: '#e8f1fb', color: AZUL, borderRadius: '20px', padding: '4px 6px 4px 11px',
+                                fontSize: '12px', fontWeight: 500, display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+          {nombre(id)}
+          <button onClick={() => toggle(id)} style={{ background: 'none', border: 'none', color: '#89b4dd', cursor: 'pointer', fontFamily: 'inherit', padding: 0, fontSize: '12px' }}>✕</button>
+        </span>
+      ))}
+      {activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
+      <div style={{ position: 'relative' }}>
+        <button onClick={() => setAbierto(a => !a)} style={sel}>
+          {activo ? '+ insumo' : 'Filtrar por insumo…'} <span style={{ color: '#9fb0bf' }}>▾</span>
+        </button>
+        {abierto && (
+          <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: '290px', background: '#fff',
+                        border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 12px 30px rgba(12,39,66,.15)', padding: '6px', zIndex: 20, maxHeight: '320px', overflow: 'auto' }}>
+            {opciones.map(o => {
+              const on = valor.includes(o.id)
+              return (
+                <button key={o.id} onClick={() => toggle(o.id)} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+                        border: 'none', background: 'none', padding: '9px 10px', borderRadius: '8px', fontSize: '13.5px', color: NAVY, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f6f9fb'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  <span style={{ width: '17px', height: '17px', borderRadius: '5px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                 fontSize: '11px', color: '#fff', border: '1.5px solid ' + (on ? AZUL : '#c3d0db'), background: on ? AZUL : '#fff' }}>{on ? '✓' : ''}</span>
+                  {o.nombre}
+                </button>
+              )
+            })}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 10px 4px', borderTop: '1px solid #eef3f8', marginTop: '4px' }}>
+              <button onClick={() => onCambio([])} style={{ background: 'none', border: 'none', color: activo ? AZUL : '#c3d0db', cursor: activo ? 'pointer' : 'default', fontFamily: 'inherit', fontSize: '12.5px', padding: 0 }}>Limpiar</button>
+              <button onClick={() => setAbierto(false)} style={{ background: 'none', border: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 600, padding: 0 }}>Listo</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Agregar({ insumos, usados, onGuardar, onCerrar }) {
   const [insumoId, setInsumoId] = useState('')
   const [cant, setCant] = useState('')
