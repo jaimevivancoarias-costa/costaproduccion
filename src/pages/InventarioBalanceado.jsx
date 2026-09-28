@@ -161,6 +161,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
   const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
   const nSinInv = filas.filter(f => coincide(f.producto) && esSinInvFila(f)).length
+  // En "Qué se movió": sin inventario = quedó en 0 y sin lotes, y tampoco se movió nada en el rango.
+  const esSinInvMov = m => Math.abs(Number(m.saldo_final)) < 0.001 && !((lotes[m.producto_id] || []).length) &&
+    !Number(m.ingresos) && !Number(m.consumo) && !Number(m.devuelto) && !Number(m.ajustes) && (m.conteo === null || m.conteo === undefined)
+  const nSinInvMov = movs.filter(m => coincide(m.producto) && esSinInvMov(m)).length
 
   // Reporte de bodega: junta "Cuánto hay" y "Qué se movió" en un solo documento.
   // Cruza saldos (al día) con movimientos (del rango), lotes, precio·vigencia y
@@ -587,6 +591,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInv})`}
               </GhostBtn>
             )}
+            {vista === 'movimientos' && nSinInvMov > 0 && (
+              <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+                {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInvMov})`}
+              </GhostBtn>
+            )}
             <select value={busq} onChange={e => setBusq(e.target.value)}
                     style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
               <option value="">Todos los balanceados</option>
@@ -750,7 +759,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           ) : (
             <Caja>
               <Encabezado gtc={esJefe ? G_MOV_J : G_MOV_B} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', 'Conteo', 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
-              {movs.filter(m => coincide(m.producto)).map(m => {
+              {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
+                    .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {
                 const cq = conteoQuien[m.producto_id]
                 // Si el conteo es el inventario inicial y no había saldo antes,
                 // se muestra en "Saldo Ini." (no en Conteo), como en insumos.
