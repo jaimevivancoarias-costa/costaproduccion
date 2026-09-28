@@ -728,7 +728,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   // es la misma firma, hecha por quien tiene la potestad de hacerla, y
   // queda en la bitacora igual que cualquier otro cierre.
   async function cerrarDiasPendientes() {
-    const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
+    const faltan = fechas.filter(f => dias[f] !== 'cerrado'
                                       && f !== hoy
                                       && situacionDia(f, hoy) !== 'futuro')
     if (!faltan.length) return
@@ -1686,7 +1686,9 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
 // ---------------------------------------------------------------------
 function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
-  const esCerrado = f => dias[f] === 'cerrado' || dias[f] === 'reabierto'
+  // Solo "cerrado" cuenta como cerrado. "reabierto" es un día que se volvió a
+  // abrir → está abierto y hay que cerrarlo de nuevo.
+  const esCerrado = f => dias[f] === 'cerrado'
   const nCerrados = fechas.filter(esCerrado).length
   const faltan = fechas.filter(f => !esCerrado(f) && f !== hoy && situacion(f) !== 'futuro')
   return (
@@ -1701,12 +1703,15 @@ function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fecha
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
         {fechas.map(f => {
           const cer = esCerrado(f)
+          const reab = dias[f] === 'reabierto'
           const fut = situacion(f) === 'futuro'
           const esHoy = f === hoy
           const cerrableAqui = puedeCerrarDias && !cer && !fut && !esHoy
+          const bordeCol = cer ? '#bfe6d6' : reab ? '#ecd9b3' : BORDE
+          const fondoCol = cer ? '#eefaf4' : reab ? '#fdf6ea' : 'white'
           return (
-            <div key={f} style={{ flex: '1 1 100px', minWidth: '100px', border: '0.5px solid ' + (cer ? '#bfe6d6' : BORDE),
-                                  background: cer ? '#eefaf4' : 'white', borderRadius: '10px', padding: '9px 11px', textAlign: 'center' }}>
+            <div key={f} style={{ flex: '1 1 100px', minWidth: '100px', border: '0.5px solid ' + bordeCol,
+                                  background: fondoCol, borderRadius: '10px', padding: '9px 11px', textAlign: 'center' }}>
               <div style={{ fontSize: '12.5px', fontWeight: 600, color: cer ? VERDE : NAVY }}>
                 {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
               </div>
@@ -1714,8 +1719,13 @@ function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fecha
                 {cer ? <span style={{ color: VERDE }}>✓ Cerrado</span>
                   : esHoy ? <span style={{ color: AZUL }}>Hoy</span>
                   : fut ? <span style={{ color: '#c3d0db' }}>Próximo</span>
-                  : cerrableAqui ? <button onClick={() => onCerrarDia(f)} style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Cerrar día</button>
-                  : <span style={{ color: GRIS }}>Pendiente</span>}
+                  : cerrableAqui ? (
+                    <>
+                      {reab && <span style={{ display: 'block', color: '#BA7517', fontSize: '10px', marginBottom: '2px' }}>Reabierto</span>}
+                      <button onClick={() => onCerrarDia(f)} style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Cerrar día</button>
+                    </>
+                  )
+                  : <span style={{ color: GRIS }}>{reab ? 'Reabierto' : 'Pendiente'}</span>}
               </div>
             </div>
           )
