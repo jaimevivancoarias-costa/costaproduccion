@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'rea
 import { supabase } from '../lib/supabase'
 import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento, mensajeError } from './DialogoEvento'
 import CampoNumero from '../components/CampoNumero'
-import BuscadorAplicacion from './BuscadorAplicacion'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, numDec, miles,
@@ -75,7 +74,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   // Saldo disponible por producto (en sacos), para no dejar consumir sin stock.
   const [saldoBal, setSaldoBal] = useState({})
   // Filtro: ver solo piscinas/días donde se aplicó este producto.
-  const [filtroProd, setFiltroProd] = useState('')
+  const [filtros, setFiltros] = useState([])   // ids de balanceados a filtrar (varios)
   const [vistaDesg, setVistaDesg] = useState('bal')   // desglose: 'bal' | 'ins'
   const [consIns, setConsIns] = useState([])          // consumo_insumo de la semana [{piscina_id, insumo_id, cantidad}]
   const [insMap, setInsMap] = useState({})            // insumo_id -> { nombre, unidad }
@@ -852,15 +851,16 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     refs.current[`${iFila + 1}|${iDia}`]?.focus()
   }
 
-  // ¿La celda (o sus extras) tiene el producto del filtro?
-  const celTieneProd = (c, prod) => !!c && !c.sinAlimentacion &&
-    (c.productoId === prod || (c.extras || []).some(e => e.productoId === prod))
-  const piscTieneProd = (p) => fechas.some(f => celTieneProd(cel(p, f), filtroProd))
+  // ¿La celda (o sus extras) usa alguno de los balanceados filtrados?
+  const hayFiltro = filtros.length > 0
+  const celTieneAlguno = (c) => !!c && !c.sinAlimentacion &&
+    (filtros.includes(c.productoId) || (c.extras || []).some(e => filtros.includes(e.productoId)))
+  const piscTieneAlguno = (p) => fechas.some(f => celTieneAlguno(cel(p, f)))
 
   const visiblesBase = soloPendientes
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
-  const visibles = filtroProd ? visiblesBase.filter(piscTieneProd) : visiblesBase
+  const visibles = hayFiltro ? visiblesBase.filter(piscTieneAlguno) : visiblesBase
 
   const COLS_BASE = '230px 150px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
@@ -957,8 +957,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           fontWeight: verIndicadores ? 500 : 400,
         }}>Indicadores</button>
         <div style={{ marginLeft: 'auto' }}>
-          <BuscadorAplicacion ambito="balanceado" opciones={productos}
-            valor={filtroProd} onCambio={setFiltroProd} nPisc={visibles.length} />
+          <FiltroBalanceados opciones={productos} valor={filtros} onCambio={setFiltros} nPisc={visibles.length} />
         </div>
       </div>
 
@@ -1076,15 +1075,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     </Td>
                     {fechas.map((f, j) => {
                       const falta = faltantesKeys.has(`${p.piscinaId}|${f}`)
-                      const marca = !!filtroProd && celTieneProd(cel(p, f), filtroProd)
                       return (
                       <Td key={f} fondo={falta ? '#FCEBC8'
-                                        : marca ? '#E1F5EE'
                                         : situacionDia(f, hoy) === 'hoy' ? HOYB
                                         : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : undefined}
                           borde={situacionDia(f, hoy) === 'hoy'}>
                         <Celda
                           p={p} f={f} c={cel(p, f)} productos={productos}
+                          filtros={hayFiltro ? filtros : null}
                           editable={editable(f)} situacion={situacionDia(f, hoy)}
                           onProducto={v => set(p, f, 'productoId', v)}
                           onLibras={v => set(p, f, 'libras', v)}
@@ -1428,7 +1426,7 @@ function TransferenciaInfo({ cicloId }) {
 // ---------------------------------------------------------------------
 // Celda: las tres situaciones de la regla 2.3
 // ---------------------------------------------------------------------
-function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
+function Celda({ p, f, c, productos, filtros, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
   if (!p.cicloId) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
@@ -1462,9 +1460,15 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
   if (!editable) {
     const conExtras = extras.filter(e => numDec(e.libras) && e.productoId)
     if ((!c || !numDec(c.libras)) && conExtras.length === 0) return <div style={cajaVacia}>Sin registrar</div>
-    const filas = []
+    let filas = []
     if (numDec(c?.libras)) filas.push({ productoId: c.productoId, libras: c.libras })
     conExtras.forEach(e => filas.push(e))
+    // Con filtro activo, solo se muestran los balanceados filtrados; si esta
+    // celda no usa ninguno, sale "—".
+    if (filtros) {
+      filas = filas.filter(x => filtros.includes(x.productoId))
+      if (!filas.length) return <div style={{ color: '#cdd8e2' }}>—</div>
+    }
     const total = filas.reduce((s, x) => s + (numDec(x.libras) || 0), 0)
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
@@ -1862,6 +1866,64 @@ function TarjetaReg({ k, v }) {
     </div>
   )
 }
+// Filtro de VARIOS balanceados (casillas). Muestra chips de los elegidos y
+// cuántas piscinas los usaron.
+function FiltroBalanceados({ opciones, valor, onCambio, nPisc }) {
+  const [abierto, setAbierto] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!abierto) return
+    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false) }
+    document.addEventListener('mousedown', fuera)
+    return () => document.removeEventListener('mousedown', fuera)
+  }, [abierto])
+  const activo = valor.length > 0
+  const toggle = id => onCambio(valor.includes(id) ? valor.filter(x => x !== id) : [...valor, id])
+  const nombre = id => opciones.find(o => o.id === id)?.nombre || ''
+  const sel = { border: '1px solid ' + (activo ? '#9cc4e8' : BORDE), background: activo ? '#f4f9ff' : 'white',
+                borderRadius: '10px', padding: '9px 13px', fontSize: '13px', color: activo ? NAVY : GRIS,
+                fontFamily: 'inherit', cursor: 'pointer', fontWeight: activo ? 500 : 400 }
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      {valor.map(id => (
+        <span key={id} style={{ background: '#e8f1fb', color: AZUL, borderRadius: '20px', padding: '4px 6px 4px 11px',
+                                fontSize: '12px', fontWeight: 500, display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+          {nombre(id)}
+          <button onClick={() => toggle(id)} style={{ background: 'none', border: 'none', color: '#89b4dd', cursor: 'pointer', fontFamily: 'inherit', padding: 0, fontSize: '12px' }}>✕</button>
+        </span>
+      ))}
+      {activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
+      <div style={{ position: 'relative' }}>
+        <button onClick={() => setAbierto(a => !a)} style={sel}>
+          {activo ? '+ balanceado' : 'Filtrar por balanceado…'} <span style={{ color: '#9fb0bf' }}>▾</span>
+        </button>
+        {abierto && (
+          <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: '290px', background: '#fff',
+                        border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 12px 30px rgba(12,39,66,.15)', padding: '6px', zIndex: 20, maxHeight: '320px', overflow: 'auto' }}>
+            {opciones.map(o => {
+              const on = valor.includes(o.id)
+              return (
+                <button key={o.id} onClick={() => toggle(o.id)} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
+                        border: 'none', background: 'none', padding: '9px 10px', borderRadius: '8px', fontSize: '13.5px', color: NAVY, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f6f9fb'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  <span style={{ width: '17px', height: '17px', borderRadius: '5px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                 fontSize: '11px', color: '#fff', border: '1.5px solid ' + (on ? AZUL : '#c3d0db'), background: on ? AZUL : '#fff' }}>{on ? '✓' : ''}</span>
+                  {o.nombre}
+                </button>
+              )
+            })}
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 10px 4px', borderTop: '1px solid #eef3f8', marginTop: '4px' }}>
+              <button onClick={() => onCambio([])} style={{ background: 'none', border: 'none', color: activo ? AZUL : '#c3d0db', cursor: activo ? 'pointer' : 'default', fontFamily: 'inherit', fontSize: '12.5px', padding: 0 }}>Limpiar</button>
+              <button onClick={() => setAbierto(false)} style={{ background: 'none', border: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 600, padding: 0 }}>Listo</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function Dato({ k, v }) {
   return (
     <div>
