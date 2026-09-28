@@ -1485,11 +1485,11 @@ function Celda({ p, f, c, productos, editable, situacion, onProducto, onLibras, 
     conExtras.forEach(e => filas.push(e))
     const total = filas.reduce((s, x) => s + (numDec(x.libras) || 0), 0)
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px' }}>
         {filas.map((x, i) => {
           const pr = productos.find(y => y.id === x.productoId)
           return (
-            <div key={i}>
+            <div key={i} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
               <div style={{ fontSize: '15px' }}>{miles(numDec(x.libras))}</div>
             </div>
