@@ -33,13 +33,16 @@ const UNIDAD = {
 }
 const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
+// "Unidades" es genérico (contar los envases): no vale mostrar "Saco → Unidad".
+// En cambio kilos/litros/gramos SÍ son unidades de uso reales aunque el factor sea 1.
+const esUnidadGenerica = u => { const x = String(u || '').toLowerCase(); return !x || x === 'unidad' || x === 'unidades' || x === 'u' || x === 'un' || x === 'unid' }
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
-const ANCHOS_SALDO_JEFE = '1.1fr 140px 120px 130px 140px 120px 84px'
-const ANCHOS_SALDO_BOD  = '1.2fr 160px 140px 150px'   // bodeguero: sin dolares
+const ANCHOS_SALDO_JEFE = '1fr 160px 130px 150px 175px 140px 100px'
+const ANCHOS_SALDO_BOD  = '1fr 170px 140px 160px'   // bodeguero: sin dolares
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
@@ -298,6 +301,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const uPres = cap1(UNIDAD[(s && s.unidad) || (m && m.unidad)] || (s && s.unidad) || (m && m.unidad) || '')
       const uApp = fac && fac.uApp ? cap1(UNIDAD[fac.uApp] || fac.uApp) : ''
       const factorN = fac?.factor || 1
+      const convR = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && uApp !== uPres
       const precio = precios[id] || 0
       const pdesde = precioInfo[id]?.desde
       const valor = Number(valorFifo[id] || 0)
@@ -317,7 +321,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       filasRep.push({
-        nombre, viaTop: (uApp && factorN !== 1) ? `${uPres} → ${uApp}` : uPres, viaSub: factorN !== 1 ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
+        nombre, viaTop: convR ? `${uPres} → ${uApp}` : uPres, viaSub: convR ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
         inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
         saldoHoy: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
@@ -938,8 +942,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           >
             {movs.filter(m => coincide(m.insumo) && (verSinInv || !esSinInvMov(m))).map(m => {
               const fac = factores[m.insumo_id]
-              // Solo hay conversión cuando el factor cambia el número (≠ 1).
-              const conv = fac && fac.uApp && (fac.factor || 1) !== 1
+              // Hay conversión cuando la unidad de uso es real (kilos, litros…) y
+              // distinta del envase. "Unidades" es genérico → no cuenta.
+              const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[m.unidad] || m.unidad)
               // El interruptor decide en qué unidad se ven los números.
               const enUso = unidadMov === 'aplica' && conv
               const factor = enUso ? (fac.factor || 1) : 1
@@ -1053,7 +1058,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const fac = factores[f.insumo_id]
                       const pres = cap1(UNIDAD[f.unidad] || f.unidad)
                       const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      const conv = fac && fac.uApp && (fac.factor || 1) !== 1
+                      const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
                       return (
                         <span>
                           <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
@@ -1080,14 +1085,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   <Celda derecha>
                     {(() => {
                       const fac = factores[f.insumo_id]
-                      const conv = fac && fac.uApp && (fac.factor || 1) !== 1
+                      const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
                       if (!conv) return <span style={{ color: '#cdd8e2' }}>—</span>
                       const uApp = (UNIDAD[fac.uApp] || fac.uApp || '').toLowerCase()
                       return <span style={{ fontVariantNumeric: 'tabular-nums', color: AZUL, fontWeight: 600 }}>{limpio(Number(f.saldo) * (fac.factor || 1))} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uApp}</span></span>
                     })()}
                   </Celda>
                   {/* Precio (una línea, con plazo corto). Detalle completo al desplegar. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{dineroExacto(f.precio)}{precioInfo[f.insumo_id] ? <span style={{ color: '#a7b4c1', fontWeight: 400, fontSize: '11px' }}> · {PLAZO_LBL[precioInfo[f.insumo_id].plazo]}</span> : ''}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
+                  {esJefe && <Celda derecha gris>{f.precio ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(f.precio)}{precioInfo[f.insumo_id] ? <span style={{ color: '#a7b4c1', fontWeight: 400, fontSize: '11px' }}> · {PLAZO_LBL[precioInfo[f.insumo_id].plazo]}</span> : ''}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
                   {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
@@ -1162,7 +1167,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const fac = factores[f.insumo_id]
                       const pres = cap1(UNIDAD[f.unidad] || f.unidad)
                       const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      const conv = fac && fac.uApp && (fac.factor || 1) !== 1
+                      const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
                       const pi = precioInfo[f.insumo_id]
                       return (
                         <div style={{ display: 'flex', gap: '34px', flexWrap: 'wrap', marginBottom: '16px' }}>
