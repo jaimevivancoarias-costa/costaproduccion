@@ -77,7 +77,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           .select('id, codigo, nombre, hectareas, tipo, es_reservorio')
           .eq('finca_id', finca.id).eq('activa', true),
         supabase.schema('produccion').from('insumo')
-          .select('id, nombre, unidad, factor').eq('activo', true).order('nombre'),
+          .select('id, nombre, unidad, unidad_compra, factor').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('ciclo')
           .select('id, piscina_origen_id, fecha_siembra, fecha_ocupacion, fecha_cierre')
           .eq('finca_id', finca.id),
@@ -322,6 +322,15 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
   const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
   const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
+  // "Equivale a": la misma cantidad pero como se compra (cant / factor). Solo
+  // cuando la unidad de uso es real (no "unidad" genérica) y distinta de la de
+  // compra; si no, no hay conversión que mostrar.
+  const equivaleCompra = (id, cant) => {
+    const ins = insumos.find(x => x.id === id)
+    if (!ins || ins.unidad === 'unidad' || !ins.unidad_compra || ins.unidad_compra === ins.unidad) return null
+    const fac = factorIns[id] || 1
+    return { cant: cant / fac, u: UNIDAD[ins.unidad_compra] || ins.unidad_compra }
+  }
   const cel = (p, f) => lineas[`${p.piscinaId}|${f}`] || []
   // Filtro: piscinas que aplicaron alguno de los insumos elegidos en la semana.
   const hayFiltro = filtros.length > 0
@@ -598,27 +607,66 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
+      {/* Barra de guardar / cerrar día (arriba del desglose). */}
+      {!cargando && semanaDeHoy && !soloLectura && !semanaCerrada && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      gap: '12px', flexWrap: 'wrap', marginTop: '16px' }}>
+          <div style={{ fontSize: '13px', color: GRIS }}>
+            Los insumos se guardan solos al agregarlos.{' '}
+            {dias[hoy] === 'cerrado'
+              ? 'El día de hoy está cerrado.'
+              : 'Cuando termines de cargar el día, ciérralo.'}
+          </div>
+          {dias[hoy] === 'cerrado' ? (
+            esJefe
+              ? <Btn disabled={cerrandoDia} onClick={reabrirDiaHoy}>{cerrandoDia ? 'Un momento...' : 'Reabrir día de hoy'}</Btn>
+              : solReapertura.some(x => x.registro_id === diasId[hoy])
+                ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
+                : <Btn onClick={pedirReabrirHoy}>Pedir reabrir</Btn>
+          ) : (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <Btn onClick={guardarBorrador} disabled={guardandoBorrador}>{guardandoBorrador ? 'Guardando...' : 'Guardar borrador'}</Btn>
+              <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
+                padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
+                border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
+                cursor: cerrandoDia ? 'default' : 'pointer', opacity: cerrandoDia ? 0.6 : 1 }}>
+                {cerrandoDia ? 'Cerrando...' : 'Guardar y cerrar día'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {!cargando && consumoSemana.length > 0 && (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                       padding: '16px 18px', marginTop: '34px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 3px' }}>Consumo de la semana</h3>
-          <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 12px' }}>
-            Total de cada insumo aplicado en las piscinas del {corta(lunes)} al {corta(domingo)}.
-          </p>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de insumos de la semana</h3>
+            <span style={{ fontSize: '12px', color: GRIS }}>{cortita(lunes)} – {cortita(domingo)}</span>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <thead><tr>
-              <th style={{ textAlign: 'left', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, padding: '0 12px 9px', borderBottom: '1px solid ' + BORDE }}>Insumo</th>
-              <th style={{ textAlign: 'right', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, padding: '0 12px 9px', borderBottom: '1px solid ' + BORDE }}>Consumo</th>
+              {['Insumo', 'Cantidad', 'Equivale a'].map((t, i) => (
+                <th key={t} style={{ width: i === 0 ? '46%' : '27%', textAlign: i === 0 ? 'left' : 'right',
+                      fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf',
+                      fontWeight: 600, padding: '0 12px 9px', borderBottom: '1px solid ' + BORDE }}>{t}</th>
+              ))}
             </tr></thead>
             <tbody>
-              {consumoSemana.map(c => (
-                <tr key={c.id}>
-                  <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', fontWeight: 600 }}>{nombreInsumo(c.id)}</td>
-                  <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                    {miles(c.cant)} <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{unidadInsumo(c.id)}</span>
-                  </td>
-                </tr>
-              ))}
+              {consumoSemana.map(c => {
+                const eq = equivaleCompra(c.id, c.cant)
+                return (
+                  <tr key={c.id}>
+                    <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', fontWeight: 600 }}>{nombreInsumo(c.id)}</td>
+                    <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      <b style={{ fontWeight: 600 }}>{miles(c.cant)}</b> <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{unidadInsumo(c.id)}</span>
+                    </td>
+                    <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
+                      {eq ? <>{miles(eq.cant)} {eq.u}</> : '—'}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -643,36 +691,6 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {!cargando && semanaDeHoy && !soloLectura && !semanaCerrada && (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      gap: '12px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + BORDE,
-                      borderRadius: '12px', padding: '13px 16px', marginTop: '14px' }}>
-          <div style={{ fontSize: '13px', color: GRIS }}>
-            Los insumos se guardan solos al agregarlos.{' '}
-            {dias[hoy] === 'cerrado'
-              ? 'El día de hoy está cerrado.'
-              : 'Cuando termines de cargar el día, ciérralo.'}
-          </div>
-          {dias[hoy] === 'cerrado' ? (
-            esJefe
-              ? <Btn disabled={cerrandoDia} onClick={reabrirDiaHoy}>{cerrandoDia ? 'Un momento...' : 'Reabrir día de hoy'}</Btn>
-              : solReapertura.some(x => x.registro_id === diasId[hoy])
-                ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
-                : <Btn onClick={pedirReabrirHoy}>Pedir reabrir</Btn>
-          ) : (
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <Btn onClick={guardarBorrador} disabled={guardandoBorrador}>{guardandoBorrador ? 'Guardando...' : 'Guardar borrador'}</Btn>
-              <button onClick={cerrarDiaHoy} disabled={cerrandoDia} style={{
-                padding: '9px 18px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
-                border: '0.5px solid ' + AZUL, borderRadius: '9px', background: AZUL, color: 'white',
-                cursor: cerrandoDia ? 'default' : 'pointer', opacity: cerrandoDia ? 0.6 : 1 }}>
-                {cerrandoDia ? 'Cerrando...' : 'Guardar y cerrar día'}
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -908,6 +926,7 @@ function Th({ children, pegado, hoy }) {
   return (
     <div style={{ padding: '9px 12px', fontSize: '11px', fontWeight: 500, color: GRIS,
                   textTransform: 'uppercase', letterSpacing: '0.03em',
+                  textAlign: pegado ? 'left' : 'center',
                   position: pegado ? 'sticky' : 'static', left: pegado ? 0 : undefined,
                   background: hoy ? '#E6F1FB' : '#f6f9fb',
                   borderRight: pegado ? '0.5px solid ' + BORDE : 'none' }}>
