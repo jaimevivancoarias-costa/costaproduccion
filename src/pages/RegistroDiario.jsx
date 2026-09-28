@@ -59,6 +59,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [laboratorios, setLaboratorios] = useState([])
   const [dialogo, setDialogo] = useState(null)   // { tipo, fila }
   const [verIndicadores, setVerIndicadores] = useState(false)
+  const [verSacos, setVerSacos] = useState(false)   // mostrar los sacos debajo de las libras en la cuadrícula (por defecto ocultos)
   const [acumulado, setAcumulado] = useState({})   // cicloId -> libras desde la siembra
   const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
   const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
@@ -961,6 +962,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           color: verIndicadores ? AZUL : GRIS,
           fontWeight: verIndicadores ? 500 : 400,
         }}>Indicadores</button>
+        <button onClick={() => setVerSacos(v => !v)} style={{
+          ...chip, cursor: 'pointer', fontFamily: 'inherit',
+          background: verSacos ? '#E6F1FB' : 'white',
+          borderColor: verSacos ? '#9cc4e8' : BORDE,
+          color: verSacos ? AZUL : GRIS,
+          fontWeight: verSacos ? 500 : 400,
+        }}>Sacos</button>
         <div style={{ marginLeft: 'auto' }}>
           <FiltroBalanceados opciones={productos} valor={filtros} onCambio={setFiltros} nPisc={visibles.length} />
         </div>
@@ -1087,7 +1095,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           borde={situacionDia(f, hoy) === 'hoy'}>
                         <Celda
                           p={p} f={f} c={cel(p, f)} productos={productos}
-                          filtros={hayFiltro ? filtros : null}
+                          filtros={hayFiltro ? filtros : null} verSacos={verSacos}
                           editable={editable(f)} situacion={situacionDia(f, hoy)}
                           onProducto={v => set(p, f, 'productoId', v)}
                           onLibras={v => set(p, f, 'libras', v)}
@@ -1432,7 +1440,7 @@ function TransferenciaInfo({ cicloId }) {
 // ---------------------------------------------------------------------
 // Celda: las tres situaciones de la regla 2.3
 // ---------------------------------------------------------------------
-function Celda({ p, f, c, productos, filtros, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
+function Celda({ p, f, c, productos, filtros, verSacos, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
   if (!p.cicloId) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
@@ -1484,12 +1492,13 @@ function Celda({ p, f, c, productos, filtros, editable, situacion, onProducto, o
             <div key={i} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
               <div style={{ fontSize: '15px' }}>{miles(numDec(x.libras))}</div>
+              {verSacos && <div style={{ fontSize: '10px', color: '#9fb0bf' }}>{(numDec(x.libras) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>}
             </div>
           )
         })}
         {filas.length > 1 && (
           <div style={{ fontSize: '11px', color: GRIS, borderTop: '0.5px solid ' + BORDE, paddingTop: '2px' }}>
-            Total {miles(total)}
+            Total {miles(total)}{verSacos && ` · ${(total / LIBRAS_POR_SACO).toFixed(1)} sacos`}
           </div>
         )}
       </div>
