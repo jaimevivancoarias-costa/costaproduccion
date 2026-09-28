@@ -48,6 +48,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [aviso, setAviso] = useState(null)
   const [nuevo, setNuevo] = useState(null)   // 'ingreso' | 'pedido' | null
   const [editando, setEditando] = useState(null)   // id del ingreso en edición/solicitud
+  const [editandoDev, setEditandoDev] = useState(null)   // id de la devolución en edición
   const [desde, setDesde] = useState(primerDelMes())
   const [hasta, setHasta] = useState(hoyISO())
   const [filtroIns, setFiltroIns] = useState('')   // filtro por insumo (nombre)
@@ -390,10 +391,24 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
                 {d.motivo && <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '2px' }}>{d.motivo}</div>}
                 {autoria(d) && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '2px' }}>{autoria(d)}</div>}
               </div>
-              {esJefe && (
-                <MiniBtn rojo onClick={() => borrarDevolucion(d)}>Borrar</MiniBtn>
+              {esJefe && editandoDev !== d.id && (
+                <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+                  <MiniBtn onClick={() => setEditandoDev(d.id)}>Editar</MiniBtn>
+                  <MiniBtn rojo onClick={() => borrarDevolucion(d)}>Borrar</MiniBtn>
+                </div>
               )}
             </div>
+            {esJefe && editandoDev === d.id && (
+              <EditorDevolucion
+                d={d} unidad={unidadInsumo(d.insumo_id)}
+                onGuardado={(nueva) => {
+                  setDevoluciones(prev => prev.map(x => x.id === d.id ? { ...x, ...nueva } : x))
+                  setEditandoDev(null)
+                  if (onCambio) onCambio()
+                  setAviso({ tipo: 'ok', texto: 'Devolución actualizada.' })
+                }}
+                onCancelar={() => setEditandoDev(null)} setAviso={setAviso} />
+            )}
           </Tarjeta>
         ))
       )}
@@ -748,8 +763,11 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
-            <CampoNumero maxDec={2} value={l.cantidad} placeholder={uni ? `Cantidad en ${uni}` : 'Cantidad'}
-              onChange={v => setLinea(i, 'cantidad', v)} style={{ ...entrada, width: '170px' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <CampoNumero maxDec={2} value={l.cantidad} placeholder="Cantidad"
+                onChange={v => setLinea(i, 'cantidad', v)} style={{ ...entrada, width: '130px' }} />
+              <span style={{ fontSize: '13px', color: GRIS, minWidth: '58px' }}>{uni || ''}</span>
+            </div>
             {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))}
               style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>}
           </div>
@@ -777,6 +795,46 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
             <Btn primario onClick={() => enviarSolicitud(false)} disabled={enviando}>{enviando ? 'Enviando...' : 'Enviar solicitud'}</Btn>
           </>
         )}
+      </div>
+    </div>
+  )
+}
+
+function EditorDevolucion({ d, unidad, onGuardado, onCancelar, setAviso }) {
+  const [fecha, setFecha] = useState(d.fecha)
+  const [cantidad, setCantidad] = useState(String(d.cantidad))
+  const [motivo, setMotivo] = useState(d.motivo || '')
+  const [enviando, setEnviando] = useState(false)
+
+  async function guardar() {
+    if (!numDec(cantidad)) { setAviso({ tipo: 'error', texto: 'Pon una cantidad.' }); return }
+    setEnviando(true)
+    const { error } = await supabase.schema('produccion').from('devolucion_insumo')
+      .update({ fecha, cantidad: numDec(cantidad), motivo: motivo.trim() || null }).eq('id', d.id)
+    setEnviando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    onGuardado({ fecha, cantidad: numDec(cantidad), motivo: motivo.trim() || null })
+  }
+
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '10px', padding: '14px', marginTop: '11px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '10px' }}>Editar devolución</div>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px', alignItems: 'flex-end' }}>
+        <Campo label="Fecha"><input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={entrada} /></Campo>
+        <Campo label="Cantidad">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+            <CampoNumero maxDec={2} value={cantidad} placeholder="Cantidad"
+              onChange={setCantidad} style={{ ...entrada, width: '130px' }} />
+            <span style={{ fontSize: '13px', color: GRIS, minWidth: '58px' }}>{unidad || ''}</span>
+          </div>
+        </Campo>
+      </div>
+      <Campo label="Motivo">
+        <input value={motivo} placeholder="Opcional" onChange={e => setMotivo(e.target.value)} style={{ ...entrada, width: '100%' }} />
+      </Campo>
+      <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px', flexWrap: 'wrap' }}>
+        <Btn onClick={onCancelar}>Cancelar</Btn>
+        <Btn primario onClick={guardar} disabled={enviando}>{enviando ? 'Guardando...' : 'Guardar cambios'}</Btn>
       </div>
     </div>
   )
