@@ -1355,6 +1355,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             onCerrarDia={cerrarUnDia}
             onCerrarTodos={cerrarDiasPendientes}
             puedeCerrarDias={!soloLectura && !semanaCerrada}
+            onReabrirSemana={esJefe && !soloLectura ? reabrirSemana : null}
           />
         </>
       )}
@@ -1689,7 +1690,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
 // ---------------------------------------------------------------------
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias }) {
+function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias, onReabrirSemana }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
   // Si la semana está cerrada, todos los días cuentan como cerrados. Si no,
   // solo "cerrado" cuenta ("reabierto" es un día que se volvió a abrir → está
@@ -1740,10 +1741,11 @@ function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fecha
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', paddingTop: '14px', borderTop: '1px solid #eef3f8' }}>
         <p style={{ fontSize: '12.5px', color: GRIS, margin: 0, maxWidth: '560px' }}>
-          {cerrada ? 'Esta semana ya está cerrada.'
+          {cerrada ? 'Esta semana ya está cerrada. Para corregir algo, reábrela y vuelve a cerrarla al terminar.'
             : 'Cuando estén los 7 días cerrados se puede cerrar la semana. Cada validación dice qué revisar.'}
         </p>
         <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap' }}>
+          {cerrada && onReabrirSemana && <Btn onClick={onReabrirSemana}>Reabrir semana</Btn>}
           {!cerrada && faltan.length > 0 && <Btn onClick={onCerrarTodos}>Cerrar todos ({faltan.length})</Btn>}
           {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
         </div>
