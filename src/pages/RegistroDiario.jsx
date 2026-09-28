@@ -1214,6 +1214,37 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               </div>
             </div>
 
+            {/* Barra de guardar / cerrar día (arriba del desglose) */}
+            {!soloLectura && modo === 'registrar' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
+                {semanaDeHoy && <Dato k="Libras de hoy" v={miles(totalDia(hoy)) || '0'} />}
+                {sucio && <span style={{ fontSize: '12.5px', color: '#854F0B' }}>Tienes cambios sin guardar.</span>}
+                {!semanaCerrada && (
+                  <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
+                    {(semanaDeHoy && dias[hoy] === 'cerrado') ? (
+                      <>
+                        <span style={{ fontSize: '13px', color: GRIS }}>El día de hoy está cerrado.</span>
+                        {esJefe
+                          ? <Btn onClick={() => reabrirDia(hoy)}>Reabrir día</Btn>
+                          : solReapertura.some(x => x.registro_id === diasId[hoy])
+                            ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
+                            : <Btn onClick={() => pedirReabrir(hoy)}>Pedir reabrir</Btn>}
+                      </>
+                    ) : (
+                      <>
+                        <Btn onClick={() => guardar(false)} disabled={guardando}>
+                          {guardando ? 'Guardando...' : (semanaDeHoy ? 'Guardar borrador' : 'Guardar cambios')}
+                        </Btn>
+                        {semanaDeHoy && dias[hoy] !== 'cerrado' && (
+                          <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Desglose de balanceado de la semana */}
             {desgloseBal.length > 0 && (
               <div style={{ marginTop: '20px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px' }}>
@@ -1289,36 +1320,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               )
             })()}
 
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          gap: '16px', flexWrap: 'wrap', padding: '14px 16px',
-                          borderTop: '0.5px solid ' + BORDE, background: '#fafcfd' }}>
-              <div style={{ display: 'flex', gap: '30px' }}>
-                {semanaDeHoy && <Dato k="Libras de hoy" v={miles(totalDia(hoy)) || '0'} />}
-                <Dato k="Sacos de la semana" v={(totalSemana / LIBRAS_POR_SACO).toFixed(1)} />
-                <Dato k="Total de la semana" v={miles(totalSemana)} />
-              </div>
-              {!soloLectura && modo === 'registrar' && !semanaCerrada && (
-                (semanaDeHoy && dias[hoy] === 'cerrado') ? (
-                  <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
-                    <span style={{ fontSize: '13px', color: GRIS }}>El día de hoy está cerrado.</span>
-                    {esJefe
-                      ? <Btn onClick={() => reabrirDia(hoy)}>Reabrir día</Btn>
-                      : solReapertura.some(x => x.registro_id === diasId[hoy])
-                        ? <span style={{ fontSize: '13px', color: '#BA7517' }}>Pedido de reapertura enviado</span>
-                        : <Btn onClick={() => pedirReabrir(hoy)}>Pedir reabrir</Btn>}
-                  </div>
-                ) : (
-                <div style={{ display: 'flex', gap: '9px' }}>
-                  <Btn onClick={() => guardar(false)} disabled={guardando}>
-                    {guardando ? 'Guardando...' : (semanaDeHoy ? 'Guardar borrador' : 'Guardar cambios')}
-                  </Btn>
-                  {semanaDeHoy && dias[hoy] !== 'cerrado' && (
-                    <Btn primario onClick={pedirCerrarDia} disabled={guardando}>Cerrar día</Btn>
-                  )}
-                </div>
-                )
-              )}
-            </div>
           </div>
 
           {dialogo && (
