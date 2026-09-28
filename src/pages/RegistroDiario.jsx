@@ -888,8 +888,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                   {semanaDeHoy ? 'Semana en curso' : 'Semana anterior'}</span>}
           </div>
           <div style={{ fontSize: '13px', color: GRIS }}>
-            Semana {semanaISO(lunes).semana} · del {corta(lunes)} al {corta(fechas[6])}
-            {semanaDeHoy && ` · hoy es ${nombreDia(hoy).toLowerCase()}`}
+            Semana {semanaISO(lunes).semana} · {cortita(lunes)} – {cortita(fechas[6])}
           </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', alignItems: 'flex-end' }}>
@@ -919,35 +918,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           </div>
         </div>
       </div>
-
-      {/* Resumen de la semana en tarjetas. */}
-      {(() => {
-        const nEng = piscinas.filter(p => p.tipo !== 'precria').length
-        const hechas = nEng - pendientesHoy.length
-        const pctHoy = nEng ? Math.round(hechas / nEng * 100) : 0
-        const diasCerrados = fechas.filter(f => dias[f] === 'cerrado' || dias[f] === 'reabierto').length
-        return (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
-                      gap: '11px', marginBottom: '14px' }}>
-          <div style={{ background: NAVY, borderRadius: '12px', padding: '14px 16px' }}>
-            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>Libras de la semana</div>
-            <div style={{ fontSize: '22px', fontWeight: 500, color: 'white' }}>{miles(totalSemana)}</div>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>{(totalSemana / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
-          </div>
-          <TarjetaReg k="Piscinas activas" v={String(piscinas.filter(p => p.cicloId).length)} />
-          {semanaDeHoy && (
-            <div style={{ background: '#f6f9fb', borderRadius: '12px', padding: '14px 16px' }}>
-              <div style={{ fontSize: '12px', color: GRIS }}>Completadas hoy</div>
-              <div style={{ fontSize: '22px', fontWeight: 500 }}>{hechas} de {nEng}</div>
-              <div style={{ height: '6px', background: '#e7eef5', borderRadius: '20px', overflow: 'hidden', marginTop: '6px' }}>
-                <i style={{ display: 'block', height: '100%', width: pctHoy + '%', background: '#1D9E75', borderRadius: '20px' }} />
-              </div>
-            </div>
-          )}
-          <TarjetaReg k="Días cerrados" v={`${diasCerrados} de 7`} />
-        </div>
-        )
-      })()}
 
       {esJefe && solReapertura.length > 0 && (
         <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b3', borderRadius: '12px',
