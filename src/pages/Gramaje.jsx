@@ -494,13 +494,26 @@ export default function Gramaje({ finca, esJefe, soloLectura, lunes, setLunes })
                     const rc = crecPorPisc[fila.piscinaId] || {}
                     const diarioTxt = rc.diario != null ? rc.diario.toFixed(2) : null
                     const ispTxt = rc.isp != null ? rc.isp.toFixed(1) : null
-                    if (rc.joven || rc.isp2 == null) {
+                    // Sin datos aún: no hay crecimiento calculable.
+                    if (rc.isp2 == null) {
                       return (
                         <>
                           <Td bordeIzq><span style={{ color: GRIS }}>{diarioTxt ?? <Guion />}</span></Td>
                           <Td><span style={{ color: GRIS }}>{ispTxt ?? <Guion />}</span></Td>
                           <Td><Guion /></Td>
-                          <Td><span style={{ color: GRIS, fontSize: '11px' }}>{rc.joven ? 'joven' : 'aún no'}</span></Td>
+                          <Td><span style={{ color: GRIS, fontSize: '11px' }}>aún no</span></Td>
+                        </>
+                      )
+                    }
+                    // Joven (<30 días): SÍ mostramos su crecimiento, pero con etiqueta
+                    // "joven" (aún no entra al semáforo).
+                    if (rc.joven) {
+                      return (
+                        <>
+                          <Td bordeIzq><span style={{ color: NAVY }}>{diarioTxt ?? '—'}</span></Td>
+                          <Td><span style={{ color: NAVY }}>{ispTxt ?? '—'}</span></Td>
+                          <Td><span style={{ fontWeight: 600, color: NAVY }}>{rc.isp2.toFixed(1)}</span></Td>
+                          <Td><span title="Menos de 30 días de engorde: aún no entra al semáforo" style={{ fontSize: '11px', fontWeight: 600, padding: '3px 9px', borderRadius: '20px', background: '#eef2f6', color: GRIS, whiteSpace: 'nowrap' }}>joven</span></Td>
                         </>
                       )
                     }
