@@ -1044,7 +1044,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const fac = factores[f.insumo_id]
                       const pres = cap1(UNIDAD[f.unidad] || f.unidad)
                       const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      const conv = fac && ((fac.factor || 1) !== 1 || (fac.uApp && app !== pres))
+                      const conv = fac && fac.uApp && (fac.factor || 1) !== 1
                       return (
                         <span>
                           <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
@@ -1071,9 +1071,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   <Celda derecha>
                     {(() => {
                       const fac = factores[f.insumo_id]
-                      const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      const pres = cap1(UNIDAD[f.unidad] || f.unidad)
-                      const conv = fac && fac.uApp && ((fac.factor || 1) !== 1 || app !== pres)
+                      const conv = fac && fac.uApp && (fac.factor || 1) !== 1
                       if (!conv) return <span style={{ color: '#cdd8e2' }}>—</span>
                       const uApp = (UNIDAD[fac.uApp] || fac.uApp || '').toLowerCase()
                       return <span style={{ fontVariantNumeric: 'tabular-nums', color: AZUL, fontWeight: 600 }}>{limpio(Number(f.saldo) * (fac.factor || 1))} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uApp}</span></span>
@@ -1155,7 +1153,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const fac = factores[f.insumo_id]
                       const pres = cap1(UNIDAD[f.unidad] || f.unidad)
                       const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      const conv = fac && ((fac.factor || 1) !== 1 || (fac.uApp && app !== pres))
+                      const conv = fac && fac.uApp && (fac.factor || 1) !== 1
                       const pi = precioInfo[f.insumo_id]
                       return (
                         <div style={{ display: 'flex', gap: '34px', flexWrap: 'wrap', marginBottom: '16px' }}>
@@ -1288,7 +1286,7 @@ function Tabla({ columnas, anchos, children, caja, min }) {
                     background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE,
                     position: 'sticky', top: 0, zIndex: 3 }}>
         {columnas.map((c, i) => (
-          <div key={c} style={{ padding: '10px 12px', fontSize: '11px', fontWeight: 500,
+          <div key={c} style={{ padding: '12px 18px', fontSize: '11px', fontWeight: 500,
                   color: GRIS, letterSpacing: '0.02em', textTransform: 'uppercase',
                   textAlign: i >= 2 ? 'right' : 'left',
                   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1323,7 +1321,7 @@ function Fila({ anchos, children, total }) {
 
 function Celda({ children, derecha, gris, fuerte, color }) {
   return (
-    <div style={{ padding: '10px 12px', fontSize: '13px',
+    <div style={{ padding: '13px 18px', fontSize: '13px',
                   textAlign: derecha ? 'right' : 'left',
                   color: color || (gris ? GRIS : NAVY),
                   fontWeight: fuerte ? 500 : 400,
