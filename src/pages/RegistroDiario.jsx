@@ -881,7 +881,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#e2e8ef', minHeight: '100%' }}>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#eef2f6', minHeight: '100%' }}>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
