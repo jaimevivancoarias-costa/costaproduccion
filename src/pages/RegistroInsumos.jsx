@@ -899,6 +899,7 @@ function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
 function Agregar({ insumos, usados, onGuardar, onCerrar }) {
   const [insumoId, setInsumoId] = useState('')
   const [cant, setCant] = useState('')
+  const [q, setQ] = useState('')
   const libres = insumos.filter(i => !usados.includes(i.id))
   const elegido = insumos.find(i => i.id === insumoId)
   // Misma regla que en la cuadrícula: nada de "u" genérica.
@@ -910,20 +911,35 @@ function Agregar({ insumos, usados, onGuardar, onCerrar }) {
     }
     return UNIDAD[i.unidad] || i.unidad
   }
+  const filtrados = libres.filter(i => i.nombre.toLowerCase().includes(q.trim().toLowerCase()))
+  const elegir = i => { setInsumoId(i.id); setQ(i.nombre) }
   return (
     <div style={{ marginTop: '4px', padding: '6px', background: '#f6f9fb', borderRadius: '7px' }}>
-      <select value={insumoId} onChange={e => setInsumoId(e.target.value)}
-        style={{ width: '100%', fontFamily: 'inherit', fontSize: '11px', padding: '4px',
-                 border: '0.5px solid ' + BORDE, borderRadius: '6px', marginBottom: '4px' }}>
-        <option value="">Elegir insumo</option>
-        {libres.map(i => (
-          <option key={i.id} value={i.id}>{i.nombre} — {UNIDAD[i.unidad] || i.unidad}</option>
-        ))}
-      </select>
+      {/* Buscador tipeable: escribe para filtrar y elige de la lista. */}
+      <input value={q} autoFocus placeholder="Buscar insumo…"
+        onChange={e => { setQ(e.target.value); setInsumoId('') }}
+        style={{ width: '100%', fontFamily: 'inherit', fontSize: '11px', padding: '5px 6px',
+                 border: '0.5px solid ' + BORDE, borderRadius: '6px', marginBottom: '4px', boxSizing: 'border-box' }} />
+      {!insumoId && (
+        <div style={{ maxHeight: '150px', overflow: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '6px',
+                      background: 'white', marginBottom: '4px' }}>
+          {filtrados.length ? filtrados.map(i => (
+            <button key={i.id} onClick={() => elegir(i)}
+              style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: 'none',
+                       padding: '6px 8px', fontFamily: 'inherit', fontSize: '11px', color: NAVY, cursor: 'pointer', borderBottom: '0.5px solid #f1f6f9' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f6f9fb'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+              {i.nombre} <span style={{ color: GRIS }}>· {uLbl(i)}</span>
+            </button>
+          )) : <div style={{ padding: '8px', fontSize: '11px', color: GRIS }}>Sin resultados</div>}
+        </div>
+      )}
+      {insumoId && (
+        <div style={{ fontSize: '10px', color: GRIS, marginBottom: '4px' }}>Se aplica en {uLbl(elegido)}</div>
+      )}
       <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
         <CampoNumero value={cant} pista
-          placeholder={elegido ? `Cantidad en ${UNIDAD[elegido.unidad] || elegido.unidad}` : 'Cantidad'}
-          autoFocus
+          placeholder={elegido ? `Cantidad en ${uLbl(elegido)}` : 'Cantidad'}
           onChange={v => setCant(v)}
           onKeyDown={e => e.key === 'Enter' && (onGuardar(insumoId, cant))}
           style={{ flex: 1, fontFamily: 'inherit', fontSize: '11px', padding: '4px',
