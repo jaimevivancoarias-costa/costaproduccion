@@ -20,6 +20,7 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 const HOYB = '#F3F8FD'
+const VERDE = '#0F6E56'
 
 const UNIDAD = {
   sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
@@ -694,59 +695,21 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
-      {/* Cerrar días de la semana (día por día o todos). Lo puede hacer
-          también el bodeguero (llena cada dos días), en cualquier semana. */}
-      {!cargando && !soloLectura && !semanaCerrada && (() => {
-        const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
-                                          && f !== hoy && situacionDia(f, hoy) !== 'futuro')
-        if (!faltan.length) return null
-        return (
-          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 16px', marginTop: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
-              <div style={{ fontSize: '15px', fontWeight: 500 }}>Cerrar días de la semana</div>
-              <Btn onClick={cerrarDiasPendientes}>Cerrar todos ({faltan.length})</Btn>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {faltan.map(f => (
-                <button key={f} onClick={() => cerrarUnDia(f)}
-                  style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
-                           padding: '7px 12px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }}>
-                  Cerrar {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )
-      })()}
-
-      {/* Reabrir un día ya cerrado (jefe/contadora), aunque tenga consumo. */}
-      {!cargando && !semanaCerrada && !soloLectura && esJefe && (() => {
-        const cerrados = fechas.filter(f => dias[f] === 'cerrado')
-        if (!cerrados.length) return null
-        return (
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
-                        padding: '10px 14px', borderRadius: '9px', marginTop: '14px', background: '#F4F7FA', color: GRIS }}>
-            <span>¿Necesitas corregir un día ya cerrado?</span>
-            {cerrados.map(f => (
-              <button key={f} onClick={() => reabrirDia(f)}
-                style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
-                         padding: '5px 10px', fontFamily: 'inherit', fontSize: '12px', color: NAVY, cursor: 'pointer' }}>
-                Reabrir {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
-              </button>
-            ))}
-          </div>
-        )
-      })()}
-
       {!cargando && (
         <Cierre
           validaciones={validaciones}
           cerrada={semanaCerrada}
           puedeCerrar={!semanaCerrada && !soloLectura}
-          puedeReabrir={esJefe && !soloLectura}
+          fechas={fechas} dias={dias} hoy={hoy}
+          situacion={f => situacionDia(f, hoy)}
+          puedeCerrarDias={!soloLectura && !semanaCerrada}
+          puedeReabrirDias={esJefe && !soloLectura && !semanaCerrada}
+          onCerrarDia={cerrarUnDia}
+          onCerrarTodos={cerrarDiasPendientes}
+          onReabrirDia={reabrirDia}
           onRevisar={revisarSemana}
           onCerrar={cerrarSemana}
-          onReabrir={reabrirSemana}
+          onReabrirSemana={esJefe && !soloLectura ? reabrirSemana : null}
         />
       )}
     </div>
@@ -756,23 +719,70 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 // Mismo panel que en balanceado: cerrar la semana corre las OCHO
 // validaciones, insumos incluidos. Se puede hacer desde cualquiera de
 // las dos pestanas porque es una sola accion para la finca-semana.
-function Cierre({ validaciones, cerrada, puedeCerrar, puedeReabrir, onRevisar, onCerrar, onReabrir }) {
+function Cierre({ validaciones, cerrada, puedeCerrar, fechas = [], dias = {}, hoy, situacion = () => '',
+                 puedeCerrarDias, puedeReabrirDias, onCerrarDia, onCerrarTodos, onReabrirDia,
+                 onRevisar, onCerrar, onReabrirSemana }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
+  // Con la semana cerrada, todos cuentan como cerrados. Si no, solo "cerrado"
+  // ("reabierto" volvió a quedar abierto y hay que cerrarlo de nuevo).
+  const esCerrado = f => cerrada || dias[f] === 'cerrado'
+  const nCerrados = fechas.filter(esCerrado).length
+  const faltan = fechas.filter(f => !esCerrado(f) && f !== hoy && situacion(f) !== 'futuro')
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                  padding: '16px 18px', marginTop: '14px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-                    gap: '14px', flexWrap: 'wrap' }}>
-        <div>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar los insumos de la semana</h3>
-          <p style={{ fontSize: '13px', color: GRIS, margin: 0 }}>
-            {cerrada ? 'Los insumos de esta semana ya están cerrados.'
-              : 'Cierra solo los insumos. El balanceado se cierra aparte, en su pestaña.'}
-          </p>
+                  padding: '16px 18px', marginTop: '12px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Cierre de la semana</h3>
+        <span style={{ fontSize: '12.5px', color: GRIS }}>{nCerrados} de 7 días cerrados</span>
+      </div>
+
+      {/* Los 7 días: cerrar el que falta, reabrir el que está cerrado. */}
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        {fechas.map(f => {
+          const cer = esCerrado(f)
+          const reab = dias[f] === 'reabierto'
+          const fut = situacion(f) === 'futuro'
+          const esHoy = f === hoy
+          const bordeCol = cer ? '#bfe6d6' : reab ? '#ecd9b3' : BORDE
+          const fondoCol = cer ? '#eefaf4' : reab ? '#fdf6ea' : 'white'
+          return (
+            <div key={f} style={{ flex: '1 1 100px', minWidth: '100px', border: '0.5px solid ' + bordeCol,
+                                  background: fondoCol, borderRadius: '10px', padding: '9px 11px', textAlign: 'center' }}>
+              <div style={{ fontSize: '12.5px', fontWeight: 600, color: cer ? VERDE : NAVY }}>
+                {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
+              </div>
+              <div style={{ fontSize: '11px', marginTop: '4px' }}>
+                {cer ? (
+                  <>
+                    <span style={{ color: VERDE }}>✓ Cerrado</span>
+                    {!cerrada && puedeReabrirDias && (
+                      <button onClick={() => onReabrirDia(f)} style={{ display: 'block', margin: '5px auto 0', background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Reabrir</button>
+                    )}
+                  </>
+                ) : esHoy ? <span style={{ color: AZUL }}>Hoy</span>
+                  : fut ? <span style={{ color: '#c3d0db' }}>Próximo</span>
+                  : puedeCerrarDias ? (
+                    <>
+                      {reab && <span style={{ display: 'block', color: '#BA7517', fontSize: '10px', marginBottom: '2px' }}>Reabierto</span>}
+                      <button onClick={() => onCerrarDia(f)} style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Cerrar día</button>
+                    </>
+                  ) : <span style={{ color: GRIS }}>{reab ? 'Reabierto' : 'Pendiente'}</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', paddingTop: '14px', borderTop: '1px solid #eef3f8' }}>
+        <p style={{ fontSize: '12.5px', color: GRIS, margin: 0, maxWidth: '540px' }}>
+          {cerrada ? 'Esta semana ya está cerrada. Para corregir algo, reábrela y vuelve a cerrarla al terminar.'
+            : 'Cierra cada día cuando termines, o todos a la vez. Un día cerrado se puede reabrir para corregir. Los insumos se cierran aparte del balanceado.'}
+        </p>
+        <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap' }}>
+          {cerrada && onReabrirSemana && <Btn onClick={onReabrirSemana}>Reabrir semana</Btn>}
+          {!cerrada && faltan.length > 0 && <Btn onClick={onCerrarTodos}>Cerrar días pendientes ({faltan.length})</Btn>}
+          {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
         </div>
-        {!cerrada
-          ? <Btn onClick={onRevisar}>Revisar cuadres</Btn>
-          : puedeReabrir && <Btn onClick={onReabrir}>Reabrir semana</Btn>}
       </div>
 
       {validaciones === 'cargando' && (
@@ -801,7 +811,7 @@ function Cierre({ validaciones, cerrada, puedeCerrar, puedeReabrir, onRevisar, o
               color: (todas && puedeCerrar) ? 'white' : GRIS,
               cursor: (todas && puedeCerrar) ? 'pointer' : 'default',
               opacity: (todas && puedeCerrar) ? 1 : 0.5 }}>
-              {puedeCerrar ? 'Cerrar semana' : 'No se puede cerrar'}
+              {puedeCerrar ? 'Cerrar la semana' : 'No se puede cerrar'}
             </button>
           </div>
         </div>
