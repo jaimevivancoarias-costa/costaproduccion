@@ -881,7 +881,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem' }}>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#eef2f6', minHeight: '100%' }}>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
@@ -1219,7 +1219,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             </div>
 
             {/* Barra de guardar / cerrar día (arriba del desglose) */}
-            {!soloLectura && modo === 'registrar' && (
+            {!soloLectura && modo === 'registrar' && (semanaDeHoy || sucio || !semanaCerrada) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
                 {semanaDeHoy && <Dato k="Libras de hoy" v={miles(totalDia(hoy)) || '0'} />}
                 {sucio && <span style={{ fontSize: '12.5px', color: '#854F0B' }}>Tienes cambios sin guardar.</span>}
