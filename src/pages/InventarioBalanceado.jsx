@@ -884,6 +884,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   const [solicitudes, setSolicitudes] = useState([])
   const [userId, setUserId] = useState(null)
   const [editando, setEditando] = useState(null)
+  const [editandoDev, setEditandoDev] = useState(null)   // id de la devolución en edición
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
   const [filtroProd, setFiltroProd] = useState('')   // filtro por balanceado (nombre)
@@ -1253,11 +1254,65 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
                 {d.motivo && <div style={{ fontSize: '12px', color: GRIS, fontStyle: 'italic', marginTop: '2px' }}>{d.motivo}</div>}
                 {autoria(d) && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '2px' }}>{autoria(d)}</div>}
               </div>
-              {esJefe && <button onClick={() => borrarDevolucion(d)} style={{ ...btn, padding: '6px 11px', fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>}
+              {esJefe && editandoDev !== d.id && (
+                <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap' }}>
+                  <button onClick={() => setEditandoDev(d.id)} style={{ ...btn, padding: '6px 11px', fontSize: '12px' }}>Editar</button>
+                  <button onClick={() => borrarDevolucion(d)} style={{ ...btn, padding: '6px 11px', fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
+                </div>
+              )}
             </div>
+            {esJefe && editandoDev === d.id && (
+              <EditorDevBal
+                d={d}
+                onGuardado={(nueva) => {
+                  setDevoluciones(prev => prev.map(x => x.id === d.id ? { ...x, ...nueva } : x))
+                  setEditandoDev(null)
+                  onCambio && onCambio()
+                  setAviso({ tipo: 'ok', texto: 'Devolución actualizada.' })
+                }}
+                onCancelar={() => setEditandoDev(null)} setAviso={setAviso} />
+            )}
           </div>
         ))
       )}
+    </div>
+  )
+}
+
+// Editor de una devolución de balanceado (jefe): corrige fecha, cantidad y motivo.
+function EditorDevBal({ d, onGuardado, onCancelar, setAviso }) {
+  const [fecha, setFecha] = useState(d.fecha)
+  const [cantidad, setCantidad] = useState(String(d.cantidad))
+  const [motivo, setMotivo] = useState(d.motivo || '')
+  const [enviando, setEnviando] = useState(false)
+
+  async function guardar() {
+    if (!numDec(cantidad)) { setAviso({ tipo: 'error', texto: 'Pon una cantidad.' }); return }
+    setEnviando(true)
+    const { error } = await supabase.schema('produccion').from('devolucion_balanceado')
+      .update({ fecha, cantidad: numDec(cantidad), motivo: motivo.trim() || null }).eq('id', d.id)
+    setEnviando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    onGuardado({ fecha, cantidad: numDec(cantidad), motivo: motivo.trim() || null })
+  }
+
+  return (
+    <div style={{ background: '#f6f9fb', borderRadius: '10px', padding: '14px', marginTop: '11px' }}>
+      <div style={{ fontSize: '13px', fontWeight: 500, marginBottom: '10px' }}>Editar devolución</div>
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '10px', alignItems: 'flex-end' }}>
+        <Campo label="Fecha"><input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={inp} /></Campo>
+        <Campo label="Cantidad">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+            <CampoNumero maxDec={2} value={cantidad} placeholder="Cantidad" onChange={setCantidad} style={{ ...inp, width: '110px' }} />
+            <span style={{ fontSize: '13px', color: GRIS, minWidth: '42px' }}>sacos</span>
+          </div>
+        </Campo>
+      </div>
+      <Campo label="Motivo"><input value={motivo} placeholder="Opcional" onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%' }} /></Campo>
+      <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px', flexWrap: 'wrap' }}>
+        <button onClick={onCancelar} style={btn}>Cancelar</button>
+        <button onClick={guardar} disabled={enviando} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: enviando ? 0.6 : 1 }}>{enviando ? 'Guardando...' : 'Guardar cambios'}</button>
+      </div>
     </div>
   )
 }
@@ -1318,7 +1373,10 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
             <option value="">Elegir balanceado</option>
             {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
           </select>
-          <CampoNumero maxDec={2} value={l.cantidad} placeholder="Sacos" onChange={v => setLinea(i, 'cantidad', v)} style={{ ...inp, width: '150px' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+            <CampoNumero maxDec={2} value={l.cantidad} placeholder="Cantidad" onChange={v => setLinea(i, 'cantidad', v)} style={{ ...inp, width: '110px' }} />
+            <span style={{ fontSize: '13px', color: GRIS, minWidth: '42px' }}>sacos</span>
+          </div>
           {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
         </div>
       ))}
