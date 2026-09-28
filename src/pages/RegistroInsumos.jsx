@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
-  nombreDia, semanaISO, situacionDia, numDec, miles, dinero,
+  nombreDia, semanaISO, situacionDia, numDec, miles, dinero, diasCultivo,
 } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import BuscadorAplicacion from './BuscadorAplicacion'
@@ -41,6 +41,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [abierta, setAbierta] = useState(null)  // celda con el agregador abierto
+  const [abiertaP, setAbiertaP] = useState(null)  // piscina con el detalle (Fases) abierto
   const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [validaciones, setValidaciones] = useState(null)
   const [dias, setDias] = useState({})   // fecha -> estado del dia (cerrado/borrador/reabierto)
@@ -61,6 +62,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const hoy = hoyISO()
   const semanaDeHoy = lunesDe(hoy) === lunes
   const domingo = fechas[6]
+  const corteDias = fechas[6] > hoy ? hoy : fechas[6]   // hasta hoy si la semana no ha terminado
 
   // El bodeguero edita su semana actual, y también una anterior si el jefe
   // la reabrió (semana no cerrada). Como las viejas están cerradas, no
@@ -78,7 +80,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         supabase.schema('produccion').from('insumo')
           .select('id, nombre, unidad, factor').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('ciclo')
-          .select('id, piscina_origen_id, fecha_siembra, fecha_cierre')
+          .select('id, piscina_origen_id, fecha_siembra, fecha_ocupacion, fecha_cierre')
           .eq('finca_id', finca.id),
         supabase.schema('produccion').from('insumo_finca')
           .select('insumo_id, unidad, factor').eq('finca_id', finca.id),
@@ -96,16 +98,28 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       const si = {}; (saldosI || []).forEach(r => { si[r.insumo_id] = Number(r.saldo) })
       setSaldoIns(si)
 
-      const lista = (ps || []).map(p => ({
-        piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
-        hectareas: Number(p.hectareas), tipo: p.tipo, esReservorio: p.es_reservorio,
+      const lista = (ps || []).map(p => {
         // El ciclo que cubre la semana, para colgarle el consumo. Si no
         // hay (piscina en preparacion), va null y el trigger lo pega a
         // la siembra siguiente.
-        cicloId: (cs || []).find(c => c.piscina_origen_id === p.id
-          && c.fecha_siembra <= domingo
-          && (!c.fecha_cierre || c.fecha_cierre >= lunes))?.id || null,
-      })).sort((a, b) => (a.esReservorio ? 1 : 0) - (b.esReservorio ? 1 : 0) || ordenar(a, b))
+        const c = (cs || []).find(x => x.piscina_origen_id === p.id
+          && x.fecha_siembra <= domingo
+          && (!x.fecha_cierre || x.fecha_cierre >= lunes))
+        // "Secado": cosecha del cultivo anterior en esta misma piscina.
+        const ocup0 = c?.fecha_ocupacion || c?.fecha_siembra
+        const prevCierre = c ? (cs || [])
+          .filter(x => x.piscina_origen_id === p.id && x.fecha_cierre && (!ocup0 || x.fecha_cierre < ocup0))
+          .reduce((mx, x) => (!mx || x.fecha_cierre > mx ? x.fecha_cierre : mx), null) : null
+        return {
+          piscinaId: p.id, codigo: p.codigo, nombre: p.nombre,
+          hectareas: Number(p.hectareas), tipo: p.tipo, esReservorio: p.es_reservorio,
+          cicloId: c?.id || null,
+          fechaSiembra: c?.fecha_siembra || null,
+          fechaOcupacion: c?.fecha_ocupacion || c?.fecha_siembra || null,
+          fechaCierre: c?.fecha_cierre || null,
+          prevCierre,
+        }
+      }).sort((a, b) => (a.esReservorio ? 1 : 0) - (b.esReservorio ? 1 : 0) || ordenar(a, b))
       setPiscinas(lista)
       setInsumos(insFinca)
 
@@ -468,13 +482,24 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               ))}
             </div>
 
-            {(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).map(p => (
-              <div key={p.piscinaId} style={{ display: 'grid', gridTemplateColumns: COLS,
+            {(filtroProd ? piscinas.filter(piscTieneIns) : piscinas).map(p => {
+              const hayFases = !!(p.cicloId && p.fechaSiembra)
+              const abiertoP = abiertaP === p.piscinaId
+              return (
+              <Fragment key={p.piscinaId}>
+              <div style={{ display: 'grid', gridTemplateColumns: COLS,
                     borderBottom: '0.5px solid #f1f6f9', alignItems: 'stretch' }}>
                 <div style={{ padding: '10px 12px', position: 'sticky', left: 0, background: 'white',
                               borderRight: '0.5px solid #f1f6f9' }}>
-                  <div style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</div>
-                  <div style={{ fontSize: '11px', color: GRIS }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {hayFases && (
+                      <button onClick={() => setAbiertaP(abiertoP ? null : p.piscinaId)}
+                        style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, lineHeight: 1 }}>
+                        {abiertoP ? '▾' : '▸'}</button>
+                    )}
+                    <span style={{ fontWeight: 500, fontSize: '14px' }}>{p.nombre}</span>
+                  </div>
+                  <div style={{ fontSize: '11px', color: GRIS, marginLeft: hayFases ? '17px' : 0 }}>
                     {p.esReservorio ? 'Reservorio · solo insumos' : `${p.hectareas.toFixed(2)} ha · ${p.tipo === 'precria' ? 'precría' : (p.cicloId ? 'con ciclo' : 'preparación')}`}
                   </div>
                 </div>
@@ -490,32 +515,35 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                                     : situacionDia(f, hoy) === 'hoy' ? HOYB
                                     : situacionDia(f, hoy) === 'futuro' ? '#fbfcfd' : 'white',
                           borderLeft: '0.5px solid #f6f9fb' }}>
-                      {ls.map(l => (
+                      {ls.map((l, li) => edit ? (
                         <div key={l.id} style={{ background: 'white', border: '1px solid ' + BORDE,
                               borderRadius: '9px', padding: '7px 9px', marginBottom: '6px' }}>
                           <div style={{ fontSize: '11px', color: NAVY, fontWeight: 600,
-                                        marginBottom: edit ? '4px' : '2px', lineHeight: 1.2 }}>
+                                        marginBottom: '4px', lineHeight: 1.2 }}>
                             {nombreInsumo(l.insumoId)}
                           </div>
-                          {edit ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                              <CampoNumero value={l.cantidad}
-                                onChange={v => cambiarCantidad(k, l.id, v)}
-                                style={{ width: '56px', fontFamily: 'inherit', fontSize: '12px',
-                                         padding: '4px 6px', textAlign: 'right', border: '0.5px solid ' + BORDE,
-                                         borderRadius: '6px', fontVariantNumeric: 'tabular-nums' }} />
-                              <span style={{ fontSize: '11px', color: GRIS, flex: 1 }}>
-                                {unidadInsumo(l.insumoId)}
-                              </span>
-                              <button onClick={() => quitar(k, l.id)} title="Quitar"
-                                style={{ border: 'none', background: 'none', cursor: 'pointer',
-                                         color: '#c3d0db', fontSize: '15px', lineHeight: 1, padding: 0 }}>×</button>
-                            </div>
-                          ) : (
-                            <span style={{ fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
-                              <b style={{ fontWeight: 600 }}>{miles(numDec(l.cantidad))}</b> {unidadInsumo(l.insumoId)}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <CampoNumero value={l.cantidad}
+                              onChange={v => cambiarCantidad(k, l.id, v)}
+                              style={{ width: '56px', fontFamily: 'inherit', fontSize: '12px',
+                                       padding: '4px 6px', textAlign: 'right', border: '0.5px solid ' + BORDE,
+                                       borderRadius: '6px', fontVariantNumeric: 'tabular-nums' }} />
+                            <span style={{ fontSize: '11px', color: GRIS, flex: 1 }}>
+                              {unidadInsumo(l.insumoId)}
                             </span>
-                          )}
+                            <button onClick={() => quitar(k, l.id)} title="Quitar"
+                              style={{ border: 'none', background: 'none', cursor: 'pointer',
+                                       color: '#c3d0db', fontSize: '15px', lineHeight: 1, padding: 0 }}>×</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div key={l.id} style={{ textAlign: 'center', lineHeight: 1.3,
+                              ...(li > 0 ? { borderTop: '1px dashed ' + BORDE, paddingTop: '6px', marginTop: '6px' } : {}) }}>
+                          <div style={{ fontSize: '11px', color: GRIS }}>{nombreInsumo(l.insumoId)}</div>
+                          <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>
+                            <b style={{ fontWeight: 600 }}>{miles(numDec(l.cantidad))}</b>{' '}
+                            <span style={{ fontSize: '10px', color: '#9fb0bf' }}>{unidadInsumo(l.insumoId)}</span>
+                          </div>
                         </div>
                       ))}
 
@@ -535,13 +563,34 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                       ))}
 
                       {!ls.length && !edit && (
-                        <span style={{ fontSize: '11px', color: '#c3d0db' }}>—</span>
+                        <div style={{ fontSize: '11px', color: '#c3d0db', textAlign: 'center' }}>—</div>
                       )}
                     </div>
                   )
                 })}
               </div>
-            ))}
+              {abiertoP && hayFases && (
+                <div style={{ borderBottom: '0.5px solid #f1f6f9', background: '#f7fafc' }}>
+                  <div style={{ position: 'sticky', left: 0, width: 'fit-content', padding: '12px 16px' }}>
+                    <div style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, marginBottom: '3px' }}>Fases</div>
+                    <div style={{ fontSize: '14px' }}>{(() => {
+                      if (p.tipo === 'precria') return `${diasCultivo(p.fechaSiembra, corteDias)} días en precría`
+                      const ocup = p.fechaOcupacion || p.fechaSiembra
+                      const precria = ocup !== p.fechaSiembra ? diasCultivo(p.fechaSiembra, ocup) : 0
+                      const engorde = diasCultivo(ocup, corteDias)
+                      const secado = p.prevCierre ? diasCultivo(p.prevCierre, ocup) : 0
+                      const partes = []
+                      if (precria > 0) partes.push(`${precria} en precría`)
+                      partes.push(`${engorde} de engorde`)
+                      if (secado > 0) partes.push(`${secado} de secado`)
+                      return partes.join(' · ')
+                    })()}</div>
+                  </div>
+                </div>
+              )}
+              </Fragment>
+              )
+            })}
           </div>
         </div>
       )}
