@@ -822,6 +822,11 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
       .insert({ finca_id: finca.id, anio, semana, ambito: 'balanceado', validaciones })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    // Cerrar la semana marca también todos sus días como cerrados (por si alguno
+    // quedó en 'reabierto' de una reapertura previa). Así el estado queda parejo.
+    await supabase.schema('produccion').from('dia_registro')
+      .upsert(fechas.map(f => ({ finca_id: finca.id, fecha: f, ambito: 'balanceado', estado: 'cerrado', cerrado_en: new Date().toISOString() })),
+              { onConflict: 'finca_id,fecha,ambito' })
     setAviso({ tipo: 'ok', texto: 'Balanceado de la semana cerrado' })
     await cargar(true)
   }
@@ -1686,9 +1691,10 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
 // ---------------------------------------------------------------------
 function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
-  // Solo "cerrado" cuenta como cerrado. "reabierto" es un día que se volvió a
-  // abrir → está abierto y hay que cerrarlo de nuevo.
-  const esCerrado = f => dias[f] === 'cerrado'
+  // Si la semana está cerrada, todos los días cuentan como cerrados. Si no,
+  // solo "cerrado" cuenta ("reabierto" es un día que se volvió a abrir → está
+  // abierto y hay que cerrarlo de nuevo).
+  const esCerrado = f => cerrada || dias[f] === 'cerrado'
   const nCerrados = fechas.filter(esCerrado).length
   const faltan = fechas.filter(f => !esCerrado(f) && f !== hoy && situacion(f) !== 'futuro')
   return (
