@@ -322,7 +322,17 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   useEffect(() => { cargar() }, [cargar])
 
   const nombreInsumo = id => insumos.find(x => x.id === id)?.nombre || ''
-  const unidadInsumo = id => UNIDAD[insumos.find(x => x.id === id)?.unidad] || ''
+  // Unidad para mostrar. Si la de uso es genérica ("unidad"), no se muestra
+  // "u": se usa cómo se compra (saco, funda…) o, si no, "unidades".
+  const unidadInsumo = id => {
+    const ins = insumos.find(x => x.id === id)
+    if (!ins) return ''
+    if (!ins.unidad || ins.unidad === 'unidad') {
+      if (ins.unidad_compra && ins.unidad_compra !== 'unidad') return UNIDAD[ins.unidad_compra] || ins.unidad_compra
+      return 'unidades'
+    }
+    return UNIDAD[ins.unidad] || ins.unidad
+  }
   // "Equivale a": la misma cantidad pero como se compra (cant / factor). Solo
   // cuando la unidad de uso es real (no "unidad" genérica) y distinta de la de
   // compra; si no, no hay conversión que mostrar.
@@ -884,6 +894,15 @@ function Agregar({ insumos, usados, onGuardar, onCerrar }) {
   const [cant, setCant] = useState('')
   const libres = insumos.filter(i => !usados.includes(i.id))
   const elegido = insumos.find(i => i.id === insumoId)
+  // Misma regla que en la cuadrícula: nada de "u" genérica.
+  const uLbl = i => {
+    if (!i) return ''
+    if (!i.unidad || i.unidad === 'unidad') {
+      if (i.unidad_compra && i.unidad_compra !== 'unidad') return UNIDAD[i.unidad_compra] || i.unidad_compra
+      return 'unidades'
+    }
+    return UNIDAD[i.unidad] || i.unidad
+  }
   return (
     <div style={{ marginTop: '4px', padding: '6px', background: '#f6f9fb', borderRadius: '7px' }}>
       <select value={insumoId} onChange={e => setInsumoId(e.target.value)}
