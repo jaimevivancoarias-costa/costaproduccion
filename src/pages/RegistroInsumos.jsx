@@ -383,10 +383,17 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <div>
-          <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Insumos de la semana</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 5px' }}>Insumos de la semana</h1>
+            {semanaCerrada
+              ? <span style={{ background: '#eef2f5', color: GRIS, fontSize: '11px', fontWeight: 500,
+                               padding: '3px 10px', borderRadius: '20px' }}>Semana cerrada</span>
+              : <span style={{ background: '#E1F5EE', color: '#0F6E56', fontSize: '11px', fontWeight: 500,
+                               padding: '3px 10px', borderRadius: '20px' }}>
+                  {semanaDeHoy ? 'Semana en curso' : 'Semana anterior'}</span>}
+          </div>
           <div style={{ fontSize: '13px', color: GRIS }}>
-            Semana {semanaISO(lunes).semana} · del {corta(lunes)} al {corta(domingo)}
-            {semanaDeHoy && ` · hoy es ${nombreDia(hoy).toLowerCase()}`}
+            Semana {semanaISO(lunes).semana} · {cortita(lunes)} – {cortita(domingo)}
           </div>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
@@ -431,19 +438,6 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
-
-      {/* Resumen de la semana · mismas tarjetas que el registro de balanceado */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))',
-                    gap: '11px', marginBottom: '14px' }}>
-        {esJefe && (
-          <div style={{ background: NAVY, borderRadius: '12px', padding: '14px 16px' }}>
-            <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>Gasto de la semana</div>
-            <div style={{ fontSize: '22px', fontWeight: 500, color: 'white' }}>{dinero(resumen.gasto)}</div>
-          </div>
-        )}
-        <TarjetaIns k="Insumos distintos" v={String(resumen.insumos)} />
-        <TarjetaIns k="Piscinas con movimiento" v={String(resumen.piscinas)} />
-      </div>
 
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>
         Una piscina puede recibir varios insumos el mismo día. Que un día quede vacío es normal.
