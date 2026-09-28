@@ -1129,7 +1129,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         <div>
                           <div style={etq}>Fecha de siembra</div>
                           <div style={{ fontSize: '14px' }}>
-                            {p.fechaSiembra ? corta(p.fechaSiembra) : '—'}
+                            {p.fechaSiembra ? cortita(p.fechaSiembra) : '—'}
                             {p.cicloId && !soloLectura && modo === 'registrar' && (
                               <button onClick={() => setEditSiembra(editSiembra === p.piscinaId ? null : p.piscinaId)}
                                 style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer', padding: '0 0 0 8px' }}>{editSiembra === p.piscinaId ? 'Cerrar' : 'Editar'}</button>
@@ -1402,7 +1402,7 @@ function TransferenciaInfo({ cicloId }) {
             <span>
               <span style={{ color: '#3C3489', fontWeight: 500 }}>Recibió</span>{' '}
               {r.origen ? <>desde <b>{r.origen}</b> </> : ''}
-              {r.fecha ? `el ${corta(r.fecha)} · ` : ''}
+              {r.fecha ? `el ${cortita(r.fecha)} · ` : ''}
               {r.cant != null ? `${miles(r.cant)} animales` : `${Math.round(r.porc)}%`}
             </span>
             {surv != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
@@ -1413,7 +1413,7 @@ function TransferenciaInfo({ cicloId }) {
       {envio.length > 0 && (
         <div style={linea}>
           <span style={{ color: '#3C3489', fontWeight: 500 }}>Transferida</span>{' '}
-          {envio[0].fecha ? `el ${corta(envio[0].fecha)} a: ` : 'a: '}
+          {envio[0].fecha ? `el ${cortita(envio[0].fecha)} a: ` : 'a: '}
           {envio.map((e, i) => (
             <span key={i}>{i > 0 ? ', ' : ''}{e.nombre} ({e.cant != null ? `${miles(e.cant)}` : `${Math.round(e.porc)}%`})</span>
           ))}
@@ -1617,7 +1617,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
             <span style={{ fontSize: '11px', fontWeight: 500, padding: '3px 9px', borderRadius: '20px',
                            background: t.fondo, color: t.color }}>{t.nombre}</span>
             <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px' }}>
-              {corta(ev.fecha)}{ev.libras ? ` · ${miles(ev.libras)} lb` : ''}
+              {cortita(ev.fecha)}{ev.libras ? ` · ${miles(ev.libras)} lb` : ''}
               {puede && onEditar && ev.tipo === 'siembra' && (
                 <button onClick={onEditar} title="Corregir fecha, larva o gramaje de la siembra"
                   style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
@@ -1652,7 +1652,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
       <div>
         {pills}
         <span style={{ color: GRIS, fontSize: '12px' }}>
-          Vacía · se siembra el {corta(fila.siembraPosterior)}
+          Vacía · se siembra el {cortita(fila.siembraPosterior)}
         </span>
       </div>
     )
