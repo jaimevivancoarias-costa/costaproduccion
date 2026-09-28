@@ -147,11 +147,12 @@ ${secciones}
 </table></body></html>`
   }
 
+  const clases = c => `${c.der ? 'r' : ''}${c.destacar ? ' destacar' : ''}`.trim()
   const filaHTML = (cols, f, clase) => '<tr' + (clase ? ` class="${clase}"` : '') + '>' +
-    cols.map(c => `<td class="${c.der ? 'r' : ''}">${celda(c, f, 'sm')}</td>`).join('') + '</tr>'
+    cols.map(c => `<td class="${clases(c)}">${celda(c, f, 'sm')}</td>`).join('') + '</tr>'
   const tabla = b => {
     const cols = b.columnas || []
-    const th = cols.map(c => `<th class="${c.der ? 'r' : ''}">${esc(c.titulo)}</th>`).join('')
+    const th = cols.map(c => `<th class="${clases(c)}">${esc(c.titulo)}</th>`).join('')
     const cuerpo = (b.filas || []).map(f => filaHTML(cols, f)).join('')
     const total = b.total ? filaHTML(cols, b.total, 'total') : ''
     return (b.titulo ? `<h2>${esc(b.titulo)}</h2>` : '') +
@@ -182,7 +183,10 @@ ${secciones}
   .r { text-align:right; }
   .m { color:#a7b4c1; }
   .sm { font-size:8.5px; color:#a7b4c1; }
+  th.destacar { background:#0d4c7a; }
+  td.destacar { background:#eef4fb !important; font-weight:bold; font-size:12px; border-left:2px solid #cfe0f0; border-right:2px solid #cfe0f0; }
   tr.total td { border-top:2px solid #022847; border-bottom:none; font-weight:bold; background:#eef3f8 !important; padding-top:8px; }
+  tr.total td.destacar { background:#dfeaf6 !important; }
   h2 { font-size:13px; font-weight:bold; margin:22px 0 8px; padding-left:8px; border-left:3px solid #1f7a8c; }
   .pie { font-size:10px; color:#7d8fa0; margin-top:18px; border-top:1px solid #e2e9f0; padding-top:10px; }
   @media print { body { margin:0; } }
