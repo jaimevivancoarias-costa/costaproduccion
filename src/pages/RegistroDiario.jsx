@@ -1249,33 +1249,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               </div>
             )}
 
-            {/* Desglose de balanceado de la semana */}
-            {desgloseBal.length > 0 && (
-              <div style={{ marginTop: '34px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                  <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de balanceado de la semana</h3>
-                  <span style={{ fontSize: '12px', color: GRIS }}>{corta(fechas[0])} – {corta(fechas[6])}</span>
-                </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr><th style={dThL}>Balanceado</th><th style={dThR}>Libras</th><th style={dThR}>Sacos</th></tr></thead>
-                  <tbody>
-                    {desgloseBal.map((r, i) => (
-                      <tr key={i}>
-                        <td style={dTdL}>{r.nombre}</td>
-                        <td style={dTdR}>{miles(Math.round(r.lb))}</td>
-                        <td style={dTdR}>{(r.lb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
-                      </tr>
-                    ))}
-                    <tr>
-                      <td style={{ ...dTdL, ...dTot }}>Total</td>
-                      <td style={{ ...dTdR, ...dTot }}>{miles(Math.round(totalBalLb))}</td>
-                      <td style={{ ...dTdR, ...dTot }}>{(totalBalLb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-
             {atrasadas.length > 0 && modo === 'registrar' && (
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
                             padding: '9px 16px', background: '#FAEEDA', color: '#854F0B' }}>
@@ -1325,6 +1298,33 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             })()}
 
           </div>
+
+          {/* Desglose de balanceado de la semana */}
+          {desgloseBal.length > 0 && (
+            <div style={{ marginTop: '34px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de balanceado de la semana</h3>
+                <span style={{ fontSize: '12px', color: GRIS }}>{corta(fechas[0])} – {corta(fechas[6])}</span>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr><th style={dThL}>Balanceado</th><th style={dThR}>Libras</th><th style={dThR}>Sacos</th></tr></thead>
+                <tbody>
+                  {desgloseBal.map((r, i) => (
+                    <tr key={i}>
+                      <td style={dTdL}>{r.nombre}</td>
+                      <td style={dTdR}>{miles(Math.round(r.lb))}</td>
+                      <td style={dTdR}>{(r.lb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ ...dTdL, ...dTot }}>Total</td>
+                    <td style={{ ...dTdR, ...dTot }}>{miles(Math.round(totalBalLb))}</td>
+                    <td style={{ ...dTdR, ...dTot }}>{(totalBalLb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {dialogo && (
             <DialogoEvento
