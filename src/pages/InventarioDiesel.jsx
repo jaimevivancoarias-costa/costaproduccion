@@ -156,7 +156,7 @@ export default function InventarioDiesel({ finca, esJefe, soloLectura }) {
       { titulo: 'Inicial', der: true, campo: 'inicial' },
       { titulo: 'Ingresos', der: true, campo: 'ingresos' },
       { titulo: 'Consumo', der: true, campo: 'consumo' },
-      { titulo: 'Saldo hoy (gal)', der: true, campo: 'saldoHoy' },
+      { titulo: 'Saldo (gal)', der: true, campo: 'saldoHoy', destacar: true },
       ...(esJefe ? [
         { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
         { titulo: 'Valor', der: true, campo: 'valor' },
