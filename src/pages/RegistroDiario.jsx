@@ -27,6 +27,7 @@ const HOYB = '#E6F1FB'
 const miniLink = { display: 'block', margin: '3px auto 0', background: 'none', border: 'none',
                    padding: 0, cursor: 'pointer', color: '#0D6CB0', fontFamily: 'inherit', fontSize: '9px' }
 const HOYL = '#85B7EB'
+const VERDE = '#0F6E56'
 // Estilos del panel "Consumo de la semana" (desglose).
 const dTh = { fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, padding: '0 12px 9px', borderBottom: '1px solid ' + BORDE }
 const dThL = { ...dTh, textAlign: 'left' }
@@ -1340,39 +1341,17 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             />
           )}
 
-          {/* Cerrar días de la semana: panel aparte, arriba del cierre de
-              semana. Se puede cerrar día por día o todos de una vez. */}
-          {!soloLectura && !semanaCerrada && (() => {
-            const faltan = fechas.filter(f => dias[f] !== 'cerrado' && dias[f] !== 'reabierto'
-                                             && f !== hoy && situacionDia(f, hoy) !== 'futuro')
-            if (!faltan.length) return null
-            return (
-              <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
-                            padding: '14px 18px', marginTop: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                              gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                  <div style={{ fontSize: '15px', fontWeight: 500 }}>Cerrar días de la semana</div>
-                  <Btn onClick={cerrarDiasPendientes}>Cerrar todos ({faltan.length})</Btn>
-                </div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  {faltan.map(f => (
-                    <button key={f} onClick={() => cerrarUnDia(f)}
-                      style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
-                               padding: '7px 12px', fontFamily: 'inherit', fontSize: '13px', color: NAVY, cursor: 'pointer' }}>
-                      Cerrar {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )
-          })()}
-
           <Cierre
             validaciones={validaciones}
             onRevisar={revisarSemana}
             onCerrar={cerrarSemana}
             puedeCerrar={!semanaCerrada && !soloLectura}
             cerrada={semanaCerrada}
+            fechas={fechas} dias={dias} hoy={hoy}
+            situacion={f => situacionDia(f, hoy)}
+            onCerrarDia={cerrarUnDia}
+            onCerrarTodos={cerrarDiasPendientes}
+            puedeCerrarDias={!soloLectura && !semanaCerrada}
           />
         </>
       )}
@@ -1701,20 +1680,53 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
 // ---------------------------------------------------------------------
 // Panel de cierre de semana (regla 5.1)
 // ---------------------------------------------------------------------
-function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada }) {
+function Cierre({ validaciones, onRevisar, onCerrar, puedeCerrar, cerrada, fechas = [], dias = {}, hoy, situacion = () => '', onCerrarDia, onCerrarTodos, puedeCerrarDias }) {
   const todas = Array.isArray(validaciones) && validaciones.length > 0 && validaciones.every(v => v.pasa)
+  const esCerrado = f => dias[f] === 'cerrado' || dias[f] === 'reabierto'
+  const nCerrados = fechas.filter(esCerrado).length
+  const faltan = fechas.filter(f => !esCerrado(f) && f !== hoy && situacion(f) !== 'futuro')
   return (
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                   padding: '16px 18px', marginTop: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap' }}>
-        <div>
-          <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Cerrar la semana</h3>
-          <p style={{ fontSize: '13px', color: GRIS, margin: 0, maxWidth: '620px' }}>
-            {cerrada ? 'Esta semana ya está cerrada.'
-              : 'Esto se cierra al final de la semana (domingo). Durante la semana solo cierras cada día con “Cerrar día”; cuando estén los 7, se puede cerrar la semana. Cada validación dice qué revisar.'}
-          </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        <h3 style={{ fontSize: '15px', fontWeight: 500, margin: 0 }}>Cierre de la semana</h3>
+        <span style={{ fontSize: '12.5px', color: GRIS }}>{nCerrados} de 7 días cerrados</span>
+      </div>
+
+      {/* Fila de los 7 días */}
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        {fechas.map(f => {
+          const cer = esCerrado(f)
+          const fut = situacion(f) === 'futuro'
+          const esHoy = f === hoy
+          const cerrableAqui = puedeCerrarDias && !cer && !fut && !esHoy
+          return (
+            <div key={f} style={{ flex: '1 1 100px', minWidth: '100px', border: '0.5px solid ' + (cer ? '#bfe6d6' : BORDE),
+                                  background: cer ? '#eefaf4' : 'white', borderRadius: '10px', padding: '9px 11px', textAlign: 'center' }}>
+              <div style={{ fontSize: '12.5px', fontWeight: 600, color: cer ? VERDE : NAVY }}>
+                {nombreDia(f).slice(0, 3)} {corta(f).slice(0, 5)}
+              </div>
+              <div style={{ fontSize: '11px', marginTop: '3px' }}>
+                {cer ? <span style={{ color: VERDE }}>✓ Cerrado</span>
+                  : esHoy ? <span style={{ color: AZUL }}>Hoy</span>
+                  : fut ? <span style={{ color: '#c3d0db' }}>Próximo</span>
+                  : cerrableAqui ? <button onClick={() => onCerrarDia(f)} style={{ background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '11px', cursor: 'pointer', padding: 0 }}>Cerrar día</button>
+                  : <span style={{ color: GRIS }}>Pendiente</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '14px', flexWrap: 'wrap', paddingTop: '14px', borderTop: '1px solid #eef3f8' }}>
+        <p style={{ fontSize: '12.5px', color: GRIS, margin: 0, maxWidth: '560px' }}>
+          {cerrada ? 'Esta semana ya está cerrada.'
+            : 'Cuando estén los 7 días cerrados se puede cerrar la semana. Cada validación dice qué revisar.'}
+        </p>
+        <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap' }}>
+          {!cerrada && faltan.length > 0 && <Btn onClick={onCerrarTodos}>Cerrar todos ({faltan.length})</Btn>}
+          {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
         </div>
-        {!cerrada && <Btn onClick={onRevisar}>Revisar cuadres</Btn>}
       </div>
 
       {validaciones === 'cargando' && (
