@@ -65,6 +65,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
   const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
+  const [unidadMov, setUnidadMov] = useState('compra')  // 'compra' | 'aplica' — en qué unidad ver "Qué se movió"
   const [recosForm, setRecosForm] = useState(null)   // insumo_id con la confirmación de recosteo abierta
   const [recosteando, setRecosteando] = useState(false)
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
@@ -914,6 +915,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       ) : vista === 'movimientos' ? (
         <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12.5px', color: GRIS }}>Ver en:</span>
+            <Seg valor={unidadMov} onCambio={setUnidadMov}
+                 opciones={[['compra', 'Como se compra'], ['aplica', 'Como se aplica']]} />
+          </div>
           <Tabla
             caja min="1040px"
             columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
@@ -921,26 +927,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           >
             {movs.filter(m => coincide(m.insumo)).map(m => {
               const fac = factores[m.insumo_id]
-              // Se muestra la unidad de aplicación cuando difiere del envase,
-              // aunque el factor sea 1 (ej. Funda que se aplica en kg, 1 Funda = 1 kg).
               const distintaU = fac && fac.uApp && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[m.unidad] || m.unidad)
               const conv = fac && ((fac.factor || 1) !== 1 || distintaU)
-              // Si no aplica lo anterior, la segunda unidad es el peso del envase
-              // (contenido, ej. saco = 45 kg).
-              const conPeso = !conv && fac && fac.contenido && fac.contenido !== 1 && fac.uCont
-              const eq = v => {
-                if (conv) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.factor)} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</div>
-                if (conPeso) return <div style={{ fontSize: '10px', color: GRIS }}>{limpio(Number(v) * fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>
-                return null
-              }
-              // Si el saldo inicial es 0 y hay un conteo (el inicial), ese conteo
-              // ES el inventario inicial: se muestra en "Inicial", no en "Conteo".
+              // El interruptor decide en qué unidad se ven los números.
+              const enUso = unidadMov === 'aplica' && conv
+              const factor = enUso ? (fac.factor || 1) : 1
+              const uLabel = (enUso ? (UNIDAD[fac.uApp] || fac.uApp) : (UNIDAD[m.unidad] || m.unidad) || '').toLowerCase()
+              const val = v => limpio(Number(v) * factor)
               const contInicial = Math.abs(Number(m.saldo_inicial)) < 0.0001 && m.conteo !== null && m.conteo !== undefined
               const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
               const conteoMostrar = contInicial ? null : m.conteo
               const cq = conteoQuien[m.insumo_id]
               const abierto2 = conteoDet === m.insumo_id
-              // Flechita para desplegar quién contó y cuándo (no llena la celda).
               const porQuien = cq && (
                 <>
                   <button onClick={() => setConteoDet(abierto2 ? null : m.insumo_id)}
@@ -958,26 +956,25 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}</>}
-                  {conPeso && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {limpio(fac.contenido)} {cap1(UNIDAD[fac.uCont] || fac.uCont)}</div>}
                 </Celda>
-                <Celda derecha gris>{iniMostrar === null ? '—' : <>{limpio(iniMostrar)}{eq(iniMostrar)}{contInicial && porQuien}</>}</Celda>
+                <Celda derecha gris>{iniMostrar === null ? '—' : <>{val(iniMostrar)}{contInicial && porQuien}</>}</Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
-                  {Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}{Number(m.ingresos) ? eq(m.ingresos) : null}
+                  {Number(m.ingresos) ? '+' + val(m.ingresos) : '—'}
                 </Celda>
                 <Celda derecha color={Number(m.consumo) ? ROJO : '#c3d0db'}>
-                  {Number(m.consumo) ? '−' + limpio(m.consumo) : '—'}{Number(m.consumo) ? eq(m.consumo) : null}
+                  {Number(m.consumo) ? '−' + val(m.consumo) : '—'}
                 </Celda>
                 <Celda derecha color={Number(m.devuelto) ? ROJO : '#c3d0db'}>
-                  {Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}{Number(m.devuelto) ? eq(m.devuelto) : null}
+                  {Number(m.devuelto) ? '−' + val(m.devuelto) : '—'}
                 </Celda>
                 <Celda derecha color={Number(m.ajustes) ? (Number(m.ajustes) < 0 ? ROJO : VERDE) : '#c3d0db'}>
-                  {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + limpio(Math.abs(Number(m.ajustes))) : '—'}{Number(m.ajustes) ? eq(Math.abs(Number(m.ajustes))) : null}
+                  {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + val(Math.abs(Number(m.ajustes))) : '—'}
                 </Celda>
                 <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
-                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{limpio(conteoMostrar)}{eq(conteoMostrar)}{porQuien}</>}
+                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{val(conteoMostrar)}{porQuien}</>}
                 </Celda>
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
-                  {limpio(m.saldo_final)}{eq(m.saldo_final)}
+                  {val(m.saldo_final)} <span style={{ fontSize: '11px', fontWeight: 400, color: GRIS }}>{uLabel}</span>
                 </Celda>
               </Fila>
             )})}
