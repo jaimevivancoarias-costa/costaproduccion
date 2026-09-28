@@ -881,7 +881,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   }
 
   return (
-    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#eef2f6', minHeight: '100%' }}>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#e2e8ef', minHeight: '100%' }}>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
                     gap: '18px', flexWrap: 'wrap', marginBottom: '1rem' }}>
@@ -1006,7 +1006,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         <Vacio>No hay piscinas sembradas en esta semana.</Vacio>
       ) : (
         <>
-          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
             <div style={{ overflow: 'auto', maxHeight: '72vh' }}>
               <div style={{ minWidth: ANCHO }}>
 
@@ -1251,7 +1251,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
             {/* Desglose de balanceado de la semana */}
             {desgloseBal.length > 0 && (
-              <div style={{ marginTop: '34px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px' }}>
+              <div style={{ marginTop: '34px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                   <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de balanceado de la semana</h3>
                   <span style={{ fontSize: '12px', color: GRIS }}>{corta(fechas[0])} – {corta(fechas[6])}</span>
