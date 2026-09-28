@@ -559,20 +559,22 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           <p style={{ fontSize: '12px', color: GRIS, margin: '0 0 12px' }}>
             Total de cada insumo aplicado en las piscinas del {corta(lunes)} al {corta(domingo)}.
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-                        gap: '9px' }}>
-            {consumoSemana.map(c => (
-              <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'baseline', padding: '9px 12px', background: '#f6f9fb',
-                    borderRadius: '9px', fontSize: '13px' }}>
-                <span style={{ color: NAVY }}>{nombreInsumo(c.id)}</span>
-                <span style={{ fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-                  {miles(c.cant)} <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>
-                    {unidadInsumo(c.id)}</span>
-                </span>
-              </div>
-            ))}
-          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr>
+              <th style={{ textAlign: 'left', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, padding: '0 12px 9px', borderBottom: '1px solid ' + BORDE }}>Insumo</th>
+              <th style={{ textAlign: 'right', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', fontWeight: 600, padding: '0 12px 9px', borderBottom: '1px solid ' + BORDE }}>Consumo</th>
+            </tr></thead>
+            <tbody>
+              {consumoSemana.map(c => (
+                <tr key={c.id}>
+                  <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', fontWeight: 600 }}>{nombreInsumo(c.id)}</td>
+                  <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {miles(c.cant)} <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{unidadInsumo(c.id)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

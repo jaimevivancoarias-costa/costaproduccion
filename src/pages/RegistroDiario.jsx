@@ -3,7 +3,6 @@ import { supabase } from '../lib/supabase'
 import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento, mensajeError } from './DialogoEvento'
 import CampoNumero from '../components/CampoNumero'
 import BuscadorAplicacion from './BuscadorAplicacion'
-import { Seg } from '../components/controles'
 import {
   LIBRAS_POR_SACO, hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, esDiaDeMuestreo, diasCultivo, semanaISO, situacionDia, num, numDec, miles,
@@ -465,49 +464,21 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const totalDia = f =>
     piscinas.reduce((s, p) => s + librasCelda(cel(p, f)), 0)
 
-  // ---- Desglose de consumo de la semana (panel debajo de la cuadrícula) ----
-  // Balanceado: se arma desde las mismas celdas (libras por producto).
+  // ---- Desglose de balanceado de la semana (panel debajo de la cuadrícula) ----
+  // Se arma desde las mismas celdas (libras por producto).
   const desgloseBal = useMemo(() => {
     const m = {}
     piscinas.forEach(p => fechas.forEach(f => {
       const c = celdas[clave(p, f)]
       if (!c || c.sinAlimentacion) return
-      const add = (pid, lb) => { const x = numDec(lb) || 0; if (pid && x) { const e = m[pid] = m[pid] || { lb: 0, pisc: new Set() }; e.lb += x; e.pisc.add(p.piscinaId) } }
+      const add = (pid, lb) => { const x = numDec(lb) || 0; if (pid && x) { m[pid] = (m[pid] || 0) + x } }
       add(c.productoId, c.libras)
       ;(c.extras || []).forEach(e => add(e.productoId, e.libras))
     }))
-    return Object.entries(m).map(([pid, e]) => ({ nombre: productos.find(x => x.id === pid)?.nombre || '', lb: e.lb, piscinas: e.pisc.size })).sort((a, b) => b.lb - a.lb)
+    return Object.entries(m).map(([pid, lb]) => ({ nombre: productos.find(x => x.id === pid)?.nombre || '', lb })).sort((a, b) => b.lb - a.lb)
   }, [celdas, piscinas, fechas, productos])
   const totalBalLb = desgloseBal.reduce((s, r) => s + r.lb, 0)
 
-  // Insumos: su consumo se registra en otra pantalla; se carga aparte.
-  useEffect(() => {
-    const ids = piscinas.map(p => p.piscinaId)
-    if (!ids.length) { setConsIns([]); return }
-    let cancel = false
-    ;(async () => {
-      const dom = fechas[6]
-      const [{ data: co }, { data: ins }] = await Promise.all([
-        supabase.schema('produccion').from('consumo_insumo')
-          .select('piscina_id, insumo_id, cantidad').in('piscina_id', ids).gte('fecha', lunes).lte('fecha', dom),
-        supabase.schema('produccion').from('insumo').select('id, nombre, unidad').eq('activo', true),
-      ])
-      if (cancel) return
-      const im = {}; (ins || []).forEach(x => { im[x.id] = { nombre: x.nombre, unidad: x.unidad } })
-      setInsMap(im); setConsIns(co || [])
-    })()
-    return () => { cancel = true }
-  }, [piscinas, lunes, fechas])
-  const desgloseIns = useMemo(() => {
-    const m = {}
-    consIns.forEach(r => {
-      const x = numDec(r.cantidad) || 0
-      if (!x) return
-      const e = m[r.insumo_id] = m[r.insumo_id] || { cant: 0, pisc: new Set() }
-      e.cant += x; e.pisc.add(r.piscina_id)
-    })
-    return Object.entries(m).map(([id, e]) => ({ nombre: insMap[id]?.nombre || '', unidad: insMap[id]?.unidad || '', cant: e.cant, piscinas: e.pisc.size })).sort((a, b) => b.cant - a.cant)
-  }, [consIns, insMap])
   async function reabrirDia(fecha) {
     const id = diasId[fecha]
     if (!id) return
@@ -1271,58 +1242,32 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               </div>
             </div>
 
-            {/* Desglose de consumo de la semana */}
-            <div style={{ marginTop: '20px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de la semana</h3>
-                <span style={{ fontSize: '12px', color: GRIS }}>{corta(fechas[0])} – {corta(fechas[6])}</span>
-                <div style={{ marginLeft: 'auto' }}>
-                  <Seg valor={vistaDesg} onCambio={setVistaDesg} opciones={[['bal', 'Balanceado'], ['ins', 'Insumos']]} />
+            {/* Desglose de balanceado de la semana */}
+            {desgloseBal.length > 0 && (
+              <div style={{ marginTop: '20px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de balanceado de la semana</h3>
+                  <span style={{ fontSize: '12px', color: GRIS }}>{corta(fechas[0])} – {corta(fechas[6])}</span>
                 </div>
-              </div>
-              {vistaDesg === 'bal' ? (
-                desgloseBal.length === 0 ? (
-                  <div style={{ color: GRIS, fontSize: '13px', padding: '8px 0' }}>No hay consumo de balanceado esta semana.</div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={dThL}>Balanceado</th><th style={dThR}>Libras</th><th style={dThR}>Sacos</th><th style={dThR}>Piscinas</th></tr></thead>
-                    <tbody>
-                      {desgloseBal.map((r, i) => (
-                        <tr key={i}>
-                          <td style={dTdL}>{r.nombre}</td>
-                          <td style={dTdR}>{miles(Math.round(r.lb))}</td>
-                          <td style={dTdR}>{(r.lb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
-                          <td style={{ ...dTdR, color: GRIS }}>{r.piscinas}</td>
-                        </tr>
-                      ))}
-                      <tr>
-                        <td style={{ ...dTdL, ...dTot }}>Total</td>
-                        <td style={{ ...dTdR, ...dTot }}>{miles(Math.round(totalBalLb))}</td>
-                        <td style={{ ...dTdR, ...dTot }}>{(totalBalLb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
-                        <td style={{ ...dTdR, ...dTot, color: GRIS }}>—</td>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead><tr><th style={dThL}>Balanceado</th><th style={dThR}>Libras</th><th style={dThR}>Sacos</th></tr></thead>
+                  <tbody>
+                    {desgloseBal.map((r, i) => (
+                      <tr key={i}>
+                        <td style={dTdL}>{r.nombre}</td>
+                        <td style={dTdR}>{miles(Math.round(r.lb))}</td>
+                        <td style={dTdR}>{(r.lb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
                       </tr>
-                    </tbody>
-                  </table>
-                )
-              ) : (
-                desgloseIns.length === 0 ? (
-                  <div style={{ color: GRIS, fontSize: '13px', padding: '8px 0' }}>No hay consumo de insumos esta semana.</div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead><tr><th style={dThL}>Insumo</th><th style={dThR}>Consumo</th><th style={dThR}>Piscinas</th></tr></thead>
-                    <tbody>
-                      {desgloseIns.map((r, i) => (
-                        <tr key={i}>
-                          <td style={dTdL}>{r.nombre}</td>
-                          <td style={dTdR}>{miles(r.cant)} <span style={dU}>{r.unidad}</span></td>
-                          <td style={{ ...dTdR, color: GRIS }}>{r.piscinas}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )
-              )}
-            </div>
+                    ))}
+                    <tr>
+                      <td style={{ ...dTdL, ...dTot }}>Total</td>
+                      <td style={{ ...dTdR, ...dTot }}>{miles(Math.round(totalBalLb))}</td>
+                      <td style={{ ...dTdR, ...dTot }}>{(totalBalLb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {atrasadas.length > 0 && modo === 'registrar' && (
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', fontSize: '13px',
