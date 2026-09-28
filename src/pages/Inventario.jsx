@@ -310,10 +310,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const dif = conteo != null ? conteo - teorico : null
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
       const cq = conteoQuien[id]
-      const ls = (lotes[id] || []).flatMap(L => ([
-        { t: `${limpio(L.cantidad)} a ${L.costo == null ? 's/precio' : dineroExacto(L.costo)}` },
-        { t: L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico', sm: true },
-      ]))
+      // Lotes en una sola línea, solo si hay más de uno (agrupa el caso "todos al mismo precio").
+      const lts = lotes[id] || []
+      let lotesLinea = ''
+      if (lts.length > 1) {
+        const u = uPres.toLowerCase()
+        const costos = [...new Set(lts.map(L => L.costo == null ? 's/p' : Number(L.costo).toFixed(6)))]
+        if (costos.length === 1) {
+          const pr = lts[0].costo == null ? 'sin precio' : dineroExacto(lts[0].costo)
+          lotesLinea = `Lotes: ${lts.map(L => limpio(L.cantidad)).join(' · ')} ${u} (todos a ${pr})`
+        } else {
+          lotesLinea = 'Lotes: ' + lts.map(L => `${limpio(L.cantidad)} a ${L.costo == null ? 's/p' : dineroExacto(L.costo)}`).join(' · ')
+        }
+      }
       const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
 
       totIni += nd(m?.saldo_inicial); totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
@@ -321,11 +330,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       filasRep.push({
-        nombre, viaTop: convR ? `${uPres} → ${uApp}` : uPres, viaSub: convR ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
+        nombre, lotesLinea,
+        viaTop: convR ? `${uPres} → ${uApp}` : uPres, viaSub: convR ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
         inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
-        saldoHoy: limpio(saldoAlDia), precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
-        valor: dinero(valor), lotes: ls,
+        saldoHoy: `${limpio(saldoAlDia)} ${uPres.toLowerCase()}`,
+        saldoEquiv: convR ? `= ${limpio(saldoAlDia * factorN)} ${uApp.toLowerCase()}` : '',
+        precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
+        valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
         motivo: descMotivo[id] || '',
@@ -335,17 +347,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const hayConteo = filasRep.some(f => f.contado !== '')
 
     const columnas = [
-      { titulo: 'Insumo', campo: 'nombre' },
+      { titulo: 'Insumo', campo: 'nombre', sub: 'lotesLinea' },
       { titulo: 'Llega / aplica', campo: 'viaTop', sub: 'viaSub' },
       { titulo: 'Inicial', der: true, campo: 'inicial' },
       { titulo: 'Ingresos', der: true, campo: 'ingresos' },
       { titulo: 'Devuelto', der: true, campo: 'devuelto' },
       { titulo: 'Consumo', der: true, campo: 'consumo' },
-      { titulo: 'Saldo hoy', der: true, campo: 'saldoHoy' },
+      { titulo: 'Saldo', der: true, campo: 'saldoHoy', sub: 'saldoEquiv', destacar: true },
       { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
       { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
       { titulo: 'Valor', der: true, campo: 'valor' },
-      { titulo: 'Lotes', campo: 'lotes', lotes: true },
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
         { titulo: 'Dif.', der: true, campo: 'dif' },
@@ -354,10 +365,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ] : []),
     ]
     const total = {
-      nombre: 'Total', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
+      nombre: 'Total', lotesLinea: '', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
       devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
-      saldoHoy: limpio(totSaldo), consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
-      valor: dinero(totValor), lotes: [], contado: '', contadoInfo: '',
+      saldoHoy: '', saldoEquiv: '', consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
+      valor: dinero(totValor), contado: '', contadoInfo: '',
       dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
       descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
     }
