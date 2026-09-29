@@ -59,6 +59,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [vista, setVista] = useState('consumo')
   const [filtros, setFiltros] = useState([])   // ids de item/piscina a filtrar (chips)
   const [abiertoP, setAbiertoP] = useState({}) // clave -> mostrar el desglose por precio
+  const [factoresIns, setFactoresIns] = useState({}) // insumo_id -> { unidad, unidad_compra, factor }
   const irVista = v => {
     setVista(v)
     if (v === 'consumo') setKind('consumo')
@@ -101,6 +102,23 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   }, [finca.id, desde, hasta, todasFincas])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Factor y unidad de compra de los insumos (para "Equivale a" en la tabla),
+  // con override por finca. Igual que en bodega.
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      const [{ data: ins }, { data: ov }] = await Promise.all([
+        supabase.schema('produccion').from('insumo').select('id, unidad, unidad_compra, factor').eq('activo', true),
+        supabase.schema('produccion').from('insumo_finca').select('insumo_id, unidad, factor').eq('finca_id', finca.id),
+      ])
+      const m = {}
+      ;(ins || []).forEach(i => { m[i.id] = { unidad: i.unidad, unidad_compra: i.unidad_compra, factor: Number(i.factor) || 1 } })
+      ;(ov || []).forEach(x => { if (m[x.insumo_id]) { if (x.unidad) m[x.insumo_id].unidad = x.unidad; if (x.factor != null) m[x.insumo_id].factor = Number(x.factor) || 1 } })
+      if (vivo) setFactoresIns(m)
+    })()
+    return () => { vivo = false }
+  }, [finca.id])
 
   // Desglose del consumo de balanceado por precio (cuánto se gastó a cada
   // precio). Va aparte y no rompe si la función aún no está en la base.
@@ -279,10 +297,19 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // angosta: solo nombre y cantidad.
   // Tabla nueva: Producto · Cantidad (se aplica) · Equivale a (llega) · Costo · Peso.
   const grid = esJefe ? '1.5fr 1.1fr 0.95fr 1.05fr 1.7fr' : '1.6fr 1fr 1fr'
-  // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo aún sin factor aquí.
+  // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo → cantidad/factor
+  // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
   const equivale = g => {
-    if (g.mixto) return '—'
-    if (g.tipo === 'balanceado' && g.cantidad) return miles(g.cantidad / LIBRAS_POR_SACO) + ' sacos'
+    if (g.mixto || !g.cantidad) return '—'
+    if (g.tipo === 'balanceado') return miles(g.cantidad / LIBRAS_POR_SACO) + ' sacos'
+    if (g.tipo === 'insumo') {
+      const fi = factoresIns[g.clave]
+      const gen = u => { const x = String(u || '').toLowerCase(); return !x || x === 'unidad' || x === 'unidades' || x === 'u' }
+      if (fi && !gen(fi.unidad) && fi.unidad_compra && fi.unidad_compra !== fi.unidad) {
+        const val = g.cantidad / (fi.factor || 1)
+        return Number(val).toLocaleString('es-EC', { maximumFractionDigits: 2 }) + ' ' + (UNIDAD[fi.unidad_compra] || fi.unidad_compra)
+      }
+    }
     return '—'
   }
   const cabItem = agrupar === 'item' ? 'Producto' : agrupar === 'piscina' ? 'Piscina' : 'Finca'
