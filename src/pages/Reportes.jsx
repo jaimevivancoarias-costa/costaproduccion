@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, miles, dinero } from '../lib/fechas'
+import { hoyISO, corta, miles, dinero, LIBRAS_POR_SACO } from '../lib/fechas'
+import { Seg } from '../components/controles'
 
 // Reportes · modulo Produccion
 //
@@ -53,6 +54,15 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [aviso, setAviso] = useState(null)
   // Que reporte: consumo del rango, o cierre de ciclos cosechados.
   const [kind, setKind] = useState('consumo')
+  // Agrupación de las pestañas en 3: Consumo, Bodega, Producción.
+  const [vista, setVista] = useState('consumo')
+  const [filtros, setFiltros] = useState([])   // ids de item/piscina a filtrar (chips)
+  const irVista = v => {
+    setVista(v)
+    if (v === 'consumo') setKind('consumo')
+    else if (v === 'bodega') setKind(esJefe ? 'valorizacion' : 'estado')
+    else setKind('proceso')
+  }
 
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -204,8 +214,22 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
   // Filtrado por tipo y agregado segun lo elegido.
   const visibles = useMemo(
-    () => filas.filter(f => tipo === 'todo' || f.tipo === tipo),
-    [filas, tipo])
+    () => filas.filter(f => (tipo === 'todo' || f.tipo === tipo)
+      && (!filtros.length || filtros.includes(f.item_id) || filtros.includes(f.piscina_id))),
+    [filas, tipo, filtros])
+
+  // Opciones del filtro: productos/insumos y piscinas presentes en el rango.
+  const opcItems = useMemo(() => {
+    const m = new Map()
+    filas.forEach(f => { if (f.item_id && !m.has(f.item_id)) m.set(f.item_id, { id: f.item_id, nombre: f.item, tipo: f.tipo }) })
+    return [...m.values()].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)))
+  }, [filas])
+  const opcPisc = useMemo(() => {
+    const m = new Map()
+    filas.forEach(f => { if (f.piscina_id && !m.has(f.piscina_id)) m.set(f.piscina_id, { id: f.piscina_id, nombre: f.piscina, tipo: 'piscina' }) })
+    return [...m.values()].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)))
+  }, [filas])
+  const infoFiltro = id => opcItems.find(o => o.id === id) || opcPisc.find(o => o.id === id) || { nombre: '', tipo: '' }
 
   const grupos = useMemo(() => {
     const m = {}
@@ -235,21 +259,43 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const maxCosto = Math.max(1, ...grupos.map(g => g.costo))
   // El bodeguero no ve columnas de dolares, asi que la tabla es mas
   // angosta: solo nombre y cantidad.
-  const grid = esJefe ? GRID : '1fr 220px'
+  // Tabla nueva: Producto · Cantidad (se aplica) · Equivale a (llega) · Costo · Peso.
+  const grid = esJefe ? '1.5fr 1.1fr 0.95fr 1.05fr 1.7fr' : '1.6fr 1fr 1fr'
+  // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo aún sin factor aquí.
+  const equivale = g => {
+    if (g.mixto) return '—'
+    if (g.tipo === 'balanceado' && g.cantidad) return miles(g.cantidad / LIBRAS_POR_SACO) + ' sacos'
+    return '—'
+  }
+  const cabItem = agrupar === 'item' ? 'Producto' : agrupar === 'piscina' ? 'Piscina' : 'Finca'
 
   return (
-    <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
-      <div style={{ marginBottom: '14px' }}>
-        <h2 style={{ fontSize: '19px', fontWeight: 500, margin: '0 0 10px' }}>Reportes</h2>
-        <div style={{ display: 'flex', gap: '7px' }}>
-          <Chip on={kind === 'consumo'} onClick={() => setKind('consumo')}>Consumo</Chip>
-          {esJefe && <Chip on={kind === 'valorizacion'} onClick={() => setKind('valorizacion')}>Valorización de bodega total</Chip>}
-          <Chip on={kind === 'estado'} onClick={() => setKind('estado')}>Estado / Reponer</Chip>
-          <Chip on={kind === 'descuadres'} onClick={() => setKind('descuadres')}>Descuadres</Chip>
-          <Chip on={kind === 'proceso'} onClick={() => setKind('proceso')}>En proceso</Chip>
-          <Chip on={kind === 'cosechas'} onClick={() => setKind('cosechas')}>Cosechas</Chip>
-        </div>
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#eef2f6', minHeight: '100%' }}>
+      <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 3px' }}>Reportes</h1>
+      <div style={{ fontSize: '13px', color: GRIS, marginBottom: '14px' }}>{finca.nombre}</div>
+
+      {/* Tres pestañas: Consumo, Bodega, Producción. */}
+      <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, marginBottom: '16px', flexWrap: 'wrap' }}>
+        {[['consumo', 'Consumo'], ['bodega', 'Bodega'], ['produccion', 'Producción']].map(([v, txt]) => (
+          <button key={v} onClick={() => irVista(v)} style={{
+            border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13.5px',
+            padding: '10px 14px', marginBottom: '-1px', color: vista === v ? AZUL : GRIS,
+            borderBottom: '2px solid ' + (vista === v ? AZUL : 'transparent'), fontWeight: vista === v ? 600 : 400,
+          }}>{txt}</button>
+        ))}
       </div>
+
+      {/* Sub-pestañas de Bodega y Producción. */}
+      {vista === 'bodega' && (
+        <div style={{ marginBottom: '14px' }}>
+          <Seg valor={kind} onCambio={setKind} opciones={[...(esJefe ? [['valorizacion', 'Valorización']] : []), ['estado', 'Estado / Reponer'], ['descuadres', 'Descuadres']]} />
+        </div>
+      )}
+      {vista === 'produccion' && (
+        <div style={{ marginBottom: '14px' }}>
+          <Seg valor={kind} onCambio={setKind} opciones={[['proceso', 'En proceso'], ['cosechas', 'Cosechas']]} />
+        </div>
+      )}
 
       {/* Filtros (valorización y estado son "ahora", no usan rango de fechas) */}
       {kind !== 'valorizacion' && kind !== 'estado' && (
@@ -330,31 +376,40 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       )}
 
       {kind === 'consumo' && <>
-      {/* Ejes */}
-      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        <Grupo titulo="Mostrar">
-          <Chip on={tipo === 'todo'} onClick={() => setTipo('todo')}>Todo</Chip>
-          <Chip on={tipo === 'balanceado'} onClick={() => setTipo('balanceado')}>Balanceado</Chip>
-          <Chip on={tipo === 'insumo'} onClick={() => setTipo('insumo')}>Insumos</Chip>
-          {!todasFincas && <Chip on={tipo === 'diesel'} onClick={() => setTipo('diesel')}>Diesel</Chip>}
-        </Grupo>
-        <Grupo titulo="Agrupar por">
-          <Chip on={agrupar === 'item'} onClick={() => setAgrupar('item')}>Producto</Chip>
-          <Chip on={agrupar === 'piscina'} onClick={() => setAgrupar('piscina')} disabled={todasFincas}>Piscina</Chip>
-          <Chip on={agrupar === 'finca'} onClick={() => setAgrupar('finca')}>Finca</Chip>
-        </Grupo>
+      {/* Toggles en una línea */}
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <Seg valor={tipo} onCambio={setTipo}
+             opciones={[['todo', 'Todo'], ['balanceado', 'Balanceado'], ['insumo', 'Insumos'], ...(!todasFincas ? [['diesel', 'Diesel']] : [])]} />
+        <span style={{ color: '#c3d0db' }}>|</span>
+        <Seg valor={agrupar} onCambio={v => v !== 'piscina' || !todasFincas ? setAgrupar(v) : null}
+             opciones={[['item', 'Por producto'], ...(!todasFincas ? [['piscina', 'Por piscina']] : []), ['finca', 'Por finca']]} />
+      </div>
+      {/* Filtro con chips de color (azul = balanceado, ámbar = insumo) */}
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '16px' }}>
+        <span style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }}>Filtro</span>
+        {filtros.map(id => {
+          const o = infoFiltro(id); const ins = o.tipo === 'insumo'; const pisc = o.tipo === 'piscina'
+          return (
+            <span key={id} style={{ borderRadius: '20px', padding: '5px 8px 5px 12px', fontSize: '12.5px', fontWeight: 500,
+                    display: 'inline-flex', gap: '6px', alignItems: 'center', border: '0.5px solid ' + (ins ? '#f0dcbb' : pisc ? '#d9e2ea' : '#cfe0f0'),
+                    background: ins ? '#fbf1e0' : pisc ? '#eef2f6' : '#e8f1fb', color: ins ? '#b5751a' : pisc ? GRIS : AZUL }}>
+              {o.nombre}
+              <button onClick={() => setFiltros(filtros.filter(x => x !== id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', opacity: 0.7, padding: 0, fontSize: '12px' }}>✕</button>
+            </span>
+          )
+        })}
+        <FiltroReporte items={opcItems} piscinas={opcPisc} valor={filtros} onCambio={setFiltros} />
       </div>
 
-      {/* Resumen */}
+      {/* Resumen · tira delgada */}
       {!cargando && (
-        <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
-          {/* El gasto en dolares es solo del jefe. */}
-          {esJefe && <Kpi titulo={verTodoR ? 'Gasto del rango (con diesel)' : 'Gasto total del rango'}
-                          valor={dinero(totalCosto + (verTodoR ? dslR.total : 0))} />}
-          {esJefe && !todasFincas && <Kpi titulo="Diesel del rango" valor={dinero(dslR.total)} />}
-          <Kpi titulo={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'}
-               valor={String(grupos.length)} />
-          <Kpi titulo="Días" valor={String(dias(desde, hasta))} />
+        <div style={{ display: 'flex', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden',
+                      marginBottom: '16px', boxShadow: '0 1px 4px rgba(2,40,71,.07)', flexWrap: 'wrap' }}>
+          {esJefe && <KCel hl k={verTodoR ? 'Gasto del rango (con diesel)' : 'Gasto del rango'}
+                           v={dinero(totalCosto + (verTodoR ? dslR.total : 0))} />}
+          {esJefe && !todasFincas && <KCel k="Diesel del rango" v={dinero(dslR.total)} />}
+          <KCel k={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'} v={String(grupos.length)} />
+          <KCel k="Días" v={String(dias(desde, hasta))} />
         </div>
       )}
 
@@ -428,73 +483,69 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       ) : (
         <Caja>
           <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px', padding: '11px 16px',
-                        fontSize: '12px', color: GRIS,
+                        fontSize: '11.5px', fontWeight: 600, color: '#9fb0bf', textAlign: 'center',
                         borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
-            <span>{agrupar === 'item' ? 'Producto' : agrupar === 'piscina' ? 'Piscina' : 'Finca'}</span>
-            <span style={{ textAlign: 'right' }}>Cantidad</span>
-            {esJefe && <span style={{ textAlign: 'right' }}>Costo</span>}
+            <span style={{ textAlign: 'left' }}>{cabItem}</span>
+            <span>Cantidad (se aplica)</span>
+            <span>Equivale a (llega)</span>
+            {esJefe && <span>Costo</span>}
             {esJefe && <span>Peso</span>}
-            {esJefe && agrupar === 'piscina' && <span style={{ textAlign: 'right' }}>Costo / ha</span>}
           </div>
 
           {grupos.map(g => (
             <div key={g.clave} style={{ borderBottom: '0.5px solid #f1f6f9' }}>
             <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
-                    padding: '10px 16px', alignItems: 'center', fontSize: '13px' }}>
+                    padding: '11px 16px', alignItems: 'center', fontSize: '13px' }}>
               <span>
                 {g.etiqueta}
                 {agrupar === 'item' && (
-                  <span style={{ fontSize: '11px', color: g.tipo === 'insumo' ? AMBAR : AZUL,
-                                 marginLeft: '7px' }}>
+                  <span style={{ fontSize: '11px', color: g.tipo === 'insumo' ? AMBAR : AZUL, marginLeft: '7px' }}>
                     {g.tipo === 'insumo' ? 'insumo' : 'balanceado'}
                   </span>
                 )}
               </span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                {g.mixto ? '—' : `${miles(g.cantidad)} ${UNIDAD[g.unidad] || g.unidad || ''}`}
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{miles(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{UNIDAD[g.unidad] || g.unidad || ''}</span></>}
+              </span>
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12.5px' }}>
+                {equivale(g)}
               </span>
               {esJefe && (
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
                   {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>{dinero(g.costo / g.cantidad)} /{UNIDAD[g.unidad] || g.unidad || ''}</span> : null}
                 </span>
               )}
               {esJefe && (
-                <span style={{ display: 'block', height: '8px', background: '#eef3f7', borderRadius: '20px',
-                               overflow: 'hidden' }}>
+                <span style={{ display: 'block', height: '8px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden' }}>
                   <i style={{ display: 'block', height: '100%', borderRadius: '20px',
                               width: (g.costo / maxCosto * 100) + '%',
                               background: g.tipo === 'insumo' ? '#E3B15F' : AZUL }} />
                 </span>
               )}
-              {esJefe && agrupar === 'piscina' && (
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-                  {g.hectareas ? dinero(g.costo / g.hectareas) : '—'}
-                </span>
-              )}
             </div>
-            {esJefe && agrupar === 'item' && (porPrecio[g.clave]?.length > 1) && (
-              <div style={{ padding: '0 16px 10px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <span style={{ fontSize: '11px', color: GRIS, alignSelf: 'center' }}>Por precio:</span>
-                {porPrecio[g.clave].map((x, i) => (
-                  <span key={i} style={{ fontSize: '11px', background: '#f2f6fa', border: '0.5px solid ' + BORDE, borderRadius: '20px', padding: '4px 11px', color: GRIS, lineHeight: 1.3 }}>
-                    <b style={{ color: NAVY, fontWeight: 600 }}>{miles(x.sacos)} sacos</b> a {dinero(x.precio)}
-                    {x.desde && <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1' }}>{corta(x.desde)}{x.hasta && x.hasta !== x.desde ? ' – ' + corta(x.hasta) : ''}</span>}
-                  </span>
-                ))}
-              </div>
-            )}
+            {esJefe && agrupar === 'item' && (porPrecio[g.clave]?.length > 1) && (() => {
+              const ps = porPrecio[g.clave]
+              const tS = ps.reduce((t, x) => t + Number(x.sacos), 0)
+              const tC = ps.reduce((t, x) => t + Number(x.costo), 0)
+              return (
+                <div style={{ padding: '0 16px 11px 42px', fontSize: '12px', color: GRIS }}>
+                  <b style={{ color: NAVY }}>{ps.length} precios:</b>{' '}
+                  {ps.map((x, i) => `${miles(x.sacos)} a ${dinero(x.precio)}`).join(' · ')}
+                  {tS > 0 && <span style={{ color: '#a7b4c1' }}> · promedio {dinero(tC / tS)} /saco</span>}
+                </div>
+              )
+            })()}
             </div>
           ))}
 
           {esJefe && (
             <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px', padding: '12px 16px',
-                          alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
+                          alignItems: 'center', background: '#fafcfd', fontSize: '13px', fontWeight: 600 }}>
               <span>Total</span>
-              <span />
+              <span /><span />
               <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(totalCosto)}</span>
               <span />
-              {agrupar === 'piscina' && <span />}
             </div>
           )}
         </Caja>
@@ -1432,6 +1483,62 @@ function Chip({ children, on, pequeno, disabled, onClick }) {
       background: on ? '#E6F1FB' : 'white', color: disabled ? '#c3d0db' : on ? AZUL : NAVY,
       fontWeight: on ? 500 : 400, opacity: disabled ? 0.6 : 1,
     }}>{children}</button>
+  )
+}
+function KCel({ k, v, hl }) {
+  return (
+    <div style={{ flex: '1 1 150px', padding: '12px 16px', borderRight: '0.5px solid ' + BORDE, background: hl ? NAVY : 'white' }}>
+      <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.03em', color: hl ? 'rgba(255,255,255,0.6)' : GRIS }}>{k}</div>
+      <div style={{ fontSize: '20px', fontWeight: 600, marginTop: '2px', color: hl ? '#fff' : NAVY, fontVariantNumeric: 'tabular-nums' }}>{v}</div>
+    </div>
+  )
+}
+const linkBtn = { background: 'none', border: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', padding: 0 }
+function OpFiltro({ o, on, onClick }) {
+  const ins = o.tipo === 'insumo'
+  return (
+    <button onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: '9px', width: '100%', border: 'none', background: 'none', padding: '8px 10px', borderRadius: '8px', fontSize: '13px', color: NAVY, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+      onMouseEnter={e => e.currentTarget.style.background = '#f6f9fb'} onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+      <span style={{ width: '16px', height: '16px', borderRadius: '5px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: '#fff', border: '1.5px solid ' + (on ? AZUL : '#c3d0db'), background: on ? AZUL : '#fff' }}>{on ? '✓' : ''}</span>
+      <span style={{ flex: 1 }}>{o.nombre}</span>
+      {o.tipo === 'balanceado' && <span style={{ fontSize: '10px', color: AZUL }}>bal</span>}
+      {ins && <span style={{ fontSize: '10px', color: '#b5751a' }}>ins</span>}
+    </button>
+  )
+}
+function FiltroReporte({ items, piscinas, valor, onCambio }) {
+  const [abierto, setAbierto] = useState(false)
+  const [q, setQ] = useState('')
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!abierto) return
+    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false) }
+    document.addEventListener('mousedown', fuera)
+    return () => document.removeEventListener('mousedown', fuera)
+  }, [abierto])
+  const toggle = id => onCambio(valor.includes(id) ? valor.filter(x => x !== id) : [...valor, id])
+  const ql = q.trim().toLowerCase()
+  const fItems = items.filter(o => String(o.nombre).toLowerCase().includes(ql))
+  const fPisc = piscinas.filter(o => String(o.nombre).toLowerCase().includes(ql))
+  const secc = { fontSize: '10px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#9fb0bf', padding: '4px 8px' }
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setAbierto(a => !a)} style={{ border: '1px dashed #c3d0db', background: '#fff', borderRadius: '20px', padding: '6px 13px', fontSize: '12.5px', color: GRIS, cursor: 'pointer', fontFamily: 'inherit' }}>+ Filtrar por producto o piscina</button>
+      {abierto && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, width: '280px', background: '#fff', border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 12px 30px rgba(12,39,66,.15)', padding: '6px', zIndex: 20, maxHeight: '340px', overflow: 'auto' }}>
+          <input value={q} onChange={e => setQ(e.target.value)} autoFocus placeholder="Buscar…" style={{ ...entrada, width: '100%', marginBottom: '6px' }} />
+          {fItems.length > 0 && <div style={secc}>Productos / insumos</div>}
+          {fItems.map(o => <OpFiltro key={o.id} o={o} on={valor.includes(o.id)} onClick={() => toggle(o.id)} />)}
+          {fPisc.length > 0 && <div style={{ ...secc, borderTop: '1px solid #eef3f8', marginTop: '4px', paddingTop: '6px' }}>Piscinas</div>}
+          {fPisc.map(o => <OpFiltro key={o.id} o={o} on={valor.includes(o.id)} onClick={() => toggle(o.id)} />)}
+          {!fItems.length && !fPisc.length && <div style={{ padding: '8px', fontSize: '12px', color: GRIS }}>Sin resultados</div>}
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 8px 2px', borderTop: '1px solid #eef3f8', marginTop: '4px' }}>
+            <button onClick={() => onCambio([])} style={linkBtn}>Limpiar</button>
+            <button onClick={() => setAbierto(false)} style={{ ...linkBtn, fontWeight: 600 }}>Listo</button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 function Kpi({ titulo, valor }) {
