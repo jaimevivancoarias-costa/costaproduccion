@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, miles, dinero, LIBRAS_POR_SACO } from '../lib/fechas'
 import { Seg } from '../components/controles'
+import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 
 // Reportes · modulo Produccion
 //
@@ -285,6 +286,43 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   }
   const cabItem = agrupar === 'item' ? 'Producto' : agrupar === 'piscina' ? 'Piscina' : 'Finca'
 
+  // Arma el reporte de Consumo para PDF/Excel (mismo generador que bodega).
+  function construirReporteConsumo() {
+    const filasRep = grupos.map(g => {
+      const ps = (agrupar === 'item' && porPrecio[g.clave]?.length > 1) ? porPrecio[g.clave] : null
+      return {
+        nombre: g.etiqueta + (agrupar === 'item' && g.tipo !== 'mixto' ? `  (${g.tipo})` : ''),
+        detalle: ps ? 'Por precio: ' + ps.map(x => `${miles(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
+        cantidad: g.mixto ? '—' : `${miles(g.cantidad)} ${UNIDAD[g.unidad] || g.unidad || ''}`,
+        equivale: equivale(g),
+        costo: dinero(g.costo),
+        costoUnit: (!g.mixto && g.cantidad) ? `${dinero(g.costo / g.cantidad)} /${UNIDAD[g.unidad] || g.unidad || ''}` : '',
+      }
+    })
+    const columnas = [
+      { titulo: cabItem, campo: 'nombre', sub: 'detalle' },
+      { titulo: 'Cantidad (se aplica)', der: true, campo: 'cantidad' },
+      { titulo: 'Equivale a (llega)', der: true, campo: 'equivale' },
+      { titulo: 'Costo', der: true, campo: 'costo', sub: 'costoUnit', destacar: true },
+    ]
+    const total = { nombre: 'Total', detalle: '', cantidad: '', equivale: '', costo: dinero(totalCosto), costoUnit: '' }
+    const cards = [
+      { k: 'Gasto del rango', v: dinero(totalCosto + (verTodoR ? dslR.total : 0)) },
+      { k: cabItem + 's', v: '' + grupos.length },
+      { k: 'Días', v: '' + dias(desde, hasta) },
+    ]
+    return {
+      titulo: 'Reporte de Consumo', finca: todasFincas ? 'Todas las fincas' : finca.nombre,
+      categoria: tipo === 'todo' ? '' : cap1(tipo === 'insumo' ? 'insumos' : tipo),
+      meta: [{ k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` }, { k: 'Impreso', v: corta(hoyISO()) }],
+      cards, columnas, filas: filasRep, total,
+    }
+  }
+  function exportarConsumoExcel() { reporteBodegaExcel(construirReporteConsumo()) }
+  function exportarConsumoPDF() {
+    if (!reporteBodegaPDF(construirReporteConsumo())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+  }
+
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem 1.4rem 4rem', background: '#eef2f6', minHeight: '100%' }}>
       <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 3px' }}>Reportes</h1>
@@ -399,6 +437,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <span style={{ color: '#c3d0db' }}>|</span>
         <Seg valor={agrupar} onCambio={v => v !== 'piscina' || !todasFincas ? setAgrupar(v) : null}
              opciones={[['item', 'Por producto'], ...(!todasFincas ? [['piscina', 'Por piscina']] : []), ['finca', 'Por finca']]} />
+        {esJefe && <div style={{ marginLeft: 'auto' }}>
+          <DescargarBtn disabled={!grupos.length} onPDF={exportarConsumoPDF} onExcel={exportarConsumoExcel} />
+        </div>}
       </div>
       {/* Filtro con chips de color (azul = balanceado, ámbar = insumo) */}
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '16px' }}>
@@ -603,15 +644,6 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         </div>
       )}
 
-      {/* La descarga incluye costos, asi que es solo del jefe. */}
-      {esJefe && <button onClick={() => exportarCSV(grupos, agrupar)}
-        disabled={!grupos.length}
-        style={{ marginTop: '14px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit',
-                 fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px',
-                 background: 'white', color: NAVY, cursor: grupos.length ? 'pointer' : 'default',
-                 opacity: grupos.length ? 1 : 0.5 }}>
-        Descargar en Excel
-      </button>}
       </>}
     </div>
   )
@@ -1556,6 +1588,28 @@ function OpFiltro({ o, on, onClick }) {
       {o.tipo === 'balanceado' && <span style={{ fontSize: '10px', color: AZUL }}>bal</span>}
       {ins && <span style={{ fontSize: '10px', color: '#b5751a' }}>ins</span>}
     </button>
+  )
+}
+const menuItem = { display: 'flex', alignItems: 'center', gap: '9px', width: '100%', border: 'none', background: 'none', padding: '9px 10px', borderRadius: '8px', fontSize: '13px', color: NAVY, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }
+function DescargarBtn({ onPDF, onExcel, disabled }) {
+  const [abierto, setAbierto] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!abierto) return
+    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false) }
+    document.addEventListener('mousedown', fuera)
+    return () => document.removeEventListener('mousedown', fuera)
+  }, [abierto])
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button disabled={disabled} onClick={() => setAbierto(a => !a)} style={{ border: '1px solid ' + BORDE, background: '#fff', borderRadius: '9px', padding: '8px 14px', fontSize: '13px', color: NAVY, cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit', opacity: disabled ? 0.5 : 1, display: 'inline-flex', gap: '7px', alignItems: 'center' }}>Descargar <span style={{ color: '#9fb0bf' }}>▾</span></button>
+      {abierto && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: '200px', background: '#fff', border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 12px 30px rgba(12,39,66,.15)', padding: '6px', zIndex: 20 }}>
+          <button onClick={() => { setAbierto(false); onPDF() }} style={menuItem} onMouseEnter={e => e.currentTarget.style.background = '#f6f9fb'} onMouseLeave={e => e.currentTarget.style.background = 'none'}><span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#c0392b' }} />Descargar PDF</button>
+          <button onClick={() => { setAbierto(false); onExcel() }} style={menuItem} onMouseEnter={e => e.currentTarget.style.background = '#f6f9fb'} onMouseLeave={e => e.currentTarget.style.background = 'none'}><span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#1e7e45' }} />Descargar Excel</button>
+        </div>
+      )}
+    </div>
   )
 }
 function FiltroReporte({ items, piscinas, valor, onCambio }) {
