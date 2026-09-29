@@ -316,6 +316,16 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const porHa = useMemo(() => porPiscina.filter(p => p.ha > 0).map(p => ({ label: p.label, valor: p.valor / p.ha }))
     .sort((a, b) => b.valor - a.valor).slice(0, 7), [porPiscina])
   const colItem = tipo => tipo === 'insumo' ? '#E3B15F' : AZUL
+  // Unidad a mostrar: para insumos (agrupados por producto) usa la unidad de
+  // la FINCA (override), no la base — así PERCARBONATO en Austromar sale en g,
+  // no en kg.
+  const unidadCel = g => {
+    if (g.tipo === 'insumo' && agrupar === 'item') {
+      const fi = factoresIns[g.clave]
+      if (fi && fi.unidad) return UNIDAD[fi.unidad] || fi.unidad
+    }
+    return UNIDAD[g.unidad] || g.unidad || ''
+  }
   // El bodeguero no ve columnas de dolares, asi que la tabla es mas
   // angosta: solo nombre y cantidad.
   // Tabla nueva: Producto · Cantidad (se aplica) · Equivale a (llega) · Costo · Peso.
@@ -344,10 +354,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       return {
         nombre: g.etiqueta + (agrupar === 'item' && g.tipo !== 'mixto' ? `  (${g.tipo})` : ''),
         detalle: ps ? 'Por precio: ' + ps.map(x => `${miles(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
-        cantidad: g.mixto ? '—' : `${miles(g.cantidad)} ${UNIDAD[g.unidad] || g.unidad || ''}`,
+        cantidad: g.mixto ? '—' : `${miles(g.cantidad)} ${unidadCel(g)}`,
         equivale: equivale(g),
         costo: dinero(g.costo),
-        costoUnit: (!g.mixto && g.cantidad) ? `${dinero(g.costo / g.cantidad)} /${UNIDAD[g.unidad] || g.unidad || ''}` : '',
+        costoUnit: (!g.mixto && g.cantidad) ? `${dinero(g.costo / g.cantidad)} /${unidadCel(g)}` : '',
       }
     })
     const columnas = [
@@ -629,7 +639,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 )}
               </span>
               <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{miles(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{UNIDAD[g.unidad] || g.unidad || ''}</span></>}
+                {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{miles(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{unidadCel(g)}</span></>}
               </span>
               <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12.5px' }}>
                 {equivale(g)}
@@ -637,7 +647,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               {esJefe && (
                 <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
-                  {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>{dinero(g.costo / g.cantidad)} /{UNIDAD[g.unidad] || g.unidad || ''}</span> : null}
+                  {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>{dinero(g.costo / g.cantidad)} /{unidadCel(g)}</span> : null}
                 </span>
               )}
               {esJefe && (
