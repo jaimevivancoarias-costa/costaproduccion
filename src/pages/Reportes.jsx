@@ -58,6 +58,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // Agrupación de las pestañas en 3: Consumo, Bodega, Producción.
   const [vista, setVista] = useState('consumo')
   const [filtros, setFiltros] = useState([])   // ids de item/piscina a filtrar (chips)
+  const [abiertoP, setAbiertoP] = useState({}) // clave -> mostrar el desglose por precio
   const irVista = v => {
     setVista(v)
     if (v === 'consumo') setKind('consumo')
@@ -387,14 +388,6 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             </select>
           </Campo>
         )}
-        {fincas.length > 1 && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px',
-                          cursor: 'pointer', marginLeft: 'auto' }}>
-            <input type="checkbox" checked={todasFincas}
-                   onChange={e => { setTodasFincas(e.target.checked); if (e.target.checked) setAgrupar('finca') }} />
-            Comparar todas las fincas
-          </label>
-        )}
       </div>
       )}
 
@@ -573,6 +566,11 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
                     padding: '11px 16px', alignItems: 'center', fontSize: '13px' }}>
               <span>
+                {esJefe && agrupar === 'item' && (porPrecio[g.clave]?.length > 1) && (
+                  <button onClick={() => setAbiertoP(a => ({ ...a, [g.clave]: !a[g.clave] }))}
+                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, marginRight: '6px' }}>
+                    {abiertoP[g.clave] ? '▾' : '▸'}</button>
+                )}
                 {g.etiqueta}
                 {agrupar === 'item' && (
                   <span style={{ fontSize: '11px', color: g.tipo === 'insumo' ? AMBAR : AZUL, marginLeft: '7px' }}>
@@ -580,14 +578,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                   </span>
                 )}
               </span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
                 {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{miles(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{UNIDAD[g.unidad] || g.unidad || ''}</span></>}
               </span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12.5px' }}>
+              <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12.5px' }}>
                 {equivale(g)}
               </span>
               {esJefe && (
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
                   {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>{dinero(g.costo / g.cantidad)} /{UNIDAD[g.unidad] || g.unidad || ''}</span> : null}
                 </span>
@@ -600,7 +598,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 </span>
               )}
             </div>
-            {esJefe && agrupar === 'item' && (porPrecio[g.clave]?.length > 1) && (() => {
+            {esJefe && agrupar === 'item' && abiertoP[g.clave] && (porPrecio[g.clave]?.length > 1) && (() => {
               const ps = porPrecio[g.clave]
               const tS = ps.reduce((t, x) => t + Number(x.sacos), 0)
               const tC = ps.reduce((t, x) => t + Number(x.costo), 0)
@@ -620,7 +618,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                           alignItems: 'center', background: '#fafcfd', fontSize: '13px', fontWeight: 600 }}>
               <span>Total</span>
               <span /><span />
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(totalCosto)}</span>
+              <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{dinero(totalCosto)}</span>
               <span />
             </div>
           )}
