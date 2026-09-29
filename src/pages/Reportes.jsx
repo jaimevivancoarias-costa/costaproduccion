@@ -257,6 +257,22 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
   const totalCosto = grupos.reduce((t, g) => t + g.costo, 0)
   const maxCosto = Math.max(1, ...grupos.map(g => g.costo))
+
+  // Datos para los gráficos (siempre por producto/piscina, sin importar el "Ver por").
+  const topItems = useMemo(() => {
+    const m = {}
+    visibles.forEach(f => { const k = f.item_id; if (!k) return; (m[k] = m[k] || { label: f.item, valor: 0, tipo: f.tipo }); m[k].valor += Number(f.costo || 0) })
+    return Object.values(m).sort((a, b) => b.valor - a.valor).slice(0, 7)
+  }, [visibles])
+  const porPiscina = useMemo(() => {
+    const m = {}
+    visibles.forEach(f => { const k = f.piscina_id; if (!k) return; (m[k] = m[k] || { label: f.piscina, valor: 0, ha: Number(f.hectareas) || 0 }); m[k].valor += Number(f.costo || 0) })
+    return Object.values(m).sort((a, b) => b.valor - a.valor)
+  }, [visibles])
+  const topPisc = useMemo(() => porPiscina.slice(0, 7), [porPiscina])
+  const porHa = useMemo(() => porPiscina.filter(p => p.ha > 0).map(p => ({ label: p.label, valor: p.valor / p.ha }))
+    .sort((a, b) => b.valor - a.valor).slice(0, 7), [porPiscina])
+  const colItem = tipo => tipo === 'insumo' ? '#E3B15F' : AZUL
   // El bodeguero no ve columnas de dolares, asi que la tabla es mas
   // angosta: solo nombre y cantidad.
   // Tabla nueva: Producto · Cantidad (se aplica) · Equivale a (llega) · Costo · Peso.
@@ -422,33 +438,52 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         </div>
       )}
 
-      {!cargando && esJefe && tipo !== 'diesel' && (() => {
+      {!cargando && esJefe && tipo !== 'diesel' && grupos.length > 0 && (() => {
         const bal = filas.filter(f => f.tipo === 'balanceado').reduce((t, f) => t + Number(f.costo || 0), 0)
         const ins = filas.filter(f => f.tipo === 'insumo').reduce((t, f) => t + Number(f.costo || 0), 0)
         const dsl = todasFincas ? 0 : Number(dslR.total || 0)
         const tot = bal + ins + dsl
-        if (tot <= 0) return null
         const segs = [
           { label: 'Balanceado', valor: bal, color: '#0D6CB0' },
           { label: 'Insumos', valor: ins, color: '#E3B15F' },
           { label: 'Diesel', valor: dsl, color: '#5F5E5A' },
         ].filter(s => s.valor > 0)
+        let off = 25
         return (
-          <div style={{ marginBottom: '14px', maxWidth: '420px' }}>
-            <CajaGrafica titulo="En qué se va la plata · por categoría">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                <Donut segmentos={segs} centro="" sub="" />
-                <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '9px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '14px', marginBottom: '16px' }}>
+            <CajaGrafica titulo="En qué se va la plata">
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+                <svg width="176" height="176" viewBox="0 0 42 42">
+                  <circle cx="21" cy="21" r="15.9" fill="none" stroke="#eef3f7" strokeWidth="5.5" />
+                  {segs.map((s, i) => { const len = tot ? s.valor / tot * 100 : 0; const el = <circle key={i} cx="21" cy="21" r="15.9" fill="none" stroke={s.color} strokeWidth="5.5" strokeDasharray={`${len} ${100 - len}`} strokeDashoffset={off} />; off -= len; return el })}
+                  <text x="21" y="20.5" textAnchor="middle" fontSize="4.4" fontWeight="700" fill={NAVY}>{dinero(tot)}</text>
+                  <text x="21" y="25" textAnchor="middle" fontSize="2.3" fill={GRIS}>gasto total</text>
+                </svg>
+                <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '9px', fontSize: '13px' }}>
                   {segs.map(s => (
                     <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
                       <span style={{ width: '11px', height: '11px', borderRadius: '3px', background: s.color, display: 'inline-block' }} />
-                      <span style={{ minWidth: '86px' }}>{s.label}</span>
-                      <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{dinero(s.valor)}</span>
-                      <span style={{ color: GRIS }}>{Math.round(s.valor / tot * 100)}%</span>
+                      <span>{s.label}</span>
+                      <span style={{ color: NAVY, fontVariantNumeric: 'tabular-nums', marginLeft: 'auto' }}>{dinero(s.valor)}</span>
+                      <span style={{ color: GRIS, minWidth: '34px', textAlign: 'right' }}>{Math.round(s.valor / (tot || 1) * 100)}%</span>
                     </div>
                   ))}
                 </div>
               </div>
+            </CajaGrafica>
+            <CajaGrafica titulo="Top productos por costo">
+              {topItems.length ? topItems.map((it, i) => {
+                const max = Math.max(1, ...topItems.map(x => x.valor))
+                return (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 92px', gap: '10px', alignItems: 'center', marginBottom: '11px', fontSize: '12.5px' }}>
+                    <div>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{it.label} <span style={{ fontSize: '10px', color: colItem(it.tipo) }}>{it.tipo === 'insumo' ? 'ins' : 'bal'}</span></div>
+                      <div style={{ height: '8px', background: '#eef3f7', borderRadius: '20px', overflow: 'hidden', marginTop: '3px' }}><i style={{ display: 'block', height: '100%', borderRadius: '20px', width: (it.valor / max * 100) + '%', background: colItem(it.tipo) }} /></div>
+                    </div>
+                    <span style={{ textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{dinero(it.valor)}</span>
+                  </div>
+                )
+              }) : <div style={{ fontSize: '12px', color: GRIS }}>Sin datos.</div>}
             </CajaGrafica>
           </div>
         )
@@ -549,6 +584,23 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             </div>
           )}
         </Caja>
+      )}
+
+      {/* Gráficos de apoyo: por piscina y por hectárea. */}
+      {!cargando && esJefe && tipo !== 'diesel' && topPisc.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: porHa.length ? '1fr 1fr' : '1fr', gap: '14px', marginTop: '16px' }}>
+          <CajaGrafica titulo="Top piscinas por gasto">
+            <BarrasRank items={topPisc} money />
+          </CajaGrafica>
+          {porHa.length > 0 && (() => {
+            const maxHa = Math.max(...porHa.map(p => p.valor))
+            return (
+              <CajaGrafica titulo="Costo por hectárea · gasto ÷ hectáreas">
+                <BarrasRank items={porHa} money colorDe={v => v === maxHa ? '#c9821f' : '#0f6e56'} />
+              </CajaGrafica>
+            )
+          })()}
+        </div>
       )}
 
       {/* La descarga incluye costos, asi que es solo del jefe. */}
