@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, miles, dinero, LIBRAS_POR_SACO } from '../lib/fechas'
+import { hoyISO, corta, miles, dinero, LIBRAS_POR_SACO, lunesDe, sumarDias } from '../lib/fechas'
 import { Seg } from '../components/controles'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 
@@ -60,6 +60,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [filtros, setFiltros] = useState([])   // ids de item/piscina a filtrar (chips)
   const [abiertoP, setAbiertoP] = useState({}) // clave -> mostrar el desglose por precio
   const [factoresIns, setFactoresIns] = useState({}) // insumo_id -> { unidad, unidad_compra, factor }
+  const [tendencia, setTendencia] = useState([]) // [{ semana, bal, ins }] últimas 8
   const irVista = v => {
     setVista(v)
     if (v === 'consumo') setKind('consumo')
@@ -119,6 +120,28 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     })()
     return () => { vivo = false }
   }, [finca.id])
+
+  // Costo por semana (últimas 8), anclado en el "hasta" del rango. Balanceado + insumos.
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      const { data: ps } = await supabase.schema('produccion').from('piscina').select('id').eq('finca_id', finca.id)
+      const ids = (ps || []).map(p => p.id)
+      if (!ids.length) { if (vivo) setTendencia([]); return }
+      const lun = lunesDe(hasta)
+      const rango8 = sumarDias(lun, -49)
+      const [{ data: tBal }, { data: tIns }] = await Promise.all([
+        supabase.schema('produccion').from('vw_alimentacion_costeada').select('costo, fecha').in('piscina_id', ids).gte('fecha', rango8).lte('fecha', hasta),
+        supabase.schema('produccion').from('consumo_insumo').select('cantidad, precio_unitario, fecha').in('piscina_id', ids).gte('fecha', rango8).lte('fecha', hasta),
+      ])
+      const semanas = Array.from({ length: 8 }, (_, k) => sumarDias(lun, -7 * (7 - k)))
+      const tw = {}; semanas.forEach(s => { tw[s] = { semana: s, bal: 0, ins: 0 } })
+      ;(tBal || []).forEach(r => { const k = lunesDe(r.fecha); if (tw[k]) tw[k].bal += Number(r.costo) })
+      ;(tIns || []).forEach(r => { const k = lunesDe(r.fecha); if (tw[k]) tw[k].ins += Number(r.cantidad) * Number(r.precio_unitario || 0) })
+      if (vivo) setTendencia(semanas.map(s => tw[s]))
+    })()
+    return () => { vivo = false }
+  }, [finca.id, hasta])
 
   // Desglose del consumo de balanceado por precio (cuánto se gastó a cada
   // precio). Va aparte y no rompe si la función aún no está en la base.
@@ -650,6 +673,31 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             </div>
           )}
         </Caja>
+      )}
+
+      {/* Costo por semana (últimas 8). */}
+      {!cargando && esJefe && tipo !== 'diesel' && tendencia.some(t => t.bal + t.ins > 0) && (
+        <div style={{ marginTop: '16px' }}>
+          <CajaGrafica titulo="Costo por semana · últimas 8 (balanceado + insumos)">
+            {(() => {
+              const max = Math.max(1, ...tendencia.map(t => t.bal + t.ins))
+              return (
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', height: '155px', paddingTop: '6px' }}>
+                  {tendencia.map((t, i) => {
+                    const tot = t.bal + t.ins; const ult = i === tendencia.length - 1
+                    return (
+                      <div key={t.semana} style={{ flex: 1, textAlign: 'center' }}>
+                        <div style={{ fontSize: '10px', color: ult ? NAVY : GRIS, fontWeight: ult ? 600 : 400, marginBottom: '3px' }}>{tot > 0 ? dinero(tot) : ''}</div>
+                        <div style={{ height: Math.round(tot / max * 128) + 'px', background: ult ? AZUL : '#cfe0f0', borderRadius: '5px 5px 0 0' }} />
+                        <div style={{ fontSize: '10px', color: ult ? NAVY : '#9fb0bf', fontWeight: ult ? 600 : 400, marginTop: '5px' }}>{corta(t.semana).slice(0, 5)}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+          </CajaGrafica>
+        </div>
       )}
 
       {/* Gráficos de apoyo: por piscina y por hectárea. */}
