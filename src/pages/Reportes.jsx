@@ -143,20 +143,27 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     return () => { vivo = false }
   }, [finca.id, hasta])
 
-  // Desglose del consumo de balanceado por precio (cuánto se gastó a cada
-  // precio). Va aparte y no rompe si la función aún no está en la base.
+  // Desglose del consumo de balanceado por precio REAL (FIFO por lote): cuántos
+  // sacos salieron a cada precio de compra. "Lo que es", no el promedio por día.
+  // Va aparte y no rompe si la función aún no está en la base.
   useEffect(() => {
     let vivo = true
-    supabase.schema('produccion').rpc('fn_reporte_consumo_por_precio',
-      { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta })
+    supabase.schema('produccion').rpc('fn_reporte_consumo_fifo_todos',
+      { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
       .then(({ data, error }) => {
-        if (!vivo || error) { if (!error) return; setPorPrecio({}); return }
-        const m = {}; (data || []).forEach(r => { (m[r.producto_id] = m[r.producto_id] || []).push({ precio: Number(r.precio_saco), sacos: Number(r.sacos), costo: Number(r.costo), desde: r.desde, hasta: r.hasta }) })
+        if (!vivo) return
+        if (error) { setPorPrecio({}); return }
+        const m = {}
+        ;(data || []).forEach(r => {
+          const precio = Number(r.precio), sacos = Number(r.sacos)
+          ;(m[r.producto_id] = m[r.producto_id] || []).push({ precio, sacos, costo: precio * sacos })
+        })
+        Object.values(m).forEach(arr => arr.sort((a, b) => a.precio - b.precio))
         setPorPrecio(m)
       })
       .catch(() => { if (vivo) setPorPrecio({}) })
     return () => { vivo = false }
-  }, [finca.id, desde, hasta, todasFincas])
+  }, [finca.id, desde, hasta])
 
   // Diesel del rango (finca individual). En modo Todas se omite.
   useEffect(() => {
