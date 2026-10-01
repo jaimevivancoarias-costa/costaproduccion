@@ -582,6 +582,47 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     }
   }
 
+  // Imprimir el acta de un conteo: por cada insumo, sistema · contó · diferencia · motivo.
+  async function imprimirConteo(c) {
+    const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
+      .select('insumo_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').eq('toma_id', c.id)
+    const filas = (data || []).map(l => {
+      const dif = Number(l.diferencia) || 0
+      return {
+        insumo: nombreInsumo(l.insumo_id),
+        unidad: cap1(UNIDAD[unidadInsumo(l.insumo_id)] || unidadInsumo(l.insumo_id) || ''),
+        sistema: limpio(l.cantidad_sistema),
+        contado: limpio(l.cantidad_contada),
+        diferencia: Math.abs(dif) < 0.001 ? '—' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif)),
+        motivo: l.motivo_descuadre || '',
+      }
+    }).sort((a, b) => String(a.insumo).localeCompare(String(b.insumo)))
+    const ok = reporteBodegaPDF({
+      titulo: 'Acta de conteo de bodega',
+      finca: String(finca.nombre).toUpperCase(),
+      categoria: 'Insumos',
+      subtitulo: 'Conteo físico de bodega · insumos',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que decía el sistema. Contó = lo contado físicamente. Diferencia: "faltó" = menos de lo que decía; "sobró" = más.',
+      meta: [
+        { k: 'Fecha del conteo', v: corta(c.fecha) },
+        { k: 'Tipo', v: c.es_inicial ? 'Inventario inicial' : 'Conteo' },
+        ...(c.observacion ? [{ k: 'Observación', v: c.observacion }] : []),
+        { k: 'Realizó', v: '______________________' },
+        { k: 'Revisó', v: '______________________' },
+      ],
+      columnas: [
+        { titulo: 'Insumo', campo: 'insumo' },
+        { titulo: 'Unidad', campo: 'unidad' },
+        { titulo: 'Sistema', campo: 'sistema', der: true },
+        { titulo: 'Contó', campo: 'contado', der: true },
+        { titulo: 'Diferencia', campo: 'diferencia', der: true },
+        { titulo: 'Motivo', campo: 'motivo' },
+      ],
+      filas,
+    })
+    if (!ok) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para imprimir.' })
+  }
+
   async function borrarConteo(c) {
     if (!window.confirm(`¿Borrar el conteo del ${corta(c.fecha)}?\n\nEl saldo vuelve a calcularse desde el conteo anterior (o desde cero si no hay otro). No se puede deshacer.`)) return
     const { error } = await supabase.schema('produccion').from('toma_inventario').delete().eq('id', c.id)
@@ -1394,10 +1435,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 El saldo de arriba se calcula desde el más reciente.
               </p>
               <Tabla caja columnas={esJefe ? ['Fecha', 'Observación', ''] : ['Fecha', 'Observación']}
-                     anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
+                     anchos={esJefe ? '150px 1fr 250px' : '150px 1fr'}>
                 {conteos.map(c => (
                   <div key={c.id}>
-                  <Fila anchos={esJefe ? '150px 1fr 160px' : '150px 1fr'}>
+                  <Fila anchos={esJefe ? '150px 1fr 250px' : '150px 1fr'}>
                     <Celda fuerte>{corta(c.fecha)}{c.es_inicial && <span style={{ marginLeft: '8px', fontSize: '10px', fontWeight: 500, background: '#E6F1FB', color: AZUL, borderRadius: '6px', padding: '2px 7px' }}>Inventario inicial</span>}</Celda>
                     <Celda gris>
                       {c.observacion || 'Sin observación'}
@@ -1407,6 +1448,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     </Celda>
                     {esJefe && (
                       <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
+                        <button onClick={() => imprimirConteo(c)}
+                          style={{ background: 'white', border: '0.5px solid #9cc4e8', borderRadius: '8px',
+                                   padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
+                                   color: AZUL, cursor: 'pointer' }}>Imprimir</button>
                         <button onClick={() => editarConteo(c)}
                           style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
                                    padding: '5px 11px', fontFamily: 'inherit', fontSize: '12px',
