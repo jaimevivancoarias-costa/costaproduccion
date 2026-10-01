@@ -1178,19 +1178,21 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       ) : vista === 'movimientos' ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '12.5px', color: GRIS }}>Ver en:</span>
-            <Seg valor={unidadMov} onCambio={setUnidadMov}
-                 opciones={[['compra', 'Como se compra'], ['aplica', 'Como se aplica']]} />
-            {(() => {
-              const n = movs.filter(m => coincide(m.insumo) && esSinInvMov(m)).length
-              return n > 0 && (
-                <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
-                  {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${n})`}
-                </GhostBtn>
-              )
-            })()}
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '14px 20px', marginBottom: '14px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12.5px', color: GRIS }}>Ver en:</span>
+              <Seg valor={unidadMov} onCambio={setUnidadMov}
+                   opciones={[['compra', 'Como se compra'], ['aplica', 'Como se aplica']]} />
+              {(() => {
+                const n = movs.filter(m => coincide(m.insumo) && esSinInvMov(m)).length
+                return n > 0 && (
+                  <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
+                    {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${n})`}
+                  </GhostBtn>
+                )
+              })()}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '9px', flexWrap: 'wrap' }}>
               <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
                 onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
               <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
