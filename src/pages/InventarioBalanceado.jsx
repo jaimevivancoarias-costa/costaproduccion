@@ -965,6 +965,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <span style={{ color: GRIS }}> “Saldo Ini.” es lo que contaste ese día (el conteo fija el saldo); de ahí se resta el consumo.</span>
                 </div>
               )}
+              {modoMov === 'fechas' && tomas.some(t => t.fecha > desde && t.fecha <= hasta) && (() => {
+                const cs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => ddmm(t.fecha))
+                return (
+                  <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
+                    <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que fijó el saldo ese día. Por eso no cuadra “Inicial + Ingresos − Consumo”. Para verlo cuadrado, usa{' '}
+                    <button onClick={() => setModoMov('conteo')} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 600, textDecoration: 'underline' }}>Por conteo</button>.
+                  </div>
+                )
+              })()}
               <Encabezado gtc={gMov} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
                     .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {

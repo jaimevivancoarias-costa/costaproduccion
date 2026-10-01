@@ -1223,6 +1223,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               )}
             </div>
           </div>
+          {modoMov === 'fechas' && conteos.some(c => c.fecha > desde && c.fecha <= hasta) && (() => {
+            const cs = conteos.filter(c => c.fecha > desde && c.fecha <= hasta).map(c => ddmm(c.fecha))
+            return (
+              <div style={{ background: '#E6F1FB', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 14px', fontSize: '12.5px', color: NAVY, marginBottom: '12px' }}>
+                <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que fijó el saldo ese día. Por eso no cuadra “Inicial + Ingresos − Consumo”. Para verlo cuadrado, usa{' '}
+                <button onClick={() => setModoMov('conteo')} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 600, textDecoration: 'underline' }}>Por conteo</button>.
+              </div>
+            )
+          })()}
           <Tabla
             caja min={minMov}
             columnas={colsMov}
