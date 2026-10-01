@@ -1025,12 +1025,41 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
   const [filtroProd, setFiltroProd] = useState('')   // filtro por balanceado (nombre)
+  // Plazo + precio del catálogo (solo jefe).
+  const [plazo, setPlazo] = useState(0)
+  const [precioCat, setPrecioCat] = useState({})   // productoId -> {plazo: precio por saco}
+  const [plazoAct, setPlazoAct] = useState({})      // productoId -> plazo que rige
+  function precioSacoCat(productoId, pz) {
+    const m = precioCat[productoId]
+    if (!m) return null
+    return m[pz] != null ? m[pz] : (m[0] != null ? m[0] : null)
+  }
+  const fmtPre = n => (n != null ? String(n) : '')
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      const [{ data: pr }, { data: pz }] = await Promise.all([
+        esJefe
+          ? supabase.schema('produccion').from('precio_producto')
+              .select('producto_id, plazo, precio_saco').eq('finca_id', finca.id).is('vigente_hasta', null)
+          : Promise.resolve({ data: [] }),
+        supabase.schema('produccion').from('plazo_producto')
+          .select('producto_id, plazo').eq('finca_id', finca.id).is('vigente_hasta', null),
+      ])
+      if (!vivo) return
+      const cat = {}; (pr || []).forEach(x => { (cat[x.producto_id] = cat[x.producto_id] || {})[Number(x.plazo)] = Number(x.precio_saco) })
+      setPrecioCat(cat)
+      const pa = {}; (pz || []).forEach(x => { pa[x.producto_id] = Number(x.plazo) })
+      setPlazoAct(pa)
+    })()
+    return () => { vivo = false }
+  }, [finca.id, esJefe])
 
   const cargar = useCallback(async () => {
     const [{ data: pr }, { data: g }, { data: pd }, { data: pend }, { data: dev }, { data: sol }, { data: auth }, { data: us }] = await Promise.all([
       supabase.schema('produccion').from('producto').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('ingreso_balanceado')
-        .select('id, fecha, numero_guia, proveedor, creado_por, creado_en, ingreso_balanceado_linea(producto_id, cantidad)')
+        .select('id, fecha, numero_guia, proveedor, creado_por, creado_en, ingreso_balanceado_linea(producto_id, cantidad, plazo, costo_unitario)')
         .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
       supabase.schema('produccion').from('pedido_balanceado')
         .select('id, fecha, fecha_esperada, proveedor, estado, creado_por, creado_en, pedido_balanceado_linea(producto_id, cantidad)')
@@ -1176,7 +1205,18 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           .insert({ finca_id: finca.id, fecha, numero_guia: guia || null, proveedor: prov || null }).select('id').single()
         if (error) throw error
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
-          .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) })))
+          .insert(validas.map(l => {
+            const fila = { ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) }
+            if (esJefe) {
+              fila.plazo = plazo
+              const pu = numDec(l.precio)
+              if (pu > 0) fila.costo_unitario = pu
+            } else {
+              const pa = plazoAct[l.productoId]
+              if (pa != null) fila.plazo = pa
+            }
+            return fila
+          }))
         if (e2) throw e2
       } else if (nuevo === 'devolucion') {
         const { error } = await supabase.schema('produccion').from('devolucion_balanceado')
@@ -1270,23 +1310,47 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
               ? <Campo label="Motivo / observación"><input value={obs} placeholder="Por qué se devuelve" onChange={e => setObs(e.target.value)} style={{ ...inp, width: '260px' }} /></Campo>
               : <Campo label="Proveedor"><input value={prov} placeholder="Opcional" onChange={e => setProv(e.target.value)} style={inp} /></Campo>}
           </div>
+          {esJefe && nuevo === 'ingreso' && (
+            <div style={{ marginBottom: '12px' }}>
+              <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
+              <Seg valor={plazo}
+                   onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.productoId ? { ...l, precio: fmtPre(precioSacoCat(l.productoId, pz)) } : l)) }}
+                   opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
+            </div>
+          )}
           <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Balanceados (en sacos)</div>
           {lineas.map((l, i) => (
-            <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '7px' }}>
-              <select value={l.productoId} onChange={e => setLineas(ls => ls.map((x, j) => j === i ? { ...x, productoId: e.target.value } : x))} style={{ ...inp, flex: 1 }}>
+            <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '7px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select value={l.productoId} onChange={e => { const v = e.target.value; setLineas(ls => ls.map((x, j) => j === i ? { ...x, productoId: v, ...(esJefe && nuevo === 'ingreso' ? { precio: fmtPre(precioSacoCat(v, plazo)) } : {}) } : x)) }} style={{ ...inp, flex: 1, minWidth: '180px' }}>
                 <option value="">Elegir balanceado</option>
                 {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
               </select>
               <CampoNumero maxDec={2} value={l.cantidad} placeholder="Sacos"
-                onChange={v => setLineas(ls => ls.map((x, j) => j === i ? { ...x, cantidad: v } : x))} style={{ ...inp, width: '150px' }} />
+                onChange={v => setLineas(ls => ls.map((x, j) => j === i ? { ...x, cantidad: v } : x))} style={{ ...inp, width: '120px' }} />
+              {esJefe && nuevo === 'ingreso' && l.productoId && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="Precio del catálogo según el plazo. Puedes cambiarlo solo para este ingreso.">
+                  <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                  <CampoNumero maxDec={6} value={l.precio ?? ''} placeholder="precio"
+                    onChange={v => setLineas(ls => ls.map((x, j) => j === i ? { ...x, precio: v } : x))} style={{ ...inp, width: '100px', borderColor: '#9cc4e8' }} />
+                  <span style={{ fontSize: '11px', color: GRIS }}>/saco</span>
+                </div>
+              )}
               {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
             </div>
           ))}
           <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ otra línea</button>
+          {esJefe && nuevo === 'ingreso' && validas.length > 0 && (
+            <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
+              {validas.map((l, i) => {
+                const q = numDec(l.cantidad); const pu = numDec(l.precio)
+                return <div key={i}><b>{miles(q)} sacos</b> de {nombre(l.productoId)} · {PLAZO_LBL[plazo]} · {pu > 0 ? <>{dineroExacto(pu)}/saco = <b>{dinero(q * pu)}</b></> : <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>}</div>
+              })}
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px' }}>
             <button onClick={limpiarForm} style={btn}>Cancelar</button>
             <button onClick={guardar} disabled={!validas.length} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: validas.length ? 1 : 0.5 }}>
-              {nuevo === 'ingreso' ? 'Guardar ingreso' : nuevo === 'pedido' ? 'Guardar pedido' : 'Guardar devolución'}
+              {nuevo === 'ingreso' ? (esJefe ? 'Confirmar y guardar' : 'Guardar ingreso') : nuevo === 'pedido' ? 'Guardar pedido' : 'Guardar devolución'}
             </button>
           </div>
         </div>
@@ -1296,7 +1360,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
       {modo === 'ingresos' ? (
         listaF.length === 0 ? (
           <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>{filtroProd ? 'No hay ingresos de ese balanceado en el rango.' : 'Todavía no hay ingresos. Cuando llegue balanceado, regístralo con su guía.'}</div></Caja>
-        ) : listaF.map(g => {
+        ) : (<>{listaF.map(g => {
           const solPend = solicitudes.find(s => s.registro_id === g.id)
           return (
           <div key={g.id} style={{ ...cajaS, padding: '15px 17px', marginBottom: '10px' }}>
@@ -1320,11 +1384,17 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
               </div>
             </div>
             <div style={{ marginTop: '9px', borderTop: '0.5px solid #f1f6f9', paddingTop: '8px' }}>
-              {(g.ingreso_balanceado_linea || []).map((l, i) => (
-                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '3px 0' }}>
-                  <span>{nombre(l.producto_id)}</span><span style={{ color: VERDE }}>+{miles(numDec(l.cantidad))} sacos</span>
+              {(g.ingreso_balanceado_linea || []).map((l, i) => {
+                const q = numDec(l.cantidad); const pu = Number(l.costo_unitario) || 0
+                const sub = [esJefe && pu > 0 ? `${dinero(pu)}/saco` : '', l.plazo != null ? PLAZO_LBL[l.plazo] : ''].filter(Boolean).join(' · ')
+                return (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '4px 0', alignItems: 'baseline', gap: '12px' }}>
+                  <span>{nombre(l.producto_id)}</span>
+                  <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>+{miles(q)} sacos
+                    {sub && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{sub}</span>}
+                  </span>
                 </div>
-              ))}
+              )})}
             </div>
             {editando === g.id && (
               <EditorIngBal g={g} productos={productos} esJefe={esJefe} finca={finca} userId={userId}
@@ -1333,7 +1403,38 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
             )}
           </div>
           )
-        })
+        })}
+        {(() => {
+          const porProd = {}
+          listaF.forEach(g => (g.ingreso_balanceado_linea || []).forEach(l => {
+            const k = l.producto_id
+            if (!porProd[k]) porProd[k] = { n: 0, qty: 0 }
+            porProd[k].n += 1
+            porProd[k].qty += numDec(l.cantidad)
+          }))
+          const filas = Object.entries(porProd).sort((a, b) => b[1].n - a[1].n)
+          if (!filas.length) return null
+          const gtc = '1fr 110px 110px'
+          const cab = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'center' }
+          return (
+            <div style={{ marginTop: '14px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px' }}>
+              <div style={{ fontSize: '12px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '10px' }}>Resumen por balanceado</div>
+              <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', paddingBottom: '6px', borderBottom: '0.5px solid ' + BORDE }}>
+                <span style={{ ...cab, textAlign: 'left' }}>Balanceado</span>
+                <span style={cab}>Ingresos</span>
+                <span style={cab}>Cantidad</span>
+              </div>
+              {filas.map(([k, v]) => (
+                <div key={k} style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', padding: '7px 0', borderBottom: '0.5px solid #f1f6f9', fontSize: '13px', alignItems: 'baseline' }}>
+                  <span>{nombre(k)}</span>
+                  <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}><b>{v.n}</b></span>
+                  <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(Math.round(v.qty * 100) / 100)} sacos</span>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
+        </>)
       ) : modo === 'pedidos' ? (
         pedidos.length === 0 ? (
           <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay pedidos. Un pedido no suma al saldo: solo sirve para seguir lo que pediste.</div></Caja>
@@ -1459,11 +1560,27 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
   const [fecha, setFecha] = useState(g.fecha)
   const [guia, setGuia] = useState(g.numero_guia || '')
   const [prov, setProv] = useState(g.proveedor || '')
-  const [lineas, setLineas] = useState((g.ingreso_balanceado_linea || []).map(l => ({ productoId: l.producto_id, cantidad: String(l.cantidad) })))
+  const [lineas, setLineas] = useState((g.ingreso_balanceado_linea || []).map(l => ({ productoId: l.producto_id, cantidad: String(l.cantidad), precio: l.costo_unitario != null ? String(l.costo_unitario) : '' })))
   const [motivo, setMotivo] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [plazo, setPlazo] = useState(() => { const p = (g.ingreso_balanceado_linea || [])[0]?.plazo; return p != null ? Number(p) : 0 })
+  const [precioCat, setPrecioCat] = useState({})
   const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
   const validas = lineas.filter(l => l.productoId && numDec(l.cantidad))
+  const precioSacoCat = (pid, pz) => { const m = precioCat[pid]; return m ? (m[pz] != null ? m[pz] : (m[0] != null ? m[0] : null)) : null }
+  const fmtPre = n => (n != null ? String(n) : '')
+  useEffect(() => {
+    if (!esJefe) return
+    let vivo = true
+    ;(async () => {
+      const { data: pr } = await supabase.schema('produccion').from('precio_producto')
+        .select('producto_id, plazo, precio_saco').eq('finca_id', finca.id).is('vigente_hasta', null)
+      if (!vivo) return
+      const cat = {}; (pr || []).forEach(x => { (cat[x.producto_id] = cat[x.producto_id] || {})[Number(x.plazo)] = Number(x.precio_saco) })
+      setPrecioCat(cat)
+    })()
+    return () => { vivo = false }
+  }, [finca.id, esJefe])
 
   async function guardarJefe() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
@@ -1473,7 +1590,12 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
     if (error) { setEnviando(false); setAviso({ tipo: 'error', texto: error.message }); return }
     await supabase.schema('produccion').from('ingreso_balanceado_linea').delete().eq('ingreso_id', g.id)
     const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
-      .insert(validas.map(l => ({ ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) })))
+      .insert(validas.map(l => {
+        const fila = { ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad), plazo }
+        const pu = numDec(l.precio)
+        if (pu > 0) fila.costo_unitario = pu
+        return fila
+      }))
     setEnviando(false)
     if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
     onHecho('Ingreso actualizado.')
@@ -1503,17 +1625,32 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
         <Campo label="Número de guía"><input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={inp} /></Campo>
         <Campo label="Proveedor"><input value={prov} placeholder="Opcional" onChange={e => setProv(e.target.value)} style={inp} /></Campo>
       </div>
+      {esJefe && (
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
+          <Seg valor={plazo}
+               onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.productoId ? { ...l, precio: fmtPre(precioSacoCat(l.productoId, pz)) } : l)) }}
+               opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
+        </div>
+      )}
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Balanceados (en sacos)</div>
       {lineas.map((l, i) => (
-        <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '7px' }}>
-          <select value={l.productoId} onChange={e => setLinea(i, 'productoId', e.target.value)} style={{ ...inp, flex: 1 }}>
+        <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '7px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <select value={l.productoId} onChange={e => { const v = e.target.value; setLinea(i, 'productoId', v); if (esJefe) setLinea(i, 'precio', fmtPre(precioSacoCat(v, plazo))) }} style={{ ...inp, flex: 1, minWidth: '170px' }}>
             <option value="">Elegir balanceado</option>
             {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-            <CampoNumero maxDec={2} value={l.cantidad} placeholder="Cantidad" onChange={v => setLinea(i, 'cantidad', v)} style={{ ...inp, width: '110px' }} />
+            <CampoNumero maxDec={2} value={l.cantidad} placeholder="Cantidad" onChange={v => setLinea(i, 'cantidad', v)} style={{ ...inp, width: '100px' }} />
             <span style={{ fontSize: '13px', color: GRIS, minWidth: '42px' }}>sacos</span>
           </div>
+          {esJefe && l.productoId && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="Precio del catálogo según el plazo. Puedes cambiarlo solo para este ingreso.">
+              <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+              <CampoNumero maxDec={6} value={l.precio ?? ''} placeholder="precio" onChange={v => setLinea(i, 'precio', v)} style={{ ...inp, width: '100px', borderColor: '#9cc4e8' }} />
+              <span style={{ fontSize: '11px', color: GRIS }}>/saco</span>
+            </div>
+          )}
           {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
         </div>
       ))}
