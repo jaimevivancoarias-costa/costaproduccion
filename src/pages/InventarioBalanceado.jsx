@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias, LIBRAS_POR_SACO } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
@@ -10,7 +10,7 @@ import { TabU, Seg, GhostBtn, selChip } from '../components/controles'
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
 // El balanceado se compra en sacos y se aplica en libras. El saldo se
-// lleva en sacos: baja con lo aplicado en las piscinas (libras/55) y
+// lleva en sacos: baja con lo aplicado en las piscinas (libras ÷ libras_por_saco) y
 // sube con los ingresos. Valorado por lotes (FIFO). Los dolares son
 // solo para el jefe.
 
@@ -61,7 +61,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [sueltas, setSueltas] = useState({})         // libras sueltas
   const [motivoDesc, setMotivoDesc] = useState({})   // motivo del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})
-  const [lps, setLps] = useState(55)                 // libras por saco
+  const [lps, setLps] = useState(LIBRAS_POR_SACO)    // libras por saco (del parámetro de la base)
   const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
   const [detLineas, setDetLineas] = useState({})
   const [guardando, setGuardando] = useState(false)
@@ -291,7 +291,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
-    const c = (hayS || hayL) ? (hayS ? Number(txt) : 0) + (hayL ? Number(String(lib).replace(',', '.')) / (lps || 55) : 0) : null
+    const c = (hayS || hayL) ? (hayS ? Number(txt) : 0) + (hayL ? Number(String(lib).replace(',', '.')) / (lps || LIBRAS_POR_SACO) : 0) : null
     return { ...s, precio: precios[s.producto_id] || 0, contado: c,
              diferencia: c !== null ? c - Number(s.saldo) : null }
   }), [saldos, precios, contado, sueltas, lps])
@@ -356,10 +356,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
       const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       filasRep.push({
-        nombre, lotesLinea, viaTop: 'Saco → lb', viaSub: `1 Saco = ${lps || 55} lb`,
+        nombre, lotesLinea, viaTop: 'Saco → lb', viaSub: `1 Saco = ${lps || LIBRAS_POR_SACO} lb`,
         inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
-        saldoHoy: `${limpio(saldoAlDia)} sacos`, saldoEquiv: `= ${limpio(saldoAlDia * (lps || 55))} lb`,
+        saldoHoy: `${limpio(saldoAlDia)} sacos`, saldoEquiv: `= ${limpio(saldoAlDia * (lps || LIBRAS_POR_SACO))} lb`,
         precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
