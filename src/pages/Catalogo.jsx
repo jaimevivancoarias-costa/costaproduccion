@@ -253,7 +253,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       }
     }
     if (!afectadas.length) return
-    const ch = {}; afectadas.forEach(a => { ch[a.id] = 'recostear' })
+    // Por defecto NO se reprecia el pasado: el precio nuevo rige de la fecha
+    // en adelante. Recostear es opcional (corrección), elegido por el jefe.
+    const ch = {}; afectadas.forEach(a => { ch[a.id] = 'mantener' })
     setRecostChoice(ch)
     setRecostModal({ prodId, nombre, esIns, fincas: afectadas })
   }
@@ -302,12 +304,15 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex',
                       alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 80 }}>
           <div style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '100%', maxWidth: '480px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div style={{ fontSize: '16px', fontWeight: 500, marginBottom: '4px' }}>Cambiaste un precio hacia atrás</div>
+            <div style={{ fontSize: '16px', fontWeight: 500, marginBottom: '4px' }}>Precio guardado con fecha pasada</div>
             <div style={{ fontSize: '13px', color: GRIS, marginBottom: '14px' }}>
               {recostModal.esIns ? 'Insumo' : 'Balanceado'} · {recostModal.nombre}
             </div>
-            <div style={{ fontSize: '13px', color: NAVY, marginBottom: '11px' }}>
-              Estas fincas tienen consumo con el precio anterior. ¿Recostear al que rige?
+            <div style={{ fontSize: '13px', color: NAVY, marginBottom: '6px' }}>
+              El precio nuevo <b style={{ fontWeight: 600 }}>rige de esa fecha en adelante</b>. Lo ya registrado se mantiene con su precio.
+            </div>
+            <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '11px' }}>
+              Solo si necesitas <b style={{ fontWeight: 600, color: NAVY }}>corregir el pasado</b>, puedes recostear estas fincas (opcional). Por defecto queda en "Mantener".
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px', marginBottom: '9px', fontSize: '11px', color: GRIS, alignItems: 'center' }}>
               Todas:
