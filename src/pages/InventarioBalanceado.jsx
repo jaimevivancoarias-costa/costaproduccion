@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
@@ -30,6 +30,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [seccion, setSeccion] = useState('bodega')  // 'bodega' | 'ingresos' | 'precios'
   useEffect(() => { if (abrirIngresos) setSeccion('ingresos') }, [abrirIngresos])
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
+  const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
+  const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
   const [busq, setBusq] = useState('')
   const coincide = nom => !busq || nom === busq
   const [alDia, setAlDia] = useState(hoyISO())
@@ -153,6 +155,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   useEffect(() => { cargar() }, [cargar])
 
   const primeraVez = tomas.length === 0
+
+  // Períodos "entre conteos": de cada conteo hasta el siguiente (o hasta hoy).
+  const periodos = useMemo(() => {
+    const ts = [...tomas].sort((a, b) => (a.fecha < b.fecha ? 1 : -1))  // más reciente primero
+    return ts.map((t, i) => ({
+      desde: t.fecha,
+      hasta: i === 0 ? hoyISO() : sumarDias(ts[i - 1].fecha, -1),
+      label: i === 0 ? `Conteo ${corta(t.fecha)} → Hoy` : `Conteo ${corta(t.fecha)} → Conteo ${corta(ts[i - 1].fecha)}`,
+    }))
+  }, [tomas])
+  // En modo "por conteo", el período elegido fija desde/hasta.
+  useEffect(() => {
+    if (modoMov !== 'conteo') return
+    const p = periodos[periodoSel]
+    if (p) { setDesde(p.desde); setHasta(p.hasta) }
+  }, [modoMov, periodoSel, periodos])
   // Valor de la bodega = costo REAL de lo que hay (FIFO, lo que se pagó por
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
@@ -655,10 +673,27 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
               </label>
             ) : (
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
-                del <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
-                al <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
-              </label>
+              <>
+                <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
+                {modoMov === 'conteo' ? (
+                  periodos.length ? (
+                    <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <button onClick={() => setPeriodoSel(i => Math.min(i + 1, periodos.length - 1))} disabled={periodoSel >= periodos.length - 1}
+                        style={{ ...btn, padding: '7px 10px', opacity: periodoSel >= periodos.length - 1 ? 0.4 : 1 }}>‹</button>
+                      <select value={periodoSel} onChange={e => setPeriodoSel(Number(e.target.value))} style={{ ...selChip, minWidth: '250px' }}>
+                        {periodos.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
+                      </select>
+                      <button onClick={() => setPeriodoSel(i => Math.max(i - 1, 0))} disabled={periodoSel <= 0}
+                        style={{ ...btn, padding: '7px 10px', opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
+                    </span>
+                  ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
+                ) : (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
+                    del <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
+                    al <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+                  </label>
+                )}
+              </>
             )}
           </div>
 
@@ -807,6 +842,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </>
           ) : (
             <Caja>
+              {modoMov === 'conteo' && periodos[periodoSel] && (
+                <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
+                  Desde el <b>conteo del {corta(periodos[periodoSel].desde)}</b>{periodoSel === 0 ? ' hasta hoy' : ` hasta el ${corta(periodos[periodoSel].hasta)}`}.
+                  <span style={{ color: GRIS }}> “Saldo Ini.” = lo que el sistema decía esa mañana · “Conteo” = lo que contaste · de ahí se resta el consumo del período.</span>
+                </div>
+              )}
               <Encabezado gtc={esJefe ? G_MOV_J : G_MOV_B} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', 'Conteo', 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
                     .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {
