@@ -18,6 +18,8 @@ const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 const ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#BA7517'
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
+const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
+const ddmm = iso => corta(iso).slice(0, 5)
 const G_CONTEO = '1fr 90px 100px 250px 120px'
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 const G_SALDO_J = '1fr 150px 130px 140px 110px'
@@ -39,6 +41,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [hasta, setHasta] = useState(hoyISO())
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
+  // En "Por conteo" el Saldo Ini. ya es el conteo, así que la columna "Conteo" sobra.
+  const ocultaConteo = modoMov === 'conteo'
+  const gMov = esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B)
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -674,6 +679,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               </label>
             ) : (
               <>
+                <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
+                  onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+                <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
+                  onClick={() => { setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
                 <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
                 {modoMov === 'conteo' ? (
                   periodos.length ? (
@@ -845,18 +854,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               {modoMov === 'conteo' && periodos[periodoSel] && (
                 <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
                   Desde el <b>conteo del {corta(periodos[periodoSel].desde)}</b>{periodoSel === 0 ? ' hasta hoy' : ` hasta el ${corta(periodos[periodoSel].hasta)}`}.
-                  <span style={{ color: GRIS }}> “Saldo Ini.” = lo que el sistema decía esa mañana · “Conteo” = lo que contaste · de ahí se resta el consumo del período.</span>
+                  <span style={{ color: GRIS }}> “Saldo Ini.” es lo que contaste ese día (el conteo fija el saldo); de ahí se resta el consumo.</span>
                 </div>
               )}
-              <Encabezado gtc={esJefe ? G_MOV_J : G_MOV_B} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', 'Conteo', 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
+              <Encabezado gtc={gMov} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
                     .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {
                 const cq = conteoQuien[m.producto_id]
                 // Si el conteo es el inventario inicial y no había saldo antes,
                 // se muestra en "Saldo Ini." (no en Conteo), como en insumos.
                 const contInicial = cq?.esInicial && m.conteo !== null && Math.abs(Number(m.saldo_inicial)) < 0.0001
-                const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
-                const conteoMostrar = contInicial ? null : m.conteo
+                // En "Por conteo" el período arranca en el conteo: ese valor ES el Saldo Ini.
+                const conteoIni = ocultaConteo && m.conteo !== null
+                const iniMostrar = (contInicial || conteoIni) ? m.conteo : m.saldo_inicial
+                const conteoMostrar = (contInicial || conteoIni) ? null : m.conteo
+                const fechaConteoIni = conteoIni && (cq?.fecha || periodos[periodoSel]?.desde)
                 const detalle = cq && (
                   <>
                     <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
@@ -872,26 +884,31 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 )
                 return (
                 <div key={m.producto_id}>
-                <Fila gtc={esJefe ? G_MOV_J : G_MOV_B}>
+                <Fila gtc={gMov}>
                   <Cel>
                     <button onClick={() => abrirMov(m.producto_id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, textAlign: 'left' }}>
                       <span style={{ color: GRIS, marginRight: '7px', fontSize: '11px' }}>{movDet === m.producto_id ? '▾' : '▸'}</span>{m.producto}
                     </button>
                   </Cel>
-                  <Cel der gris>
+                  <Cel der gris={!(contInicial || conteoIni)} fuerte={contInicial || conteoIni}>
                     {limpio(iniMostrar)}
                     {contInicial && <>
                       <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Inventario inicial</span>
                       {detalle}
                     </>}
+                    {conteoIni && !contInicial && (
+                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Conteo {ddmm(fechaConteoIni)}</span>
+                    )}
                   </Cel>
                   <Cel der color={Number(m.ingresos) ? VERDE : '#c3d0db'}>{Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}</Cel>
                   <Cel der>{Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}</Cel>
                   <Cel der color={Number(m.devuelto) ? ROJO : '#c3d0db'}>{Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}</Cel>
                   <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
-                  <Cel der color={conteoMostrar === null ? '#c3d0db' : AZUL}>
-                    {conteoMostrar === null ? '—' : <>{limpio(conteoMostrar)}{detalle}</>}
-                  </Cel>
+                  {!ocultaConteo && (
+                    <Cel der color={conteoMostrar === null ? '#c3d0db' : AZUL}>
+                      {conteoMostrar === null ? '—' : <>{limpio(conteoMostrar)}{detalle}</>}
+                    </Cel>
+                  )}
                   <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
                   {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
                 </Fila>
