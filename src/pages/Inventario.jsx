@@ -1035,7 +1035,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                   ) : (() => {
                     const rows = [...lotesMov[m.insumo_id]].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
-                    const gtc = esJefe ? '1.6fr .9fr .9fr .9fr 1fr' : '1.8fr 1fr 1fr 1fr'
+                    const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                     const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                     const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
                     const tQueda = rows.reduce((s, r) => s + Number(r.queda || 0), 0)
@@ -1049,7 +1049,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <div style={{ fontSize: '11px', color: GRIS, marginBottom: '9px' }}>
                           Por lote · se consume del más viejo primero{uLabel ? ` · en ${uLabel}` : ''}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '7px 14px', alignItems: 'baseline', maxWidth: '640px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline', maxWidth: '720px' }}>
                           <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
                           <div style={cab}>Entró</div>
                           <div style={cab}>Consumió</div>
@@ -1057,9 +1057,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           {esJefe && <div style={cab}>Costo consumido</div>}
                           {rows.map((r, i) => (
                             <Fragment key={i}>
-                              <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
-                                <span style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</span>
-                                {esJefe && r.costo_unitario != null && <span style={{ color: GRIS }}> · {dineroExacto(r.costo_unitario)}</span>}
+                              <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
+                                {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
                                 {i === primerQueda && Number(r.queda) > 0 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
                               </div>
                               <div style={cel}>{val(r.entro)}</div>
