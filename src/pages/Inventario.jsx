@@ -459,7 +459,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Corregir el precio de un lote: arregla el catálogo del período (o de ahí
   // en adelante) y recostea. Solo recalcula los consumos de este insumo.
-  async function guardarCorreccion() {
+  async function guardarCorreccionPrecio() {
     if (!corrige) return
     const v = numDec(corrPrecio)
     if (!(v > 0)) { setAviso({ tipo: 'error', texto: 'Pon un precio mayor que cero.' }); return }
@@ -1138,7 +1138,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
                             </div>
                             <div style={{ display: 'flex', gap: '9px' }}>
-                              <Btn primario onClick={guardarCorreccion} disabled={guardandoCorr}>
+                              <Btn primario onClick={guardarCorreccionPrecio} disabled={guardandoCorr}>
                                 {guardandoCorr ? 'Guardando...' : 'Guardar corrección'}
                               </Btn>
                               <Btn onClick={() => setCorrige(null)}>Cancelar</Btn>
