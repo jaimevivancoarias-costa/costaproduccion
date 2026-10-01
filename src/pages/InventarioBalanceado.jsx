@@ -73,7 +73,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [lineasToma, setLineasToma] = useState({})     // toma_id -> [líneas completas] (resumen Conteos anteriores)
   const [consumoToma, setConsumoToma] = useState({})   // toma_id -> { porProd: {pid: $}, total } consumo del corte
   const [motivoEdit, setMotivoEdit] = useState(null)   // { tomaId, productoId } línea editando motivo
-  const [motivoVal, setMotivoVal] = useState('')
+  const [motivoSel, setMotivoSel] = useState('')       // opción del dropdown
+  const [motivoVal, setMotivoVal] = useState('')       // texto libre cuando es "Otro"
+  const [cortesAbiertos, setCortesAbiertos] = useState({})  // toma_id -> abierto/cerrado (resumen colapsable)
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
@@ -214,23 +216,73 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       if (!vivo) return
       const cmap = {}
       res.forEach(({ id, rows }) => {
-        const porProd = {}; let total = 0
-        rows.forEach(r => { const d = Number(r.consumo_dolares) || 0; porProd[r.producto_id] = d; total += d })
-        cmap[id] = { porProd, total }
+        const porProd = {}, sis = {}; let total = 0
+        rows.forEach(r => { const d = Number(r.consumo_dolares) || 0; porProd[r.producto_id] = d; total += d; sis[r.producto_id] = Number(r.saldo_inicial) })
+        cmap[id] = { porProd, total, sis }
       })
       setConsumoToma(cmap)
     })()
     return () => { vivo = false }
   }, [tomas, finca.id, esJefe])
 
+  // Sistema "en vivo" del corte = saldo del sistema la mañana del conteo
+  // (saldo_inicial recalculado). Si no hay dato, usa lo guardado en la línea.
+  const sisCorte = (l, cons) => (cons && cons.sis[l.producto_id] != null) ? cons.sis[l.producto_id] : Number(l.cantidad_sistema)
+  const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
+
+  function abrirMotivo(tomaId, productoId, actual) {
+    setMotivoEdit({ tomaId, productoId })
+    if (actual && MOTIVOS_DESCUADRE.includes(actual)) { setMotivoSel(actual); setMotivoVal('') }
+    else if (actual) { setMotivoSel('Otro'); setMotivoVal(actual) }
+    else { setMotivoSel(''); setMotivoVal('') }
+  }
   async function guardarMotivo(tomaId, productoId) {
-    const v = (motivoVal || '').trim()
+    const v = motivoSel === 'Otro' ? (motivoVal || '').trim() : motivoSel
     if (!v) { setMotivoEdit(null); return }
     const { error } = await supabase.schema('produccion').from('toma_balanceado_linea')
       .update({ motivo_descuadre: v }).eq('toma_id', tomaId).eq('producto_id', productoId)
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el motivo. ' + error.message }); return }
     setLineasToma(m => ({ ...m, [tomaId]: (m[tomaId] || []).map(l => l.producto_id === productoId ? { ...l, motivo_descuadre: v } : l) }))
-    setMotivoEdit(null); setMotivoVal('')
+    setMotivoEdit(null); setMotivoSel(''); setMotivoVal('')
+  }
+
+  // Acta de un corte para imprimir (PDF), con Sistema en vivo.
+  function imprimirCorte(t, idx, lins, cons) {
+    const autor = nombresU[t.creado_por]
+    const nFalt = lins.filter(l => difCorte(l, cons) < -0.001).length
+    const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(tomas[idx - 1].fecha, -1))
+    const columnas = [
+      { titulo: 'Balanceado', campo: 'nombre' },
+      { titulo: 'Sistema', der: true, campo: 'sistema' },
+      { titulo: 'Contó', der: true, campo: 'conto' },
+      { titulo: 'Diferencia', der: true, campo: 'dif' },
+      { titulo: 'Motivo', campo: 'motivo' },
+      ...(esJefe ? [{ titulo: 'Consumo $', der: true, campo: 'consumo' }] : []),
+    ]
+    const filas = lins.map(l => {
+      const dif = difCorte(l, cons)
+      return {
+        nombre: nombreProducto(l.producto_id),
+        sistema: t.es_inicial ? '—' : limpio(sisCorte(l, cons)),
+        conto: limpio(l.cantidad_contada),
+        dif: t.es_inicial ? 'inicial' : Math.abs(dif) < 0.001 ? 'cuadró' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif)),
+        motivo: l.motivo_descuadre || (t.es_inicial || Math.abs(dif) < 0.001 ? '—' : 'sin motivo'),
+        consumo: cons ? dinero(cons.porProd[l.producto_id] || 0) : '—',
+      }
+    })
+    const total = esJefe && cons ? { nombre: 'Total del corte', sistema: '', conto: '', dif: '', motivo: '', consumo: dinero(cons.total) } : null
+    return {
+      titulo: 'Acta de conteo — Balanceado', finca: finca.nombre, categoria: 'Balanceado',
+      subtitulo: `Conteo del ${corta(t.fecha)}${t.es_inicial ? ' (inventario inicial)' : ''}`,
+      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. &nbsp; Contó = lo físico. &nbsp; Diferencia = Contó − Sistema. &nbsp; Consumo $ = lo consumido del corte.',
+      meta: [
+        { k: 'Período', v: idx === 0 ? `${corta(t.fecha)} – hoy` : `${corta(t.fecha)} – ${hastaTxt}` },
+        { k: 'Contó', v: autor || '—' },
+        { k: 'Faltantes', v: String(nFalt) },
+        { k: 'Impreso', v: corta(hoyISO()) },
+      ],
+      columnas, filas, total,
+    }
   }
   // Valor de la bodega = costo REAL de lo que hay (FIFO, lo que se pagó por
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
@@ -946,7 +998,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     </button>
                   </Cel>
                   <Cel der gris={!iniEsConteo} fuerte={iniEsConteo}>
-                    {limpio(iniMostrar)}
+                    <div>{limpio(iniMostrar)}</div>
                     {contInicial && <>
                       <span style={badgeIni}>Inicial</span>
                       {detalle}
@@ -1074,35 +1126,41 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const lins = [...(lineasToma[t.id] || [])].sort((a, b) => nombreProducto(a.producto_id).localeCompare(nombreProducto(b.producto_id)))
                 const cons = consumoToma[t.id]
                 const autor = nombresU[t.creado_por]
-                const nFalt = lins.filter(l => Number(l.diferencia) < -0.001).length
+                const nFalt = lins.filter(l => !t.es_inicial && difCorte(l, cons) < -0.001).length
                 const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(tomas[idx - 1].fecha, -1))
                 const alSis = ddmm(sumarDias(t.fecha, -1))
                 const cabCel = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                 const vacia = { color: '#c3d0db' }
+                const abierto = t.id in cortesAbiertos ? cortesAbiertos[t.id] : idx === 0
                 return (
                   <div key={t.id} style={{ ...cajaS, maxHeight: 'none', overflow: 'visible', marginBottom: '14px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '14px 16px' }}>
-                      <div>
-                        <div style={{ fontSize: '14.5px', fontWeight: 700 }}>
+                      <button onClick={() => setCortesAbiertos(a => ({ ...a, [t.id]: !abierto }))}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', flex: 1, minWidth: '240px' }}>
+                        <div style={{ fontSize: '14.5px', fontWeight: 700, color: NAVY }}>
+                          <span style={{ color: GRIS, marginRight: '8px', fontSize: '12px' }}>{abierto ? '▾' : '▸'}</span>
                           Conteo del {corta(t.fecha)}
                           <span style={{ fontSize: '10px', fontWeight: 700, borderRadius: '20px', padding: '2px 9px', marginLeft: '8px',
                             background: idx === 0 ? '#E6F1FB' : '#eef2f6', color: idx === 0 ? AZUL : GRIS }}>
                             {idx === 0 ? 'corte actual' : t.es_inicial ? 'inventario inicial' : 'corte anterior'}</span>
                         </div>
-                        <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px' }}>
+                        <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
                           {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(t.fecha)} → ${hastaTxt}`}
                           {autor ? ` · contó ${autor}` : ''} · {lins.length} {lins.length === 1 ? 'balanceado' : 'balanceados'} · {nFalt > 0
                             ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
                             : <span style={{ color: VERDE }}>todo cuadró</span>}
                         </div>
-                      </div>
-                      {esJefe && (
-                        <div style={{ display: 'flex', gap: '7px' }}>
+                      </button>
+                      <div style={{ display: 'flex', gap: '7px' }}>
+                        <button onClick={() => { if (!reporteBodegaPDF(imprimirCorte(t, idx, lins, cons))) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para imprimir.' }) }}
+                          style={{ ...btn, padding: '6px 12px', fontSize: '12px', background: AZUL, color: '#fff', borderColor: AZUL }}>Imprimir</button>
+                        {esJefe && <>
                           <button onClick={() => editarToma(t)} style={{ ...btn, padding: '6px 12px', fontSize: '12px' }}>Editar</button>
                           <button onClick={() => borrarToma(t)} style={{ ...btn, padding: '6px 12px', fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
-                        </div>
-                      )}
+                        </>}
+                      </div>
                     </div>
+                    {abierto && <>
                     <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '8px 16px', background: '#fbfcfe', borderTop: '0.5px solid ' + BORDE, borderBottom: '1px solid ' + BORDE }}>
                       {['Balanceado', 'Sistema', 'Contó', 'Diferencia', 'Motivo / qué pasó', ...(esJefe ? ['Consumo $'] : [])].map((c, i) =>
                         <span key={i} style={{ ...cabCel, textAlign: i === 0 ? 'left' : 'right' }}>{c}</span>)}
@@ -1110,14 +1168,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {!lineasToma[t.id] ? (
                       <div style={{ padding: '12px 16px', fontSize: '12px', color: GRIS }}>Cargando...</div>
                     ) : lins.map((l, i) => {
-                      const dif = Number(l.diferencia)
+                      const dif = difCorte(l, cons)
                       const falto = dif < -0.001, sobro = dif > 0.001
                       const editando = motivoEdit && motivoEdit.tomaId === t.id && motivoEdit.productoId === l.producto_id
                       return (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
                           <span>{nombreProducto(l.producto_id)}</span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {t.es_inicial ? <span style={vacia}>—</span> : <>{limpio(l.cantidad_sistema)}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
+                            {t.es_inicial ? <span style={vacia}>—</span> : <>{limpio(sisCorte(l, cons))}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
                           </span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
                           <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
@@ -1125,19 +1183,25 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           </span>
                           <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
                             {t.es_inicial ? <span style={vacia}>—</span>
-                              : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}</span>
-                              : (falto || sobro)
-                                ? (editando
-                                  ? <span style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+                              : editando
+                                ? <span style={{ display: 'inline-flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    <select autoFocus value={motivoSel} onChange={e => setMotivoSel(e.target.value)} style={{ ...inp, padding: '3px 7px', fontSize: '12px' }}>
+                                      <option value="">Motivo...</option>
+                                      {MOTIVOS_DESCUADRE.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    {motivoSel === 'Otro' && (
                                       <input autoFocus value={motivoVal} onChange={e => setMotivoVal(e.target.value)}
                                         onKeyDown={e => { if (e.key === 'Enter') guardarMotivo(t.id, l.producto_id); if (e.key === 'Escape') setMotivoEdit(null) }}
-                                        placeholder="merma, robo..." style={{ ...inp, padding: '3px 7px', fontSize: '12px', width: '110px' }} />
-                                      <button onClick={() => guardarMotivo(t.id, l.producto_id)} style={{ ...btnLink, fontSize: '11.5px' }}>Guardar</button>
-                                    </span>
-                                  : esJefe
-                                    ? <button onClick={() => { setMotivoEdit({ tomaId: t.id, productoId: l.producto_id }); setMotivoVal('') }} style={{ ...btnLink, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                        placeholder="Especifica" style={{ ...inp, padding: '3px 7px', fontSize: '12px', width: '100px' }} />
+                                    )}
+                                    <button onClick={() => guardarMotivo(t.id, l.producto_id)} style={{ ...btnLink, fontSize: '11.5px' }}>Guardar</button>
+                                  </span>
+                                : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}{esJefe && (falto || sobro) && <button onClick={() => abrirMotivo(t.id, l.producto_id, l.motivo_descuadre)} style={{ ...btnLink, fontSize: '10.5px', marginLeft: '6px' }}>cambiar</button>}</span>
+                                : (falto || sobro)
+                                  ? (esJefe
+                                    ? <button onClick={() => abrirMotivo(t.id, l.producto_id, null)} style={{ ...btnLink, fontSize: '11.5px' }}>Poner motivo ›</button>
                                     : <span style={vacia}>—</span>)
-                                : <span style={vacia}>—</span>}
+                                  : <span style={vacia}>—</span>}
                           </span>
                           {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cons ? dinero(cons.porProd[l.producto_id] || 0) : '—'}</span>}
                         </div>
@@ -1149,6 +1213,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(cons.total)}</span>
                       </div>
                     )}
+                    </>}
                   </div>
                 )
               })}
