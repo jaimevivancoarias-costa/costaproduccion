@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero, dineroExacto } from '../lib/fechas'
 import Ingresos from './Ingresos'
@@ -73,6 +73,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [recosteando, setRecosteando] = useState(false)
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
+  const [movDet, setMovDet] = useState(null)       // insumoId con el detalle por lote abierto en "Qué se movió"
+  const [lotesMov, setLotesMov] = useState({})     // insumoId -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
   const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -88,6 +90,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
+  // El detalle por lote depende de la fecha "hasta" y la finca; si cambian,
+  // se limpia la caché para no mostrar lotes de otro corte.
+  useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
 
   const [contando, setContando] = useState(false)
   const [editToma, setEditToma] = useState(null)   // conteo que se está editando
@@ -427,6 +432,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setRecosForm(null)
     setAviso({ tipo: 'ok', texto: `${f.insumo} recosteado al precio que rige.` })
     await cargar()
+  }
+
+  // Detalle por lote en "Qué se movió": entró / consumió / queda por lote,
+  // respetando FIFO (el viejo se gasta primero). Se carga al abrir la flechita.
+  async function abrirMov(insumoId) {
+    if (movDet === insumoId) { setMovDet(null); return }
+    setMovDet(insumoId)
+    if (!lotesMov[insumoId]) {
+      const { data, error } = await supabase.schema('produccion')
+        .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insumoId, p_hasta: hasta })
+      setLotesMov(m => ({ ...m, [insumoId]: error ? [] : (data || []) }))
+    }
   }
 
   function abrirCorregir(f) {
@@ -978,8 +995,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </>
               )
               return (
-              <Fila key={m.insumo_id} anchos={ANCHOS_MOV2}>
-                <Celda>{m.insumo}</Celda>
+              <div key={m.insumo_id}>
+              <Fila anchos={ANCHOS_MOV2}>
+                <Celda>
+                  <button onClick={() => abrirMov(m.insumo_id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, textAlign: 'left' }}>
+                    <span style={{ color: GRIS, marginRight: '7px', fontSize: '11px' }}>{movDet === m.insumo_id ? '▾' : '▸'}</span>{m.insumo}
+                  </button>
+                </Celda>
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}
@@ -1005,6 +1027,59 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {val(m.saldo_final)} <span style={{ fontSize: '11px', fontWeight: 400, color: GRIS }}>{uLabel}</span>
                 </Celda>
               </Fila>
+              {movDet === m.insumo_id && (
+                <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9' }}>
+                  {!lotesMov[m.insumo_id] ? (
+                    <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
+                  ) : lotesMov[m.insumo_id].length === 0 ? (
+                    <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
+                  ) : (() => {
+                    const rows = [...lotesMov[m.insumo_id]].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
+                    const gtc = esJefe ? '1.6fr .9fr .9fr .9fr 1fr' : '1.8fr 1fr 1fr 1fr'
+                    const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
+                    const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
+                    const tQueda = rows.reduce((s, r) => s + Number(r.queda || 0), 0)
+                    const tCosto = rows.reduce((s, r) => s + Number(r.consumio || 0) * Number(r.costo_unitario || 0), 0)
+                    const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                    const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
+                    const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
+                    const primerQueda = rows.findIndex(r => Number(r.queda) > 0)
+                    return (
+                      <div>
+                        <div style={{ fontSize: '11px', color: GRIS, marginBottom: '9px' }}>
+                          Por lote · se consume del más viejo primero{uLabel ? ` · en ${uLabel}` : ''}
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '7px 14px', alignItems: 'baseline', maxWidth: '640px' }}>
+                          <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                          <div style={cab}>Entró</div>
+                          <div style={cab}>Consumió</div>
+                          <div style={cab}>Queda</div>
+                          {esJefe && <div style={cab}>Costo consumido</div>}
+                          {rows.map((r, i) => (
+                            <Fragment key={i}>
+                              <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
+                                <span style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</span>
+                                {esJefe && r.costo_unitario != null && <span style={{ color: GRIS }}> · {dineroExacto(r.costo_unitario)}</span>}
+                                {i === primerQueda && Number(r.queda) > 0 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                              </div>
+                              <div style={cel}>{val(r.entro)}</div>
+                              <div style={{ ...cel, color: Number(r.consumio) ? ROJO : '#c3d0db' }}>{Number(r.consumio) ? val(r.consumio) : '—'}</div>
+                              <div style={{ ...cel, fontWeight: 600 }}>{val(r.queda)}</div>
+                              {esJefe && <div style={cel}>{dinero(Number(r.consumio) * Number(r.costo_unitario || 0))}</div>}
+                            </Fragment>
+                          ))}
+                          <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                          <div style={tot}>{val(tEntro)}</div>
+                          <div style={tot}>{val(tCons)}</div>
+                          <div style={tot}>{val(tQueda)}</div>
+                          {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+              </div>
             )})}
           </Tabla>
 
