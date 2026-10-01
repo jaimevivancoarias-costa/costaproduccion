@@ -584,13 +584,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Imprimir el acta de un conteo: por cada insumo, sistema · contó · diferencia · motivo.
   async function imprimirConteo(c) {
+    const uIns = id => (saldos.find(s => s.insumo_id === id)?.unidad) || ''
     const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
       .select('insumo_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').eq('toma_id', c.id)
     const filas = (data || []).map(l => {
       const dif = Number(l.diferencia) || 0
       return {
         insumo: nombreInsumo(l.insumo_id),
-        unidad: cap1(UNIDAD[unidadInsumo(l.insumo_id)] || unidadInsumo(l.insumo_id) || ''),
+        unidad: cap1(UNIDAD[uIns(l.insumo_id)] || uIns(l.insumo_id) || ''),
         sistema: limpio(l.cantidad_sistema),
         contado: limpio(l.cantidad_contada),
         diferencia: Math.abs(dif) < 0.001 ? '—' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif)),
