@@ -1277,32 +1277,41 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     return () => { vivo = false }
   }, [finca.id, esJefe])
 
-  const cargar = useCallback(async () => {
-    const [{ data: pr }, { data: g }, { data: pd }, { data: pend }, { data: dev }, { data: sol }, { data: auth }, { data: us }] = await Promise.all([
+  // Datos que NO dependen de las fechas: se cargan una vez por finca. Así los
+  // chips de fecha (Hoy, Este mes, Mes pasado) solo recargan lo del rango.
+  const cargarFijo = useCallback(async () => {
+    const [{ data: pr }, { data: pd }, { data: pend }, { data: sol }, { data: auth }, { data: us }] = await Promise.all([
       supabase.schema('produccion').from('producto').select('id, nombre').eq('activo', true).order('nombre'),
-      supabase.schema('produccion').from('ingreso_balanceado')
-        .select('id, fecha, numero_guia, proveedor, creado_por, creado_en, ingreso_balanceado_linea(producto_id, cantidad, plazo, costo_unitario)')
-        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
       supabase.schema('produccion').from('pedido_balanceado')
         .select('id, fecha, fecha_esperada, proveedor, estado, creado_por, creado_en, pedido_balanceado_linea(producto_id, cantidad)')
         .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(40),
       supabase.schema('produccion').from('vw_pedido_balanceado_pendiente')
         .select('pedido_id, producto_id, producto, pedida, recibida, pendiente').eq('finca_id', finca.id),
-      supabase.schema('produccion').from('devolucion_balanceado')
-        .select('id, fecha, producto_id, cantidad, motivo, creado_por, creado_en')
-        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
       supabase.schema('produccion').from('solicitud_correccion')
         .select('id, registro_id, valor_propuesto, motivo, estado')
         .eq('finca_id', finca.id).eq('tabla', 'ingreso_balanceado').eq('estado', 'pendiente'),
       supabase.auth.getUser(),
       supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
     ])
-    setProductos(pr || []); setLista(g || []); setPedidos(pd || []); setDevoluciones(dev || [])
-    setSolicitudes(sol || []); setUserId(auth?.user?.id || null)
+    setProductos(pr || []); setPedidos(pd || []); setSolicitudes(sol || []); setUserId(auth?.user?.id || null)
     const pp = {}; (pend || []).forEach(r => { (pp[r.pedido_id] = pp[r.pedido_id] || []).push(r) }); setPendientes(pp)
     const um = {}; (us || []).forEach(u => { um[u.id] = u.nombre }); setUsuarios(um)
+  }, [finca.id])
+  // Datos del rango de fechas: ingresos y devoluciones.
+  const cargarRango = useCallback(async () => {
+    const [{ data: g }, { data: dev }] = await Promise.all([
+      supabase.schema('produccion').from('ingreso_balanceado')
+        .select('id, fecha, numero_guia, proveedor, creado_por, creado_en, ingreso_balanceado_linea(producto_id, cantidad, plazo, costo_unitario)')
+        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
+      supabase.schema('produccion').from('devolucion_balanceado')
+        .select('id, fecha, producto_id, cantidad, motivo, creado_por, creado_en')
+        .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }).limit(200),
+    ])
+    setLista(g || []); setDevoluciones(dev || [])
   }, [finca.id, desde, hasta])
-  useEffect(() => { cargar() }, [cargar])
+  const cargar = useCallback(async () => { await Promise.all([cargarFijo(), cargarRango()]) }, [cargarFijo, cargarRango])
+  useEffect(() => { cargarFijo() }, [cargarFijo])
+  useEffect(() => { cargarRango() }, [cargarRango])
 
   const nombre = id => productos.find(p => p.id === id)?.nombre || ''
   // Filtro por balanceado (por nombre). Afecta la lista y el reporte.
@@ -1482,6 +1491,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
         <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
         <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
         <GhostBtn on={desde === primeroDelMes(hoyISO()) && hasta === hoyISO()} onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+        <GhostBtn on={desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)} onClick={() => { setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
         <select value={filtroProd} onChange={e => setFiltroProd(e.target.value)}
                 style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
           <option value="">Todos los balanceados</option>
