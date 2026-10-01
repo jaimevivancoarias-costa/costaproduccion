@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, numDec, miles } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
@@ -250,7 +250,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
 
       {nuevo && (
         <Formulario
-          tipo={nuevo} finca={finca} insumos={insumos}
+          tipo={nuevo} finca={finca} insumos={insumos} esJefe={esJefe}
           pedidosAbiertos={pedidos.filter(p => p.estado === 'abierto')}
           pendientes={pendientes}
           onCancelar={() => setNuevo(null)}
@@ -455,7 +455,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
 // ---------------------------------------------------------------------
 // Formulario de ingreso o de pedido: cabecera + lineas
 // ---------------------------------------------------------------------
-function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCancelar, onGuardado, onDevolucion, setAviso }) {
+function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes, onCancelar, onGuardado, onDevolucion, setAviso }) {
   const esIngreso = tipo === 'ingreso'
   const esDevolucion = tipo === 'devolucion'
   const esPedido = tipo === 'pedido'
@@ -467,6 +467,47 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
   const [obs, setObs] = useState('')
   const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '', unidad: '' }])
   const [guardando, setGuardando] = useState(false)
+  // Plazo + precio del catálogo (solo jefe, solo ingreso).
+  const [plazo, setPlazo] = useState(0)
+  const [precioCat, setPrecioCat] = useState({})   // insumoId -> {plazo: precio por conteo}
+  const [plazoAct, setPlazoAct] = useState({})      // insumoId -> plazo que rige en catálogo
+  const verPrecio = esJefe && esIngreso
+
+  // Precio por unidad de COMPRA del catálogo, para un insumo y plazo.
+  function precioCompraCat(insumoId, pz) {
+    const ins = insumos.find(x => x.id === insumoId)
+    const factor = Number(ins?.factor) || 1
+    const m = precioCat[insumoId]
+    if (!m) return null
+    const p = m[pz] != null ? m[pz] : m[0]
+    return p != null ? p * factor : null
+  }
+  const fmtPre = n => (n != null ? String(n) : '')
+
+  useEffect(() => {
+    if (!esIngreso) return
+    let vivo = true
+    ;(async () => {
+      const [{ data: pr }, { data: pz }] = await Promise.all([
+        esJefe
+          ? supabase.schema('produccion').from('precio_insumo')
+              .select('insumo_id, finca_id, plazo, precio_unitario')
+              .or(`finca_id.is.null,finca_id.eq.${finca.id}`).is('vigente_hasta', null)
+          : Promise.resolve({ data: [] }),
+        supabase.schema('produccion').from('plazo_insumo')
+          .select('insumo_id, plazo').eq('finca_id', finca.id).is('vigente_hasta', null),
+      ])
+      if (!vivo) return
+      const prop = {}, gen = {}
+      ;(pr || []).forEach(x => { const mm = x.finca_id ? prop : gen; (mm[x.insumo_id] = mm[x.insumo_id] || {})[Number(x.plazo)] = Number(x.precio_unitario) })
+      const cat = {}
+      ;[...new Set([...Object.keys(prop), ...Object.keys(gen)])].forEach(id => { cat[id] = { ...(gen[id] || {}), ...(prop[id] || {}) } })
+      setPrecioCat(cat)
+      const pa = {}; (pz || []).forEach(x => { pa[x.insumo_id] = Number(x.plazo) })
+      setPlazoAct(pa)
+    })()
+    return () => { vivo = false }
+  }, [finca.id, esIngreso, esJefe])
 
   const UNI = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'gramos',
                 libras: 'libras', kg: 'kilos', unidad: 'unidades',
@@ -504,8 +545,24 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
                     observacion: obs || null })
           .select('id').single()
         if (error) throw error
+        const lineasIns = validas.map(l => {
+          const fila = { ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) }
+          if (esJefe) {
+            // Jefe/contadora: plazo elegido + precio (del catálogo o el que puso).
+            fila.plazo = plazo
+            const pu = numDec(l.precio)
+            if (pu > 0) fila.costo_unitario = pu
+          } else {
+            // Bodeguero: el plazo y el precio que rigen en el catálogo.
+            const pa = plazoAct[l.insumoId]
+            if (pa != null) fila.plazo = pa
+            const pc = precioCompraCat(l.insumoId, pa != null ? pa : 0)
+            if (pc != null) fila.costo_unitario = pc
+          }
+          return fila
+        })
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
-          .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) })))
+          .insert(lineasIns)
         if (e2) throw e2
       } else if (esDevolucion) {
         const { data: nuevas, error } = await supabase.schema('produccion').from('devolucion_insumo')
@@ -581,6 +638,15 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         )}
       </div>
 
+      {verPrecio && (
+        <div style={{ marginBottom: '14px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
+          <Seg valor={plazo}
+               onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.insumoId ? { ...l, precio: fmtPre(precioCompraCat(l.insumoId, pz)) } : l)) }}
+               opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
+        </div>
+      )}
+
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
       {lineas.map((l, i) => {
         const ins = insumos.find(x => x.id === l.insumoId)
@@ -594,7 +660,7 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         const mostrarEquiv = ins && uElegida !== uCompra && enCompra != null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
-            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', ''); setLinea(i, 'sobrante', ''); setLinea(i, 'sobranteOn', false) }}
+            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', ''); setLinea(i, 'sobrante', ''); setLinea(i, 'sobranteOn', false); if (verPrecio) setLinea(i, 'precio', fmtPre(precioCompraCat(e.target.value, plazo))) }}
               style={{ ...entrada, flex: 1, minWidth: '180px' }}>
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
@@ -612,6 +678,15 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
             ) : null}
             {mostrarEquiv && (
               <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(enCompra * 100) / 100)} {UNI[uCompra] || cap1(uCompra)}</span>
+            )}
+            {verPrecio && ins && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="Precio del catálogo según el plazo. Puedes cambiarlo solo para este ingreso.">
+                <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                <CampoNumero maxDec={6} value={l.precio ?? ''} placeholder="precio"
+                  onChange={v => setLinea(i, 'precio', v)}
+                  style={{ ...entrada, width: '92px', borderColor: '#9cc4e8' }} />
+                <span style={{ fontSize: '11px', color: GRIS }}>/{UNI[uCompra] || cap1(uCompra)}</span>
+              </div>
             )}
             {lineas.length > 1 && (
               <button onClick={() => quitarLinea(i)} style={{ border: 'none', background: 'none',
@@ -642,11 +717,23 @@ function Formulario({ tipo, finca, insumos, pedidosAbiertos, pendientes, onCance
         + otra línea
       </button>
 
+      {verPrecio && validas.length > 0 && (
+        <div style={{ background: '#eef7f2', border: '0.5px solid #cdeadd', borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
+          {validas.map((l, i) => {
+            const ins = insumos.find(x => x.id === l.insumoId)
+            const uc = ins?.unidad_compra || ins?.unidad
+            const q = cantidadEnCompra(l)
+            const pu = numDec(l.precio)
+            return <div key={i}><b>{miles(Math.round(q * 100) / 100)} {UNI[uc] || cap1(uc)}</b> · {PLAZO_LBL[plazo]} · {pu > 0 ? <>{dineroExacto(pu)} = <b>{dinero(q * pu)}</b></> : <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>}</div>
+          })}
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px' }}>
         <Btn onClick={onCancelar}>Cancelar</Btn>
         <Btn primario onClick={guardar} disabled={guardando || !validas.length}>
           {guardando ? 'Guardando...'
-            : esIngreso ? 'Guardar ingreso'
+            : esIngreso ? (verPrecio ? 'Confirmar y guardar' : 'Guardar ingreso')
             : esDevolucion ? 'Guardar devolución'
             : 'Guardar pedido'}
         </Btn>
