@@ -590,27 +590,26 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       .select('insumo_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').eq('toma_id', c.id)
     const filas = (data || []).map(l => {
       const dif = Number(l.diferencia) || 0
+      const sinDif = Math.abs(dif) < 0.001
       return {
         insumo: nombreInsumo(l.insumo_id),
         unidad: cap1(UNIDAD[uIns(l.insumo_id)] || uIns(l.insumo_id) || ''),
         sistema: limpio(l.cantidad_sistema),
         contado: limpio(l.cantidad_contada),
-        diferencia: Math.abs(dif) < 0.001 ? '—' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif)),
-        motivo: l.motivo_descuadre || '',
+        diferencia: sinDif ? 'Se mantiene' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif)),
+        motivo: sinDif ? '' : (l.motivo_descuadre || ''),
       }
     }).sort((a, b) => String(a.insumo).localeCompare(String(b.insumo)))
     const ok = reporteBodegaPDF({
-      titulo: 'Acta de conteo de bodega',
+      titulo: 'Reporte de conteo de bodega',
       finca: String(finca.nombre).toUpperCase(),
       categoria: 'Insumos',
-      subtitulo: 'Conteo físico de bodega · insumos',
-      pie: '<b>Cómo se lee:</b> Sistema = lo que decía el sistema. Contó = lo contado físicamente. Diferencia: "faltó" = menos de lo que decía; "sobró" = más.',
+      subtitulo: 'Saldo, conteo y diferencias · insumos',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que decía el sistema. Contó = lo contado físicamente. Diferencia: "faltó" = menos de lo que decía; "sobró" = más; "Se mantiene" = cuadró.',
       meta: [
         { k: 'Fecha del conteo', v: corta(c.fecha) },
         { k: 'Tipo', v: c.es_inicial ? 'Inventario inicial' : 'Conteo' },
         ...(c.observacion ? [{ k: 'Observación', v: c.observacion }] : []),
-        { k: 'Realizó', v: '______________________' },
-        { k: 'Revisó', v: '______________________' },
       ],
       columnas: [
         { titulo: 'Insumo', campo: 'insumo' },
@@ -1068,7 +1067,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           </div>
           <Tabla
             caja min="1040px"
-            columnas={['Insumo', 'Llega / se aplica', 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
+            columnas={['Insumo', 'Llega / se aplica', movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
             anchos={ANCHOS_MOV2}
           >
             {movs.filter(m => coincide(m.insumo) && (verSinInv || !esSinInvMov(m))).map(m => {
