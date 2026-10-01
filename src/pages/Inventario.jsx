@@ -452,14 +452,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Abrir el formulario de corrección de precio de un lote concreto.
   function iniciarCorreccion(insumoId, lote) {
-    setCorrige({ insumoId, fecha: lote.fecha, plazo: lote.plazo, actual: lote.costo_unitario })
+    setCorrige({ insumoId, fecha: lote.fecha, plazo: lote.plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
     setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
     setCorrAdelante(false)
   }
 
   // Corregir el precio de un lote: arregla el catálogo del período (o de ahí
   // en adelante) y recostea. Solo recalcula los consumos de este insumo.
-  async function guardarCorreccion() {
+  async function guardarCorreccionPrecio() {
     if (!corrige) return
     const v = numDec(corrPrecio)
     if (!(v > 0)) { setAviso({ tipo: 'error', texto: 'Pon un precio mayor que cero.' }); return }
@@ -1092,7 +1092,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
                                 {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
                                 {i === primerQueda && Number(r.queda) > 0 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                                {esJefe && !r.es_conteo && (
+                                {esJefe && (
                                   <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
                                     style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                     Corregir precio
@@ -1114,7 +1114,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         {esJefe && corrige && corrige.insumoId === m.insumo_id && (
                           <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                             <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>
-                              Corregir precio · Compra {corta(corrige.fecha)}
+                              Corregir precio · {corrige.esConteo ? 'Conteo' : 'Compra'} {corta(corrige.fecha)}
                             </div>
                             <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
                               Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()} · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este insumo.
@@ -1138,7 +1138,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
                             </div>
                             <div style={{ display: 'flex', gap: '9px' }}>
-                              <Btn primario onClick={guardarCorreccion} disabled={guardandoCorr}>
+                              <Btn primario onClick={guardarCorreccionPrecio} disabled={guardandoCorr}>
                                 {guardandoCorr ? 'Guardando...' : 'Guardar corrección'}
                               </Btn>
                               <Btn onClick={() => setCorrige(null)}>Cancelar</Btn>
