@@ -69,6 +69,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
   const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
   const [descMotivo, setDescMotivo] = useState({})     // producto_id -> motivo del descuadre (para el reporte)
+  const [nombresU, setNombresU] = useState({})         // id usuario -> nombre
+  const [lineasToma, setLineasToma] = useState({})     // toma_id -> [líneas completas] (resumen Conteos anteriores)
+  const [consumoToma, setConsumoToma] = useState({})   // toma_id -> { porProd: {pid: $}, total } consumo del corte
+  const [motivoEdit, setMotivoEdit] = useState(null)   // { tomaId, productoId } línea editando motivo
+  const [motivoVal, setMotivoVal] = useState('')
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
@@ -92,7 +97,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         supabase.schema('produccion').from('precio_producto')
           .select('producto_id, plazo, precio_saco, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
         supabase.schema('produccion').from('toma_balanceado')
-          .select('id, fecha, observacion').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
+          .select('id, fecha, observacion, es_inicial, creado_por').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('parametro').select('valor').eq('clave', 'libras_por_saco').maybeSingle(),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
@@ -148,7 +153,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         // El último motivo del rango con descuadre (las tomas vienen en orden ascendente).
         if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
       }))
-      setConteoQuien(cq); setDescMotivo(dm)
+      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
@@ -187,6 +192,46 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const hayConteoSuelto = movs.some(m => m.conteo !== null && !anclaInicio(m))
   const ocultaConteo = !hayConteoSuelto
   const gMov = esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B)
+
+  // Resumen de "Conteos anteriores": todas las líneas de cada conteo + el
+  // consumo $ del corte (del conteo al siguiente, o a hoy). Se carga una vez.
+  useEffect(() => {
+    if (!tomas.length) { setLineasToma({}); setConsumoToma({}); return }
+    let vivo = true
+    ;(async () => {
+      const ids = tomas.map(t => t.id)
+      const { data: lins } = await supabase.schema('produccion').from('toma_balanceado_linea')
+        .select('toma_id, producto_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').in('toma_id', ids)
+      if (!vivo) return
+      const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
+      setLineasToma(byToma)
+      if (!esJefe) return
+      const res = await Promise.all(tomas.map((t, i) => {
+        const h = i === 0 ? hoyISO() : sumarDias(tomas[i - 1].fecha, -1)
+        return supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: t.fecha, p_hasta: h })
+          .then(r => ({ id: t.id, rows: r.data || [] }))
+      }))
+      if (!vivo) return
+      const cmap = {}
+      res.forEach(({ id, rows }) => {
+        const porProd = {}; let total = 0
+        rows.forEach(r => { const d = Number(r.consumo_dolares) || 0; porProd[r.producto_id] = d; total += d })
+        cmap[id] = { porProd, total }
+      })
+      setConsumoToma(cmap)
+    })()
+    return () => { vivo = false }
+  }, [tomas, finca.id, esJefe])
+
+  async function guardarMotivo(tomaId, productoId) {
+    const v = (motivoVal || '').trim()
+    if (!v) { setMotivoEdit(null); return }
+    const { error } = await supabase.schema('produccion').from('toma_balanceado_linea')
+      .update({ motivo_descuadre: v }).eq('toma_id', tomaId).eq('producto_id', productoId)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el motivo. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [tomaId]: (m[tomaId] || []).map(l => l.producto_id === productoId ? { ...l, motivo_descuadre: v } : l) }))
+    setMotivoEdit(null); setMotivoVal('')
+  }
   // Valor de la bodega = costo REAL de lo que hay (FIFO, lo que se pagó por
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
@@ -1019,50 +1064,94 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           )}
 
           {tomas.length > 0 && (
-            <div style={{ marginTop: '16px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 8px' }}>Conteos anteriores</h3>
-              <Caja>
-                {tomas.map(t => (
-                  <div key={t.id}>
-                  <Fila gtc={esJefe ? '150px 1fr 160px' : G_DOS}>
-                    <Cel fuerte>{corta(t.fecha)}</Cel>
-                    <Cel gris>
-                      {t.observacion || 'Sin observación'}
-                      <button onClick={() => verDescuadres(t)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL, marginLeft: '8px', padding: 0 }}>
-                        {detToma === t.id ? 'ocultar descuadres' : 'ver descuadres'}
-                      </button>
-                    </Cel>
-                    {esJefe && (
-                      <div style={{ padding: '6px 10px', textAlign: 'right', display: 'flex', gap: '7px', justifyContent: 'flex-end' }}>
-                        <button onClick={() => editarToma(t)} style={{ ...btn, padding: '5px 11px', fontSize: '12px' }}>Editar</button>
-                        <button onClick={() => borrarToma(t)} style={{ ...btn, padding: '5px 11px',
-                          fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
+            <div style={{ marginTop: '20px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Conteos anteriores</h3>
+              <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '12px' }}>
+                Cada conteo explica su corte: lo que decía el sistema, lo que se contó, la diferencia (con su motivo){esJefe ? ' y cuánto costó' : ''}.
+              </div>
+              {tomas.map((t, idx) => {
+                const grc = `1.7fr .9fr .9fr 1fr 1.3fr${esJefe ? ' .9fr' : ''}`
+                const lins = [...(lineasToma[t.id] || [])].sort((a, b) => nombreProducto(a.producto_id).localeCompare(nombreProducto(b.producto_id)))
+                const cons = consumoToma[t.id]
+                const autor = nombresU[t.creado_por]
+                const nFalt = lins.filter(l => Number(l.diferencia) < -0.001).length
+                const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(tomas[idx - 1].fecha, -1))
+                const alSis = ddmm(sumarDias(t.fecha, -1))
+                const cabCel = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                const vacia = { color: '#c3d0db' }
+                return (
+                  <div key={t.id} style={{ ...cajaS, maxHeight: 'none', overflow: 'visible', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '14px 16px' }}>
+                      <div>
+                        <div style={{ fontSize: '14.5px', fontWeight: 700 }}>
+                          Conteo del {corta(t.fecha)}
+                          <span style={{ fontSize: '10px', fontWeight: 700, borderRadius: '20px', padding: '2px 9px', marginLeft: '8px',
+                            background: idx === 0 ? '#E6F1FB' : '#eef2f6', color: idx === 0 ? AZUL : GRIS }}>
+                            {idx === 0 ? 'corte actual' : t.es_inicial ? 'inventario inicial' : 'corte anterior'}</span>
+                        </div>
+                        <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px' }}>
+                          {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(t.fecha)} → ${hastaTxt}`}
+                          {autor ? ` · contó ${autor}` : ''} · {lins.length} {lins.length === 1 ? 'balanceado' : 'balanceados'} · {nFalt > 0
+                            ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
+                            : <span style={{ color: VERDE }}>todo cuadró</span>}
+                        </div>
+                      </div>
+                      {esJefe && (
+                        <div style={{ display: 'flex', gap: '7px' }}>
+                          <button onClick={() => editarToma(t)} style={{ ...btn, padding: '6px 12px', fontSize: '12px' }}>Editar</button>
+                          <button onClick={() => borrarToma(t)} style={{ ...btn, padding: '6px 12px', fontSize: '12px', color: ROJO, borderColor: '#e7cccb' }}>Borrar</button>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '8px 16px', background: '#fbfcfe', borderTop: '0.5px solid ' + BORDE, borderBottom: '1px solid ' + BORDE }}>
+                      {['Balanceado', 'Sistema', 'Contó', 'Diferencia', 'Motivo / qué pasó', ...(esJefe ? ['Consumo $'] : [])].map((c, i) =>
+                        <span key={i} style={{ ...cabCel, textAlign: i === 0 ? 'left' : 'right' }}>{c}</span>)}
+                    </div>
+                    {!lineasToma[t.id] ? (
+                      <div style={{ padding: '12px 16px', fontSize: '12px', color: GRIS }}>Cargando...</div>
+                    ) : lins.map((l, i) => {
+                      const dif = Number(l.diferencia)
+                      const falto = dif < -0.001, sobro = dif > 0.001
+                      const editando = motivoEdit && motivoEdit.tomaId === t.id && motivoEdit.productoId === l.producto_id
+                      return (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
+                          <span>{nombreProducto(l.producto_id)}</span>
+                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {t.es_inicial ? <span style={vacia}>—</span> : <>{limpio(l.cantidad_sistema)}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
+                          </span>
+                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
+                          <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
+                            {t.es_inicial ? 'inicial' : falto ? 'faltó ' + limpio(Math.abs(dif)) : sobro ? 'sobró ' + limpio(dif) : 'cuadró'}
+                          </span>
+                          <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
+                            {t.es_inicial ? <span style={vacia}>—</span>
+                              : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}</span>
+                              : (falto || sobro)
+                                ? (editando
+                                  ? <span style={{ display: 'inline-flex', gap: '5px', alignItems: 'center' }}>
+                                      <input autoFocus value={motivoVal} onChange={e => setMotivoVal(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') guardarMotivo(t.id, l.producto_id); if (e.key === 'Escape') setMotivoEdit(null) }}
+                                        placeholder="merma, robo..." style={{ ...inp, padding: '3px 7px', fontSize: '12px', width: '110px' }} />
+                                      <button onClick={() => guardarMotivo(t.id, l.producto_id)} style={{ ...btnLink, fontSize: '11.5px' }}>Guardar</button>
+                                    </span>
+                                  : esJefe
+                                    ? <button onClick={() => { setMotivoEdit({ tomaId: t.id, productoId: l.producto_id }); setMotivoVal('') }} style={{ ...btnLink, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                    : <span style={vacia}>—</span>)
+                                : <span style={vacia}>—</span>}
+                          </span>
+                          {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cons ? dinero(cons.porProd[l.producto_id] || 0) : '—'}</span>}
+                        </div>
+                      )
+                    })}
+                    {esJefe && cons && (
+                      <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '10px 16px', fontWeight: 700, borderTop: '1.5px solid ' + BORDE, fontSize: '13px' }}>
+                        <span>Total del corte</span><span /><span /><span /><span />
+                        <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(cons.total)}</span>
                       </div>
                     )}
-                  </Fila>
-                  {detToma === t.id && (
-                    <div style={{ padding: '8px 16px 12px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
-                      {!detLineas[t.id] ? (
-                        <div style={{ fontSize: '12px', color: GRIS }}>Cargando...</div>
-                      ) : !detLineas[t.id].length ? (
-                        <div style={{ fontSize: '12px', color: VERDE }}>Todo cuadró en este conteo.</div>
-                      ) : detLineas[t.id].map((l, i) => {
-                        const dif = Number(l.diferencia)
-                        return (
-                          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr', gap: '10px', fontSize: '12.5px', padding: '4px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
-                            <span>{nombreProducto(l.producto_id)}</span>
-                            <span style={{ color: GRIS }}>sistema {limpio(l.cantidad_sistema)} · contó {limpio(l.cantidad_contada)}</span>
-                            <span style={{ textAlign: 'right', color: dif < 0 ? ROJO : AMBAR }}>
-                              {(dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}{l.motivo_descuadre ? ` · ${l.motivo_descuadre}` : ''}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
                   </div>
-                ))}
-              </Caja>
+                )
+              })}
             </div>
           )}
         </>
