@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, dinero, dineroExacto, numDec } from '../lib/fechas'
+import { hoyISO, corta, dinero, dineroExacto, numDec, sumarDias } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
@@ -39,6 +39,10 @@ const esUnidadGenerica = u => { const x = String(u || '').toLowerCase(); return 
 
 // Primer dia del mes de una fecha, para el atajo "este mes".
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
+const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
+const ddmm = iso => corta(iso).slice(0, 5)
+const badgeIni = { display: 'inline-block', fontSize: '8.5px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '0.5px 5px', marginTop: '3px', letterSpacing: '.01em' }
+const navBtn = { padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
 const ANCHOS_SALDO_JEFE = '1fr 160px 130px 150px 175px 140px 100px'
@@ -94,9 +98,42 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
+  const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
+  const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
   // El detalle por lote depende de la fecha "hasta" y la finca; si cambian,
   // se limpia la caché para no mostrar lotes de otro corte.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
+
+  // Períodos "entre conteos": de cada conteo hasta el siguiente (o hasta hoy).
+  const periodos = useMemo(() => {
+    const ts = [...conteos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1))  // más reciente primero
+    return ts.map((t, i) => ({
+      desde: t.fecha,
+      hasta: i === 0 ? hoyISO() : sumarDias(ts[i - 1].fecha, -1),
+      label: i === 0 ? `Conteo ${corta(t.fecha)} → Hoy` : `Conteo ${corta(t.fecha)} → Conteo ${corta(ts[i - 1].fecha)}`,
+    }))
+  }, [conteos])
+  // En modo "por conteo", el período elegido fija desde/hasta.
+  useEffect(() => {
+    if (modoMov !== 'conteo') return
+    const p = periodos[periodoSel]
+    if (p) { setDesde(p.desde); setHasta(p.hasta) }
+  }, [modoMov, periodoSel, periodos])
+
+  // El conteo "fija" el saldo: si el período arranca justo en un conteo (o en el
+  // inventario inicial), ese valor contado ES el Saldo Ini. — en todos los modos.
+  const anclaInicio = m => {
+    if (m.conteo === null || m.conteo === undefined) return false
+    const c = conteoQuien[m.insumo_id]
+    if (c && c.fecha === desde) return true
+    if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
+    return false
+  }
+  // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
+  const hayConteoSuelto = movs.some(m => m.conteo !== null && m.conteo !== undefined && !anclaInicio(m))
+  const ocultaConteo = !hayConteoSuelto
+  const colsMov = ['Insumo', 'Llega / se aplica', ocultaConteo ? 'Saldo Ini.' : (movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial'), 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', ...(ocultaConteo ? [] : ['Conteo']), 'Queda']
+  const anchosMov = ocultaConteo ? '1.3fr 180px 90px 90px 90px 90px 95px 100px' : ANCHOS_MOV2
 
   const [contando, setContando] = useState(false)
   const [editToma, setEditToma] = useState(null)   // conteo que se está editando
@@ -781,16 +818,34 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </label>
           ) : (
             <>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '13px', color: GRIS }}>del</span>
-                <input type="date" value={desde} max={hasta}
-                       onChange={e => setDesde(e.target.value)} style={entrada} />
-                <span style={{ fontSize: '13px', color: GRIS }}>al</span>
-                <input type="date" value={hasta} min={desde} max={hoyISO()}
-                       onChange={e => setHasta(e.target.value)} style={entrada} />
-              </label>
-              <GhostBtn onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
-              <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
+              <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
+                onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+              <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
+                onClick={() => { setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
+              <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
+              {modoMov === 'conteo' ? (
+                periodos.length ? (
+                  <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <button onClick={() => setPeriodoSel(i => Math.min(i + 1, periodos.length - 1))} disabled={periodoSel >= periodos.length - 1}
+                      style={{ ...navBtn, opacity: periodoSel >= periodos.length - 1 ? 0.4 : 1 }}>‹</button>
+                    <select value={periodoSel} onChange={e => setPeriodoSel(Number(e.target.value))} style={{ ...selChip, minWidth: '250px' }}>
+                      {periodos.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
+                    </select>
+                    <button onClick={() => setPeriodoSel(i => Math.max(i - 1, 0))} disabled={periodoSel <= 0}
+                      style={{ ...navBtn, opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
+                  </span>
+                ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
+              ) : (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '13px', color: GRIS }}>del</span>
+                  <input type="date" value={desde} max={hasta}
+                         onChange={e => setDesde(e.target.value)} style={entrada} />
+                  <span style={{ fontSize: '13px', color: GRIS }}>al</span>
+                  <input type="date" value={hasta} min={desde} max={hoyISO()}
+                         onChange={e => setHasta(e.target.value)} style={entrada} />
+                  <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
+                </label>
+              )}
             </>
           )}
         </div>
@@ -1067,8 +1122,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           </div>
           <Tabla
             caja min="1040px"
-            columnas={['Insumo', 'Llega / se aplica', movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial', 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', 'Conteo', 'Queda']}
-            anchos={ANCHOS_MOV2}
+            columnas={colsMov}
+            anchos={anchosMov}
           >
             {movs.filter(m => coincide(m.insumo) && (verSinInv || !esSinInvMov(m))).map(m => {
               const fac = factores[m.insumo_id]
@@ -1080,9 +1135,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const factor = enUso ? (fac.factor || 1) : 1
               const uLabel = (enUso ? (UNIDAD[fac.uApp] || fac.uApp) : (UNIDAD[m.unidad] || m.unidad) || '').toLowerCase()
               const val = v => limpio(Number(v) * factor)
-              const contInicial = Math.abs(Number(m.saldo_inicial)) < 0.0001 && m.conteo !== null && m.conteo !== undefined
-              const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
-              const conteoMostrar = contInicial ? null : m.conteo
+              const iniEsConteo = anclaInicio(m)
+              const contInicial = iniEsConteo && conteoQuien[m.insumo_id]?.esInicial
+              const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
+              const conteoMostrar = iniEsConteo ? null : m.conteo
+              const fechaConteoIni = conteoQuien[m.insumo_id]?.fecha || desde
               const cq = conteoQuien[m.insumo_id]
               const abierto2 = conteoDet === m.insumo_id
               const porQuien = cq && (
@@ -1098,7 +1155,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               )
               return (
               <div key={m.insumo_id}>
-              <Fila anchos={ANCHOS_MOV2}>
+              <Fila anchos={anchosMov}>
                 <Celda>
                   <button onClick={() => abrirMov(m.insumo_id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, textAlign: 'left' }}>
                     <span style={{ color: GRIS, marginRight: '7px', fontSize: '11px' }}>{movDet === m.insumo_id ? '▾' : '▸'}</span>{m.insumo}
@@ -1109,7 +1166,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}
                     <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {fac.factor} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</span></>}
                 </Celda>
-                <Celda derecha gris>{iniMostrar === null ? '—' : <>{val(iniMostrar)}{contInicial && porQuien}</>}</Celda>
+                <Celda derecha gris={!iniEsConteo} fuerte={iniEsConteo}>
+                  {iniMostrar === null || iniMostrar === undefined ? '—' : <>
+                    <div>{val(iniMostrar)}</div>
+                    {contInicial && <><span style={badgeIni}>Inicial</span>{porQuien}</>}
+                    {iniEsConteo && !contInicial && <span style={badgeIni}>Conteo {ddmm(fechaConteoIni)}</span>}
+                  </>}
+                </Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
                   {Number(m.ingresos) ? '+' + val(m.ingresos) : '—'}
                 </Celda>
@@ -1122,9 +1185,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda derecha color={Number(m.ajustes) ? (Number(m.ajustes) < 0 ? ROJO : VERDE) : '#c3d0db'}>
                   {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + val(Math.abs(Number(m.ajustes))) : '—'}
                 </Celda>
-                <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
-                  {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{val(conteoMostrar)}{porQuien}</>}
-                </Celda>
+                {!ocultaConteo && (
+                  <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
+                    {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{val(conteoMostrar)}{porQuien}</>}
+                  </Celda>
+                )}
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {val(m.saldo_final)} <span style={{ fontSize: '11px', fontWeight: 400, color: GRIS }}>{uLabel}</span>
                 </Celda>
