@@ -237,6 +237,118 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     if (!ok) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para imprimir.' })
   }
 
+  // "Conteos anteriores": tarjetas colapsables por corte. Se muestra igual en
+  // "Cuánto hay" y en "Qué se movió". Nacen todas cerradas; el usuario abre.
+  function renderConteosAnteriores() {
+    if (!conteos.length) return null
+    return (
+            <div style={{ marginTop: '20px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Conteos anteriores</h3>
+              <p style={{ fontSize: '12.5px', color: GRIS, margin: '0 0 12px' }}>
+                Cada conteo explica su corte: lo que decía el sistema, lo que se contó, la diferencia (con su motivo){esJefe ? ' y cuánto costó' : ''}. Tócalo para abrir el detalle.
+              </p>
+              {conteos.map((c, idx) => {
+                const grc = `1.9fr .9fr .9fr 1fr 1.3fr${esJefe ? ' .9fr' : ''}`
+                const lins = [...(lineasToma[c.id] || [])].sort((a, b) => nombreInsumo(a.insumo_id).localeCompare(nombreInsumo(b.insumo_id)))
+                const cons = consumoToma[c.id]
+                const autor = nombresU[c.creado_por]
+                const nFalt = lins.filter(l => !c.es_inicial && difCorte(l, cons) < -0.001).length
+                const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(conteos[idx - 1].fecha, -1))
+                const alSis = ddmm(sumarDias(c.fecha, -1))
+                const cabCel = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                const vacia = { color: '#c3d0db' }
+                const link = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', color: AZUL, fontWeight: 500 }
+                const abierto = c.id in cortesAbiertos ? cortesAbiertos[c.id] : false
+                return (
+                  <div key={c.id} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '14px 16px' }}>
+                      <button onClick={() => setCortesAbiertos(a => ({ ...a, [c.id]: !abierto }))}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', flex: 1, minWidth: '240px' }}>
+                        <div style={{ fontSize: '14.5px', fontWeight: 700, color: NAVY }}>
+                          <span style={{ color: GRIS, marginRight: '8px', fontSize: '12px' }}>{abierto ? '▾' : '▸'}</span>
+                          Conteo del {corta(c.fecha)}
+                          <span style={{ fontSize: '10px', fontWeight: 700, borderRadius: '20px', padding: '2px 9px', marginLeft: '8px',
+                            background: idx === 0 ? '#E6F1FB' : '#eef2f6', color: idx === 0 ? AZUL : GRIS }}>
+                            {idx === 0 ? 'corte actual' : c.es_inicial ? 'inventario inicial' : 'corte anterior'}</span>
+                        </div>
+                        <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
+                          {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(c.fecha)} → ${hastaTxt}`}
+                          {autor ? ` · contó ${autor}` : ''} · {lins.length} {lins.length === 1 ? 'insumo' : 'insumos'} · {nFalt > 0
+                            ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
+                            : <span style={{ color: VERDE }}>todo cuadró</span>}
+                        </div>
+                      </button>
+                      <div style={{ display: 'flex', gap: '7px' }}>
+                        <button onClick={() => imprimirCorte(c, idx, lins, cons)}
+                          style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid ' + AZUL, borderRadius: '8px', background: AZUL, color: '#fff', cursor: 'pointer' }}>Imprimir</button>
+                        {esJefe && <>
+                          <button onClick={() => editarConteo(c)} style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: 'white', color: NAVY, cursor: 'pointer' }}>Editar</button>
+                          <button onClick={() => borrarConteo(c)} style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid #e7cccb', borderRadius: '8px', background: 'white', color: ROJO, cursor: 'pointer' }}>Borrar</button>
+                        </>}
+                      </div>
+                    </div>
+                    {abierto && <>
+                    <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '8px 16px', background: '#fbfcfe', borderTop: '0.5px solid ' + BORDE, borderBottom: '1px solid ' + BORDE }}>
+                      {['Insumo', 'Sistema', 'Contó', 'Diferencia', 'Motivo / qué pasó', ...(esJefe ? ['Consumo $'] : [])].map((t, i) =>
+                        <span key={i} style={{ ...cabCel, textAlign: i === 0 ? 'left' : 'right' }}>{t}</span>)}
+                    </div>
+                    {!lineasToma[c.id] ? (
+                      <div style={{ padding: '12px 16px', fontSize: '12px', color: GRIS }}>Cargando...</div>
+                    ) : lins.map((l, i) => {
+                      const dif = difCorte(l, cons)
+                      const falto = dif < -0.001, sobro = dif > 0.001
+                      const uni = unidadIns(l.insumo_id)
+                      const editando = motivoEdit && motivoEdit.tomaId === c.id && motivoEdit.insumoId === l.insumo_id
+                      return (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
+                          <span>{nombreInsumo(l.insumo_id)}{uni && <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>{uni}</span>}</span>
+                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {c.es_inicial ? <span style={vacia}>—</span> : <>{limpio(sisCorte(l, cons))}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
+                          </span>
+                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
+                          <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
+                            {c.es_inicial ? 'inicial' : falto ? 'faltó ' + limpio(Math.abs(dif)) : sobro ? 'sobró ' + limpio(dif) : 'cuadró'}
+                          </span>
+                          <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
+                            {c.es_inicial ? <span style={vacia}>—</span>
+                              : editando
+                                ? <span style={{ display: 'inline-flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    <select autoFocus value={motivoSel} onChange={e => setMotivoSel(e.target.value)} style={{ ...entrada, padding: '3px 7px', fontSize: '12px' }}>
+                                      <option value="">Motivo...</option>
+                                      {MOTIVOS_DESCUADRE.map(mo => <option key={mo} value={mo}>{mo}</option>)}
+                                    </select>
+                                    {motivoSel === 'Otro' && (
+                                      <input value={motivoVal} onChange={e => setMotivoVal(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') guardarMotivoC(c.id, l.insumo_id); if (e.key === 'Escape') setMotivoEdit(null) }}
+                                        placeholder="Especifica" style={{ ...entrada, padding: '3px 7px', fontSize: '12px', width: '100px' }} />
+                                    )}
+                                    <button onClick={() => guardarMotivoC(c.id, l.insumo_id)} style={{ ...link, fontSize: '11.5px' }}>Guardar</button>
+                                  </span>
+                                : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}{esJefe && (falto || sobro) && <button onClick={() => abrirMotivoC(c.id, l.insumo_id, l.motivo_descuadre)} style={{ ...link, fontSize: '10.5px', marginLeft: '6px' }}>cambiar</button>}</span>
+                                : (falto || sobro)
+                                  ? (esJefe
+                                    ? <button onClick={() => abrirMotivoC(c.id, l.insumo_id, null)} style={{ ...link, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                    : <span style={vacia}>—</span>)
+                                  : <span style={vacia}>—</span>}
+                          </span>
+                          {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cons ? dinero(cons.porProd[l.insumo_id] || 0) : '—'}</span>}
+                        </div>
+                      )
+                    })}
+                    {esJefe && cons && (
+                      <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '10px 16px', fontWeight: 700, borderTop: '1.5px solid ' + BORDE, fontSize: '13px' }}>
+                        <span>Total del corte</span><span /><span /><span /><span />
+                        <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(cons.total)}</span>
+                      </div>
+                    )}
+                    </>}
+                  </div>
+                )
+              })}
+            </div>
+    )
+  }
+
   const [contando, setContando] = useState(false)
   const [editToma, setEditToma] = useState(null)   // conteo que se está editando
   const [fecha, setFecha] = useState(hoyISO())
@@ -1399,6 +1511,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               (por eso puede no ser exactamente inicial + entró − aplicado).
             </Nota>
           )}
+          {renderConteosAnteriores()}
         </>
 
       ) : (
@@ -1622,112 +1735,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             )}
           </Tabla>
 
-          {conteos.length > 0 && (
-            <div style={{ marginTop: '20px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Conteos anteriores</h3>
-              <p style={{ fontSize: '12.5px', color: GRIS, margin: '0 0 12px' }}>
-                Cada conteo explica su corte: lo que decía el sistema, lo que se contó, la diferencia (con su motivo){esJefe ? ' y cuánto costó' : ''}.
-              </p>
-              {conteos.map((c, idx) => {
-                const grc = `1.9fr .9fr .9fr 1fr 1.3fr${esJefe ? ' .9fr' : ''}`
-                const lins = [...(lineasToma[c.id] || [])].sort((a, b) => nombreInsumo(a.insumo_id).localeCompare(nombreInsumo(b.insumo_id)))
-                const cons = consumoToma[c.id]
-                const autor = nombresU[c.creado_por]
-                const nFalt = lins.filter(l => !c.es_inicial && difCorte(l, cons) < -0.001).length
-                const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(conteos[idx - 1].fecha, -1))
-                const alSis = ddmm(sumarDias(c.fecha, -1))
-                const cabCel = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
-                const vacia = { color: '#c3d0db' }
-                const link = { background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', color: AZUL, fontWeight: 500 }
-                const abierto = c.id in cortesAbiertos ? cortesAbiertos[c.id] : idx === 0
-                return (
-                  <div key={c.id} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', marginBottom: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '14px 16px' }}>
-                      <button onClick={() => setCortesAbiertos(a => ({ ...a, [c.id]: !abierto }))}
-                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', flex: 1, minWidth: '240px' }}>
-                        <div style={{ fontSize: '14.5px', fontWeight: 700, color: NAVY }}>
-                          <span style={{ color: GRIS, marginRight: '8px', fontSize: '12px' }}>{abierto ? '▾' : '▸'}</span>
-                          Conteo del {corta(c.fecha)}
-                          <span style={{ fontSize: '10px', fontWeight: 700, borderRadius: '20px', padding: '2px 9px', marginLeft: '8px',
-                            background: idx === 0 ? '#E6F1FB' : '#eef2f6', color: idx === 0 ? AZUL : GRIS }}>
-                            {idx === 0 ? 'corte actual' : c.es_inicial ? 'inventario inicial' : 'corte anterior'}</span>
-                        </div>
-                        <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
-                          {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(c.fecha)} → ${hastaTxt}`}
-                          {autor ? ` · contó ${autor}` : ''} · {lins.length} {lins.length === 1 ? 'insumo' : 'insumos'} · {nFalt > 0
-                            ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
-                            : <span style={{ color: VERDE }}>todo cuadró</span>}
-                        </div>
-                      </button>
-                      <div style={{ display: 'flex', gap: '7px' }}>
-                        <button onClick={() => imprimirCorte(c, idx, lins, cons)}
-                          style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid ' + AZUL, borderRadius: '8px', background: AZUL, color: '#fff', cursor: 'pointer' }}>Imprimir</button>
-                        {esJefe && <>
-                          <button onClick={() => editarConteo(c)} style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: 'white', color: NAVY, cursor: 'pointer' }}>Editar</button>
-                          <button onClick={() => borrarConteo(c)} style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid #e7cccb', borderRadius: '8px', background: 'white', color: ROJO, cursor: 'pointer' }}>Borrar</button>
-                        </>}
-                      </div>
-                    </div>
-                    {abierto && <>
-                    <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '8px 16px', background: '#fbfcfe', borderTop: '0.5px solid ' + BORDE, borderBottom: '1px solid ' + BORDE }}>
-                      {['Insumo', 'Sistema', 'Contó', 'Diferencia', 'Motivo / qué pasó', ...(esJefe ? ['Consumo $'] : [])].map((t, i) =>
-                        <span key={i} style={{ ...cabCel, textAlign: i === 0 ? 'left' : 'right' }}>{t}</span>)}
-                    </div>
-                    {!lineasToma[c.id] ? (
-                      <div style={{ padding: '12px 16px', fontSize: '12px', color: GRIS }}>Cargando...</div>
-                    ) : lins.map((l, i) => {
-                      const dif = difCorte(l, cons)
-                      const falto = dif < -0.001, sobro = dif > 0.001
-                      const uni = unidadIns(l.insumo_id)
-                      const editando = motivoEdit && motivoEdit.tomaId === c.id && motivoEdit.insumoId === l.insumo_id
-                      return (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
-                          <span>{nombreInsumo(l.insumo_id)}{uni && <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>{uni}</span>}</span>
-                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {c.es_inicial ? <span style={vacia}>—</span> : <>{limpio(sisCorte(l, cons))}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
-                          </span>
-                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
-                          <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
-                            {c.es_inicial ? 'inicial' : falto ? 'faltó ' + limpio(Math.abs(dif)) : sobro ? 'sobró ' + limpio(dif) : 'cuadró'}
-                          </span>
-                          <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
-                            {c.es_inicial ? <span style={vacia}>—</span>
-                              : editando
-                                ? <span style={{ display: 'inline-flex', gap: '5px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                    <select autoFocus value={motivoSel} onChange={e => setMotivoSel(e.target.value)} style={{ ...entrada, padding: '3px 7px', fontSize: '12px' }}>
-                                      <option value="">Motivo...</option>
-                                      {MOTIVOS_DESCUADRE.map(mo => <option key={mo} value={mo}>{mo}</option>)}
-                                    </select>
-                                    {motivoSel === 'Otro' && (
-                                      <input value={motivoVal} onChange={e => setMotivoVal(e.target.value)}
-                                        onKeyDown={e => { if (e.key === 'Enter') guardarMotivoC(c.id, l.insumo_id); if (e.key === 'Escape') setMotivoEdit(null) }}
-                                        placeholder="Especifica" style={{ ...entrada, padding: '3px 7px', fontSize: '12px', width: '100px' }} />
-                                    )}
-                                    <button onClick={() => guardarMotivoC(c.id, l.insumo_id)} style={{ ...link, fontSize: '11.5px' }}>Guardar</button>
-                                  </span>
-                                : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}{esJefe && (falto || sobro) && <button onClick={() => abrirMotivoC(c.id, l.insumo_id, l.motivo_descuadre)} style={{ ...link, fontSize: '10.5px', marginLeft: '6px' }}>cambiar</button>}</span>
-                                : (falto || sobro)
-                                  ? (esJefe
-                                    ? <button onClick={() => abrirMotivoC(c.id, l.insumo_id, null)} style={{ ...link, fontSize: '11.5px' }}>Poner motivo ›</button>
-                                    : <span style={vacia}>—</span>)
-                                  : <span style={vacia}>—</span>}
-                          </span>
-                          {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cons ? dinero(cons.porProd[l.insumo_id] || 0) : '—'}</span>}
-                        </div>
-                      )
-                    })}
-                    {esJefe && cons && (
-                      <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '10px 16px', fontWeight: 700, borderTop: '1.5px solid ' + BORDE, fontSize: '13px' }}>
-                        <span>Total del corte</span><span /><span /><span /><span />
-                        <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(cons.total)}</span>
-                      </div>
-                    )}
-                    </>}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          {renderConteosAnteriores()}
         </>
       )}
       </>
