@@ -41,9 +41,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [hasta, setHasta] = useState(hoyISO())
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
-  // En "Por conteo" el Saldo Ini. ya es el conteo, así que la columna "Conteo" sobra.
-  const ocultaConteo = modoMov === 'conteo'
-  const gMov = esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B)
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -176,6 +173,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const p = periodos[periodoSel]
     if (p) { setDesde(p.desde); setHasta(p.hasta) }
   }, [modoMov, periodoSel, periodos])
+
+  // El conteo "fija" el saldo: si el período arranca justo en un conteo (o en el
+  // inventario inicial), ese valor contado ES el Saldo Ini. — en todos los modos.
+  const anclaInicio = m => {
+    if (m.conteo === null) return false
+    const c = conteoQuien[m.producto_id]
+    if (c && c.fecha === desde) return true
+    if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
+    return false
+  }
+  // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
+  const hayConteoSuelto = movs.some(m => m.conteo !== null && !anclaInicio(m))
+  const ocultaConteo = !hayConteoSuelto
+  const gMov = esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B)
   // Valor de la bodega = costo REAL de lo que hay (FIFO, lo que se pagó por
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
@@ -861,14 +872,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
                     .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {
                 const cq = conteoQuien[m.producto_id]
-                // Si el conteo es el inventario inicial y no había saldo antes,
-                // se muestra en "Saldo Ini." (no en Conteo), como en insumos.
-                const contInicial = cq?.esInicial && m.conteo !== null && Math.abs(Number(m.saldo_inicial)) < 0.0001
-                // En "Por conteo" el período arranca en el conteo: ese valor ES el Saldo Ini.
-                const conteoIni = ocultaConteo && m.conteo !== null
-                const iniMostrar = (contInicial || conteoIni) ? m.conteo : m.saldo_inicial
-                const conteoMostrar = (contInicial || conteoIni) ? null : m.conteo
-                const fechaConteoIni = conteoIni && (cq?.fecha || periodos[periodoSel]?.desde)
+                // Si el período arranca en un conteo (o en el inventario inicial),
+                // ese valor contado ES el Saldo Ini. — no se repite en "Conteo".
+                const iniEsConteo = anclaInicio(m)
+                const contInicial = iniEsConteo && cq?.esInicial
+                const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
+                const conteoMostrar = iniEsConteo ? null : m.conteo
+                const fechaConteoIni = cq?.fecha || desde
                 const detalle = cq && (
                   <>
                     <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
@@ -890,14 +900,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       <span style={{ color: GRIS, marginRight: '7px', fontSize: '11px' }}>{movDet === m.producto_id ? '▾' : '▸'}</span>{m.producto}
                     </button>
                   </Cel>
-                  <Cel der gris={!(contInicial || conteoIni)} fuerte={contInicial || conteoIni}>
+                  <Cel der gris={!iniEsConteo} fuerte={iniEsConteo}>
                     {limpio(iniMostrar)}
                     {contInicial && <>
-                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Inventario inicial</span>
+                      <span style={badgeIni}>Inicial</span>
                       {detalle}
                     </>}
-                    {conteoIni && !contInicial && (
-                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Conteo {ddmm(fechaConteoIni)}</span>
+                    {iniEsConteo && !contInicial && (
+                      <span style={badgeIni}>Conteo {ddmm(fechaConteoIni)}</span>
                     )}
                   </Cel>
                   <Cel der color={Number(m.ingresos) ? VERDE : '#c3d0db'}>{Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}</Cel>
@@ -1760,6 +1770,7 @@ function Fila({ children, gtc }) {
 function Cel({ children, der, gris, fuerte, color }) {
   return <div style={{ padding: '10px 12px', fontSize: '13px', textAlign: der ? 'right' : 'left', color: color || (gris ? GRIS : NAVY), fontWeight: fuerte ? 500 : 400, fontVariantNumeric: der ? 'tabular-nums' : 'normal' }}>{children}</div>
 }
+const badgeIni = { display: 'inline-block', fontSize: '8.5px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '0.5px 5px', marginTop: '3px', letterSpacing: '.01em' }
 const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
 const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
