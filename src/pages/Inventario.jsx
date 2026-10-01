@@ -463,18 +463,22 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     if (!corrige) return
     const v = numDec(corrPrecio)
     if (!(v > 0)) { setAviso({ tipo: 'error', texto: 'Pon un precio mayor que cero.' }); return }
+    const insId = corrige.insumoId
     setGuardandoCorr(true)
+    setAviso({ tipo: 'ok', texto: 'Corrigiendo y recalculando consumos… puede tardar unos segundos.' })
     const { error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_insumo', {
-      p_finca: finca.id, p_insumo: corrige.insumoId, p_fecha: corrige.fecha,
+      p_finca: finca.id, p_insumo: insId, p_fecha: corrige.fecha,
       p_plazo: corrige.plazo, p_nuevo_compra: v, p_adelante: corrAdelante,
     })
-    setGuardandoCorr(false)
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
-    const insId = corrige.insumoId
+    if (error) { setGuardandoCorr(false); setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
     setCorrige(null)
-    setLotesMov(m => { const n = { ...m }; delete n[insId]; return n })  // refrescar el detalle
-    setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
     await cargar()
+    // Refrescar el detalle por lote en pantalla (sin recargar la página).
+    const { data } = await supabase.schema('produccion')
+      .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insId, p_hasta: hasta })
+    setLotesMov(m => ({ ...m, [insId]: data || [] }))
+    setGuardandoCorr(false)
+    setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
   }
 
   function abrirCorregir(f) {
