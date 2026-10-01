@@ -103,6 +103,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [fecha, setFecha] = useState(hoyISO())
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
+  const [noContados, setNoContados] = useState('mantiene')  // 'mantiene' | 'cero' — qué pasa con lo que no se cuenta
   const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
   const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
   const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
@@ -672,19 +673,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         tomaId = toma.id
       }
 
-      const lineas = filas.filter(f => f.contado !== null).map(f => {
+      // Los contados. Si el modo es "Queda en 0", también los no contados que
+      // tenían saldo (se ponen en 0). "Se mantiene" = solo los contados.
+      const contadas = filas.filter(f => f.contado !== null)
+      const enCero = (!primeraVez && !editToma && noContados === 'cero')
+        ? filas.filter(f => f.contado === null && !esSinInvFila(f))
+        : []
+      const lineas = [...contadas, ...enCero].map(f => {
+        const contadoVal = f.contado !== null ? f.contado : 0
+        const difVal = f.contado !== null ? f.diferencia : (0 - Number(f.saldo))
         // En un recuento normal, hay descuadre si la diferencia no es cero.
         // Al editar, conservamos el motivo que ya se había cargado.
-        const hayDesc = !primeraVez && (editToma || Math.abs(f.diferencia || 0) > 0.0001)
+        const hayDesc = !primeraVez && (editToma || Math.abs(difVal || 0) > 0.0001)
         const cat = motivoDesc[f.insumo_id]
         const motivoD = hayDesc && cat
           ? (cat === 'Otro' ? (motivoOtro[f.insumo_id]?.trim() || 'Otro') : cat)
           : null
         return {
           toma_id: tomaId, insumo_id: f.insumo_id,
-          cantidad_contada: f.contado,
+          cantidad_contada: contadoVal,
           cantidad_sistema: Number(f.saldo),
-          diferencia: f.diferencia,
+          diferencia: difVal,
           motivo_descuadre: motivoD,
         }
       })
@@ -865,6 +874,23 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </div>
           </div>
 
+          {!primeraVez && !editToma && (
+            <div style={{ padding: '13px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#F4F9FF' }}>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                <span style={{ color: AZUL, fontSize: '15px', lineHeight: 1.2 }}>i</span>
+                <div style={{ fontSize: '13px', color: NAVY }}>
+                  Cuenta solo lo que verifiques. <b style={{ fontWeight: 600 }}>Lo que dejes en blanco se mantiene</b> en su saldo actual — no se pone en 0.
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '10px' }}>
+                <span style={{ fontSize: '12px', color: GRIS }}>Lo que no cuente:</span>
+                <Seg valor={noContados} onCambio={setNoContados}
+                     opciones={[['mantiene', 'Se mantiene'], ['cero', 'Queda en 0']]} />
+                {noContados === 'cero' && <span style={{ fontSize: '11.5px', color: AMBAR }}>Los que dejes en blanco se pondrán en 0 (para cuando cuentas toda la bodega).</span>}
+              </div>
+            </div>
+          )}
+
           {/* Agregar insumos que faltan, varios a la vez. */}
           <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
             {nuevos.length === 0 ? (
@@ -982,7 +1008,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   : f.diferencia > 0 ? AMBAR : VERDE
                 }>
                   {(primeraVez || editToma) ? ''
-                    : f.diferencia === null ? '—'
+                    : f.diferencia === null ? (noContados === 'cero' ? 'Queda en 0' : 'Se mantiene')
                     : f.diferencia === 0 ? 'cuadra'
                     : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
                 </Celda>
