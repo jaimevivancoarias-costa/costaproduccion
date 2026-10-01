@@ -448,18 +448,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (!corrige) return
     const v = numDec(corrPrecio)
     if (!(v > 0)) { setAviso({ tipo: 'error', texto: 'Pon un precio mayor que cero.' }); return }
+    const pid = corrige.productoId
     setGuardandoCorr(true)
+    setAviso({ tipo: 'ok', texto: 'Corrigiendo y recalculando consumos… puede tardar unos segundos.' })
     const { error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_bal', {
-      p_finca: finca.id, p_producto: corrige.productoId, p_fecha: corrige.fecha,
+      p_finca: finca.id, p_producto: pid, p_fecha: corrige.fecha,
       p_plazo: corrige.plazo, p_nuevo: v, p_adelante: corrAdelante,
     })
-    setGuardandoCorr(false)
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
-    const pid = corrige.productoId
+    if (error) { setGuardandoCorr(false); setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
     setCorrige(null)
-    setLotesMov(m => { const n = { ...m }; delete n[pid]; return n })
-    setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
     await cargar()
+    // Refrescar el detalle por lote en pantalla (sin recargar la página).
+    const { data } = await supabase.schema('produccion')
+      .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: pid, p_hasta: hasta })
+    setLotesMov(m => ({ ...m, [pid]: data || [] }))
+    setGuardandoCorr(false)
+    setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
   }
 
   async function corregir(f) {
