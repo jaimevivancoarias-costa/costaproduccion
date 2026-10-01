@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, dinero, dineroExacto } from '../lib/fechas'
+import { hoyISO, corta, dinero, dineroExacto, numDec } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
@@ -75,6 +75,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [movDet, setMovDet] = useState(null)       // insumoId con el detalle por lote abierto en "Qué se movió"
   const [lotesMov, setLotesMov] = useState({})     // insumoId -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
+  const [corrige, setCorrige] = useState(null)     // { insumoId, fecha, plazo, actual } lote en corrección de precio
+  const [corrPrecio, setCorrPrecio] = useState('') // nuevo precio (por unidad de compra)
+  const [corrAdelante, setCorrAdelante] = useState(false)  // false = solo este período · true = de ahí en adelante
+  const [guardandoCorr, setGuardandoCorr] = useState(false)
   const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
@@ -444,6 +448,33 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insumoId, p_hasta: hasta })
       setLotesMov(m => ({ ...m, [insumoId]: error ? [] : (data || []) }))
     }
+  }
+
+  // Abrir el formulario de corrección de precio de un lote concreto.
+  function iniciarCorreccion(insumoId, lote) {
+    setCorrige({ insumoId, fecha: lote.fecha, plazo: lote.plazo, actual: lote.costo_unitario })
+    setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
+    setCorrAdelante(false)
+  }
+
+  // Corregir el precio de un lote: arregla el catálogo del período (o de ahí
+  // en adelante) y recostea. Solo recalcula los consumos de este insumo.
+  async function guardarCorreccion() {
+    if (!corrige) return
+    const v = numDec(corrPrecio)
+    if (!(v > 0)) { setAviso({ tipo: 'error', texto: 'Pon un precio mayor que cero.' }); return }
+    setGuardandoCorr(true)
+    const { error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_insumo', {
+      p_finca: finca.id, p_insumo: corrige.insumoId, p_fecha: corrige.fecha,
+      p_plazo: corrige.plazo, p_nuevo_compra: v, p_adelante: corrAdelante,
+    })
+    setGuardandoCorr(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
+    const insId = corrige.insumoId
+    setCorrige(null)
+    setLotesMov(m => { const n = { ...m }; delete n[insId]; return n })  // refrescar el detalle
+    setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
+    await cargar()
   }
 
   function abrirCorregir(f) {
@@ -1035,7 +1066,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                   ) : (() => {
                     const rows = [...lotesMov[m.insumo_id]].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
-                    const gtc = esJefe ? '1.6fr .9fr .9fr .9fr 1fr' : '1.8fr 1fr 1fr 1fr'
+                    const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                     const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                     const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
                     const tQueda = rows.reduce((s, r) => s + Number(r.queda || 0), 0)
@@ -1049,7 +1080,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <div style={{ fontSize: '11px', color: GRIS, marginBottom: '9px' }}>
                           Por lote · se consume del más viejo primero{uLabel ? ` · en ${uLabel}` : ''}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '7px 14px', alignItems: 'baseline', maxWidth: '640px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline', maxWidth: '720px' }}>
                           <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
                           <div style={cab}>Entró</div>
                           <div style={cab}>Consumió</div>
@@ -1057,10 +1088,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           {esJefe && <div style={cab}>Costo consumido</div>}
                           {rows.map((r, i) => (
                             <Fragment key={i}>
-                              <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
-                                <span style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</span>
-                                {esJefe && r.costo_unitario != null && <span style={{ color: GRIS }}> · {dineroExacto(r.costo_unitario)}</span>}
+                              <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
+                                {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
                                 {i === primerQueda && Number(r.queda) > 0 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                {esJefe && !r.es_conteo && (
+                                  <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
+                                    style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                    Corregir precio
+                                  </button>
+                                )}
                               </div>
                               <div style={cel}>{val(r.entro)}</div>
                               <div style={{ ...cel, color: Number(r.consumio) ? ROJO : '#c3d0db' }}>{Number(r.consumio) ? val(r.consumio) : '—'}</div>
@@ -1074,6 +1111,40 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           <div style={tot}>{val(tQueda)}</div>
                           {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
                         </div>
+                        {esJefe && corrige && corrige.insumoId === m.insumo_id && (
+                          <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
+                            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>
+                              Corregir precio · Compra {corta(corrige.fecha)}
+                            </div>
+                            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
+                              Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()} · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este insumo.
+                            </div>
+                            <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                              <div>
+                                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>
+                                <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)}
+                                  style={{ ...entrada, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                <Seg valor={corrAdelante ? 'adelante' : 'solo'}
+                                     onCambio={v => setCorrAdelante(v === 'adelante')}
+                                     opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
+                              </div>
+                            </div>
+                            <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
+                              {corrAdelante
+                                ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.'
+                                : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
+                            </div>
+                            <div style={{ display: 'flex', gap: '9px' }}>
+                              <Btn primario onClick={guardarCorreccion} disabled={guardandoCorr}>
+                                {guardandoCorr ? 'Guardando...' : 'Guardar corrección'}
+                              </Btn>
+                              <Btn onClick={() => setCorrige(null)}>Cancelar</Btn>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   })()}
