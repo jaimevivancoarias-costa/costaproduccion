@@ -845,7 +845,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               {modoMov === 'conteo' && periodos[periodoSel] && (
                 <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
                   Desde el <b>conteo del {corta(periodos[periodoSel].desde)}</b>{periodoSel === 0 ? ' hasta hoy' : ` hasta el ${corta(periodos[periodoSel].hasta)}`}.
-                  <span style={{ color: GRIS }}> “Saldo Ini.” = lo que el sistema decía esa mañana · “Conteo” = lo que contaste · de ahí se resta el consumo del período.</span>
+                  <span style={{ color: GRIS }}> “Saldo Ini.” = lo que contaste (el conteo fija el saldo); debajo ves qué decía el sistema y la diferencia. De ahí se resta el consumo del período.</span>
                 </div>
               )}
               <Encabezado gtc={esJefe ? G_MOV_J : G_MOV_B} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', 'Conteo', 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
@@ -855,8 +855,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 // Si el conteo es el inventario inicial y no había saldo antes,
                 // se muestra en "Saldo Ini." (no en Conteo), como en insumos.
                 const contInicial = cq?.esInicial && m.conteo !== null && Math.abs(Number(m.saldo_inicial)) < 0.0001
-                const iniMostrar = contInicial ? m.conteo : m.saldo_inicial
-                const conteoMostrar = contInicial ? null : m.conteo
+                // En modo "por conteo", el conteo del inicio del período ES el Saldo Ini.
+                const esConteoInicio = contInicial || (modoMov === 'conteo' && m.conteo !== null)
+                const dif = Number(m.conteo || 0) - Number(m.saldo_inicial || 0)
+                const iniMostrar = esConteoInicio ? m.conteo : m.saldo_inicial
+                const conteoMostrar = esConteoInicio ? null : m.conteo
                 const detalle = cq && (
                   <>
                     <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
@@ -882,6 +885,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {limpio(iniMostrar)}
                     {contInicial && <>
                       <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Inventario inicial</span>
+                      {detalle}
+                    </>}
+                    {esConteoInicio && !contInicial && <>
+                      <span style={{ display: 'block', fontSize: '9px', fontWeight: 500, color: AZUL, background: '#E6F1FB', borderRadius: '6px', padding: '1px 6px', marginTop: '3px' }}>Conteo {corta(periodos[periodoSel]?.desde)}</span>
+                      <span style={{ display: 'block', fontSize: '10px', color: GRIS, marginTop: '2px' }}>
+                        sistema {limpio(m.saldo_inicial)} · {Math.abs(dif) < 0.001 ? <span style={{ color: VERDE }}>cuadró</span> : <span style={{ color: dif < 0 ? ROJO : AMBAR }}>{(dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}</span>}
+                      </span>
                       {detalle}
                     </>}
                   </Cel>
