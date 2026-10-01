@@ -68,7 +68,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
               : i) }
           }),
         supabase.schema('produccion').from('ingreso_insumo')
-          .select('id, fecha, numero_guia, proveedor, observacion, creado_por, creado_en, ingreso_insumo_linea(insumo_id, cantidad, plazo)')
+          .select('id, fecha, numero_guia, proveedor, observacion, creado_por, creado_en, ingreso_insumo_linea(insumo_id, cantidad, plazo, costo_unitario)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: false }).limit(200),
         supabase.schema('produccion').from('pedido_insumo')
@@ -280,7 +280,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
       ) : modo === 'ingresos' ? (
         !ingresosF.length ? (
           <Vacio>{filtroIns ? 'No hay ingresos de ese insumo en el rango.' : 'Todavía no hay ingresos registrados. Cuando llegue producto a bodega, regístralo aquí con su guía.'}</Vacio>
-        ) : ingresosF.map(g => {
+        ) : (<>{ingresosF.map(g => {
           const solPend = solicitudes.find(s => s.registro_id === g.id && s.estado === 'pendiente')
           return (
           <Tarjeta key={g.id}>
@@ -310,11 +310,15 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
               </div>
             </div>
             <Lineas>
-              {(g.ingreso_insumo_linea || []).map((l, i) => (
+              {(g.ingreso_insumo_linea || []).map((l, i) => {
+                const uc = unidadInsumo(l.insumo_id)
+                const q = numDec(l.cantidad)
+                const pu = Number(l.costo_unitario) || 0
+                return (
                 <Linea key={i} nombre={nombreInsumo(l.insumo_id)}
-                       cantidad={`+${miles(numDec(l.cantidad))} ${unidadInsumo(l.insumo_id)}${l.plazo ? ` · ${PLAZO_LBL[l.plazo]}` : ''}`}
-                       color={VERDE} />
-              ))}
+                       cantidad={`+${miles(q)} ${uc}${l.plazo != null ? ` · ${PLAZO_LBL[l.plazo]}` : ''}`}
+                       sub={esJefe && pu > 0 ? `${dineroExacto(pu)}/${uc} · ${dinero(q * pu)}` : null} />
+              )})}
             </Lineas>
             {g.observacion && <Obs>{g.observacion}</Obs>}
             {editando === g.id && (
@@ -325,7 +329,19 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
             )}
           </Tarjeta>
           )
-        })
+        })}
+        {(() => {
+          const totItems = ingresosF.reduce((s, g) => s + (g.ingreso_insumo_linea || []).length, 0)
+          const totValor = ingresosF.reduce((s, g) => s + (g.ingreso_insumo_linea || []).reduce((ss, l) => ss + (Number(l.costo_unitario) || 0) * numDec(l.cantidad), 0), 0)
+          return (
+            <div style={{ marginTop: '12px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '22px', alignItems: 'baseline', flexWrap: 'wrap', fontSize: '13px' }}>
+              <span><b>{ingresosF.length}</b> {ingresosF.length === 1 ? 'ingreso' : 'ingresos'}</span>
+              <span style={{ color: GRIS }}><b style={{ color: NAVY }}>{totItems}</b> {totItems === 1 ? 'ítem' : 'ítems'}</span>
+              {esJefe && totValor > 0 && <span style={{ marginLeft: 'auto', color: GRIS }}>Total ingresado: <b style={{ color: NAVY, fontSize: '15px' }}>{dinero(totValor)}</b></span>}
+            </div>
+          )
+        })()}
+        </>)
 
       ) : modo === 'pedidos' ? (
         !pedidos.length ? (
@@ -718,7 +734,7 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
       </button>
 
       {verPrecio && validas.length > 0 && (
-        <div style={{ background: '#eef7f2', border: '0.5px solid #cdeadd', borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
+        <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
           {validas.map((l, i) => {
             const ins = insumos.find(x => x.id === l.insumoId)
             const uc = ins?.unidad_compra || ins?.unidad
@@ -966,11 +982,14 @@ function Tarjeta({ children }) {
 function Lineas({ children }) {
   return <div style={{ marginTop: '11px', borderTop: '0.5px solid #f1f6f9', paddingTop: '9px' }}>{children}</div>
 }
-function Linea({ nombre, cantidad, color }) {
+function Linea({ nombre, cantidad, sub, color }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '13px' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: '13px', alignItems: 'baseline', gap: '12px' }}>
       <span>{nombre}</span>
-      <span style={{ fontVariantNumeric: 'tabular-nums', color: color || NAVY }}>{cantidad}</span>
+      <span style={{ fontVariantNumeric: 'tabular-nums', color: color || NAVY, textAlign: 'right' }}>
+        {cantidad}
+        {sub && <span style={{ display: 'block', fontSize: '11px', color: GRIS, fontWeight: 400 }}>{sub}</span>}
+      </span>
     </div>
   )
 }
