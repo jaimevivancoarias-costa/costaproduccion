@@ -316,8 +316,8 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
                 const pu = Number(l.costo_unitario) || 0
                 return (
                 <Linea key={i} nombre={nombreInsumo(l.insumo_id)}
-                       cantidad={`+${miles(q)} ${uc}${l.plazo != null ? ` · ${PLAZO_LBL[l.plazo]}` : ''}`}
-                       sub={esJefe && pu > 0 ? `${dineroExacto(pu)}/${uc} · ${dinero(q * pu)}` : null} />
+                       cantidad={`+${miles(q)} ${uc}`}
+                       sub={esJefe && pu > 0 ? `${dinero(pu)}/${uc}${l.plazo != null ? ` · ${PLAZO_LBL[l.plazo]}` : ''}` : (l.plazo != null ? PLAZO_LBL[l.plazo] : null)} />
               )})}
             </Lineas>
             {g.observacion && <Obs>{g.observacion}</Obs>}
@@ -331,13 +331,33 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           )
         })}
         {(() => {
-          const totItems = ingresosF.reduce((s, g) => s + (g.ingreso_insumo_linea || []).length, 0)
-          const totValor = ingresosF.reduce((s, g) => s + (g.ingreso_insumo_linea || []).reduce((ss, l) => ss + (Number(l.costo_unitario) || 0) * numDec(l.cantidad), 0), 0)
+          // Resumen por insumo: cuántos ingresos y cuánta cantidad en el período.
+          const porIns = {}
+          ingresosF.forEach(g => (g.ingreso_insumo_linea || []).forEach(l => {
+            const k = l.insumo_id
+            if (!porIns[k]) porIns[k] = { n: 0, qty: 0 }
+            porIns[k].n += 1
+            porIns[k].qty += numDec(l.cantidad)
+          }))
+          const filas = Object.entries(porIns).sort((a, b) => b[1].n - a[1].n)
+          if (!filas.length) return null
+          const gtc = '1fr 110px 110px'
+          const cab = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'center' }
           return (
-            <div style={{ marginTop: '12px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '12px 16px', display: 'flex', gap: '22px', alignItems: 'baseline', flexWrap: 'wrap', fontSize: '13px' }}>
-              <span><b>{ingresosF.length}</b> {ingresosF.length === 1 ? 'ingreso' : 'ingresos'}</span>
-              <span style={{ color: GRIS }}><b style={{ color: NAVY }}>{totItems}</b> {totItems === 1 ? 'ítem' : 'ítems'}</span>
-              {esJefe && totValor > 0 && <span style={{ marginLeft: 'auto', color: GRIS }}>Total ingresado: <b style={{ color: NAVY, fontSize: '15px' }}>{dinero(totValor)}</b></span>}
+            <div style={{ marginTop: '14px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px' }}>
+              <div style={{ fontSize: '12px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '10px' }}>Resumen por insumo</div>
+              <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', paddingBottom: '6px', borderBottom: '0.5px solid ' + BORDE }}>
+                <span style={{ ...cab, textAlign: 'left' }}>Insumo</span>
+                <span style={cab}>Ingresos</span>
+                <span style={cab}>Cantidad</span>
+              </div>
+              {filas.map(([k, v]) => (
+                <div key={k} style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', padding: '7px 0', borderBottom: '0.5px solid #f1f6f9', fontSize: '13px', alignItems: 'baseline' }}>
+                  <span>{nombreInsumo(k)}</span>
+                  <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}><b>{v.n}</b></span>
+                  <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(Math.round(v.qty * 100) / 100)} {unidadInsumo(k)}</span>
+                </div>
+              ))}
             </div>
           )
         })()}
@@ -807,13 +827,49 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
   const [fecha, setFecha] = useState(g.fecha)
   const [guia, setGuia] = useState(g.numero_guia || '')
   const [proveedor, setProveedor] = useState(g.proveedor || '')
-  const [lineas, setLineas] = useState((g.ingreso_insumo_linea || []).map(l => ({ insumoId: l.insumo_id, cantidad: String(l.cantidad) })))
+  const [lineas, setLineas] = useState((g.ingreso_insumo_linea || []).map(l => ({ insumoId: l.insumo_id, cantidad: String(l.cantidad), precio: l.costo_unitario != null ? String(l.costo_unitario) : '' })))
   const [motivo, setMotivo] = useState('')
   const [enviando, setEnviando] = useState(false)
+  const [plazo, setPlazo] = useState(() => { const p = (g.ingreso_insumo_linea || [])[0]?.plazo; return p != null ? Number(p) : 0 })
+  const [precioCat, setPrecioCat] = useState({})
+  const [plazoAct, setPlazoAct] = useState({})
   const UNI = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'gramos', libras: 'libras', kg: 'kilos',
                 unidad: 'unidades', tambor: 'tambores', botella: 'botellas' }
   const setLinea = (i, c, v) => setLineas(ls => ls.map((l, j) => j === i ? { ...l, [c]: v } : l))
   const validas = lineas.filter(l => l.insumoId && numDec(l.cantidad))
+
+  function precioCompraCat(insumoId, pz) {
+    const ins = insumos.find(x => x.id === insumoId)
+    const factor = Number(ins?.factor) || 1
+    const m = precioCat[insumoId]
+    if (!m) return null
+    const p = m[pz] != null ? m[pz] : m[0]
+    return p != null ? p * factor : null
+  }
+  const fmtPre = n => (n != null ? String(n) : '')
+
+  useEffect(() => {
+    if (!esJefe) return
+    let vivo = true
+    ;(async () => {
+      const [{ data: pr }, { data: pz }] = await Promise.all([
+        supabase.schema('produccion').from('precio_insumo')
+          .select('insumo_id, finca_id, plazo, precio_unitario')
+          .or(`finca_id.is.null,finca_id.eq.${finca.id}`).is('vigente_hasta', null),
+        supabase.schema('produccion').from('plazo_insumo')
+          .select('insumo_id, plazo').eq('finca_id', finca.id).is('vigente_hasta', null),
+      ])
+      if (!vivo) return
+      const prop = {}, gen = {}
+      ;(pr || []).forEach(x => { const mm = x.finca_id ? prop : gen; (mm[x.insumo_id] = mm[x.insumo_id] || {})[Number(x.plazo)] = Number(x.precio_unitario) })
+      const cat = {}
+      ;[...new Set([...Object.keys(prop), ...Object.keys(gen)])].forEach(id => { cat[id] = { ...(gen[id] || {}), ...(prop[id] || {}) } })
+      setPrecioCat(cat)
+      const pa = {}; (pz || []).forEach(x => { pa[x.insumo_id] = Number(x.plazo) })
+      setPlazoAct(pa)
+    })()
+    return () => { vivo = false }
+  }, [finca.id, esJefe])
 
   async function guardarJefe() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Deja al menos una línea.' }); return }
@@ -823,7 +879,12 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
     if (error) { setEnviando(false); setAviso({ tipo: 'error', texto: error.message }); return }
     await supabase.schema('produccion').from('ingreso_insumo_linea').delete().eq('ingreso_id', g.id)
     const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
-      .insert(validas.map(l => ({ ingreso_id: g.id, insumo_id: l.insumoId, cantidad: numDec(l.cantidad) })))
+      .insert(validas.map(l => {
+        const fila = { ingreso_id: g.id, insumo_id: l.insumoId, cantidad: numDec(l.cantidad), plazo }
+        const pu = numDec(l.precio)
+        if (pu > 0) fila.costo_unitario = pu
+        return fila
+      }))
     setEnviando(false)
     if (e2) { setAviso({ tipo: 'error', texto: e2.message }); return }
     onHecho('Ingreso actualizado.')
@@ -856,21 +917,37 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
         <Campo label="Número de guía"><input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={entrada} /></Campo>
         <Campo label="Proveedor"><input value={proveedor} placeholder="Opcional" onChange={e => setProveedor(e.target.value)} style={entrada} /></Campo>
       </div>
+      {esJefe && (
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
+          <Seg valor={plazo}
+               onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.insumoId ? { ...l, precio: fmtPre(precioCompraCat(l.insumoId, pz)) } : l)) }}
+               opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
+        </div>
+      )}
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
       {lineas.map((l, i) => {
         const ins = insumos.find(x => x.id === l.insumoId)
         const uni = ins ? (UNI[ins.unidad_compra] || ins.unidad_compra) : null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px' }}>
-            <select value={l.insumoId} onChange={e => setLinea(i, 'insumoId', e.target.value)} style={{ ...entrada, flex: 1 }}>
+            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); if (esJefe) setLinea(i, 'precio', fmtPre(precioCompraCat(e.target.value, plazo))) }} style={{ ...entrada, flex: 1 }}>
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
             </select>
             <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
               <CampoNumero maxDec={2} value={l.cantidad} placeholder="Cantidad"
-                onChange={v => setLinea(i, 'cantidad', v)} style={{ ...entrada, width: '130px' }} />
-              <span style={{ fontSize: '13px', color: GRIS, minWidth: '58px' }}>{uni || ''}</span>
+                onChange={v => setLinea(i, 'cantidad', v)} style={{ ...entrada, width: '110px' }} />
+              <span style={{ fontSize: '13px', color: GRIS, minWidth: '50px' }}>{uni || ''}</span>
             </div>
+            {esJefe && ins && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="Precio del catálogo según el plazo. Puedes cambiarlo solo para este ingreso.">
+                <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                <CampoNumero maxDec={6} value={l.precio ?? ''} placeholder="precio"
+                  onChange={v => setLinea(i, 'precio', v)} style={{ ...entrada, width: '90px', borderColor: '#9cc4e8' }} />
+                <span style={{ fontSize: '11px', color: GRIS }}>/{uni || ''}</span>
+              </div>
+            )}
             {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))}
               style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>}
           </div>
