@@ -133,7 +133,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const hayConteoSuelto = movs.some(m => m.conteo !== null && m.conteo !== undefined && !anclaInicio(m))
   const ocultaConteo = !hayConteoSuelto
   const colsMov = ['Insumo', 'Llega / se aplica', ocultaConteo ? 'Saldo Ini.' : (movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial'), 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', ...(ocultaConteo ? [] : ['Conteo']), 'Queda']
-  const anchosMov = ocultaConteo ? '1.3fr 180px 90px 90px 90px 90px 95px 100px' : ANCHOS_MOV2
+  const anchosMov = ocultaConteo ? '1.4fr 160px 110px 95px 105px 105px 95px 120px' : '1.4fr 160px 120px 95px 105px 105px 95px 105px 120px'
+  const minMov = ocultaConteo ? '960px' : '1060px'
 
   const [contando, setContando] = useState(false)
   const [editToma, setEditToma] = useState(null)   // conteo que se está editando
@@ -816,38 +817,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </button>
               )}
             </label>
-          ) : (
-            <>
-              <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
-                onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
-              <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
-                onClick={() => { setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
-              <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
-              {modoMov === 'conteo' ? (
-                periodos.length ? (
-                  <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    <button onClick={() => setPeriodoSel(i => Math.min(i + 1, periodos.length - 1))} disabled={periodoSel >= periodos.length - 1}
-                      style={{ ...navBtn, opacity: periodoSel >= periodos.length - 1 ? 0.4 : 1 }}>‹</button>
-                    <select value={periodoSel} onChange={e => setPeriodoSel(Number(e.target.value))} style={{ ...selChip, minWidth: '250px' }}>
-                      {periodos.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
-                    </select>
-                    <button onClick={() => setPeriodoSel(i => Math.max(i - 1, 0))} disabled={periodoSel <= 0}
-                      style={{ ...navBtn, opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
-                  </span>
-                ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
-              ) : (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '13px', color: GRIS }}>del</span>
-                  <input type="date" value={desde} max={hasta}
-                         onChange={e => setDesde(e.target.value)} style={entrada} />
-                  <span style={{ fontSize: '13px', color: GRIS }}>al</span>
-                  <input type="date" value={hasta} min={desde} max={hoyISO()}
-                         onChange={e => setHasta(e.target.value)} style={entrada} />
-                  <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
-                </label>
-              )}
-            </>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -1119,9 +1089,39 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </GhostBtn>
               )
             })()}
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
+                onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+              <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
+                onClick={() => { setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
+              <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
+              {modoMov === 'conteo' ? (
+                periodos.length ? (
+                  <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    <button onClick={() => setPeriodoSel(i => Math.min(i + 1, periodos.length - 1))} disabled={periodoSel >= periodos.length - 1}
+                      style={{ ...navBtn, opacity: periodoSel >= periodos.length - 1 ? 0.4 : 1 }}>‹</button>
+                    <select value={periodoSel} onChange={e => setPeriodoSel(Number(e.target.value))} style={{ ...selChip, minWidth: '240px' }}>
+                      {periodos.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
+                    </select>
+                    <button onClick={() => setPeriodoSel(i => Math.max(i - 1, 0))} disabled={periodoSel <= 0}
+                      style={{ ...navBtn, opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
+                  </span>
+                ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
+              ) : (
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '13px', color: GRIS }}>del</span>
+                  <input type="date" value={desde} max={hasta}
+                         onChange={e => setDesde(e.target.value)} style={entrada} />
+                  <span style={{ fontSize: '13px', color: GRIS }}>al</span>
+                  <input type="date" value={hasta} min={desde} max={hoyISO()}
+                         onChange={e => setHasta(e.target.value)} style={entrada} />
+                  <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
+                </label>
+              )}
+            </div>
           </div>
           <Tabla
-            caja min="1040px"
+            caja min={minMov}
             columnas={colsMov}
             anchos={anchosMov}
           >
