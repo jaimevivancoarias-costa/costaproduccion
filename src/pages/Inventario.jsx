@@ -45,8 +45,8 @@ const badgeIni = { display: 'inline-block', fontSize: '8.5px', fontWeight: 600, 
 const navBtn = { padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
-const ANCHOS_SALDO_JEFE = '1fr 160px 130px 150px 175px 140px 100px'
-const ANCHOS_SALDO_BOD  = '1fr 170px 140px 160px'   // bodeguero: sin dolares
+const ANCHOS_SALDO_JEFE = '1fr 180px 160px 195px 150px 115px'   // sin "Equivale a" (lo reemplaza el toggle)
+const ANCHOS_SALDO_BOD  = '1.4fr 220px 170px'       // bodeguero: sin dolares ni "Equivale a"
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
@@ -73,6 +73,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
   const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
   const [unidadMov, setUnidadMov] = useState('compra')  // 'compra' | 'aplica' — en qué unidad ver "Qué se movió"
+  const [unidadSaldo, setUnidadSaldo] = useState('compra')  // 'compra' | 'aplica' — en qué unidad ver "Cuánto hay"
   const [recosForm, setRecosForm] = useState(null)   // insumo_id con la confirmación de recosteo abierta
   const [recosteando, setRecosteando] = useState(false)
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
@@ -895,6 +896,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
                       marginBottom: '14px' }}>
           <Seg valor={vista} onCambio={setVista} opciones={[['saldo', 'Cuánto hay'], ['movimientos', 'Qué se movió']]} />
+          {vista === 'saldo' && (
+            <>
+              <span style={{ fontSize: '12.5px', color: GRIS }}>Ver en:</span>
+              <Seg valor={unidadSaldo} onCambio={setUnidadSaldo}
+                   opciones={[['compra', 'Como se compra'], ['aplica', 'Como se aplica']]} />
+            </>
+          )}
           {vista === 'saldo' && filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length > 0 && (
             <GhostBtn on={verSinInv} onClick={() => setVerSinInv(v => !v)}>
               {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length})`}
@@ -1422,8 +1430,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           <Tabla
             caja min={esJefe ? '760px' : '620px'}
             columnas={esJefe
-              ? ['Insumo', 'Llega / se aplica', 'Saldo', 'Equivale a', 'Precio', 'Valor', '']
-              : ['Insumo', 'Llega / se aplica', 'Saldo', 'Equivale a']}
+              ? ['Insumo', 'Llega / se aplica', 'Saldo', 'Precio', 'Valor', '']
+              : ['Insumo', 'Llega / se aplica', 'Saldo']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
           >
             {filas.filter(f => coincide(f.insumo) && (verSinInv || !esSinInvFila(f)))
@@ -1471,22 +1479,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                  fontVariantNumeric: 'tabular-nums',
                                  borderColor: '#9cc4e8' }} />
                     </div>
-                  ) : (
+                  ) : (() => {
+                    const fac = factores[f.insumo_id]
+                    const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
+                    const enUso = unidadSaldo === 'aplica' && conv
+                    const factor = enUso ? (fac.factor || 1) : 1
+                    const uLabel = ((enUso ? (UNIDAD[fac.uApp] || fac.uApp) : (UNIDAD[f.unidad] || f.unidad)) || '').toLowerCase()
+                    return (
                     <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
-                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(f.saldo)} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{(UNIDAD[f.unidad] || f.unidad || '').toLowerCase()}</span></span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(Number(f.saldo) * factor)} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uLabel}</span></span>
                       {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
-                  )}
-                  {/* Equivale a: el mismo saldo en la unidad de uso (— si no cambia). */}
-                  <Celda derecha>
-                    {(() => {
-                      const fac = factores[f.insumo_id]
-                      const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
-                      if (!conv) return <span style={{ color: '#cdd8e2' }}>—</span>
-                      const uApp = (UNIDAD[fac.uApp] || fac.uApp || '').toLowerCase()
-                      return <span style={{ fontVariantNumeric: 'tabular-nums', color: AZUL, fontWeight: 600 }}>{limpio(Number(f.saldo) * (fac.factor || 1))} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uApp}</span></span>
-                    })()}
-                  </Celda>
+                    )
+                  })()}
                   {/* Precio (una línea, con plazo corto). Detalle completo al desplegar. */}
                   {esJefe && <Celda derecha gris>{f.precio ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(f.precio)}{precioInfo[f.insumo_id] ? <span style={{ color: '#a7b4c1', fontWeight: 400, fontSize: '11px' }}> · {PLAZO_LBL[precioInfo[f.insumo_id].plazo]}</span> : ''}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
                   {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
@@ -1615,7 +1620,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             {esJefe && (
               <Fila anchos={ANCHOS_SALDO_JEFE} total>
                 <Celda fuerte>Total</Celda>
-                <Celda /><Celda /><Celda /><Celda />
+                <Celda /><Celda /><Celda />
                 <Celda derecha fuerte>{dinero(valorBodega)}</Celda>
                 <Celda />
               </Fila>
