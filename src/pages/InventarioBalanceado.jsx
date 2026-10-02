@@ -41,6 +41,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [hasta, setHasta] = useState(hoyISO())
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
+  useEffect(() => { setCortesMov({}) }, [desde, hasta, finca.id, modoMov])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -84,6 +85,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [verSinInv, setVerSinInv] = useState(false)    // mostrar también los productos sin inventario
   const [movDet, setMovDet] = useState(null)           // producto_id con el detalle por lote abierto en "Qué se movió"
   const [lotesMov, setLotesMov] = useState({})         // producto_id -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
+  const [cortesMov, setCortesMov] = useState({})       // producto_id -> [{a, b, row}] tramos entre conteos (Por fechas)
   const [corrige, setCorrige] = useState(null)         // { productoId, fecha, plazo, actual } lote en corrección
   const [corrPrecio, setCorrPrecio] = useState('')     // nuevo precio por saco
   const [corrAdelante, setCorrAdelante] = useState(false)
@@ -583,6 +585,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta })
       setLotesMov(m => ({ ...m, [productoId]: error ? [] : (data || []) }))
     }
+    // Línea de tiempo por corte (solo "Por fechas", si el rango cruza conteos):
+    // parte el rango en tramos [inicio..conteo1], (conteo1..conteo2], … y pide
+    // el movimiento de cada tramo. Cada tramo cuadra solo.
+    if (modoMov === 'fechas' && !cortesMov[productoId]) {
+      const fechas = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => t.fecha).sort()
+      if (!fechas.length) { setCortesMov(m => ({ ...m, [productoId]: [] })); return }
+      const defs = []; let s = desde
+      for (const c of fechas) { defs.push([s, c]); s = sumarDias(c, 1) }
+      if (s <= hasta) defs.push([s, hasta])
+      const res = await Promise.all(defs.map(([a, b]) =>
+        supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: a, p_hasta: b })
+          .then(r => ({ a, b, row: (r.data || []).find(x => x.producto_id === productoId) || null }))
+      ))
+      setCortesMov(m => ({ ...m, [productoId]: res }))
+    }
   }
 
   function iniciarCorreccion(productoId, lote) {
@@ -1056,6 +1073,46 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 </Fila>
                 {movDet === m.producto_id && (
                   <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9' }}>
+                    {modoMov === 'fechas' && cortesMov[m.producto_id] && cortesMov[m.producto_id].length > 0 && (() => {
+                      const gt = '1.5fr .8fr .8fr .9fr .9fr .9fr .9fr'
+                      const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                      const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
+                      return (
+                        <div style={{ marginBottom: '18px' }}>
+                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '9px' }}>
+                            Línea de tiempo · cada conteo parte el rango en tramos · en sacos
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: gt, gap: '9px 16px', alignItems: 'baseline', maxWidth: '760px' }}>
+                            <div style={{ ...cab, textAlign: 'left' }}>Tramo</div>
+                            <div style={cab}>Inicial</div><div style={cab}>Ingresos</div><div style={cab}>Consumo</div>
+                            <div style={cab}>Conteo</div><div style={cab}>Dif.</div><div style={cab}>Queda</div>
+                            {cortesMov[m.producto_id].map((s, i) => {
+                              const r = s.row || {}
+                              const ini = Number(r.saldo_inicial) || 0, ing = Number(r.ingresos) || 0, con = Number(r.consumo) || 0
+                              const dev = Number(r.devuelto) || 0, aj = Number(r.ajustes) || 0
+                              const cont = r.conteo === null || r.conteo === undefined ? null : Number(r.conteo)
+                              const dif = cont === null ? null : cont - (ini + ing - con - dev + aj)
+                              return (
+                                <Fragment key={i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
+                                    {corta(s.a)} → {corta(s.b)}
+                                    {cont !== null && <span style={{ ...badgeIni, marginLeft: '6px' }}>Conteo</span>}
+                                  </div>
+                                  <div style={cel}>{limpio(ini)}</div>
+                                  <div style={{ ...cel, color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + limpio(ing) : '—'}</div>
+                                  <div style={{ ...cel, color: con ? ROJO : '#c3d0db' }}>{con ? '−' + limpio(con) : '—'}</div>
+                                  <div style={{ ...cel, color: cont === null ? '#c3d0db' : AZUL }}>{cont === null ? '—' : limpio(cont)}</div>
+                                  <div style={{ ...cel, color: dif === null || Math.abs(dif) < 0.001 ? '#c3d0db' : (dif < 0 ? ROJO : AMBAR) }}>
+                                    {dif === null ? '—' : Math.abs(dif) < 0.001 ? 'cuadró' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}
+                                  </div>
+                                  <div style={{ ...cel, fontWeight: 600 }}>{limpio(Number(r.saldo_final) || 0)}</div>
+                                </Fragment>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )
+                    })()}
                     {!lotesMov[m.producto_id] ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
                     ) : lotesMov[m.producto_id].length === 0 ? (
