@@ -31,6 +31,18 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
   // esperaban en el rango: sirve para distinguir "nadie registró" de "0 real".
   const [diasReg, setDiasReg] = useState({})
   const [diasEsper, setDiasEsper] = useState(0)
+  const [factorFinca, setFactorFinca] = useState({})   // finca_id -> libras/saco (Marexport 55.1156, resto 55)
+
+  // Factor libras/saco por finca (una vez): las que tienen override lo usan.
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').from('finca').select('id, libras_por_saco').then(({ data }) => {
+      if (!vivo) return
+      const m = {}; (data || []).forEach(f => { if (Number(f.libras_por_saco) > 0) m[f.id] = Number(f.libras_por_saco) })
+      setFactorFinca(m)
+    })
+    return () => { vivo = false }
+  }, [])
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -64,10 +76,10 @@ export default function Resumen({ fincas, onIrAFinca, esJefe }) {
     .map(f => ({ ...f,
       costo_bal: Number(f.costo_bal), costo_ins: Number(f.costo_ins),
       total: Number(f.costo_bal) + Number(f.costo_ins),
-      sacos: Number(f.libras_bal) / LIBRAS_POR_SACO,
+      sacos: Number(f.libras_bal) / (factorFinca[f.finca_id] || LIBRAS_POR_SACO),
       diasReg: diasReg[f.finca_id] || 0,
       sinLlenar: Math.max(0, diasEsper - (diasReg[f.finca_id] || 0)) })),
-    [filas, zonaFiltro, diasReg, diasEsper])
+    [filas, zonaFiltro, diasReg, diasEsper, factorFinca])
 
   const tot = useMemo(() => vis.reduce((a, f) => ({
     bal: a.bal + f.costo_bal, ins: a.ins + f.costo_ins, ha: a.ha + Number(f.hectareas),

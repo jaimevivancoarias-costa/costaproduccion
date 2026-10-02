@@ -101,7 +101,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         supabase.schema('produccion').from('toma_balanceado')
           .select('id, fecha, observacion, es_inicial, creado_por').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
-        supabase.schema('produccion').from('parametro').select('valor').eq('clave', 'libras_por_saco').maybeSingle(),
+        supabase.schema('produccion').from('finca').select('libras_por_saco').eq('id', finca.id).maybeSingle(),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
         esJefe ? supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: alDia }) : Promise.resolve({ data: [] }),
         // Plazo que rige por producto (para verificar QUÉ precio se aplica).
@@ -138,7 +138,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor) }) })
       setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo)
-      if (par && Number(par.valor) > 0) setLps(Number(par.valor))
+      setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([

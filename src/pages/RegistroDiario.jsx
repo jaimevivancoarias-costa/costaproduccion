@@ -60,6 +60,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [dialogo, setDialogo] = useState(null)   // { tipo, fila }
   const [verIndicadores, setVerIndicadores] = useState(false)
   const [verSacos, setVerSacos] = useState(false)   // mostrar los sacos debajo de las libras en la cuadrícula (por defecto ocultos)
+  const [lps, setLps] = useState(LIBRAS_POR_SACO)   // libras por saco de ESTA finca (Marexport 55.1156, resto 55)
   const [acumulado, setAcumulado] = useState({})   // cicloId -> libras desde la siembra
   const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
   const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
@@ -337,6 +338,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   }, [finca.id, lunes, fechas])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Factor libras/saco de la finca (Marexport 55.1156, resto 55 por defecto).
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').from('finca').select('libras_por_saco').eq('id', finca.id).maybeSingle()
+      .then(({ data }) => { if (vivo) setLps(Number(data?.libras_por_saco) > 0 ? Number(data.libras_por_saco) : LIBRAS_POR_SACO) })
+    return () => { vivo = false }
+  }, [finca.id])
 
   // Regla 3.2: solo el dia de hoy es editable en modo Registrar, y solo
   // si la semana no esta cerrada. El jefe puede tocar cualquier dia.
@@ -625,10 +634,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       const faltan = []
       for (const [pid, delta] of Object.entries(deltaProd)) {
         if (delta <= 0.0001) continue
-        const dispLibras = (saldoBal[pid] || 0) * LIBRAS_POR_SACO
+        const dispLibras = (saldoBal[pid] || 0) * lps
         if (delta > dispLibras + 0.001) {
           const nom = productos.find(x => x.id === pid)?.nombre || 'balanceado'
-          faltan.push(`${nom}: hay ${(dispLibras / LIBRAS_POR_SACO).toFixed(1)} sacos (${miles(Math.round(dispLibras))} lb), quieres consumir ${miles(Math.round(delta))} lb`)
+          faltan.push(`${nom}: hay ${(dispLibras / lps).toFixed(1)} sacos (${miles(Math.round(dispLibras))} lb), quieres consumir ${miles(Math.round(delta))} lb`)
         }
       }
       if (faltan.length) {
@@ -1113,7 +1122,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <Td>{totalPiscina(p) ? (
                       <>
                         <span style={{ fontWeight: 500 }}>{miles(totalPiscina(p))}</span>
-                        <div style={{ fontSize: '11px', color: GRIS }}>{(totalPiscina(p) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+                        <div style={{ fontSize: '11px', color: GRIS }}>{(totalPiscina(p) / lps).toFixed(1)} sacos</div>
                       </>
                     ) : ''}</Td>
                     {verIndicadores && (() => {
@@ -1212,14 +1221,14 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                       {situacionDia(f, hoy) === 'futuro' ? <span style={{ color: GRIS }}>—</span> : (
                         <>
                           <span style={{ fontWeight: 500 }}>{miles(totalDia(f)) || '0'}</span>
-                          <div style={{ fontSize: '11px', color: GRIS }}>{(totalDia(f) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+                          <div style={{ fontSize: '11px', color: GRIS }}>{(totalDia(f) / lps).toFixed(1)} sacos</div>
                         </>
                       )}
                     </Td>
                   ))}
                   <Td fondo="#fafcfd">
                     <span style={{ fontWeight: 500, fontSize: '16px' }}>{miles(totalSemana)}</span>
-                    <div style={{ fontSize: '11px', color: GRIS }}>{(totalSemana / LIBRAS_POR_SACO).toFixed(1)} sacos</div>
+                    <div style={{ fontSize: '11px', color: GRIS }}>{(totalSemana / lps).toFixed(1)} sacos</div>
                   </Td>
                   {verIndicadores && Array.from({ length: 9 }, (_, k) => <Td key={k} fondo="#fafcfd" />)}
                 </div>
@@ -1286,13 +1295,13 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <tr key={i}>
                       <td style={dTdL}>{r.nombre}</td>
                       <td style={dTdR}>{miles(Math.round(r.lb))}</td>
-                      <td style={dTdR}>{(r.lb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
+                      <td style={dTdR}>{(r.lb / lps).toFixed(1)} <span style={dU}>sacos</span></td>
                     </tr>
                   ))}
                   <tr>
                     <td style={{ ...dTdL, ...dTot }}>Total</td>
                     <td style={{ ...dTdR, ...dTot }}>{miles(Math.round(totalBalLb))}</td>
-                    <td style={{ ...dTdR, ...dTot }}>{(totalBalLb / LIBRAS_POR_SACO).toFixed(1)} <span style={dU}>sacos</span></td>
+                    <td style={{ ...dTdR, ...dTot }}>{(totalBalLb / lps).toFixed(1)} <span style={dU}>sacos</span></td>
                   </tr>
                 </tbody>
               </table>
@@ -1462,13 +1471,13 @@ function Celda({ p, f, c, productos, filtros, verSacos, editable, situacion, onP
             <div key={i} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '11px', color: GRIS }}>{pr?.nombre_corto || ''}</div>
               <div style={{ fontSize: '15px' }}>{miles(numDec(x.libras))}</div>
-              {verSacos && <div style={{ fontSize: '10px', color: '#9fb0bf' }}>{(numDec(x.libras) / LIBRAS_POR_SACO).toFixed(1)} sacos</div>}
+              {verSacos && <div style={{ fontSize: '10px', color: '#9fb0bf' }}>{(numDec(x.libras) / lps).toFixed(1)} sacos</div>}
             </div>
           )
         })}
         {filas.length > 1 && (
           <div style={{ fontSize: '11px', color: GRIS, borderTop: '0.5px solid ' + BORDE, paddingTop: '2px' }}>
-            Total {miles(total)}{verSacos && ` · ${(total / LIBRAS_POR_SACO).toFixed(1)} sacos`}
+            Total {miles(total)}{verSacos && ` · ${(total / lps).toFixed(1)} sacos`}
           </div>
         )}
       </div>
