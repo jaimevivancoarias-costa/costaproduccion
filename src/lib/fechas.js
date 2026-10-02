@@ -7,10 +7,11 @@ export const MESES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio',
                       'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 export const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']
 
-// Peso real de un saco de balanceado: 25 kg × 2,204623 lb/kg = 55,1156 lb.
-// Debe coincidir con el parámetro `libras_por_saco` de la base (lo usan las
-// funciones SQL de saldo/consumo). Si algún día cambia, cambiar en ambos lados.
-export const LIBRAS_POR_SACO = 55.1156
+// Libras por saco de balanceado POR DEFECTO (la mayoría de fincas: 55).
+// Marexport usa 55,1156 (25 kg × 2,204623) → eso va como override por finca.
+// Fallback cuando no se cargó el factor de la finca; debe coincidir con el
+// parámetro global `libras_por_saco` de la base.
+export const LIBRAS_POR_SACO = 55
 
 // Una fecha ISO se convierte a mediodia para que ningun huso horario
 // la corra un dia hacia atras.
