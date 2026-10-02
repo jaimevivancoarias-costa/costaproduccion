@@ -1074,38 +1074,40 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {movDet === m.producto_id && (
                   <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9' }}>
                     {modoMov === 'fechas' && cortesMov[m.producto_id] && cortesMov[m.producto_id].length > 0 && (() => {
-                      const gt = '1.5fr .8fr .8fr .9fr .9fr .9fr .9fr'
-                      const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                      const gt = '1.6fr .85fr .9fr .9fr .85fr 1fr .9fr'
+                      const cab = { fontSize: '9.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
                       return (
-                        <div style={{ marginBottom: '18px' }}>
-                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '9px' }}>
-                            Línea de tiempo · cada conteo parte el rango en tramos · en sacos
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: gt, gap: '9px 16px', alignItems: 'baseline', maxWidth: '760px' }}>
-                            <div style={{ ...cab, textAlign: 'left' }}>Tramo</div>
-                            <div style={cab}>Inicial</div><div style={cab}>Ingresos</div><div style={cab}>Consumo</div>
-                            <div style={cab}>Conteo</div><div style={cab}>Dif.</div><div style={cab}>Queda</div>
+                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', marginBottom: '14px', maxWidth: '840px' }}>
+                          <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Línea de tiempo por corte</div>
+                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>Cada conteo parte el rango en tramos; cada tramo cuadra solo · en sacos</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: gt, gap: '0 16px', alignItems: 'baseline' }}>
+                            <div style={{ ...cab, textAlign: 'left', paddingBottom: '7px' }}>Tramo</div>
+                            <div style={{ ...cab, paddingBottom: '7px' }}>Inicial</div><div style={{ ...cab, paddingBottom: '7px' }}>Ingresos</div><div style={{ ...cab, paddingBottom: '7px' }}>Consumo</div>
+                            <div style={{ ...cab, paddingBottom: '7px' }}>Conteo</div><div style={{ ...cab, paddingBottom: '7px' }}>Dif.</div><div style={{ ...cab, paddingBottom: '7px' }}>Queda</div>
                             {cortesMov[m.producto_id].map((s, i) => {
                               const r = s.row || {}
                               const ini = Number(r.saldo_inicial) || 0, ing = Number(r.ingresos) || 0, con = Number(r.consumo) || 0
                               const dev = Number(r.devuelto) || 0, aj = Number(r.ajustes) || 0
+                              const fin = Number(r.saldo_final) || 0
                               const cont = r.conteo === null || r.conteo === undefined ? null : Number(r.conteo)
-                              const dif = cont === null ? null : cont - (ini + ing - con - dev + aj)
+                              // Dif del tramo = cuadre (lo mismo que la columna "Conteos").
+                              const dif = cont === null ? null : fin - (ini + ing - con - dev + aj)
+                              const bt = { borderTop: '0.5px solid #f1f6f9', paddingTop: '8px', paddingBottom: '8px' }
                               return (
                                 <Fragment key={i}>
-                                  <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
+                                  <div style={{ ...bt, fontSize: '12.5px', textAlign: 'left' }}>
                                     {corta(s.a)} → {corta(s.b)}
                                     {cont !== null && <span style={{ ...badgeIni, marginLeft: '6px' }}>Conteo</span>}
                                   </div>
-                                  <div style={cel}>{limpio(ini)}</div>
-                                  <div style={{ ...cel, color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + limpio(ing) : '—'}</div>
-                                  <div style={{ ...cel, color: con ? ROJO : '#c3d0db' }}>{con ? '−' + limpio(con) : '—'}</div>
-                                  <div style={{ ...cel, color: cont === null ? '#c3d0db' : AZUL }}>{cont === null ? '—' : limpio(cont)}</div>
-                                  <div style={{ ...cel, color: dif === null || Math.abs(dif) < 0.001 ? '#c3d0db' : (dif < 0 ? ROJO : AMBAR) }}>
+                                  <div style={{ ...cel, ...bt }}>{limpio(ini)}</div>
+                                  <div style={{ ...cel, ...bt, color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + limpio(ing) : '—'}</div>
+                                  <div style={{ ...cel, ...bt, color: con ? ROJO : '#c3d0db' }}>{con ? '−' + limpio(con) : '—'}</div>
+                                  <div style={{ ...cel, ...bt, color: cont === null ? '#c3d0db' : AZUL }}>{cont === null ? '—' : limpio(cont)}</div>
+                                  <div style={{ ...cel, ...bt, color: dif === null || Math.abs(dif) < 0.001 ? '#c3d0db' : (dif < 0 ? ROJO : AMBAR) }}>
                                     {dif === null ? '—' : Math.abs(dif) < 0.001 ? 'cuadró' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}
                                   </div>
-                                  <div style={{ ...cel, fontWeight: 600 }}>{limpio(Number(r.saldo_final) || 0)}</div>
+                                  <div style={{ ...cel, ...bt, fontWeight: 700 }}>{limpio(fin)}</div>
                                 </Fragment>
                               )
                             })}
@@ -1129,11 +1131,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
                       const primerQueda = rows.findIndex(r => Number(r.queda) > 0)
                       return (
-                        <div>
-                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '9px' }}>
-                            Por lote · se consume del más viejo primero · en sacos
+                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', maxWidth: '840px' }}>
+                          <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
+                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
+                            Se consume del más viejo primero · en sacos
                           </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline', maxWidth: '720px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
                             <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
                             <div style={cab}>Entró</div>
                             <div style={cab}>Consumió</div>
