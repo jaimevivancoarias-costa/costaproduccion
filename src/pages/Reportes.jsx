@@ -41,6 +41,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [cosechas, setCosechas] = useState([])
   const [proceso, setProceso] = useState([])
   const [valor, setValor] = useState([])   // valorización de bodega
+  const [lps, setLps] = useState(LIBRAS_POR_SACO)      // libras por saco de ESTA finca (Marexport 55.1156, resto 55)
   const [valFinca, setValFinca] = useState(finca.id)   // finca del reporte de valorización ('todas' = todas)
   const [valFincas, setValFincas] = useState([])       // total por finca (gráfica, modo Todas)
   const [valTipo, setValTipo] = useState('insumo')     // 'insumo' | 'balanceado' | 'diesel'
@@ -103,6 +104,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   }, [finca.id, desde, hasta, todasFincas])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Factor libras/saco de la finca (Marexport 55.1156, resto 55 por defecto).
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').from('finca').select('libras_por_saco').eq('id', finca.id).maybeSingle()
+      .then(({ data }) => { if (vivo) setLps(Number(data?.libras_por_saco) > 0 ? Number(data.libras_por_saco) : LIBRAS_POR_SACO) })
+    return () => { vivo = false }
+  }, [finca.id])
 
   // Factor y unidad de compra de los insumos (para "Equivale a" en la tabla),
   // con override por finca. Igual que en bodega.
@@ -341,7 +350,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
   const equivale = g => {
     if (g.mixto || !g.cantidad) return '—'
-    if (g.tipo === 'balanceado') return miles(g.cantidad / LIBRAS_POR_SACO) + ' sacos'
+    if (g.tipo === 'balanceado') return miles(g.cantidad / (todasFincas ? LIBRAS_POR_SACO : lps)) + ' sacos'
     if (g.tipo === 'insumo') {
       const fi = factoresIns[g.clave]
       const gen = u => { const x = String(u || '').toLowerCase(); return !x || x === 'unidad' || x === 'unidades' || x === 'u' }
