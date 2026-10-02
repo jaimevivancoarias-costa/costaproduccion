@@ -778,7 +778,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </button>
           </div>
         </Caja>
-      ) : cargando ? (
+      ) : cargando && !saldos.length ? (
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div></Caja>
       ) : (
         <>
