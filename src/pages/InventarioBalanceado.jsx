@@ -994,12 +994,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </>
           ) : (
             <Caja>
-              {modoMov === 'conteo' && periodos[periodoSel] && (
-                <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
-                  Desde el <b>conteo del {corta(periodos[periodoSel].desde)}</b>{periodoSel === 0 ? ' hasta hoy' : ` hasta el ${corta(periodos[periodoSel].hasta)}`}.
-                  <span style={{ color: GRIS }}> “Saldo Ini.” es lo que contaste ese día (el conteo fija el saldo); de ahí se resta el consumo.</span>
-                </div>
-              )}
               {modoMov === 'fechas' && tomas.some(t => t.fecha > desde && t.fecha <= hasta) && (() => {
                 const cs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => ddmm(t.fecha))
                 return (
