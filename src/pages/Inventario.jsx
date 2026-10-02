@@ -1093,7 +1093,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         </>
       )}
 
-      {cargando ? (
+      {cargando && !saldos.length ? (
         <Caja><div style={{ padding: '34px', textAlign: 'center', fontSize: '13px', color: GRIS }}>
           Cargando...
         </div></Caja>
