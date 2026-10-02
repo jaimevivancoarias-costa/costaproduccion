@@ -140,7 +140,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
   const hayConteoSuelto = movs.some(m => m.conteo !== null && m.conteo !== undefined && !anclaInicio(m))
   const ocultaConteo = !hayConteoSuelto
-  const colsMov = ['Insumo', 'Llega / se aplica', ocultaConteo ? 'Saldo Ini.' : (movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial'), 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', ...(ocultaConteo ? [] : ['Conteo']), 'Queda']
+  const colsMov = ['Insumo', 'Llega / se aplica', ocultaConteo ? 'Saldo Ini.' : (movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial'), 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', ...(ocultaConteo ? [] : [modoMov === 'fechas' ? 'Conteos' : 'Conteo']), 'Queda']
   const anchosMov = ocultaConteo ? '1.4fr 160px 110px 95px 105px 105px 95px 120px' : '1.4fr 160px 120px 95px 105px 105px 95px 105px 120px'
   const minMov = ocultaConteo ? '960px' : '1060px'
 
@@ -1362,7 +1362,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             const cs = conteos.filter(c => c.fecha > desde && c.fecha <= hasta).map(c => ddmm(c.fecha))
             return (
               <div style={{ background: '#E6F1FB', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 14px', fontSize: '12.5px', color: NAVY, marginBottom: '12px' }}>
-                <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que fijó el saldo ese día. Por eso no cuadra “Inicial + Ingresos − Consumo”. Para verlo cuadrado, usa{' '}
+                <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que re-fijó el saldo. La columna <b>“Conteos”</b> muestra ese cuadre, así la fila cuadra: Saldo Ini + Entró − Se aplicó + Conteos = Queda. Para verlo corte por corte, usa{' '}
                 <button onClick={() => setModoMov('conteo')} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 600, textDecoration: 'underline' }}>Por conteo</button>.
               </div>
             )
@@ -1387,6 +1387,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
               const conteoMostrar = iniEsConteo ? null : m.conteo
               const fechaConteoIni = conteoQuien[m.insumo_id]?.fecha || desde
+              // "Conteos" (solo Por fechas): cuánto re-fijaron los conteos del rango.
+              const cuadreConteos = Number(m.saldo_final) - (Number(iniMostrar) + Number(m.ingresos) - Number(m.consumo) - Number(m.devuelto) + Number(m.ajustes))
               const cq = conteoQuien[m.insumo_id]
               const abierto2 = conteoDet === m.insumo_id
               const porQuien = cq && (
@@ -1432,11 +1434,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda derecha color={Number(m.ajustes) ? (Number(m.ajustes) < 0 ? ROJO : VERDE) : '#c3d0db'}>
                   {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + val(Math.abs(Number(m.ajustes))) : '—'}
                 </Celda>
-                {!ocultaConteo && (
+                {!ocultaConteo && (modoMov === 'fechas' ? (
+                  <Celda derecha color={Math.abs(cuadreConteos) < 0.001 ? '#c3d0db' : AMBAR}>
+                    {Math.abs(cuadreConteos) < 0.001 ? '—' : (cuadreConteos > 0 ? '+' : '−') + val(Math.abs(cuadreConteos))}
+                  </Celda>
+                ) : (
                   <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
                     {conteoMostrar === null || conteoMostrar === undefined ? '—' : <>{val(conteoMostrar)}{porQuien}</>}
                   </Celda>
-                )}
+                ))}
                 <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
                   {val(m.saldo_final)} <span style={{ fontSize: '11px', fontWeight: 400, color: GRIS }}>{uLabel}</span>
                 </Celda>
