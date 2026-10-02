@@ -663,19 +663,34 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   }
   const porReponer = filas.map(f => ({ f, a: bajoMin(f) })).filter(x => x.a)
 
-  // Cargar inventario inicial de UN insumo (nuevo o sin inventario). Usa el
-  // mismo ajuste que "Corregir": seguro y por insumo.
+  // Cargar inventario inicial de UN insumo (nuevo o sin inventario).
+  // Lo registra como CONTEO INICIAL (toma es_inicial), no como ajuste: así el
+  // arranque aparece en "Saldo Ini." y "Ajustes" queda solo para correcciones.
+  // Reutiliza el conteo inicial del día si ya existe.
   async function guardarInicial() {
     if (!iniForm) return
     const cant = Number(String(iniForm.cantidad).replace(',', '.'))
     if (!isFinite(cant) || cant <= 0) { setAviso({ tipo: 'error', texto: 'Escribe una cantidad válida.' }); return }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(iniForm.fecha)) { setAviso({ tipo: 'error', texto: 'Fecha inválida.' }); return }
-    const sActual = Number(saldos.find(x => x.insumo_id === iniForm.insumoId)?.saldo || 0)
-    const delta = cant - sActual
-    const { error } = await supabase.schema('produccion').from('ajuste_insumo')
-      .insert({ finca_id: finca.id, fecha: iniForm.fecha, insumo_id: iniForm.insumoId, cantidad: delta, motivo: 'Inventario inicial' })
-    if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado.' }); await cargar()
+    try {
+      const { data: ex } = await supabase.schema('produccion').from('toma_inventario')
+        .select('id').eq('finca_id', finca.id).eq('fecha', iniForm.fecha).eq('es_inicial', true).maybeSingle()
+      let tomaId = ex?.id
+      if (!tomaId) {
+        const { data: toma, error } = await supabase.schema('produccion').from('toma_inventario')
+          .insert({ finca_id: finca.id, fecha: iniForm.fecha, es_inicial: true, observacion: 'Inventario inicial' })
+          .select('id').single()
+        if (error) throw error
+        tomaId = toma.id
+      }
+      await supabase.schema('produccion').from('toma_inventario_linea')
+        .delete().eq('toma_id', tomaId).eq('insumo_id', iniForm.insumoId)
+      const { error: e2 } = await supabase.schema('produccion').from('toma_inventario_linea')
+        .insert({ toma_id: tomaId, insumo_id: iniForm.insumoId, cantidad_contada: cant,
+                  cantidad_sistema: 0, diferencia: cant, motivo_descuadre: null })
+      if (e2) throw e2
+      setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado como conteo inicial.' }); await cargar()
+    } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') }) }
   }
 
   // Recostear un insumo: sus lotes y su consumo pasan al precio que rige
