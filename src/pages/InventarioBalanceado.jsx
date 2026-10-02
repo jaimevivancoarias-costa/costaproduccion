@@ -987,12 +987,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const cs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => ddmm(t.fecha))
                 return (
                   <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
-                    <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que fijó el saldo ese día. Por eso no cuadra “Inicial + Ingresos − Consumo”. Para verlo cuadrado, usa{' '}
+                    <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que re-fijó el saldo. La columna <b>“Conteos”</b> muestra ese cuadre, así la fila cuadra: Saldo Ini + Ingresos − Consumo + Conteos = Saldo Fin. Para verlo corte por corte, usa{' '}
                     <button onClick={() => setModoMov('conteo')} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 600, textDecoration: 'underline' }}>Por conteo</button>.
                   </div>
                 )
               })()}
-              <Encabezado gtc={gMov} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
+              <Encabezado gtc={gMov} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : [modoMov === 'fechas' ? 'Conteos' : 'Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
                     .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {
                 const cq = conteoQuien[m.producto_id]
@@ -1003,6 +1003,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
                 const conteoMostrar = iniEsConteo ? null : m.conteo
                 const fechaConteoIni = cq?.fecha || desde
+                // "Conteos" (solo Por fechas): cuánto re-fijaron los conteos del
+                // rango. Es el plug que hace que la fila cuadre:
+                // Saldo Ini + Ingresos − Consumo − Devuelto + Ajustes + Conteos = Saldo Fin.
+                const cuadreConteos = Number(m.saldo_final) - (Number(iniMostrar) + Number(m.ingresos) - Number(m.consumo) - Number(m.devuelto) + Number(m.ajustes))
                 const detalle = cq && (
                   <>
                     <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
@@ -1038,11 +1042,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <Cel der>{Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}</Cel>
                   <Cel der color={Number(m.devuelto) ? ROJO : '#c3d0db'}>{Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}</Cel>
                   <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
-                  {!ocultaConteo && (
+                  {!ocultaConteo && (modoMov === 'fechas' ? (
+                    <Cel der color={Math.abs(cuadreConteos) < 0.001 ? '#c3d0db' : AMBAR}>
+                      {Math.abs(cuadreConteos) < 0.001 ? '—' : (cuadreConteos > 0 ? '+' : '−') + limpio(Math.abs(cuadreConteos))}
+                    </Cel>
+                  ) : (
                     <Cel der color={conteoMostrar === null ? '#c3d0db' : AZUL}>
                       {conteoMostrar === null ? '—' : <>{limpio(conteoMostrar)}{detalle}</>}
                     </Cel>
-                  )}
+                  ))}
                   <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
                   {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
                 </Fila>
