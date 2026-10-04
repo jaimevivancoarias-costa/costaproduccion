@@ -42,6 +42,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
   useEffect(() => { setCortesMov({}) }, [desde, hasta, finca.id, modoMov])
+  // "Antes del último conteo" (Diseño A, Por fechas): saldo calculado la víspera
+  // del último conteo del rango. Si no hay conteo en el rango, no aplica.
+  useEffect(() => {
+    if (modoMov !== 'fechas') { setSaldoAntes({}); return }
+    const fs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => t.fecha).sort()
+    if (!fs.length) { setSaldoAntes({}); return }
+    let vivo = true
+    supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(fs[fs.length - 1], -1) })
+      .then(({ data }) => { if (!vivo) return; const m = {}; (data || []).forEach(r => { m[r.producto_id] = Number(r.saldo) }); setSaldoAntes(m) })
+    return () => { vivo = false }
+  }, [modoMov, desde, hasta, finca.id, tomas])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -86,6 +97,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [movDet, setMovDet] = useState(null)           // producto_id con el detalle por lote abierto en "Qué se movió"
   const [lotesMov, setLotesMov] = useState({})         // producto_id -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
   const [cortesMov, setCortesMov] = useState({})       // producto_id -> [{a, b, row}] tramos entre conteos (Por fechas)
+  const [saldoAntes, setSaldoAntes] = useState({})     // producto_id -> saldo justo antes del último conteo del rango (Por fechas)
   const [corrige, setCorrige] = useState(null)         // { productoId, fecha, plazo, actual } lote en corrección
   const [corrPrecio, setCorrPrecio] = useState('')     // nuevo precio por saco
   const [corrAdelante, setCorrAdelante] = useState(false)
@@ -195,7 +207,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
   const hayConteoSuelto = movs.some(m => m.conteo !== null && !anclaInicio(m))
   const ocultaConteo = !hayConteoSuelto
-  const gMov = esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B)
+  // En "Por fechas" usamos el Diseño A: Saldo Ini · Ingresos · Consumo ·
+  // Antes del conteo · Último conteo · Saldo hoy (· Consumo $). Sin Devuelto/Ajustes.
+  const gMov = modoMov === 'fechas'
+    ? (esJefe ? '1.6fr repeat(6, 1fr) 1.1fr' : '1.6fr repeat(6, 1fr)')
+    : (esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B))
 
   // Resumen de "Conteos anteriores": todas las líneas de cada conteo + el
   // consumo $ del corte (del conteo al siguiente, o a hoy). Se carga una vez.
@@ -1003,7 +1019,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   </div>
                 )
               })()}
-              <Encabezado gtc={gMov} cols={['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : [modoMov === 'fechas' ? 'Conteos' : 'Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
+              <Encabezado gtc={gMov} cols={modoMov === 'fechas'
+                ? ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Antes del conteo', 'Último conteo', 'Saldo hoy', ...(esJefe ? ['Consumo $'] : [])]
+                : ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
                     .sort((a, b) => (esSinInvMov(a) ? 1 : 0) - (esSinInvMov(b) ? 1 : 0)).map(m => {
                 const cq = conteoQuien[m.producto_id]
@@ -1014,10 +1032,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
                 const conteoMostrar = iniEsConteo ? null : m.conteo
                 const fechaConteoIni = cq?.fecha || desde
-                // "Conteos" (solo Por fechas): cuánto re-fijaron los conteos del
-                // rango. Es el plug que hace que la fila cuadre:
-                // Saldo Ini + Ingresos − Consumo − Devuelto + Ajustes + Conteos = Saldo Fin.
-                const cuadreConteos = Number(m.saldo_final) - (Number(iniMostrar) + Number(m.ingresos) - Number(m.consumo) - Number(m.devuelto) + Number(m.ajustes))
                 const detalle = cq && (
                   <>
                     <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
@@ -1051,64 +1065,43 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   </Cel>
                   <Cel der color={Number(m.ingresos) ? VERDE : '#c3d0db'}>{Number(m.ingresos) ? '+' + limpio(m.ingresos) : '—'}</Cel>
                   <Cel der>{Number(m.consumo) ? '-' + limpio(m.consumo) : '—'}</Cel>
-                  <Cel der color={Number(m.devuelto) ? ROJO : '#c3d0db'}>{Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}</Cel>
-                  <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
-                  {!ocultaConteo && (modoMov === 'fechas' ? (
-                    <Cel der color={Math.abs(cuadreConteos) < 0.001 ? '#c3d0db' : AMBAR}>
-                      {Math.abs(cuadreConteos) < 0.001 ? '—' : (cuadreConteos > 0 ? '+' : '−') + limpio(Math.abs(cuadreConteos))}
-                    </Cel>
-                  ) : (
-                    <Cel der color={conteoMostrar === null ? '#c3d0db' : AZUL}>
-                      {conteoMostrar === null ? '—' : <>{limpio(conteoMostrar)}{detalle}</>}
-                    </Cel>
-                  ))}
-                  <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
-                  {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
+                  {modoMov === 'fechas' ? (() => {
+                    const antes = saldoAntes[m.producto_id]
+                    const hayCont = m.conteo !== null && m.conteo !== undefined
+                    const cont = Number(m.conteo)
+                    const dif = (hayCont && antes != null) ? cont - antes : null
+                    return (
+                      <>
+                        <Cel der gris>{antes == null ? '—' : limpio(antes)}</Cel>
+                        <Cel der fuerte={hayCont} color={hayCont ? AZUL : '#c3d0db'}>
+                          {!hayCont ? '—' : <>
+                            <div>{limpio(cont)}{detalle}</div>
+                            {dif !== null && Math.abs(dif) >= 0.001 && (
+                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: dif < 0 ? ROJO : AMBAR }}>{dif < 0 ? 'faltó ' : 'sobró '}{limpio(Math.abs(dif))}</span>
+                            )}
+                          </>}
+                        </Cel>
+                        <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
+                        {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
+                      </>
+                    )
+                  })() : (
+                    <>
+                      <Cel der color={Number(m.devuelto) ? ROJO : '#c3d0db'}>{Number(m.devuelto) ? '−' + limpio(m.devuelto) : '—'}</Cel>
+                      <Cel der color={Number(m.ajustes) ? AMBAR : '#c3d0db'}>{Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '') + limpio(m.ajustes) : '—'}</Cel>
+                      {!ocultaConteo && (
+                        <Cel der color={conteoMostrar === null ? '#c3d0db' : AZUL}>
+                          {conteoMostrar === null ? '—' : <>{limpio(conteoMostrar)}{detalle}</>}
+                        </Cel>
+                      )}
+                      <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
+                      {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
+                    </>
+                  )}
                 </Fila>
                 {movDet === m.producto_id && (
-                  <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9' }}>
-                    {modoMov === 'fechas' && cortesMov[m.producto_id] && cortesMov[m.producto_id].length > 0 && (() => {
-                      const gt = '1.6fr .85fr .9fr .9fr .85fr 1fr .9fr'
-                      const cab = { fontSize: '9.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
-                      const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
-                      return (
-                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', marginBottom: '14px', maxWidth: '840px' }}>
-                          <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Línea de tiempo por corte</div>
-                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>Cada conteo parte el rango en tramos; cada tramo cuadra solo · en sacos</div>
-                          <div style={{ display: 'grid', gridTemplateColumns: gt, gap: '0 16px', alignItems: 'baseline' }}>
-                            <div style={{ ...cab, textAlign: 'left', paddingBottom: '7px' }}>Tramo</div>
-                            <div style={{ ...cab, paddingBottom: '7px' }}>Inicial</div><div style={{ ...cab, paddingBottom: '7px' }}>Ingresos</div><div style={{ ...cab, paddingBottom: '7px' }}>Consumo</div>
-                            <div style={{ ...cab, paddingBottom: '7px' }}>Conteo</div><div style={{ ...cab, paddingBottom: '7px' }}>Dif.</div><div style={{ ...cab, paddingBottom: '7px' }}>Queda</div>
-                            {cortesMov[m.producto_id].map((s, i) => {
-                              const r = s.row || {}
-                              const ini = Number(r.saldo_inicial) || 0, ing = Number(r.ingresos) || 0, con = Number(r.consumo) || 0
-                              const dev = Number(r.devuelto) || 0, aj = Number(r.ajustes) || 0
-                              const fin = Number(r.saldo_final) || 0
-                              const cont = r.conteo === null || r.conteo === undefined ? null : Number(r.conteo)
-                              // Dif del tramo = cuadre (lo mismo que la columna "Conteos").
-                              const dif = cont === null ? null : fin - (ini + ing - con - dev + aj)
-                              const bt = { borderTop: '0.5px solid #f1f6f9', paddingTop: '8px', paddingBottom: '8px' }
-                              return (
-                                <Fragment key={i}>
-                                  <div style={{ ...bt, fontSize: '12.5px', textAlign: 'left' }}>
-                                    {corta(s.a)} → {corta(s.b)}
-                                    {cont !== null && <span style={{ ...badgeIni, marginLeft: '6px' }}>Conteo</span>}
-                                  </div>
-                                  <div style={{ ...cel, ...bt }}>{limpio(ini)}</div>
-                                  <div style={{ ...cel, ...bt, color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + limpio(ing) : '—'}</div>
-                                  <div style={{ ...cel, ...bt, color: con ? ROJO : '#c3d0db' }}>{con ? '−' + limpio(con) : '—'}</div>
-                                  <div style={{ ...cel, ...bt, color: cont === null ? '#c3d0db' : AZUL }}>{cont === null ? '—' : limpio(cont)}</div>
-                                  <div style={{ ...cel, ...bt, color: dif === null || Math.abs(dif) < 0.001 ? '#c3d0db' : (dif < 0 ? ROJO : AMBAR) }}>
-                                    {dif === null ? '—' : Math.abs(dif) < 0.001 ? 'cuadró' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif))}
-                                  </div>
-                                  <div style={{ ...cel, ...bt, fontWeight: 700 }}>{limpio(fin)}</div>
-                                </Fragment>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )
-                    })()}
+                  <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1, minWidth: '340px' }}>
                     {!lotesMov[m.producto_id] ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
                     ) : lotesMov[m.producto_id].length === 0 ? (
@@ -1125,7 +1118,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
                       const primerQueda = rows.findIndex(r => Number(r.queda) > 0)
                       return (
-                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', maxWidth: '840px' }}>
+                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
                           <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
                             Se consume del más viejo primero · en sacos
@@ -1185,6 +1178,32 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               </div>
                             </div>
                           )}
+                        </div>
+                      )
+                    })()}
+                    </div>
+                    {modoMov === 'fechas' && cortesMov[m.producto_id] && (() => {
+                      const cs = cortesMov[m.producto_id].map(s => {
+                        const r = s.row || {}
+                        const cont = r.conteo === null || r.conteo === undefined ? null : Number(r.conteo)
+                        if (cont === null) return null
+                        const ini = Number(r.saldo_inicial) || 0, ing = Number(r.ingresos) || 0, con = Number(r.consumo) || 0, dev = Number(r.devuelto) || 0, aj = Number(r.ajustes) || 0, fin = Number(r.saldo_final) || 0
+                        const cuadre = fin - (ini + ing - con - dev + aj)
+                        return { fecha: s.b, conto: cont, antes: cont - cuadre, dif: cuadre }
+                      }).filter(Boolean)
+                      if (!cs.length) return null
+                      return (
+                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', minWidth: '300px', maxWidth: '400px' }}>
+                          <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Conteos en el rango</div>
+                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '10px' }}>Qué pasó en cada conteo · en sacos</div>
+                          {cs.map((c, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none', fontSize: '12.5px' }}>
+                              <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· sistema {limpio(c.antes)} → contó <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
+                              <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
+                                {Math.abs(c.dif) < 0.001 ? 'cuadró' : (c.dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(c.dif))}
+                              </span>
+                            </div>
+                          ))}
                         </div>
                       )
                     })()}
