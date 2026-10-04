@@ -41,7 +41,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [hasta, setHasta] = useState(hoyISO())
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
-  useEffect(() => { setCortesMov({}) }, [desde, hasta, finca.id, modoMov])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -85,17 +84,33 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [verSinInv, setVerSinInv] = useState(false)    // mostrar también los productos sin inventario
   const [movDet, setMovDet] = useState(null)           // producto_id con el detalle por lote abierto en "Qué se movió"
   const [lotesMov, setLotesMov] = useState({})         // producto_id -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
-  const [cortesMov, setCortesMov] = useState({})       // producto_id -> [{a, b, row}] tramos entre conteos (Por fechas)
-  const [saldoAntes, setSaldoAntes] = useState({})     // producto_id -> saldo justo antes del último conteo del rango (Por fechas)
-  // "Antes del último conteo" (Diseño A, Por fechas): saldo calculado la víspera
-  // del último conteo del rango. Si no hay conteo en el rango, no aplica.
+  const [saldoAntes, setSaldoAntes] = useState({})     // producto_id -> saldo víspera del último conteo del rango (Por fechas)
+  const [conteosRango, setConteosRango] = useState({}) // producto_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
+  // Carga por adelantado (no al abrir la flecha) los conteos del rango y el
+  // saldo la víspera de cada uno, para que el ▸ salga al instante.
   useEffect(() => {
-    if (modoMov !== 'fechas') { setSaldoAntes({}); return }
-    const fs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => t.fecha).sort()
-    if (!fs.length) { setSaldoAntes({}); return }
+    if (modoMov !== 'fechas') { setConteosRango({}); setSaldoAntes({}); return }
+    const ts = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    if (!ts.length) { setConteosRango({}); setSaldoAntes({}); return }
     let vivo = true
-    supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(fs[fs.length - 1], -1) })
-      .then(({ data }) => { if (!vivo) return; const m = {}; (data || []).forEach(r => { m[r.producto_id] = Number(r.saldo) }); setSaldoAntes(m) })
+    ;(async () => {
+      const { data: lins } = await supabase.schema('produccion').from('toma_balanceado_linea')
+        .select('toma_id, producto_id, cantidad_contada').in('toma_id', ts.map(t => t.id))
+      const antesPorFecha = {}
+      await Promise.all(ts.map(t =>
+        supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(t.fecha, -1) })
+          .then(r => { const m = {}; (r.data || []).forEach(x => { m[x.producto_id] = Number(x.saldo) }); antesPorFecha[t.fecha] = m })
+      ))
+      if (!vivo) return
+      const porProd = {}
+      ts.forEach(t => (lins || []).filter(l => l.toma_id === t.id).forEach(l => {
+        const conto = Number(l.cantidad_contada)
+        const antes = antesPorFecha[t.fecha]?.[l.producto_id]
+        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes })
+      }))
+      setConteosRango(porProd)
+      setSaldoAntes(antesPorFecha[ts[ts.length - 1].fecha] || {})
+    })()
     return () => { vivo = false }
   }, [modoMov, desde, hasta, finca.id, tomas])
   const [corrige, setCorrige] = useState(null)         // { productoId, fecha, plazo, actual } lote en corrección
@@ -601,21 +616,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta })
       setLotesMov(m => ({ ...m, [productoId]: error ? [] : (data || []) }))
     }
-    // Línea de tiempo por corte (solo "Por fechas", si el rango cruza conteos):
-    // parte el rango en tramos [inicio..conteo1], (conteo1..conteo2], … y pide
-    // el movimiento de cada tramo. Cada tramo cuadra solo.
-    if (modoMov === 'fechas' && !cortesMov[productoId]) {
-      const fechas = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => t.fecha).sort()
-      if (!fechas.length) { setCortesMov(m => ({ ...m, [productoId]: [] })); return }
-      const defs = []; let s = desde
-      for (const c of fechas) { defs.push([s, c]); s = sumarDias(c, 1) }
-      if (s <= hasta) defs.push([s, hasta])
-      const res = await Promise.all(defs.map(([a, b]) =>
-        supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: a, p_hasta: b })
-          .then(r => ({ a, b, row: (r.data || []).find(x => x.producto_id === productoId) || null }))
-      ))
-      setCortesMov(m => ({ ...m, [productoId]: res }))
-    }
   }
 
   function iniciarCorreccion(productoId, lote) {
@@ -1010,15 +1010,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </>
           ) : (
             <Caja>
-              {modoMov === 'fechas' && tomas.some(t => t.fecha > desde && t.fecha <= hasta) && (() => {
-                const cs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => ddmm(t.fecha))
-                return (
-                  <div style={{ padding: '10px 14px', background: '#F4F9FF', borderBottom: '0.5px solid ' + BORDE, fontSize: '12.5px', color: NAVY }}>
-                    <b>Ojo:</b> el rango incluye {cs.length === 1 ? 'un conteo' : 'conteos'} ({cs.join(', ')}), que re-fijó el saldo. La columna <b>“Conteos”</b> muestra ese cuadre, así la fila cuadra: Saldo Ini + Ingresos − Consumo + Conteos = Saldo Fin. Para verlo corte por corte, usa{' '}
-                    <button onClick={() => setModoMov('conteo')} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 600, textDecoration: 'underline' }}>Por conteo</button>.
-                  </div>
-                )
-              })()}
               <Encabezado gtc={gMov} cols={modoMov === 'fechas'
                 ? ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Antes del conteo', 'Último conteo', 'Saldo hoy', ...(esJefe ? ['Consumo $'] : [])]
                 : ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]} />
@@ -1182,26 +1173,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       )
                     })()}
                     </div>
-                    {modoMov === 'fechas' && cortesMov[m.producto_id] && (() => {
-                      const cs = cortesMov[m.producto_id].map(s => {
-                        const r = s.row || {}
-                        const cont = r.conteo === null || r.conteo === undefined ? null : Number(r.conteo)
-                        if (cont === null) return null
-                        const ini = Number(r.saldo_inicial) || 0, ing = Number(r.ingresos) || 0, con = Number(r.consumo) || 0, dev = Number(r.devuelto) || 0, aj = Number(r.ajustes) || 0, fin = Number(r.saldo_final) || 0
-                        const cuadre = fin - (ini + ing - con - dev + aj)
-                        return { fecha: s.b, conto: cont, antes: cont - cuadre, dif: cuadre }
-                      }).filter(Boolean)
-                      if (!cs.length) return null
+                    {modoMov === 'fechas' && conteosRango[m.producto_id] && conteosRango[m.producto_id].length > 0 && (() => {
+                      const cs = conteosRango[m.producto_id]
                       return (
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', minWidth: '300px', maxWidth: '400px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Conteos en el rango</div>
                           <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '10px' }}>Qué pasó en cada conteo · en sacos</div>
                           {cs.map((c, i) => (
                             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none', fontSize: '12.5px' }}>
-                              <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· sistema {limpio(c.antes)} → contó <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
-                              <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
-                                {Math.abs(c.dif) < 0.001 ? 'cuadró' : (c.dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(c.dif))}
-                              </span>
+                              <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.antes == null ? '' : `sistema ${limpio(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
+                              {c.dif == null ? <span /> : (
+                                <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
+                                  {Math.abs(c.dif) < 0.001 ? 'cuadró' : (c.dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(c.dif))}
+                                </span>
+                              )}
                             </div>
                           ))}
                         </div>
