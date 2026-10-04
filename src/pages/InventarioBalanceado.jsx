@@ -298,7 +298,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         nombre: nombreProducto(l.producto_id),
         sistema: t.es_inicial ? '—' : limpio(sisCorte(l, cons)),
         conto: limpio(l.cantidad_contada),
-        dif: t.es_inicial ? 'inicial' : Math.abs(dif) < 0.001 ? 'cuadró' : (dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(dif)),
+        dif: t.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(dif)),
         motivo: l.motivo_descuadre || (t.es_inicial || Math.abs(dif) < 0.001 ? '—' : 'sin motivo'),
         consumo: cons ? dinero(cons.porProd[l.producto_id] || 0) : '—',
       }
@@ -1068,7 +1068,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           {!hayCont ? '—' : <>
                             <div>{limpio(cont)}{detalle}</div>
                             {dif !== null && Math.abs(dif) >= 0.001 && (
-                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: dif < 0 ? ROJO : AMBAR }}>{dif < 0 ? 'faltó ' : 'sobró '}{limpio(Math.abs(dif))}</span>
+                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: dif < 0 ? ROJO : AMBAR }}>{dif < 0 ? 'Faltó ' : 'Sobró '}{limpio(Math.abs(dif))}</span>
                             )}
                           </>}
                         </Cel>
@@ -1184,7 +1184,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.antes == null ? '' : `sistema ${limpio(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
                               {c.dif == null ? <span /> : (
                                 <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
-                                  {Math.abs(c.dif) < 0.001 ? 'cuadró' : (c.dif < 0 ? 'faltó ' : 'sobró ') + limpio(Math.abs(c.dif))}
+                                  {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(c.dif))}
                                 </span>
                               )}
                             </div>
@@ -1210,10 +1210,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {tomas.length > 0 && (
             <div style={{ marginTop: '20px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 4px' }}>Conteos anteriores</h3>
-              <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '12px' }}>
-                Cada conteo explica su corte: lo que decía el sistema, lo que se contó, la diferencia (con su motivo){esJefe ? ' y cuánto costó' : ''}.
-              </div>
+              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 12px' }}>Conteos anteriores</h3>
               {tomas.map((t, idx) => {
                 const grc = `1.7fr .9fr .9fr 1fr 1.3fr${esJefe ? ' .9fr' : ''}`
                 const lins = [...(lineasToma[t.id] || [])].sort((a, b) => nombreProducto(a.producto_id).localeCompare(nombreProducto(b.producto_id)))
@@ -1224,7 +1221,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const alSis = ddmm(sumarDias(t.fecha, -1))
                 const cabCel = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                 const vacia = { color: '#c3d0db' }
-                const abierto = t.id in cortesAbiertos ? cortesAbiertos[t.id] : idx === 0
+                const abierto = t.id in cortesAbiertos ? cortesAbiertos[t.id] : false
                 return (
                   <div key={t.id} style={{ ...cajaS, maxHeight: 'none', overflow: 'visible', marginBottom: '14px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '14px 16px' }}>
@@ -1235,7 +1232,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           Conteo del {corta(t.fecha)}
                           <span style={{ fontSize: '10px', fontWeight: 700, borderRadius: '20px', padding: '2px 9px', marginLeft: '8px',
                             background: idx === 0 ? '#E6F1FB' : '#eef2f6', color: idx === 0 ? AZUL : GRIS }}>
-                            {idx === 0 ? 'corte actual' : t.es_inicial ? 'inventario inicial' : 'corte anterior'}</span>
+                            {idx === 0 ? 'Corte actual' : t.es_inicial ? 'Inventario inicial' : 'Corte anterior'}</span>
                         </div>
                         <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
                           {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(t.fecha)} → ${hastaTxt}`}
@@ -1272,7 +1269,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           </span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
                           <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
-                            {t.es_inicial ? 'inicial' : falto ? 'faltó ' + limpio(Math.abs(dif)) : sobro ? 'sobró ' + limpio(dif) : 'cuadró'}
+                            {t.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
                           </span>
                           <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
                             {t.es_inicial ? <span style={vacia}>—</span>
