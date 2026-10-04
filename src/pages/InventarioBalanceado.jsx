@@ -42,17 +42,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
   useEffect(() => { setCortesMov({}) }, [desde, hasta, finca.id, modoMov])
-  // "Antes del último conteo" (Diseño A, Por fechas): saldo calculado la víspera
-  // del último conteo del rango. Si no hay conteo en el rango, no aplica.
-  useEffect(() => {
-    if (modoMov !== 'fechas') { setSaldoAntes({}); return }
-    const fs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => t.fecha).sort()
-    if (!fs.length) { setSaldoAntes({}); return }
-    let vivo = true
-    supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(fs[fs.length - 1], -1) })
-      .then(({ data }) => { if (!vivo) return; const m = {}; (data || []).forEach(r => { m[r.producto_id] = Number(r.saldo) }); setSaldoAntes(m) })
-    return () => { vivo = false }
-  }, [modoMov, desde, hasta, finca.id, tomas])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -98,6 +87,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [lotesMov, setLotesMov] = useState({})         // producto_id -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
   const [cortesMov, setCortesMov] = useState({})       // producto_id -> [{a, b, row}] tramos entre conteos (Por fechas)
   const [saldoAntes, setSaldoAntes] = useState({})     // producto_id -> saldo justo antes del último conteo del rango (Por fechas)
+  // "Antes del último conteo" (Diseño A, Por fechas): saldo calculado la víspera
+  // del último conteo del rango. Si no hay conteo en el rango, no aplica.
+  useEffect(() => {
+    if (modoMov !== 'fechas') { setSaldoAntes({}); return }
+    const fs = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).map(t => t.fecha).sort()
+    if (!fs.length) { setSaldoAntes({}); return }
+    let vivo = true
+    supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(fs[fs.length - 1], -1) })
+      .then(({ data }) => { if (!vivo) return; const m = {}; (data || []).forEach(r => { m[r.producto_id] = Number(r.saldo) }); setSaldoAntes(m) })
+    return () => { vivo = false }
+  }, [modoMov, desde, hasta, finca.id, tomas])
   const [corrige, setCorrige] = useState(null)         // { productoId, fecha, plazo, actual } lote en corrección
   const [corrPrecio, setCorrPrecio] = useState('')     // nuevo precio por saco
   const [corrAdelante, setCorrAdelante] = useState(false)
