@@ -41,7 +41,7 @@ const esUnidadGenerica = u => { const x = String(u || '').toLowerCase(); return 
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
 const ddmm = iso => corta(iso).slice(0, 5)
-const badgeIni = { display: 'inline-block', fontSize: '8.5px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '0.5px 5px', marginTop: '3px', letterSpacing: '.01em' }
+const badgeIni = { display: 'block', fontSize: '9.5px', fontWeight: 400, color: '#9fb0bf', marginTop: '2px', letterSpacing: '.01em' }
 const navBtn = { padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'

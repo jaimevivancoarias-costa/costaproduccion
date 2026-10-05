@@ -2028,7 +2028,7 @@ function Fila({ children, gtc }) {
 function Cel({ children, der, gris, fuerte, color }) {
   return <div style={{ padding: '10px 12px', fontSize: '13px', textAlign: der ? 'right' : 'left', color: color || (gris ? GRIS : NAVY), fontWeight: fuerte ? 500 : 400, fontVariantNumeric: der ? 'tabular-nums' : 'normal' }}>{children}</div>
 }
-const badgeIni = { display: 'inline-block', fontSize: '8.5px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '0.5px 5px', marginTop: '3px', letterSpacing: '.01em' }
+const badgeIni = { display: 'block', fontSize: '9.5px', fontWeight: 400, color: '#9fb0bf', marginTop: '2px', letterSpacing: '.01em' }
 const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
 const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
