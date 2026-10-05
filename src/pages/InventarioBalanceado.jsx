@@ -82,6 +82,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
   const [recosForm, setRecosForm] = useState(null)     // producto_id con la confirmación de recosteo abierta
+  const [corrForm, setCorrForm] = useState(null)       // producto_id con el editor de corrección abierto
+  const [corrSaldo, setCorrSaldo] = useState('')       // saldo nuevo que se escribe al corregir
+  const [corrMotivo, setCorrMotivo] = useState('')
+  const [corrFecha, setCorrFecha] = useState('')
+  const [corrUnidad, setCorrUnidad] = useState('sacos')  // 'sacos' | 'libras' — en qué unidad se escribe
+  const [corrAjustes, setCorrAjustes] = useState([])     // correcciones (ajustes manuales) del producto
+  const [guardandoCorr2, setGuardandoCorr2] = useState(false)
   const [recosteando, setRecosteando] = useState(false)
   const [verSinInv, setVerSinInv] = useState(false)    // mostrar también los productos sin inventario
   const [movDet, setMovDet] = useState(null)           // producto_id con el detalle por lote abierto en "Qué se movió"
@@ -650,25 +657,45 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
   }
 
-  async function corregir(f) {
-    const escrito = window.prompt(`${f.producto}\n\nEl sistema dice ${limpio(f.saldo)} sacos.\n¿Cuánto debe decir?`, limpio(f.saldo))
-    if (escrito === null) return
-    const nuevo = Number(String(escrito).replace(',', '.'))
-    if (!isFinite(nuevo)) { setAviso({ tipo: 'error', texto: 'No es un número.' }); return }
+  function abrirCorregir(f) {
+    setCorrForm(f.producto_id)
+    setCorrSaldo(limpio(f.saldo))
+    setCorrMotivo('')
+    setCorrFecha(alDia)
+    setCorrUnidad('sacos')
+    setCorrAjustes([])
+    setAviso(null)
+    // Correcciones (ajustes manuales) de este balanceado, para poder borrarlas.
+    supabase.schema('produccion').from('ajuste_balanceado')
+      .select('id, fecha, cantidad, motivo').eq('finca_id', finca.id).eq('producto_id', f.producto_id)
+      .order('fecha', { ascending: false }).limit(20)
+      .then(({ data }) => setCorrAjustes((data || []).filter(a => !/inicial/i.test(a.motivo || ''))))
+  }
+
+  async function guardarCorreccion(f) {
+    let nuevo = Number(String(corrSaldo).replace(',', '.'))
+    if (!isFinite(nuevo)) { setAviso({ tipo: 'error', texto: 'El saldo nuevo no es un número.' }); return }
+    // Si se escribió en libras, se convierte a sacos (÷ libras por saco de la finca).
+    if (corrUnidad === 'libras' && lps) nuevo = nuevo / lps
     const delta = nuevo - Number(f.saldo)
-    if (Math.abs(delta) < 0.001) return
-    const motivo = window.prompt('¿Por qué? Queda en la bitácora.')
-    if (!motivo || !motivo.trim()) { setAviso({ tipo: 'error', texto: 'Falta el motivo.' }); return }
-    // La fecha del ajuste debe ser la del día en que pasó el descuadre, no
-    // siempre hoy: así cuadra en todos los cortes (no solo el de hoy).
-    const fechaTxt = window.prompt('¿De qué fecha es la corrección? (AAAA-MM-DD)\nPon el día en que ocurrió el descuadre, no el de hoy.', alDia)
-    if (fechaTxt === null) return
-    const fecha = String(fechaTxt).trim()
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setAviso({ tipo: 'error', texto: 'Fecha inválida. Usa el formato AAAA-MM-DD.' }); return }
+    if (Math.abs(delta) < 0.001) { setCorrForm(null); return }
+    if (!corrMotivo.trim()) { setAviso({ tipo: 'error', texto: 'La corrección necesita un motivo.' }); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(corrFecha || '')) { setAviso({ tipo: 'error', texto: 'Pon la fecha del descuadre (AAAA-MM-DD).' }); return }
+    setGuardandoCorr2(true)
     const { error } = await supabase.schema('produccion').from('ajuste_balanceado')
-      .insert({ finca_id: finca.id, fecha, producto_id: f.producto_id, cantidad: delta, motivo: motivo.trim() })
+      .insert({ finca_id: finca.id, fecha: corrFecha, producto_id: f.producto_id, cantidad: delta, motivo: corrMotivo.trim() })
+    setGuardandoCorr2(false)
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    setAviso({ tipo: 'ok', texto: `${f.producto} corregido.` }); await cargar()
+    setCorrForm(null); setAviso({ tipo: 'ok', texto: `${f.producto} corregido.` }); await cargar()
+  }
+
+  async function borrarCorreccion(id) {
+    if (!window.confirm('¿Borrar esta corrección? El saldo se recalcula sin ella.')) return
+    const { error } = await supabase.schema('produccion').from('ajuste_balanceado').delete().eq('id', id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setCorrAjustes(a => a.filter(x => x.id !== id))
+    setAviso({ tipo: 'ok', texto: 'Corrección borrada.' })
+    await cargar()
   }
 
   return (
@@ -914,7 +941,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         </button>
                       ) : f.producto}
                     </Cel>
-                    <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
+                    <Cel der fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>{corrForm === f.producto_id
+                      ? <CampoNumero autoFocus maxDec={2} value={corrSaldo} onChange={setCorrSaldo} style={{ ...inp, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                      : sinInv ? <span style={{ fontSize: '12px', color: AMBAR, fontWeight: 400 }}>Sin inventario</span> : <>{limpio(f.saldo)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>}</Cel>
                     {esJefe && <Cel der>{f.precio ? <><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dineroExacto(f.precio)}</span><span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
                       {pi?.aplicado ? `${PLAZO_LBL[pi.aplicado.plazo] || 'catálogo'}${pi.aplicado.desde ? ' · desde ' + corta(pi.aplicado.desde) : ''}` : 'catálogo'}
                       {warn && <span style={{ color: AMBAR }}> · Revisar</span>}
@@ -923,9 +952,49 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {esJefe && <div style={{ padding: '6px 10px', textAlign: 'right' }}>
                       {esJefeGlobal && (sinInv
                         ? <button onClick={() => setIniForm({ productoId: f.producto_id, cantidad: '', fecha: hoyISO() })} style={{ background: '#fff', border: '0.5px solid #9cc4e8', color: AZUL, borderRadius: '8px', padding: '5px 11px', fontSize: '12px', fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Cargar inicial</button>
-                        : <button onClick={() => corregir(f)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>Corregir</button>)}
+                        : <button onClick={() => (corrForm === f.producto_id ? setCorrForm(null) : abrirCorregir(f))} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS, textDecoration: 'underline' }}>{corrForm === f.producto_id ? 'Cerrar' : 'Corregir'}</button>)}
                     </div>}
                   </Fila>
+                  {esJefeGlobal && corrForm === f.producto_id && (
+                    <div style={{ padding: '10px 14px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <label style={{ fontSize: '12px', color: GRIS, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Ingresar en
+                          <Seg valor={corrUnidad} onCambio={u => {
+                            const v = Number(String(corrSaldo).replace(',', '.')) || 0
+                            const enSacos = corrUnidad === 'libras' ? v / (lps || 1) : v
+                            setCorrSaldo(limpio(u === 'libras' ? enSacos * (lps || 1) : enSacos))
+                            setCorrUnidad(u)
+                          }} opciones={[['sacos', 'Sacos'], ['libras', 'Libras']]} />
+                        </label>
+                        <span style={{ fontSize: '12px', color: GRIS }}>Motivo:</span>
+                        <input value={corrMotivo} placeholder="Por qué se corrige — queda en la bitácora"
+                          onChange={e => setCorrMotivo(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && guardarCorreccion(f)}
+                          style={{ ...inp, flex: 1, minWidth: '220px' }} />
+                        <label style={{ fontSize: '12px', color: GRIS, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Fecha
+                          <input type="date" value={corrFecha} max={hoyISO()}
+                            onChange={e => setCorrFecha(e.target.value)} style={{ ...inp, width: '150px' }} />
+                        </label>
+                        <Btn onClick={() => setCorrForm(null)}>Cancelar</Btn>
+                        <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoCorr2}>
+                          {guardandoCorr2 ? 'Guardando...' : 'Guardar corrección'}
+                        </Btn>
+                      </div>
+                      {corrAjustes.length > 0 && (
+                        <div style={{ marginTop: '11px', fontSize: '12px', color: GRIS }}>
+                          <div style={{ marginBottom: '4px' }}>Correcciones de este balanceado (bórralas si fueron un error):</div>
+                          {corrAjustes.map(a => (
+                            <div key={a.id} style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '3px 0' }}>
+                              <span>{corta(a.fecha)} · {Number(a.cantidad) > 0 ? '+' : ''}{limpio(a.cantidad)} sacos{a.motivo ? ` · ${a.motivo}` : ''}</span>
+                              <button onClick={() => borrarCorreccion(a.id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11.5px', color: ROJO }}>borrar</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {recosForm === f.producto_id && (
                     <div style={{ background: '#f6f9fb', padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9' }}>
                       <div style={{ fontSize: '13px', color: NAVY, marginBottom: '6px' }}>
