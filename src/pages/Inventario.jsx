@@ -104,7 +104,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [conteosRango, setConteosRango] = useState({}) // insumo_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
   const [conteoDet, setConteoDet] = useState(null)    // insumo_id con el detalle del conteo abierto
   const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
-  const coincide = nom => !busq || nom === busq
+  const coincide = nom => !busq || String(nom).toLowerCase().includes(busq.toLowerCase())
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -1069,11 +1069,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length})`}
             </GhostBtn>
           )}
-          <select value={busq} onChange={e => setBusq(e.target.value)}
-                  style={{ ...selChip, marginLeft: 'auto', minWidth: '220px' }}>
-            <option value="">Todos los insumos</option>
-            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
+          <input list="filtro-insumos" value={busq} onChange={e => setBusq(e.target.value)}
+                 placeholder="Todos los insumos — escribe para buscar"
+                 style={{ ...selChip, marginLeft: 'auto', minWidth: '240px' }} />
+          <datalist id="filtro-insumos">
+            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n} />)}
+          </datalist>
+          {busq && <button onClick={() => setBusq('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>limpiar</button>}
           {vista === 'saldo' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>al</span>
@@ -1669,7 +1671,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       return (
                         <span>
                           <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
-                          {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {app}</>}
+                          {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {app}
+                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {pres} = {fac.factor} {app}</span></>}
                         </span>
                       )
                     })()}
@@ -1767,27 +1770,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
                 {ab && !edit && (
                   <div style={{ padding: '16px 20px 18px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9' }}>
-                    {(() => {
-                      const fac = factores[f.insumo_id]
-                      const pres = cap1(UNIDAD[f.unidad] || f.unidad)
-                      const app = cap1(UNIDAD[fac?.uApp] || fac?.uApp)
-                      const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
-                      const pi = precioInfo[f.insumo_id]
-                      return (
-                        <div style={{ display: 'flex', gap: '34px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                          <div>
-                            <div style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#a7b4c1', marginBottom: '3px' }}>Conversión</div>
-                            <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500 }}>{conv ? `1 ${pres} = ${fac.factor} ${app}` : `Se aplica en ${pres.toLowerCase()}`}</div>
-                          </div>
-                          {esJefe && (
-                            <div>
-                              <div style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '.03em', color: '#a7b4c1', marginBottom: '3px' }}>Precio que rige</div>
-                              <div style={{ fontSize: '13px', color: NAVY, fontWeight: 500 }}>{f.precio ? `${dineroExacto(f.precio)} / ${pres}${pi ? ` · ${PLAZO_LBL[pi.plazo]}${pi.desde ? ' · desde ' + corta(pi.desde) : ''}` : ''}` : 'Sin precio'}</div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })()}
                     {esJefe && (lotes[f.insumo_id] || []).length > 0 && (
                       <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
                         <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
@@ -1815,6 +1797,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         {dg.map((d, i) => <span key={i}>{i ? ' · ' : ''}{PLAZO_LBL[d.plazo]} {limpio(d.cantidad)}</span>)}
                         <span> {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
                       </div>
+                    )}
+                    {esJefe && f.precio && precioInfo[f.insumo_id]?.desde && (
+                      <div style={{ fontSize: '11px', color: '#a7b4c1', marginTop: dg.length ? '6px' : 0 }}>Precio que rige desde {corta(precioInfo[f.insumo_id].desde)}</div>
                     )}
                   </div>
                 )}

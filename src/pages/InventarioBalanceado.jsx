@@ -37,7 +37,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
   useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
   const [busq, setBusq] = useState('')
-  const coincide = nom => !busq || nom === busq
+  const coincide = nom => !busq || String(nom).toLowerCase().includes(busq.toLowerCase())
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -829,11 +829,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInvMov})`}
               </GhostBtn>
             )}
-            <select value={busq} onChange={e => setBusq(e.target.value)}
-                    style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
-              <option value="">Todos los balanceados</option>
-              {[...new Set(saldos.map(s => s.producto))].sort().map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
+            <input list="filtro-balanceados" value={busq} onChange={e => setBusq(e.target.value)}
+                   placeholder="Todos los balanceados — escribe para buscar"
+                   style={{ ...selChip, marginLeft: 'auto', minWidth: '240px' }} />
+            <datalist id="filtro-balanceados">
+              {[...new Set(saldos.map(s => s.producto))].sort().map(n => <option key={n} value={n} />)}
+            </datalist>
+            {busq && <button onClick={() => setBusq('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>limpiar</button>}
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
