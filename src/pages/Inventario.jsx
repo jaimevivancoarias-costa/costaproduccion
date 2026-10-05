@@ -760,7 +760,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Abrir el formulario de corrección de precio de un lote concreto.
   function iniciarCorreccion(insumoId, lote) {
-    setCorrige({ insumoId, fecha: lote.fecha, plazo: lote.plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
+    // Un conteo no tiene plazo de compra: se valora con el precio del plazo que
+    // RIGE en el catálogo. Si usáramos lote.plazo (viene como Contado/0),
+    // corregiríamos un plazo que el conteo no usa y el precio no cambiaría.
+    const plazo = lote.es_conteo && precioInfo[insumoId]?.plazo != null
+      ? precioInfo[insumoId].plazo : lote.plazo
+    setCorrige({ insumoId, fecha: lote.fecha, plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
     setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
     setCorrAdelante(false)
   }
