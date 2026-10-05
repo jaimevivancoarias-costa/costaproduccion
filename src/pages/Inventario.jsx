@@ -110,6 +110,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [hasta, setHasta] = useState(hoyISO())
   const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
+  // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
+  useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
   // El detalle por lote depende de la fecha "hasta" y la finca; si cambian,
   // se limpia la caché para no mostrar lotes de otro corte.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
@@ -1607,12 +1609,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             )})}
           </Tabla>
 
-          {movs.some(m => m.conteo !== null) && (
-            <Nota color={AZUL} fondo="#E6F1FB">
-              En este rango se contó la bodega físicamente; ese conteo fija el "Queda"
-              (por eso puede no ser exactamente inicial + entró − aplicado).
-            </Nota>
-          )}
           {renderConteosAnteriores()}
         </>
 

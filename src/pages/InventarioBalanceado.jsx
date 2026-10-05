@@ -34,6 +34,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [vista, setVista] = useState('saldo')       // 'saldo' | 'movimientos'
   const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
+  // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
+  useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
   const [busq, setBusq] = useState('')
   const coincide = nom => !busq || nom === busq
   const [alDia, setAlDia] = useState(hoyISO())
@@ -1660,7 +1662,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
               {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
             </div>
           ))}
-          <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ otra línea</button>
+          <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ Otra línea</button>
           {esJefe && nuevo === 'ingreso' && validas.length > 0 && (
             <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
               {validas.map((l, i) => {
@@ -1976,7 +1978,7 @@ function EditorIngBal({ g, productos, esJefe, finca, userId, onHecho, onCancelar
           {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
         </div>
       ))}
-      <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ otra línea</button>
+      <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ Otra línea</button>
       {!esJefe && (
         <div style={{ marginTop: '10px' }}>
           <Campo label="Motivo de la corrección"><input value={motivo} placeholder="Por qué se corrige — lo verá el jefe" onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%' }} /></Campo>
