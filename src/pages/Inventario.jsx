@@ -410,6 +410,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [motivo, setMotivo] = useState('')
   const [fechaAj, setFechaAj] = useState('')
   const [guardandoAj, setGuardandoAj] = useState(false)
+  const [corrUnidad, setCorrUnidad] = useState('compra')  // en qué unidad se escribe el saldo al corregir
+  const [corrAjustes, setCorrAjustes] = useState([])       // correcciones (ajustes manuales) del insumo en edición
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -788,16 +790,35 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setNuevoSaldo(limpio(f.saldo))
     setMotivo('')
     setFechaAj(alDia)
+    setCorrUnidad('compra')
+    setCorrAjustes([])
     setAviso(null)
+    // Correcciones (ajustes manuales) de este insumo, para poder borrarlas.
+    supabase.schema('produccion').from('ajuste_insumo')
+      .select('id, fecha, cantidad, motivo').eq('finca_id', finca.id).eq('insumo_id', f.insumo_id)
+      .order('fecha', { ascending: false }).limit(20)
+      .then(({ data }) => setCorrAjustes((data || []).filter(a => !/inicial/i.test(a.motivo || ''))))
+  }
+
+  async function borrarCorreccion(id) {
+    if (!window.confirm('¿Borrar esta corrección? El saldo se recalcula sin ella.')) return
+    const { error } = await supabase.schema('produccion').from('ajuste_insumo').delete().eq('id', id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setCorrAjustes(a => a.filter(x => x.id !== id))
+    setAviso({ tipo: 'ok', texto: 'Corrección borrada.' })
+    await cargar()
   }
 
   // Corregir el saldo de un insumo suelto. Solo jefes y con motivo: un
   // ajuste es donde se tapa un descuadre, y sin el porque no sirve.
   async function guardarCorreccion(f) {
-    const nuevo = Number(String(nuevoSaldo).replace(',', '.'))
+    let nuevo = Number(String(nuevoSaldo).replace(',', '.'))
     if (!isFinite(nuevo)) {
       setAviso({ tipo: 'error', texto: 'El saldo nuevo no es un número.' }); return
     }
+    // Si se escribió en la unidad de aplicación, se convierte a la de compra.
+    const facC = factores[f.insumo_id]
+    if (corrUnidad === 'aplica' && facC?.factor) nuevo = nuevo / facC.factor
     const delta = nuevo - Number(f.saldo)
     if (Math.abs(delta) < 0.0001) { setEditando(null); return }
     if (!motivo.trim()) {
@@ -1715,32 +1736,57 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   )}
                 </Fila>
 
-                {esJefeGlobal && edit && (
-                  <div style={{ display: 'flex', gap: '10px', alignItems: 'center',
-                                padding: '10px 14px', background: '#f6f9fb', flexWrap: 'wrap',
-                                borderBottom: '0.5px solid #f1f6f9' }}>
-                    <span style={{ fontSize: '12px', color: GRIS }}>
-                      De {limpio(f.saldo)} a {limpio(Number(String(nuevoSaldo).replace(',', '.')) || 0)}.
-                      Motivo:
-                    </span>
-                    <input value={motivo} autoFocus={false}
-                      placeholder="Por qué se corrige — queda en la bitácora"
-                      onChange={e => setMotivo(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && guardarCorreccion(f)}
-                      style={{ ...entrada, flex: 1, minWidth: '240px' }} />
-                    <label style={{ fontSize: '12px', color: GRIS, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      Fecha
-                      <input type="date" value={fechaAj} max={hoyISO()}
-                        onChange={e => setFechaAj(e.target.value)}
-                        title="Día en que ocurrió el descuadre, no siempre hoy"
-                        style={{ ...entrada, width: '150px' }} />
-                    </label>
-                    <Btn onClick={() => setEditando(null)}>Cancelar</Btn>
-                    <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoAj}>
-                      {guardandoAj ? 'Guardando...' : 'Guardar corrección'}
-                    </Btn>
+                {esJefeGlobal && edit && (() => {
+                  const fc = factores[f.insumo_id]
+                  const conv = fc && fc.uApp && !esUnidadGenerica(fc.uApp) && cap1(UNIDAD[fc.uApp] || fc.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
+                  const uC = cap1(UNIDAD[f.unidad] || f.unidad)
+                  const uA = cap1(UNIDAD[fc?.uApp] || fc?.uApp)
+                  return (
+                  <div style={{ padding: '10px 14px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      {conv && (
+                        <label style={{ fontSize: '12px', color: GRIS, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Ingresar en
+                          <Seg valor={corrUnidad} onCambio={u => {
+                            const v = Number(String(nuevoSaldo).replace(',', '.')) || 0
+                            const enCompra = corrUnidad === 'aplica' ? v / (fc.factor || 1) : v
+                            setNuevoSaldo(limpio(u === 'aplica' ? enCompra * (fc.factor || 1) : enCompra))
+                            setCorrUnidad(u)
+                          }} opciones={[['compra', uC], ['aplica', uA]]} />
+                        </label>
+                      )}
+                      <span style={{ fontSize: '12px', color: GRIS }}>Motivo:</span>
+                      <input value={motivo}
+                        placeholder="Por qué se corrige — queda en la bitácora"
+                        onChange={e => setMotivo(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && guardarCorreccion(f)}
+                        style={{ ...entrada, flex: 1, minWidth: '220px' }} />
+                      <label style={{ fontSize: '12px', color: GRIS, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        Fecha
+                        <input type="date" value={fechaAj} max={hoyISO()}
+                          onChange={e => setFechaAj(e.target.value)}
+                          title="Día en que ocurrió el descuadre, no siempre hoy"
+                          style={{ ...entrada, width: '150px' }} />
+                      </label>
+                      <Btn onClick={() => setEditando(null)}>Cancelar</Btn>
+                      <Btn primario onClick={() => guardarCorreccion(f)} disabled={guardandoAj}>
+                        {guardandoAj ? 'Guardando...' : 'Guardar corrección'}
+                      </Btn>
+                    </div>
+                    {corrAjustes.length > 0 && (
+                      <div style={{ marginTop: '11px', fontSize: '12px', color: GRIS }}>
+                        <div style={{ marginBottom: '4px' }}>Correcciones de este insumo (bórralas si fueron un error):</div>
+                        {corrAjustes.map(a => (
+                          <div key={a.id} style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '3px 0' }}>
+                            <span>{corta(a.fecha)} · {Number(a.cantidad) > 0 ? '+' : ''}{limpio(a.cantidad)} {(UNIDAD[f.unidad] || f.unidad || '').toLowerCase()}{a.motivo ? ` · ${a.motivo}` : ''}</span>
+                            <button onClick={() => borrarCorreccion(a.id)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11.5px', color: ROJO }}>borrar</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
+                  )
+                })()}
 
                 {recosForm === f.insumo_id && (
                   <div style={{ background: '#f6f9fb', padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9' }}>
