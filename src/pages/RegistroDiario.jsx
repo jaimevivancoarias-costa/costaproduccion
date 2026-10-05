@@ -1104,7 +1104,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           borde={situacionDia(f, hoy) === 'hoy'}>
                         <Celda
                           p={p} f={f} c={cel(p, f)} productos={productos}
-                          filtros={hayFiltro ? filtros : null} verSacos={verSacos}
+                          filtros={hayFiltro ? filtros : null} verSacos={verSacos} lps={lps}
                           editable={editable(f)} situacion={situacionDia(f, hoy)}
                           onProducto={v => set(p, f, 'productoId', v)}
                           onLibras={v => set(p, f, 'libras', v)}
@@ -1419,7 +1419,7 @@ function TransferenciaInfo({ cicloId }) {
 // ---------------------------------------------------------------------
 // Celda: las tres situaciones de la regla 2.3
 // ---------------------------------------------------------------------
-function Celda({ p, f, c, productos, filtros, verSacos, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
+function Celda({ p, f, c, productos, filtros, verSacos, lps, editable, situacion, onProducto, onLibras, onAddExtra, onExtra, onRemoveExtra, onSin, onLimpiar, inputRef, onKeyDown }) {
   if (!p.cicloId) {
     return <div style={{ color: '#c3d0db', fontSize: '12px' }}>—</div>
   }
