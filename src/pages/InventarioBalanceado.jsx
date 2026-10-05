@@ -1045,17 +1045,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       )}
                       {esJefe && (lotes[f.producto_id] || []).length > 0 && (
                         <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
-                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '10px' }}>Cuánto queda a cada precio</div>
+                          <div style={{ position: 'relative', paddingLeft: '20px' }}>
+                            <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '1.5px', background: BORDE }} />
                             {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))).map((L, i) => {
                               const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
                               return (
-                              <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
-                                <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} sacos</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
-                                <div style={{ fontSize: '11px', color: distinto ? AMBAR : GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}{distinto && L.costo != null ? ' · no es el que rige' : ''}</div>
+                              <div key={i} style={{ position: 'relative', padding: '7px 0' }}>
+                                <div style={{ position: 'absolute', left: '-20px', top: '12px', width: '9px', height: '9px', borderRadius: '50%', background: distinto ? '#FAEEDA' : '#fff', border: '1.5px solid ' + (distinto ? '#d9a441' : AZUL) }} />
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 600, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{limpio(L.cantidad)} sacos</span>
+                                  <span style={{ fontSize: '11.5px', color: distinto ? AMBAR : GRIS }}>{L.costo == null ? 'sin precio' : dineroExacto(L.costo)} · {L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{distinto && L.costo != null ? ' · no es el que rige' : ''}</span>
+                                  {i === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
+                                </div>
                                 {distinto && esJefeGlobal && (
                                   <button onClick={() => setRecosForm(recosForm === f.producto_id ? null : f.producto_id)}
-                                    style={{ marginTop: '7px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+                                    style={{ marginTop: '6px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
                                     Recostear a {dineroExacto(ruling)}
                                   </button>
                                 )}
