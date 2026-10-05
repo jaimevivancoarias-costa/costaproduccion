@@ -750,7 +750,7 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
       })}
       <button onClick={agregarLinea} style={{ border: 'none', background: 'none', cursor: 'pointer',
         fontFamily: 'inherit', fontSize: '13px', color: AZUL, padding: '4px 0' }}>
-        + otra línea
+        + Otra línea
       </button>
 
       {verPrecio && validas.length > 0 && (
@@ -954,7 +954,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
         )
       })}
       <button onClick={() => setLineas(ls => [...ls, { insumoId: '', cantidad: '' }])}
-        style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL, padding: '4px 0' }}>+ otra línea</button>
+        style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL, padding: '4px 0' }}>+ Otra línea</button>
 
       {!esJefe && (
         <div style={{ marginTop: '10px' }}>
