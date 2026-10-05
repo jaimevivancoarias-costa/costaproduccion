@@ -5,7 +5,7 @@ import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
-import { TabU, Seg, GhostBtn, selChip } from '../components/controles'
+import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -174,7 +174,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       })
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
-      const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor) }) })
+      const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
       setSaldos(s || []); setValorFifo(vfm); setMovs(m || []); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo)
       setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
@@ -856,13 +856,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInvMov})`}
               </GhostBtn>
             )}
-            <input list="filtro-balanceados" value={busq} onChange={e => setBusq(e.target.value)}
-                   placeholder="Todos los balanceados — escribe para buscar"
-                   style={{ ...selChip, marginLeft: 'auto', minWidth: '240px' }} />
-            <datalist id="filtro-balanceados">
-              {[...new Set(saldos.map(s => s.producto))].sort().map(n => <option key={n} value={n} />)}
-            </datalist>
-            {busq && <button onClick={() => setBusq('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>limpiar</button>}
+            <BuscadorFiltro value={busq} onChange={setBusq}
+              opciones={[...new Set(saldos.map(s => s.producto))].sort()}
+              placeholder="Buscar balanceado…" />
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
@@ -1049,17 +1045,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       )}
                       {esJefe && (lotes[f.producto_id] || []).length > 0 && (
                         <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
-                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => {
+                          <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '10px' }}>Cuánto queda a cada precio</div>
+                          <div style={{ position: 'relative', paddingLeft: '20px' }}>
+                            <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '1.5px', background: BORDE }} />
+                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))).map((L, i) => {
                               const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
                               return (
-                              <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
-                                <div><b style={{ fontWeight: 600 }}>{limpio(L.cantidad)} sacos</b>{L.costo == null ? ' · sin precio' : ' a ' + dineroExacto(L.costo)}</div>
-                                <div style={{ fontSize: '11px', color: distinto ? AMBAR : GRIS }}>{L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{i === 0 ? ' · se gasta primero' : ''}{distinto && L.costo != null ? ' · no es el que rige' : ''}</div>
+                              <div key={i} style={{ position: 'relative', padding: '7px 0' }}>
+                                <div style={{ position: 'absolute', left: '-20px', top: '12px', width: '9px', height: '9px', borderRadius: '50%', background: distinto ? '#FAEEDA' : '#fff', border: '1.5px solid ' + (distinto ? '#d9a441' : AZUL) }} />
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 600, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{limpio(L.cantidad)} sacos</span>
+                                  <span style={{ fontSize: '11.5px', color: distinto ? AMBAR : GRIS }}>{L.costo == null ? 'sin precio' : dineroExacto(L.costo)}{L.fecha && L.plazo != null ? ' · ' + (PLAZO_LBL[L.plazo] || 'contado') : ''} · {L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{distinto && L.costo != null ? ' · no es el que rige' : ''}</span>
+                                  {i === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
+                                </div>
                                 {distinto && esJefeGlobal && (
                                   <button onClick={() => setRecosForm(recosForm === f.producto_id ? null : f.producto_id)}
-                                    style={{ marginTop: '7px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
+                                    style={{ marginTop: '6px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
                                     Recostear a {dineroExacto(ruling)}
                                   </button>
                                 )}
@@ -1171,7 +1172,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     ) : lotesMov[m.producto_id].length === 0 ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                     ) : (() => {
-                      const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
+                      const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                       const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
@@ -1623,21 +1624,6 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
             })
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea').insert(filas)
         if (e2) throw e2
-        // Alcance "De ahora en adelante": actualiza el catálogo por finca y plazo.
-        if (esJefe) {
-          for (const r of rev) {
-            const pu = numDec(r.precio)
-            if (r.scope !== 'adelante' || !(pu > 0)) continue
-            await supabase.schema('produccion').from('precio_producto')
-              .delete().eq('producto_id', r.productoId).eq('finca_id', finca.id).eq('plazo', r.plazo).gte('vigente_desde', fecha)
-            await supabase.schema('produccion').from('precio_producto')
-              .update({ vigente_hasta: sumarDias(fecha, -1) })
-              .eq('producto_id', r.productoId).eq('finca_id', finca.id).eq('plazo', r.plazo).is('vigente_hasta', null).lt('vigente_desde', fecha)
-            const { error: e3 } = await supabase.schema('produccion').from('precio_producto')
-              .insert({ producto_id: r.productoId, finca_id: finca.id, plazo: r.plazo, precio_saco: pu, vigente_desde: fecha })
-            if (e3) throw e3
-          }
-        }
         setRevisando(false)
       } else if (nuevo === 'devolucion') {
         const { error } = await supabase.schema('produccion').from('devolucion_balanceado')
@@ -1778,17 +1764,8 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
                       <div style={{ fontSize: '11.5px', marginTop: '5px', textAlign: 'right' }}>
                         {catP == null ? <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>
                           : !cambiado ? <span style={{ color: '#0f6e56' }}>= catálogo</span>
-                          : <span style={{ color: '#9A6A00' }}>catálogo {dineroExacto(catP)}</span>}
+                          : <span style={{ color: '#9A6A00' }}>catálogo {dineroExacto(catP)} · solo para este ingreso</span>}
                       </div>
-                      {cambiado && catP != null && (
-                        <div style={{ marginTop: '7px', background: '#FFF8EC', border: '0.5px solid #ecd9b3', borderRadius: '9px', padding: '8px 11px', fontSize: '12px' }}>
-                          Cambiaste el precio. ¿Cómo lo aplico?
-                          <span style={{ display: 'inline-flex', gap: '14px', marginLeft: '8px' }}>
-                            <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'solo'} onChange={() => setRevLinea(i, { scope: 'solo' })} /> Solo este ingreso</label>
-                            <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'adelante'} onChange={() => setRevLinea(i, { scope: 'adelante' })} /> De ahora en adelante en {String(finca.nombre)}</label>
-                          </span>
-                        </div>
-                      )}
                     </div>
                   )
                 })}
