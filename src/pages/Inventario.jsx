@@ -104,7 +104,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [conteosRango, setConteosRango] = useState({}) // insumo_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
   const [conteoDet, setConteoDet] = useState(null)    // insumo_id con el detalle del conteo abierto
   const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
-  const coincide = nom => !busq || nom === busq
+  const coincide = nom => !busq || String(nom).toLowerCase().includes(busq.toLowerCase())
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
@@ -1069,11 +1069,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length})`}
             </GhostBtn>
           )}
-          <select value={busq} onChange={e => setBusq(e.target.value)}
-                  style={{ ...selChip, marginLeft: 'auto', minWidth: '220px' }}>
-            <option value="">Todos los insumos</option>
-            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
+          <input list="filtro-insumos" value={busq} onChange={e => setBusq(e.target.value)}
+                 placeholder="Todos los insumos — escribe para buscar"
+                 style={{ ...selChip, marginLeft: 'auto', minWidth: '240px' }} />
+          <datalist id="filtro-insumos">
+            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n} />)}
+          </datalist>
+          {busq && <button onClick={() => setBusq('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>limpiar</button>}
           {vista === 'saldo' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>al</span>
