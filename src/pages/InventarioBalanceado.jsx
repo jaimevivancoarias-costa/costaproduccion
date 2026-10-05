@@ -627,12 +627,26 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     }
   }
 
-  function iniciarCorreccion(productoId, lote) {
-    // Un conteo se valora con el precio del plazo que RIGE, no con lote.plazo
-    // (que viene como Contado). Si no, se corrige un plazo que el conteo no usa
-    // y el precio no cambia.
-    const plazo = lote.es_conteo && precioInfo[productoId]?.aplicado?.plazo != null
-      ? precioInfo[productoId].aplicado.plazo : lote.plazo
+  async function iniciarCorreccion(productoId, lote) {
+    // Un conteo se valora con el precio del plazo que REGÍA EN SU FECHA (no hoy).
+    // Lo buscamos en plazo_producto para precargar el plazo correcto; si usáramos
+    // lote.plazo (Contado) o el plazo de hoy, se corregiría un plazo que el conteo
+    // no usa y el precio no cambiaría.
+    let plazo = lote.plazo
+    if (lote.es_conteo) {
+      const { data } = await supabase.schema('produccion').from('plazo_producto')
+        .select('plazo, finca_id, vigente_desde')
+        .eq('producto_id', productoId)
+        .lte('vigente_desde', lote.fecha)
+        .or(`vigente_hasta.is.null,vigente_hasta.gte.${lote.fecha}`)
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
+      if (data?.length) {
+        const pick = [...data].sort((a, b) =>
+          (!!a.finca_id !== !!b.finca_id) ? (a.finca_id ? -1 : 1)
+          : (a.vigente_desde < b.vigente_desde ? 1 : -1))[0]
+        if (pick?.plazo != null) plazo = Number(pick.plazo)
+      }
+    }
     setCorrige({ productoId, fecha: lote.fecha, plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
     setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
     setCorrAdelante(false)
