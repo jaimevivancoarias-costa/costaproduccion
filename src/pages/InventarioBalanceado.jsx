@@ -628,7 +628,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   }
 
   function iniciarCorreccion(productoId, lote) {
-    setCorrige({ productoId, fecha: lote.fecha, plazo: lote.plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
+    // Un conteo se valora con el precio del plazo que RIGE, no con lote.plazo
+    // (que viene como Contado). Si no, se corrige un plazo que el conteo no usa
+    // y el precio no cambia.
+    const plazo = lote.es_conteo && precioInfo[productoId]?.aplicado?.plazo != null
+      ? precioInfo[productoId].aplicado.plazo : lote.plazo
+    setCorrige({ productoId, fecha: lote.fecha, plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
     setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
     setCorrAdelante(false)
   }
