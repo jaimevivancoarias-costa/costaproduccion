@@ -1235,6 +1235,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                   <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
                                 </div>
                                 <div>
+                                  <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                  <Seg valor={corrige.plazo}
+                                       onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))}
+                                       opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                </div>
+                                <div>
                                   <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
                                   <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
                                 </div>

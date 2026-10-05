@@ -1589,6 +1589,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                   style={{ ...entrada, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
                               </div>
                               <div>
+                                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                <Seg valor={corrige.plazo}
+                                     onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))}
+                                     opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                              </div>
+                              <div>
                                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
                                 <Seg valor={corrAdelante ? 'adelante' : 'solo'}
                                      onCambio={v => setCorrAdelante(v === 'adelante')}
