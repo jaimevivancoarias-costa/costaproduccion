@@ -1623,21 +1623,6 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
             })
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea').insert(filas)
         if (e2) throw e2
-        // Alcance "De ahora en adelante": actualiza el catálogo por finca y plazo.
-        if (esJefe) {
-          for (const r of rev) {
-            const pu = numDec(r.precio)
-            if (r.scope !== 'adelante' || !(pu > 0)) continue
-            await supabase.schema('produccion').from('precio_producto')
-              .delete().eq('producto_id', r.productoId).eq('finca_id', finca.id).eq('plazo', r.plazo).gte('vigente_desde', fecha)
-            await supabase.schema('produccion').from('precio_producto')
-              .update({ vigente_hasta: sumarDias(fecha, -1) })
-              .eq('producto_id', r.productoId).eq('finca_id', finca.id).eq('plazo', r.plazo).is('vigente_hasta', null).lt('vigente_desde', fecha)
-            const { error: e3 } = await supabase.schema('produccion').from('precio_producto')
-              .insert({ producto_id: r.productoId, finca_id: finca.id, plazo: r.plazo, precio_saco: pu, vigente_desde: fecha })
-            if (e3) throw e3
-          }
-        }
         setRevisando(false)
       } else if (nuevo === 'devolucion') {
         const { error } = await supabase.schema('produccion').from('devolucion_balanceado')
@@ -1778,17 +1763,8 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
                       <div style={{ fontSize: '11.5px', marginTop: '5px', textAlign: 'right' }}>
                         {catP == null ? <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>
                           : !cambiado ? <span style={{ color: '#0f6e56' }}>= catálogo</span>
-                          : <span style={{ color: '#9A6A00' }}>catálogo {dineroExacto(catP)}</span>}
+                          : <span style={{ color: '#9A6A00' }}>catálogo {dineroExacto(catP)} · solo para este ingreso</span>}
                       </div>
-                      {cambiado && catP != null && (
-                        <div style={{ marginTop: '7px', background: '#FFF8EC', border: '0.5px solid #ecd9b3', borderRadius: '9px', padding: '8px 11px', fontSize: '12px' }}>
-                          Cambiaste el precio. ¿Cómo lo aplico?
-                          <span style={{ display: 'inline-flex', gap: '14px', marginLeft: '8px' }}>
-                            <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'solo'} onChange={() => setRevLinea(i, { scope: 'solo' })} /> Solo este ingreso</label>
-                            <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'adelante'} onChange={() => setRevLinea(i, { scope: 'adelante' })} /> De ahora en adelante en {String(finca.nombre)}</label>
-                          </span>
-                        </div>
-                      )}
                     </div>
                   )
                 })}
