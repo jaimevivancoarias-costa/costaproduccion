@@ -5,7 +5,7 @@ import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
-import { TabU, Seg, GhostBtn, selChip } from '../components/controles'
+import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -856,13 +856,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${nSinInvMov})`}
               </GhostBtn>
             )}
-            <input list="filtro-balanceados" value={busq} onChange={e => setBusq(e.target.value)}
-                   placeholder="Todos los balanceados — escribe para buscar"
-                   style={{ ...selChip, marginLeft: 'auto', minWidth: '240px' }} />
-            <datalist id="filtro-balanceados">
-              {[...new Set(saldos.map(s => s.producto))].sort().map(n => <option key={n} value={n} />)}
-            </datalist>
-            {busq && <button onClick={() => setBusq('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>limpiar</button>}
+            <BuscadorFiltro value={busq} onChange={setBusq}
+              opciones={[...new Set(saldos.map(s => s.producto))].sort()}
+              placeholder="Buscar balanceado…" />
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
                 al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
@@ -1051,7 +1047,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
                           <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
                           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => {
+                            {[...(lotes[f.producto_id] || [])].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))).map((L, i) => {
                               const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
                               return (
                               <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
@@ -1171,7 +1167,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     ) : lotesMov[m.producto_id].length === 0 ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                     ) : (() => {
-                      const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
+                      const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                       const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)

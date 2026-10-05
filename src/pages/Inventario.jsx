@@ -6,7 +6,7 @@ import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
-import { TabU, Seg, GhostBtn, selChip } from '../components/controles'
+import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -32,6 +32,10 @@ const UNIDAD = {
   tambor: 'Tambores', botella: 'Botellas',
 }
 const UNIDADES = ['sacos', 'litros', 'ml', 'gramos', 'libras', 'kg', 'unidad']
+// Abreviatura corta para el subtítulo de "Llega / se aplica" (ej. 5 L, 5000 mg).
+const ABREV_U = { litros: 'L', ml: 'mL', mililitros: 'mL', gramos: 'g', g: 'g', mg: 'mg',
+  kg: 'kg', kilos: 'kg', libras: 'lb', unidad: 'u', sacos: 'sacos', tambor: 'tambores', botella: 'botellas' }
+const abrevU = u => ABREV_U[String(u || '').toLowerCase()] || UNIDAD[u] || u
 const PLAZO_LBL = { 0: 'Contado', 30: '30 días', 60: '60 días', 90: '90 días', 120: '120 días' }
 // "Unidades" es genérico (contar los envases): no vale mostrar "Saco → Unidad".
 // En cambio kilos/litros/gramos SÍ son unidades de uso reales aunque el factor sea 1.
@@ -1090,13 +1094,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {verSinInv ? 'Ocultar sin inventario' : `Sin inventario (${filas.filter(f => coincide(f.insumo) && esSinInvFila(f)).length})`}
             </GhostBtn>
           )}
-          <input list="filtro-insumos" value={busq} onChange={e => setBusq(e.target.value)}
-                 placeholder="Todos los insumos — escribe para buscar"
-                 style={{ ...selChip, marginLeft: 'auto', minWidth: '240px' }} />
-          <datalist id="filtro-insumos">
-            {[...new Set(saldos.map(s => s.insumo))].sort().map(n => <option key={n} value={n} />)}
-          </datalist>
-          {busq && <button onClick={() => setBusq('')} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>limpiar</button>}
+          <BuscadorFiltro value={busq} onChange={setBusq}
+            opciones={[...new Set(saldos.map(s => s.insumo))].sort()}
+            placeholder="Buscar insumo…" />
           {vista === 'saldo' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>al</span>
@@ -1459,7 +1459,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[m.unidad] || m.unidad)}</span>
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}
-                    <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[m.unidad] || m.unidad)} = {fac.factor} {cap1(UNIDAD[fac.uApp] || fac.uApp)}</span></>}
+                    <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>{fac.factor} {abrevU(fac.uApp)}</span></>}
                 </Celda>
                 <Celda derecha gris={!iniEsConteo} fuerte={iniEsConteo}>
                   {iniMostrar === null || iniMostrar === undefined ? '—' : <>
@@ -1522,7 +1522,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   ) : lotesMov[m.insumo_id].length === 0 ? (
                     <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                   ) : (() => {
-                    const rows = [...lotesMov[m.insumo_id]].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
+                    const rows = [...lotesMov[m.insumo_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                     const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                     const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                     const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
@@ -1693,7 +1693,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <span>
                           <span style={{ color: NAVY, fontWeight: 500 }}>{pres}</span>
                           {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {app}
-                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>1 {pres} = {fac.factor} {app}</span></>}
+                            <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>{fac.factor} {abrevU(fac.uApp)}</span></>}
                         </span>
                       )
                     })()}
@@ -1820,7 +1820,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       <div style={{ marginBottom: dg.length ? '12px' : 0 }}>
                         <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '8px' }}>Cuánto queda a cada precio</div>
                         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)).map((L, i) => {
+                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))).map((L, i) => {
                             const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
                             return (
                             <div key={i} style={{ background: distinto ? '#FAEEDA' : '#fff', border: '0.5px solid ' + (distinto ? '#ecd9b3' : BORDE), borderRadius: '12px', padding: '8px 13px', fontSize: '13px', lineHeight: 1.35 }}>
