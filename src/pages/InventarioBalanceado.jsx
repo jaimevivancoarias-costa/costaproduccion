@@ -1528,6 +1528,16 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
   }
   const validas = lineas.filter(l => l.productoId && numDec(l.cantidad))
+  const [revisando, setRevisando] = useState(false)
+  const [rev, setRev] = useState([])
+  const setRevLinea = (i, campo) => setRev(rs => rs.map((r, j) => j === i ? { ...r, ...campo } : r))
+  function abrirRevision() {
+    setRev(validas.map(l => {
+      const pa = plazoAct[l.productoId] != null ? plazoAct[l.productoId] : 0
+      return { productoId: l.productoId, qSacos: numDec(l.cantidad), plazo: pa, precio: fmtPre(precioSacoCat(l.productoId, pa)), scope: 'solo' }
+    }))
+    setRevisando(true)
+  }
   const autoria = row => {
     const n = row?.creado_por ? usuarios[row.creado_por] : null
     const cuando = row?.creado_en ? new Date(row.creado_en).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
@@ -1598,20 +1608,37 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
         const { data: g, error } = await supabase.schema('produccion').from('ingreso_balanceado')
           .insert({ finca_id: finca.id, fecha, numero_guia: guia || null, proveedor: prov || null }).select('id').single()
         if (error) throw error
-        const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea')
-          .insert(validas.map(l => {
-            const fila = { ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) }
-            if (esJefe) {
-              fila.plazo = plazo
-              const pu = numDec(l.precio)
+        const filas = esJefe
+          ? rev.map(r => {
+              const fila = { ingreso_id: g.id, producto_id: r.productoId, cantidad: r.qSacos, plazo: r.plazo }
+              const pu = numDec(r.precio)
               if (pu > 0) fila.costo_unitario = pu
-            } else {
+              return fila
+            })
+          : validas.map(l => {
+              const fila = { ingreso_id: g.id, producto_id: l.productoId, cantidad: numDec(l.cantidad) }
               const pa = plazoAct[l.productoId]
               if (pa != null) fila.plazo = pa
-            }
-            return fila
-          }))
+              return fila
+            })
+        const { error: e2 } = await supabase.schema('produccion').from('ingreso_balanceado_linea').insert(filas)
         if (e2) throw e2
+        // Alcance "De ahora en adelante": actualiza el catálogo por finca y plazo.
+        if (esJefe) {
+          for (const r of rev) {
+            const pu = numDec(r.precio)
+            if (r.scope !== 'adelante' || !(pu > 0)) continue
+            await supabase.schema('produccion').from('precio_producto')
+              .delete().eq('producto_id', r.productoId).eq('finca_id', finca.id).eq('plazo', r.plazo).gte('vigente_desde', fecha)
+            await supabase.schema('produccion').from('precio_producto')
+              .update({ vigente_hasta: sumarDias(fecha, -1) })
+              .eq('producto_id', r.productoId).eq('finca_id', finca.id).eq('plazo', r.plazo).is('vigente_hasta', null).lt('vigente_desde', fecha)
+            const { error: e3 } = await supabase.schema('produccion').from('precio_producto')
+              .insert({ producto_id: r.productoId, finca_id: finca.id, plazo: r.plazo, precio_saco: pu, vigente_desde: fecha })
+            if (e3) throw e3
+          }
+        }
+        setRevisando(false)
       } else if (nuevo === 'devolucion') {
         const { error } = await supabase.schema('produccion').from('devolucion_balanceado')
           .insert(validas.map(l => ({ finca_id: finca.id, fecha, producto_id: l.productoId, cantidad: numDec(l.cantidad), motivo: obs || null })))
@@ -1705,49 +1732,73 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
               ? <Campo label="Motivo / observación"><input value={obs} placeholder="Por qué se devuelve" onChange={e => setObs(e.target.value)} style={{ ...inp, width: '260px' }} /></Campo>
               : <Campo label="Proveedor"><input value={prov} placeholder="Opcional" onChange={e => setProv(e.target.value)} style={inp} /></Campo>}
           </div>
-          {esJefe && nuevo === 'ingreso' && (
-            <div style={{ marginBottom: '12px' }}>
-              <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
-              <Seg valor={plazo}
-                   onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.productoId ? { ...l, precio: fmtPre(precioSacoCat(l.productoId, pz)) } : l)) }}
-                   opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
-            </div>
-          )}
           <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Balanceados (en sacos)</div>
           {lineas.map((l, i) => (
             <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '7px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <select value={l.productoId} onChange={e => { const v = e.target.value; setLineas(ls => ls.map((x, j) => j === i ? { ...x, productoId: v, ...(esJefe && nuevo === 'ingreso' ? { precio: fmtPre(precioSacoCat(v, plazo)) } : {}) } : x)) }} style={{ ...inp, flex: 1, minWidth: '180px' }}>
+              <select value={l.productoId} onChange={e => { const v = e.target.value; setLineas(ls => ls.map((x, j) => j === i ? { ...x, productoId: v } : x)) }} style={{ ...inp, flex: 1, minWidth: '180px' }}>
                 <option value="">Elegir balanceado</option>
                 {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
               </select>
               <CampoNumero maxDec={2} value={l.cantidad} placeholder="Sacos"
                 onChange={v => setLineas(ls => ls.map((x, j) => j === i ? { ...x, cantidad: v } : x))} style={{ ...inp, width: '120px' }} />
-              {esJefe && nuevo === 'ingreso' && l.productoId && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="Precio del catálogo según el plazo. Puedes cambiarlo solo para este ingreso.">
-                  <span style={{ fontSize: '12px', color: GRIS }}>$</span>
-                  <CampoNumero maxDec={6} value={l.precio ?? ''} placeholder="precio"
-                    onChange={v => setLineas(ls => ls.map((x, j) => j === i ? { ...x, precio: v } : x))} style={{ ...inp, width: '100px', borderColor: '#9cc4e8' }} />
-                  <span style={{ fontSize: '11px', color: GRIS }}>/saco</span>
-                </div>
-              )}
               {lineas.length > 1 && <button onClick={() => setLineas(ls => ls.filter((_, j) => j !== i))} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px' }}>×</button>}
             </div>
           ))}
           <button onClick={() => setLineas(ls => [...ls, { productoId: '', cantidad: '' }])} style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: AZUL }}>+ Otra línea</button>
-          {esJefe && nuevo === 'ingreso' && validas.length > 0 && (
-            <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
-              {validas.map((l, i) => {
-                const q = numDec(l.cantidad); const pu = numDec(l.precio)
-                return <div key={i}><b>{miles(q)} sacos</b> de {nombre(l.productoId)} · {PLAZO_LBL[plazo]} · {pu > 0 ? <>{dineroExacto(pu)}/saco = <b>{dinero(q * pu)}</b></> : <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>}</div>
-              })}
-            </div>
-          )}
           <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px' }}>
             <button onClick={limpiarForm} style={btn}>Cancelar</button>
-            <button onClick={guardar} disabled={!validas.length} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: validas.length ? 1 : 0.5 }}>
-              {nuevo === 'ingreso' ? (esJefe ? 'Confirmar y guardar' : 'Guardar ingreso') : nuevo === 'pedido' ? 'Guardar pedido' : 'Guardar devolución'}
+            <button onClick={() => { if (esJefe && nuevo === 'ingreso') abrirRevision(); else guardar() }} disabled={!validas.length} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: validas.length ? 1 : 0.5 }}>
+              {nuevo === 'ingreso' ? (esJefe ? 'Revisar y guardar' : 'Guardar ingreso') : nuevo === 'pedido' ? 'Guardar pedido' : 'Guardar devolución'}
             </button>
           </div>
+          {revisando && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px', zIndex: 50 }}
+                 onClick={e => { if (e.target === e.currentTarget) setRevisando(false) }}>
+              <div style={{ background: '#fff', borderRadius: '14px', padding: '18px 20px', maxWidth: '680px', width: '100%', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(2,40,71,.25)' }}>
+                <div style={{ fontSize: '15px', fontWeight: 600 }}>Revisa los precios antes de guardar</div>
+                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Cada balanceado trae el precio del catálogo. Cambia el plazo o el precio si hace falta.</div>
+                {rev.map((r, i) => {
+                  const catP = precioSacoCat(r.productoId, r.plazo)
+                  const cambiado = catP == null || Math.abs(numDec(r.precio) - catP) > 0.0001
+                  return (
+                    <div key={i} style={{ padding: '11px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.1fr', gap: '10px', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600, fontSize: '13px' }}>{nombre(r.productoId)} <span style={{ color: GRIS, fontWeight: 400 }}>· {miles(r.qSacos)} sacos</span></span>
+                        <select value={r.plazo} onChange={e => setRevLinea(i, { plazo: Number(e.target.value), precio: fmtPre(precioSacoCat(r.productoId, Number(e.target.value))) })}
+                          style={{ ...inp, padding: '6px 8px', fontSize: '12.5px' }}>
+                          {[0, 30, 60, 90].map(p => <option key={p} value={p}>{PLAZO_LBL[p]}</option>)}
+                        </select>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+                          <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                          <CampoNumero maxDec={6} value={r.precio ?? ''} placeholder="precio" onChange={v => setRevLinea(i, { precio: v })}
+                            style={{ ...inp, width: '96px', borderColor: '#9cc4e8' }} />
+                          <span style={{ fontSize: '11px', color: GRIS }}>/saco</span>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: '11.5px', marginTop: '5px', textAlign: 'right' }}>
+                        {catP == null ? <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>
+                          : !cambiado ? <span style={{ color: '#0f6e56' }}>= catálogo</span>
+                          : <span style={{ color: '#9A6A00' }}>catálogo {dineroExacto(catP)}</span>}
+                      </div>
+                      {cambiado && catP != null && (
+                        <div style={{ marginTop: '7px', background: '#FFF8EC', border: '0.5px solid #ecd9b3', borderRadius: '9px', padding: '8px 11px', fontSize: '12px' }}>
+                          Cambiaste el precio. ¿Cómo lo aplico?
+                          <span style={{ display: 'inline-flex', gap: '14px', marginLeft: '8px' }}>
+                            <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'solo'} onChange={() => setRevLinea(i, { scope: 'solo' })} /> Solo este ingreso</label>
+                            <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'adelante'} onChange={() => setRevLinea(i, { scope: 'adelante' })} /> De ahora en adelante en {String(finca.nombre)}</label>
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+                <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                  <button onClick={() => setRevisando(false)} style={btn}>Volver</button>
+                  <button onClick={guardar} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>Guardar ingreso</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

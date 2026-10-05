@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto } from '../lib/fechas'
+import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
@@ -513,11 +513,22 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
   const [obs, setObs] = useState('')
   const [lineas, setLineas] = useState([{ insumoId: '', cantidad: '', unidad: '' }])
   const [guardando, setGuardando] = useState(false)
-  // Plazo + precio del catálogo (solo jefe, solo ingreso).
-  const [plazo, setPlazo] = useState(0)
+  // Precio del catálogo (solo jefe, solo ingreso) + revisión al guardar.
   const [precioCat, setPrecioCat] = useState({})   // insumoId -> {plazo: precio por conteo}
   const [plazoAct, setPlazoAct] = useState({})      // insumoId -> plazo que rige en catálogo
+  const [revisando, setRevisando] = useState(false) // pop-up de revisión de precios
+  const [rev, setRev] = useState([])                 // [{insumoId, qCompra, plazo, precio, scope}]
   const verPrecio = esJefe && esIngreso
+  const setRevLinea = (i, campo) => setRev(rs => rs.map((r, j) => j === i ? { ...r, ...campo } : r))
+  // Al pulsar "Revisar y guardar": arma la revisión con el plazo que rige y el
+  // precio del catálogo de cada insumo.
+  function abrirRevision() {
+    setRev(validas.map(l => {
+      const pa = plazoAct[l.insumoId] != null ? plazoAct[l.insumoId] : 0
+      return { insumoId: l.insumoId, qCompra: cantidadEnCompra(l), plazo: pa, precio: fmtPre(precioCompraCat(l.insumoId, pa)), scope: 'solo' }
+    }))
+    setRevisando(true)
+  }
 
   // Precio por unidad de COMPRA del catálogo, para un insumo y plazo.
   function precioCompraCat(insumoId, pz) {
@@ -565,19 +576,16 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
   const agregarLinea = () => setLineas(ls => [...ls, { insumoId: '', cantidad: '', unidad: '' }])
   const quitarLinea = i => setLineas(ls => ls.filter((_, j) => j !== i))
 
-  const validas = lineas.filter(l => l.insumoId && (numDec(l.cantidad) || numDec(l.sobrante)))
+  const validas = lineas.filter(l => l.insumoId && numDec(l.cantidad))
 
   // Convierte la cantidad digitada a la unidad de compra (como se guarda).
-  // Suma el sobrante (en unidad de aplicación) dividido por el factor.
   function cantidadEnCompra(l) {
     const ins = insumos.find(x => x.id === l.insumoId)
     const factor = Number(ins?.factor) || 1
     const uCompra = ins?.unidad_compra || ins?.unidad
     const uElegida = l.unidad || uCompra
     const q = numDec(l.cantidad || '')
-    const principal = uElegida === uCompra ? q : q / factor
-    const sob = numDec(l.sobrante || '')
-    return principal + (sob > 0 ? sob / factor : 0)
+    return uElegida === uCompra ? q : q / factor
   }
 
   async function guardar() {
@@ -587,29 +595,48 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
       if (esIngreso) {
         const { data: g, error } = await supabase.schema('produccion').from('ingreso_insumo')
           .insert({ finca_id: finca.id, fecha, numero_guia: guia || null,
-                    proveedor: proveedor || null, pedido_id: pedidoId || null,
-                    observacion: obs || null })
+                    proveedor: proveedor || null, observacion: obs || null })
           .select('id').single()
         if (error) throw error
-        const lineasIns = validas.map(l => {
-          const fila = { ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) }
-          if (esJefe) {
-            // Jefe/contadora: plazo elegido + precio (del catálogo o el que puso).
-            fila.plazo = plazo
-            const pu = numDec(l.precio)
-            if (pu > 0) fila.costo_unitario = pu
-          } else {
-            // Bodeguero: el plazo y el precio que rigen en el catálogo.
-            const pa = plazoAct[l.insumoId]
-            if (pa != null) fila.plazo = pa
-            const pc = precioCompraCat(l.insumoId, pa != null ? pa : 0)
-            if (pc != null) fila.costo_unitario = pc
-          }
-          return fila
-        })
+        const lineasIns = esJefe
+          ? rev.map(r => {
+              // Jefe/contadora: plazo + precio desde la revisión.
+              const fila = { ingreso_id: g.id, insumo_id: r.insumoId, cantidad: r.qCompra, plazo: r.plazo }
+              const pu = numDec(r.precio)
+              if (pu > 0) fila.costo_unitario = pu
+              return fila
+            })
+          : validas.map(l => {
+              // Bodeguero: el plazo y el precio que rigen en el catálogo.
+              const fila = { ingreso_id: g.id, insumo_id: l.insumoId, cantidad: cantidadEnCompra(l) }
+              const pa = plazoAct[l.insumoId]
+              if (pa != null) fila.plazo = pa
+              const pc = precioCompraCat(l.insumoId, pa != null ? pa : 0)
+              if (pc != null) fila.costo_unitario = pc
+              return fila
+            })
         const { error: e2 } = await supabase.schema('produccion').from('ingreso_insumo_linea')
           .insert(lineasIns)
         if (e2) throw e2
+        // Alcance "De ahora en adelante": actualiza el catálogo por finca y plazo.
+        if (esJefe) {
+          for (const r of rev) {
+            const pu = numDec(r.precio)
+            if (r.scope !== 'adelante' || !(pu > 0)) continue
+            const ins = insumos.find(x => x.id === r.insumoId)
+            const factor = Number(ins?.factor) || 1
+            const stored = pu / factor  // el catálogo guarda por unidad de conteo
+            await supabase.schema('produccion').from('precio_insumo')
+              .delete().eq('insumo_id', r.insumoId).eq('finca_id', finca.id).eq('plazo', r.plazo).gte('vigente_desde', fecha)
+            await supabase.schema('produccion').from('precio_insumo')
+              .update({ vigente_hasta: sumarDias(fecha, -1) })
+              .eq('insumo_id', r.insumoId).eq('finca_id', finca.id).eq('plazo', r.plazo).is('vigente_hasta', null).lt('vigente_desde', fecha)
+            const { error: e3 } = await supabase.schema('produccion').from('precio_insumo')
+              .insert({ insumo_id: r.insumoId, finca_id: finca.id, plazo: r.plazo, precio_unitario: stored, vigente_desde: fecha })
+            if (e3) throw e3
+          }
+        }
+        setRevisando(false)
       } else if (esDevolucion) {
         const { data: nuevas, error } = await supabase.schema('produccion').from('devolucion_insumo')
           .insert(validas.map(l => ({ finca_id: finca.id, fecha, insumo_id: l.insumoId,
@@ -650,21 +677,9 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
                  onChange={e => setFecha(e.target.value)} style={entrada} />
         </Campo>
         {esIngreso ? (
-          <>
-            <Campo label="Número de guía">
-              <input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={entrada} />
-            </Campo>
-            {pedidosAbiertos.length > 0 && (
-              <Campo label="¿Es de un pedido?">
-                <select value={pedidoId} onChange={e => setPedidoId(e.target.value)} style={entrada}>
-                  <option value="">No</option>
-                  {pedidosAbiertos.map(p => (
-                    <option key={p.id} value={p.id}>{corta(p.fecha)} · {p.proveedor || 'Sin proveedor'}</option>
-                  ))}
-                </select>
-              </Campo>
-            )}
-          </>
+          <Campo label="Número de guía">
+            <input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={entrada} />
+          </Campo>
         ) : esDevolucion ? (
           <Campo label="Motivo / observación">
             <input value={obs} placeholder="Por qué se devuelve"
@@ -684,15 +699,6 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
         )}
       </div>
 
-      {verPrecio && (
-        <div style={{ marginBottom: '14px' }}>
-          <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
-          <Seg valor={plazo}
-               onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.insumoId ? { ...l, precio: fmtPre(precioCompraCat(l.insumoId, pz)) } : l)) }}
-               opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
-        </div>
-      )}
-
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
       {lineas.map((l, i) => {
         const ins = insumos.find(x => x.id === l.insumoId)
@@ -706,7 +712,7 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
         const mostrarEquiv = ins && uElegida !== uCompra && enCompra != null
         return (
           <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
-            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', ''); setLinea(i, 'sobrante', ''); setLinea(i, 'sobranteOn', false); if (verPrecio) setLinea(i, 'precio', fmtPre(precioCompraCat(e.target.value, plazo))) }}
+            <select value={l.insumoId} onChange={e => { setLinea(i, 'insumoId', e.target.value); setLinea(i, 'unidad', '') }}
               style={{ ...entrada, flex: 1, minWidth: '180px' }}>
               <option value="">Elegir insumo</option>
               {insumos.map(x => <option key={x.id} value={x.id}>{x.nombre}</option>)}
@@ -716,44 +722,18 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
               onChange={v => setLinea(i, 'cantidad', v)}
               style={{ ...entrada, width: '110px' }} />
             {unidades.length > 1 ? (
-              <select value={uElegida} onChange={e => setLinea(i, 'unidad', e.target.value)} style={{ ...entrada, width: '110px' }}>
+              <select value={uElegida} onChange={e => setLinea(i, 'unidad', e.target.value)} style={{ ...entrada, width: '120px' }}>
                 {unidades.map(u => <option key={u} value={u}>{UNI[u] || cap1(u)}</option>)}
               </select>
             ) : ins ? (
-              <span style={{ fontSize: '13px', color: GRIS, width: '110px' }}>{UNI[uCompra] || cap1(uCompra)}</span>
+              <span style={{ fontSize: '13px', color: GRIS, width: '120px' }}>{UNI[uCompra] || cap1(uCompra)}</span>
             ) : null}
             {mostrarEquiv && (
               <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(enCompra * 100) / 100)} {UNI[uCompra] || cap1(uCompra)}</span>
             )}
-            {verPrecio && ins && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }} title="Precio del catálogo según el plazo. Puedes cambiarlo solo para este ingreso.">
-                <span style={{ fontSize: '12px', color: GRIS }}>$</span>
-                <CampoNumero maxDec={6} value={l.precio ?? ''} placeholder="precio"
-                  onChange={v => setLinea(i, 'precio', v)}
-                  style={{ ...entrada, width: '92px', borderColor: '#9cc4e8' }} />
-                <span style={{ fontSize: '11px', color: GRIS }}>/{UNI[uCompra] || cap1(uCompra)}</span>
-              </div>
-            )}
             {lineas.length > 1 && (
               <button onClick={() => quitarLinea(i)} style={{ border: 'none', background: 'none',
                 cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
-            )}
-            {/* + sobrante: solo si hay conversión y el principal está en la presentación */}
-            {ins && uCompra !== uCons && uElegida === uCompra && (
-              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '8px', paddingLeft: '2px' }}>
-                {l.sobranteOn ? (
-                  <>
-                    <CampoNumero maxDec={2} value={l.sobrante ?? ''} placeholder={'+ sobrante en ' + (UNI[uCons] || cap1(uCons))}
-                      onChange={v => setLinea(i, 'sobrante', v)} style={{ ...entrada, width: '150px' }} />
-                    <span style={{ fontSize: '11px', color: GRIS }}>= {miles(Math.round(cantidadEnCompra(l) * 100) / 100)} {UNI[uCompra] || cap1(uCompra)}</span>
-                    <button onClick={() => { setLinea(i, 'sobranteOn', false); setLinea(i, 'sobrante', '') }}
-                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontFamily: 'inherit', fontSize: '11px' }}>quitar sobrante</button>
-                  </>
-                ) : (
-                  <button onClick={() => setLinea(i, 'sobranteOn', true)}
-                    style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontFamily: 'inherit', fontSize: '11px', padding: 0 }}>+ sobrante ({UNI[uCons] || cap1(uCons)})</button>
-                )}
-              </div>
             )}
           </div>
         )
@@ -763,27 +743,66 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
         + Otra línea
       </button>
 
-      {verPrecio && validas.length > 0 && (
-        <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 13px', fontSize: '13px', marginTop: '12px', lineHeight: 1.6 }}>
-          {validas.map((l, i) => {
-            const ins = insumos.find(x => x.id === l.insumoId)
-            const uc = ins?.unidad_compra || ins?.unidad
-            const q = cantidadEnCompra(l)
-            const pu = numDec(l.precio)
-            return <div key={i}><b>{miles(Math.round(q * 100) / 100)} {UNI[uc] || cap1(uc)}</b> · {PLAZO_LBL[plazo]} · {pu > 0 ? <>{dineroExacto(pu)} = <b>{dinero(q * pu)}</b></> : <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>}</div>
-          })}
-        </div>
-      )}
-
       <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '14px' }}>
         <Btn onClick={onCancelar}>Cancelar</Btn>
-        <Btn primario onClick={guardar} disabled={guardando || !validas.length}>
+        <Btn primario onClick={() => { if (verPrecio) abrirRevision(); else guardar() }} disabled={guardando || !validas.length}>
           {guardando ? 'Guardando...'
-            : esIngreso ? (verPrecio ? 'Confirmar y guardar' : 'Guardar ingreso')
+            : esIngreso ? (verPrecio ? 'Revisar y guardar' : 'Guardar ingreso')
             : esDevolucion ? 'Guardar devolución'
             : 'Guardar pedido'}
         </Btn>
       </div>
+
+      {revisando && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '18px', zIndex: 50 }}
+             onClick={e => { if (e.target === e.currentTarget) setRevisando(false) }}>
+          <div style={{ background: '#fff', borderRadius: '14px', padding: '18px 20px', maxWidth: '680px', width: '100%', maxHeight: '88vh', overflow: 'auto', boxShadow: '0 10px 40px rgba(2,40,71,.25)' }}>
+            <div style={{ fontSize: '15px', fontWeight: 600 }}>Revisa los precios antes de guardar</div>
+            <div style={{ fontSize: '12px', color: GRIS, marginBottom: '14px' }}>Cada insumo trae el precio del catálogo. Cambia el plazo o el precio si hace falta.</div>
+            {rev.map((r, i) => {
+              const ins = insumos.find(x => x.id === r.insumoId)
+              const uc = ins?.unidad_compra || ins?.unidad
+              const catP = precioCompraCat(r.insumoId, r.plazo)
+              const cambiado = catP == null || Math.abs(numDec(r.precio) - catP) > 0.0001
+              return (
+                <div key={i} style={{ padding: '11px 0', borderTop: i ? '0.5px solid #eef3f7' : 'none' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1.1fr', gap: '10px', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 600, fontSize: '13px' }}>{ins?.nombre} <span style={{ color: GRIS, fontWeight: 400 }}>· {miles(Math.round(r.qCompra * 100) / 100)} {UNI[uc] || cap1(uc)}</span></span>
+                    <select value={r.plazo} onChange={e => setRevLinea(i, { plazo: Number(e.target.value), precio: fmtPre(precioCompraCat(r.insumoId, Number(e.target.value))) })}
+                      style={{ ...entrada, padding: '6px 8px', fontSize: '12.5px' }}>
+                      {[0, 30, 60, 90].map(p => <option key={p} value={p}>{PLAZO_LBL[p]}</option>)}
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
+                      <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                      <CampoNumero maxDec={6} value={r.precio ?? ''} placeholder="precio" onChange={v => setRevLinea(i, { precio: v })}
+                        style={{ ...entrada, width: '96px', borderColor: '#9cc4e8' }} />
+                      <span style={{ fontSize: '11px', color: GRIS }}>/{UNI[uc] || cap1(uc)}</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '11.5px', marginTop: '5px', textAlign: 'right' }}>
+                    {catP == null ? <span style={{ color: '#BA7517' }}>sin precio en catálogo</span>
+                      : !cambiado ? <span style={{ color: '#0f6e56' }}>= catálogo</span>
+                      : <span style={{ color: '#9A6A00' }}>catálogo {dineroExacto(catP)}</span>}
+                  </div>
+                  {cambiado && catP != null && (
+                    <div style={{ marginTop: '7px', background: '#FFF8EC', border: '0.5px solid #ecd9b3', borderRadius: '9px', padding: '8px 11px', fontSize: '12px' }}>
+                      Cambiaste el precio. ¿Cómo lo aplico?
+                      <span style={{ display: 'inline-flex', gap: '14px', marginLeft: '8px' }}>
+                        <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'solo'} onChange={() => setRevLinea(i, { scope: 'solo' })} /> Solo este ingreso</label>
+                        <label style={{ cursor: 'pointer' }}><input type="radio" checked={r.scope === 'adelante'} onChange={() => setRevLinea(i, { scope: 'adelante' })} /> De ahora en adelante en {String(finca.nombre)}</label>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+            <div style={{ display: 'flex', gap: '9px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <Btn onClick={() => setRevisando(false)}>Volver</Btn>
+              <Btn primario onClick={guardar} disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar ingreso'}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
