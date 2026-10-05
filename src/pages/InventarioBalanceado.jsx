@@ -1734,13 +1734,15 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           const porProd = {}
           listaF.forEach(g => (g.ingreso_balanceado_linea || []).forEach(l => {
             const k = l.producto_id
-            if (!porProd[k]) porProd[k] = { n: 0, qty: 0 }
+            if (!porProd[k]) porProd[k] = { n: 0, qty: 0, valor: 0 }
             porProd[k].n += 1
             porProd[k].qty += numDec(l.cantidad)
+            porProd[k].valor += numDec(l.cantidad) * (Number(l.costo_unitario) || 0)
           }))
           const filas = Object.entries(porProd).sort((a, b) => b[1].n - a[1].n)
           if (!filas.length) return null
-          const gtc = '1fr 110px 110px'
+          const totalVal = filas.reduce((s, [, v]) => s + v.valor, 0)
+          const gtc = esJefe ? '1fr 100px 120px 120px' : '1fr 110px 120px'
           const cab = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'center' }
           return (
             <div style={{ marginTop: '14px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px' }}>
@@ -1748,15 +1750,23 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
               <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', paddingBottom: '6px', borderBottom: '0.5px solid ' + BORDE }}>
                 <span style={{ ...cab, textAlign: 'left' }}>Balanceado</span>
                 <span style={cab}>Ingresos</span>
-                <span style={cab}>Cantidad</span>
+                <span style={{ ...cab, textAlign: 'right' }}>Cantidad</span>
+                {esJefe && <span style={{ ...cab, textAlign: 'right' }}>Valor</span>}
               </div>
               {filas.map(([k, v]) => (
                 <div key={k} style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', padding: '7px 0', borderBottom: '0.5px solid #f1f6f9', fontSize: '13px', alignItems: 'baseline' }}>
                   <span>{nombre(k)}</span>
                   <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}><b>{v.n}</b></span>
-                  <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(Math.round(v.qty * 100) / 100)} sacos</span>
+                  <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(Math.round(v.qty * 100) / 100)} sacos</span>
+                  {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(v.valor)}</span>}
                 </div>
               ))}
+              {esJefe && (
+                <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '12px', padding: '9px 0 0', fontSize: '13px', fontWeight: 700 }}>
+                  <span>Total</span><span /><span />
+                  <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(totalVal)}</span>
+                </div>
+              )}
             </div>
           )
         })()}
