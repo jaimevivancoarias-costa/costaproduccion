@@ -87,13 +87,16 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
           .select('id, piscina_origen_id, fecha_siembra, fecha_ocupacion, fecha_cierre')
           .eq('finca_id', finca.id),
         supabase.schema('produccion').from('insumo_finca')
-          .select('insumo_id, unidad, factor').eq('finca_id', finca.id),
+          .select('insumo_id, unidad, unidad_compra, factor').eq('finca_id', finca.id),
         supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: domingo }),
       ])
       if (eP) throw eP
-      // Unidad por finca: si esta finca tiene override, se usa esa.
-      const over = {}; (ov || []).forEach(x => { over[x.insumo_id] = x.unidad })
-      const insFinca = (ins || []).map(i => ({ ...i, unidad: over[i.id] || i.unidad }))
+      // Unidad por finca: si esta finca tiene override, se usa esa. También la
+      // unidad de compra de la finca (Saco/Poma), para que cuando la de uso sea
+      // genérica el registro muestre el envase de ESTA finca y no el global.
+      const over = {}; const overC = {}
+      ;(ov || []).forEach(x => { over[x.insumo_id] = x.unidad; if (x.unidad_compra) overC[x.insumo_id] = x.unidad_compra })
+      const insFinca = (ins || []).map(i => ({ ...i, unidad: over[i.id] || i.unidad, unidad_compra: overC[i.id] || i.unidad_compra }))
       // Factor por insumo (override de finca o base). Convierte saldo (unidad
       // de compra) a unidad de aplicación: disponible_app = saldo × factor.
       const facM = {}; (ins || []).forEach(i => { facM[i.id] = Number(i.factor) || 1 })
