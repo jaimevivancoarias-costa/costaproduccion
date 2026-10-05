@@ -752,7 +752,7 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
                     <span style={{ fontWeight: 600, fontSize: '13px' }}>{ins?.nombre} <span style={{ color: GRIS, fontWeight: 400 }}>· {miles(Math.round(r.qCompra * 100) / 100)} {UNI[uc] || cap1(uc)}</span></span>
                     <select value={r.plazo} onChange={e => setRevLinea(i, { plazo: Number(e.target.value), precio: fmtPre(precioCompraCat(r.insumoId, Number(e.target.value))) })}
                       style={{ ...entrada, padding: '6px 8px', fontSize: '12.5px' }}>
-                      {[0, 30, 60, 90].map(p => <option key={p} value={p}>{PLAZO_LBL[p]}</option>)}
+                      {PLAZOS.map(p => <option key={p} value={p}>{PLAZO_LBL[p]}</option>)}
                     </select>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end' }}>
                       <span style={{ fontSize: '12px', color: GRIS }}>$</span>
@@ -924,7 +924,7 @@ function EditorIngreso({ g, insumos, esJefe, finca, userId, onHecho, onCancelar,
           <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>Plazo de pago</div>
           <Seg valor={plazo}
                onCambio={pz => { setPlazo(pz); setLineas(ls => ls.map(l => l.insumoId ? { ...l, precio: fmtPre(precioCompraCat(l.insumoId, pz)) } : l)) }}
-               opciones={[0, 30, 60, 90].map(p => [p, PLAZO_LBL[p]])} />
+               opciones={PLAZOS.map(p => [p, PLAZO_LBL[p]])} />
         </div>
       )}
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '7px' }}>Insumos</div>
