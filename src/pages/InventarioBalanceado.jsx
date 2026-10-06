@@ -360,11 +360,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     // reconstruir el "había". Si contó ANTES, ya escribió el "había".
     const sis = Number(s.saldo)
     const cons = Number(consumoDia[s.producto_id] || 0)
-    const esperado = cons > 0.0001 ? sis + cons : sis            // el "había" según el sistema
+    const habiaSistema = cons > 0.0001 ? sis + cons : sis        // lo que había al inicio del día (para guardar)
+    // "El sistema dice" = lo que deberías encontrar EN EL MOMENTO que cuentas:
+    //   antes de alimentar  -> el había (todavía no sale lo de hoy)
+    //   después de alimentar -> lo de ahora (ya salió lo de hoy) = sis
+    const esperado = (contoDespues && cons > 0.0001) ? sis : habiaSistema
     const habiaContado = c === null ? null : ((contoDespues && cons > 0.0001) ? c + cons : c)
     const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
-    return { ...s, precio: precios[s.producto_id] || 0, contado: c, cons, esperado, habiaContado, saldoFinal,
-             diferencia: habiaContado === null ? null : habiaContado - esperado }
+    return { ...s, precio: precios[s.producto_id] || 0, contado: c, cons, esperado, habiaSistema, habiaContado, saldoFinal,
+             diferencia: habiaContado === null ? null : habiaContado - habiaSistema }
   }), [saldos, precios, contado, sueltas, lps, consumoDia, contoDespues])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
@@ -578,7 +582,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         const motivoD = hayDesc && cat ? (cat === 'Otro' ? (motivoOtro[f.producto_id]?.trim() || 'Otro') : cat) : null
         return {
           toma_id: tomaId, producto_id: f.producto_id, cantidad_contada: f.habiaContado,
-          cantidad_sistema: Number(f.esperado), diferencia: f.diferencia, motivo_descuadre: motivoD,
+          cantidad_sistema: Number(f.habiaSistema), diferencia: f.diferencia, motivo_descuadre: motivoD,
         }
       })
       const { error: e2 } = await supabase.schema('produccion').from('toma_balanceado_linea').insert(lineas)
@@ -821,7 +825,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
               <Cel centro gris>{(primeraVez || editToma) ? '' : (<>
                 {limpio(f.esperado)}
-                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>había · comió {limpio(f.cons)} hoy</div>}
+                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (ya comió ${limpio(f.cons)})` : `había (antes de comer ${limpio(f.cons)})`}</div>}
               </>)}</Cel>
               <div style={{ padding: '5px 10px' }}>
                 {primeraVez ? (
@@ -853,8 +857,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {f.contado !== null && f.cons > 0.0001 && (
                       <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
                         {contoDespues
-                          ? <>Contaste {limpio(f.contado)} + {limpio(f.cons)} que comió hoy = <b style={{ color: NAVY }}>{limpio(f.habiaContado)}</b> (había) → saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>
-                          : <>Había {limpio(f.habiaContado)} − {limpio(f.cons)} que comió hoy → saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>}
+                          ? <>Contaste {limpio(f.contado)} (lo que queda ahora) + {limpio(f.cons)} de hoy = <b style={{ color: NAVY }}>{limpio(f.habiaContado)}</b> había · saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>
+                          : <>Contaste {limpio(f.habiaContado)} (había) − {limpio(f.cons)} que comió hoy → saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>}
                       </div>
                     )}
                   </>
