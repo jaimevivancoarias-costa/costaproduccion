@@ -837,8 +837,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       </div>
                     )}
                     {f.contado !== null && f.cons > 0.0001 && (
-                      <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '2px', textAlign: 'right' }}>
-                        🦐 comió {limpio(f.cons)} hoy · saldo quedará <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos
+                      <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
+                        🦐 {contoDespues
+                          ? <>Contaste {limpio(f.contado)} · lo de hoy ({limpio(f.cons)}) ya salió → tu saldo queda en <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>
+                          : <>Contaste {limpio(f.contado)} − {limpio(f.cons)} que comió hoy → tu saldo queda en <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>}
                       </div>
                     )}
                   </>
