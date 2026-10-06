@@ -20,7 +20,7 @@ const ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#BA7517'
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
 const ddmm = iso => corta(iso).slice(0, 5)
-const G_CONTEO = '1fr 110px 130px 250px 120px'
+const G_CONTEO = '1.6fr 1fr 130px 250px 120px'
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 const G_SALDO_J = '1fr 150px 130px 140px 110px'
 const G_SALDO_B = '1fr 140px'
