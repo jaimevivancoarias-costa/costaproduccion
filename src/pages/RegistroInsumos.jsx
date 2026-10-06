@@ -680,7 +680,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               )
               return (
                 <>
-                  {chip(!diaResumen, 'Toda la semana', () => setDiaResumen(null))}
+                  {chip(!diaResumen, 'Semanal', () => setDiaResumen(null))}
                   {fechas.filter(f => situacionDia(f, hoy) !== 'futuro').map(f =>
                     chip(diaResumen === f, `${nombreDia(f)} ${cortita(f)}`, () => setDiaResumen(f)))}
                 </>
