@@ -1362,21 +1362,25 @@ function TransferenciaInfo({ cicloId }) {
     ;(async () => {
       const [{ data: evs }, { data: dst }] = await Promise.all([
         supabase.schema('produccion').from('evento')
-          .select('fecha, evento_destino ( porcentaje, cantidad, piscina:piscina_id ( nombre ) )')
+          .select('fecha, ciclo:ciclo_id ( cantidad_larva ), evento_destino ( porcentaje, cantidad, piscina:piscina_id ( nombre ) )')
           .eq('ciclo_id', cicloId).eq('tipo', 'transferencia'),
         supabase.schema('produccion').from('evento_destino')
-          .select('porcentaje, cantidad, evento:evento_id ( fecha, gramaje, ciclo:ciclo_id ( cantidad_larva, gramaje_precria, piscina:piscina_origen_id ( nombre ) ) )')
+          .select('porcentaje, cantidad, evento:evento_id ( fecha, gramaje, evento_destino ( cantidad ), ciclo:ciclo_id ( cantidad_larva, gramaje_precria, piscina:piscina_origen_id ( nombre ) ) )')
           .eq('ciclo_destino_id', cicloId),
       ])
       if (!vivo) return
       const env = []
       ;(evs || []).forEach(e => (e.evento_destino || []).forEach(d =>
-        env.push({ fecha: e.fecha, nombre: d.piscina?.nombre || '—', porc: d.porcentaje, cant: d.cantidad })))
+        env.push({ fecha: e.fecha, nombre: d.piscina?.nombre || '—', porc: d.porcentaje, cant: d.cantidad,
+                   larvaPadre: e.ciclo?.cantidad_larva || null })))
       setEnvio(env)
       setRecibio((dst || []).map(d => ({
         fecha: d.evento?.fecha, origen: d.evento?.ciclo?.piscina?.nombre || null,
         porc: d.porcentaje, cant: d.cantidad,
         larvaPadre: d.evento?.ciclo?.cantidad_larva || null,
+        // Total transferido en TODA la transferencia (suma de los destinos), para
+        // la sobrevivencia: es una sola (total transferido ÷ lo sembrado), no por piscina.
+        totalTransfer: (d.evento?.evento_destino || []).reduce((t, x) => t + (Number(x.cantidad) || 0), 0),
         plsG: d.evento?.ciclo?.gramaje_precria || null,
         gramaje: d.evento?.gramaje || null })))
     })()
@@ -1388,7 +1392,9 @@ function TransferenciaInfo({ cicloId }) {
   return (
     <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '0.5px solid #e8eef4' }}>
       {recibio.map((r, i) => {
-        const surv = r.cant != null && r.larvaPadre ? (r.cant / r.larvaPadre) * 100 : null
+        // Sobrevivencia = TOTAL transferido ÷ lo sembrado (una sola para toda la
+        // transferencia), no lo que le tocó a esta piscina.
+        const surv = r.totalTransfer > 0 && r.larvaPadre ? (r.totalTransfer / r.larvaPadre) * 100 : null
         const chip = { fontSize: '11px', borderRadius: '11px', padding: '1px 8px', display: 'inline-block' }
         return (
           <div key={'r' + i} style={{ ...linea, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
@@ -1403,15 +1409,23 @@ function TransferenciaInfo({ cicloId }) {
           </div>
         )
       })}
-      {envio.length > 0 && (
-        <div style={linea}>
-          <span style={{ color: '#3C3489', fontWeight: 500 }}>Transferida</span>{' '}
-          {envio[0].fecha ? `el ${cortita(envio[0].fecha)} a: ` : 'a: '}
-          {envio.map((e, i) => (
-            <span key={i}>{i > 0 ? ', ' : ''}{e.nombre} ({e.cant != null ? `${miles(e.cant)}` : `${Math.round(e.porc)}%`})</span>
-          ))}
+      {envio.length > 0 && (() => {
+        const totalEnv = envio.reduce((t, e) => t + (Number(e.cant) || 0), 0)
+        const larvaP = envio[0].larvaPadre
+        const survEnv = totalEnv > 0 && larvaP ? (totalEnv / larvaP) * 100 : null
+        return (
+        <div style={{ ...linea, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+          <span>
+            <span style={{ color: '#3C3489', fontWeight: 500 }}>Transferida</span>{' '}
+            {envio[0].fecha ? `el ${cortita(envio[0].fecha)} a: ` : 'a: '}
+            {envio.map((e, i) => (
+              <span key={i}>{i > 0 ? ', ' : ''}{e.nombre} ({e.cant != null ? `${miles(e.cant)}` : `${Math.round(e.porc)}%`})</span>
+            ))}
+          </span>
+          {survEnv != null && <span style={{ fontSize: '11px', borderRadius: '11px', padding: '1px 8px', display: 'inline-block', background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(survEnv * 10) / 10}%</span>}
         </div>
-      )}
+        )
+      })()}
     </div>
   )
 }
