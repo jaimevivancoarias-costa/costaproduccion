@@ -16,6 +16,8 @@ const GRIS = '#7d8fa0'
 const VERDE = '#0F6E56'
 const AMBAR = '#BA7517'
 const ROJO = '#A32D2D'
+// Precio del galón con hasta 6 decimales (como el Catálogo de diesel).
+const precio6 = n => '$' + (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
 
 export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, onCambio }) {
   const domingo = sumarDias(lunes, 6)
@@ -28,12 +30,14 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [form, setForm] = useState(null)
+  const [precios, setPrecios] = useState({})    // tipo_id -> { precio, desde } (catálogo vigente)
+  const [revPrecio, setRevPrecio] = useState(null)  // pop-up verificar precio al registrar el pedido
 
   const puedeRegistrar = !soloLectura
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: pe }, { data: co }, { data: sc }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: pe }, { data: co }, { data: sc }, { data: pr }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
       // "Saldo actual" = hoy (o el fin de la semana vista si es futura), no
@@ -48,6 +52,9 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
       supabase.schema('produccion').from('solicitud_correccion')
         .select('id, tabla, registro_id, valor_propuesto').eq('finca_id', finca.id)
         .in('tabla', ['diesel_pedido', 'diesel_consumo']).eq('estado', 'pendiente'),
+      supabase.schema('produccion').from('diesel_precio')
+        .select('tipo_id, finca_id, precio_galon, vigente_desde').is('vigente_hasta', null)
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
     ])
     setUserId(u?.user?.id || null)
     setTipos(tp || [])
@@ -55,6 +62,13 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     setPedidos(pe || [])
     setConsumos(co || [])
     setSolis(sc || [])
+    // Precio del catálogo que rige por tipo (la de la finca gana a la general).
+    const pm = {}
+    ;(pr || []).forEach(r => {
+      const esFinca = !!r.finca_id
+      if (pm[r.tipo_id] == null || esFinca) pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
+    })
+    setPrecios(pm)
     setCargando(false)
   }, [finca.id, lunes, domingo])
 
@@ -75,19 +89,46 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     if (!form.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
     const fecha = form.fecha || hoyISO()
     if (form.modo === 'pedido') {
-      // El bodeguero registra libre: el pedido cuenta al saldo de una vez.
-      const { error } = await supabase.schema('produccion').from('diesel_pedido')
-        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha,
-                  estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString() })
-      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
-      setAviso({ tipo: 'ok', texto: 'Pedido registrado.' })
-    } else {
-      const { error } = await supabase.schema('produccion').from('diesel_consumo')
-        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha })
-      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
-      setAviso({ tipo: 'ok', texto: 'Consumo registrado.' })
+      // Antes de registrar el ingreso, abrir el pop-up para verificar el precio
+      // del catálogo (cambia mensualmente). Se guarda desde ahí.
+      const p = precios[form.tipoId]
+      setRevPrecio({ tipoId: form.tipoId, galones: gal, fecha,
+                     precioActual: p ? p.precio : null,
+                     precio: p ? String(p.precio) : '' })
+      return
     }
+    const { error } = await supabase.schema('produccion').from('diesel_consumo')
+      .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Consumo registrado.' })
     setForm(null); await refrescar()
+  }
+
+  // Confirmar el ingreso de diesel: si el precio del catálogo cambió, lo
+  // actualiza (rige desde la fecha del ingreso) y recién ahí registra el pedido.
+  async function guardarPedido() {
+    const r = revPrecio
+    const nuevo = numDec(r.precio)
+    if (!(nuevo > 0)) { setAviso({ tipo: 'error', texto: 'Pon el precio del galón.' }); return }
+    const cambio = r.precioActual == null || Math.abs(nuevo - r.precioActual) > 1e-9
+    if (cambio) {
+      // Catálogo: una sola fila vigente. Borra las del mismo día/posterior,
+      // cierra la anterior y mete la nueva (mismo patrón que CatalogoDiesel).
+      await supabase.schema('produccion').from('diesel_precio')
+        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).gte('vigente_desde', r.fecha)
+      await supabase.schema('produccion').from('diesel_precio')
+        .update({ vigente_hasta: sumarDias(r.fecha, -1) })
+        .eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', r.fecha)
+      const { error: ep } = await supabase.schema('produccion').from('diesel_precio')
+        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: r.fecha })
+      if (ep) { setAviso({ tipo: 'error', texto: 'No se pudo actualizar el precio. ' + ep.message }); return }
+    }
+    const { error } = await supabase.schema('produccion').from('diesel_pedido')
+      .insert({ finca_id: finca.id, tipo_id: r.tipoId, galones: r.galones, fecha: r.fecha,
+                estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString() })
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: cambio ? 'Pedido registrado y precio actualizado en el catálogo.' : 'Pedido registrado.' })
+    setRevPrecio(null); setForm(null); await refrescar()
   }
 
   // --- Jefe: edita/borra directo ---
@@ -163,6 +204,37 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1080px' }}>
+      {revPrecio && (() => {
+        const nuevo = numDec(revPrecio.precio)
+        const cambio = revPrecio.precioActual != null && Math.abs(nuevo - revPrecio.precioActual) > 1e-9
+        return (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
+            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>Verifica el precio del diesel</div>
+            <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '16px', lineHeight: 1.5 }}>
+              {nombreTipo(revPrecio.tipoId)} · {miles(revPrecio.galones)} gal. El precio del catálogo cambia cada mes — confírmalo o actualízalo.
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Precio por galón</div>
+                <CampoNumero maxDec={6} autoFocus value={revPrecio.precio} onChange={v => setRevPrecio(x => ({ ...x, precio: v }))}
+                  style={{ ...inp, width: '150px', textAlign: 'right' }} />
+              </div>
+              <div style={{ fontSize: '12px', color: GRIS, paddingBottom: '9px' }}>
+                {revPrecio.precioActual != null ? <>catálogo {precio6(revPrecio.precioActual)}</> : 'sin precio en catálogo'}
+              </div>
+            </div>
+            <div style={{ fontSize: '11.5px', color: cambio ? AMBAR : GRIS, margin: '10px 0 14px', lineHeight: 1.5 }}>
+              {cambio ? `Cambiaste el precio → se actualizará en el catálogo y regirá desde ${corta(revPrecio.fecha)}.` : 'Si el precio sigue igual, solo confirma.'}
+            </div>
+            <div style={{ display: 'flex', gap: '9px' }}>
+              <Btn primario onClick={guardarPedido}>Guardar ingreso</Btn>
+              <Btn onClick={() => setRevPrecio(null)}>Volver</Btn>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: 0 }}>Diesel</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
