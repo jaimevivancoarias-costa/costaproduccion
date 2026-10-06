@@ -47,6 +47,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [abiertaP, setAbiertaP] = useState(null)  // piscina con el detalle (Fases) abierto
   const [semanaCerrada, setSemanaCerrada] = useState(false)
   const [validaciones, setValidaciones] = useState(null)
+  const [diaResumen, setDiaResumen] = useState(null)  // null = toda la semana; si no, una fecha
   const [dias, setDias] = useState({})   // fecha -> estado del dia (cerrado/borrador/reabierto)
   const [diasId, setDiasId] = useState({})
   const [solReapertura, setSolReapertura] = useState([])
@@ -302,15 +303,19 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
   // Consumo de la semana por insumo, para la pregunta directa "cuánto
   // se gastó de cada cosa esta semana".
+  // Resumen de consumo: toda la semana (diaResumen = null) o un día concreto.
   const consumoSemana = useMemo(() => {
     const m = {}
-    Object.values(lineas).flat().forEach(l => {
-      m[l.insumoId] = (m[l.insumoId] || 0) + numDec(l.cantidad)
+    Object.entries(lineas).forEach(([k, arr]) => {
+      const f = k.split('|')[1]
+      if (diaResumen && f !== diaResumen) return
+      arr.forEach(l => { m[l.insumoId] = (m[l.insumoId] || 0) + numDec(l.cantidad) })
     })
     return Object.entries(m)
       .map(([id, cant]) => ({ id, cant }))
       .sort((a, b) => b.cant - a.cant)
-  }, [lineas])
+  }, [lineas, diaResumen])
+  const hayConsumoSemana = useMemo(() => Object.values(lineas).some(arr => arr.length > 0), [lineas])
 
   // Resumen de la semana para las tarjetas de arriba.
   const resumen = useMemo(() => {
@@ -658,13 +663,33 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
         </div>
       )}
 
-      {!cargando && consumoSemana.length > 0 && (
+      {!cargando && hayConsumoSemana && (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                       padding: '16px 18px', marginTop: '34px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de insumos de la semana</h3>
-            <span style={{ fontSize: '12px', color: GRIS }}>{cortita(lunes)} – {cortita(domingo)}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', flexWrap: 'wrap' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de insumos{diaResumen ? ' del día' : ' de la semana'}</h3>
+            <span style={{ fontSize: '12px', color: GRIS }}>{diaResumen ? cortita(diaResumen) : `${cortita(lunes)} – ${cortita(domingo)}`}</span>
           </div>
+          {/* Filtro por día (o toda la semana). */}
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+            {(() => {
+              const chip = (on, label, onClick) => (
+                <button onClick={onClick} style={{ fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer',
+                  padding: '5px 11px', borderRadius: '20px', border: '0.5px solid ' + (on ? AZUL : BORDE),
+                  background: on ? AZUL : 'white', color: on ? 'white' : GRIS, fontWeight: on ? 600 : 400, textTransform: 'capitalize' }}>{label}</button>
+              )
+              return (
+                <>
+                  {chip(!diaResumen, 'Toda la semana', () => setDiaResumen(null))}
+                  {fechas.filter(f => situacionDia(f, hoy) !== 'futuro').map(f =>
+                    chip(diaResumen === f, `${nombreDia(f)} ${cortita(f)}`, () => setDiaResumen(f)))}
+                </>
+              )
+            })()}
+          </div>
+          {consumoSemana.length === 0 ? (
+            <div style={{ fontSize: '13px', color: GRIS, padding: '8px 2px' }}>Sin consumo registrado ese día.</div>
+          ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <thead><tr>
               {['Insumo', 'Cantidad', 'Equivale a'].map((t, i) => (
@@ -690,6 +715,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
               })}
             </tbody>
           </table>
+          )}
         </div>
       )}
 
