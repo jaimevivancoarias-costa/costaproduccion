@@ -553,10 +553,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
       } else {
-        const { data: toma, error } = await supabase.schema('produccion').from('toma_balanceado')
-          .insert({ finca_id: finca.id, fecha, observacion: obs || null, conto_despues: contoDespues }).select('id').single()
-        if (error) throw error
-        tomaId = toma.id
+        // Si ya existe un conteo ese día (restricción única finca+fecha), se
+        // reemplaza en vez de fallar por duplicado.
+        const { data: ex } = await supabase.schema('produccion').from('toma_balanceado')
+          .select('id').eq('finca_id', finca.id).eq('fecha', fecha).maybeSingle()
+        if (ex) {
+          const { error: eU } = await supabase.schema('produccion').from('toma_balanceado')
+            .update({ observacion: obs || null, conto_despues: contoDespues }).eq('id', ex.id)
+          if (eU) throw eU
+          await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', ex.id)
+          tomaId = ex.id
+        } else {
+          const { data: toma, error } = await supabase.schema('produccion').from('toma_balanceado')
+            .insert({ finca_id: finca.id, fecha, observacion: obs || null, conto_despues: contoDespues }).select('id').single()
+          if (error) throw error
+          tomaId = toma.id
+        }
       }
       const lineas = filas.filter(f => f.contado !== null).map(f => {
         const hayDesc = !primeraVez && (editToma || Math.abs(f.diferencia || 0) > 0.001)
@@ -838,7 +850,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     )}
                     {f.contado !== null && f.cons > 0.0001 && (
                       <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
-                        🦐 {contoDespues
+                        {contoDespues
                           ? <>Contaste {limpio(f.contado)} · lo de hoy ({limpio(f.cons)}) ya salió → tu saldo queda en <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>
                           : <>Contaste {limpio(f.contado)} − {limpio(f.cons)} que comió hoy → tu saldo queda en <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>}
                       </div>
