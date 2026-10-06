@@ -61,6 +61,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})        // sacos completos
   const [sueltas, setSueltas] = useState({})         // libras sueltas
+  const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de alimentar ese día
+  const [consumoDia, setConsumoDia] = useState({})   // producto_id -> sacos consumidos el día del conteo
   const [motivoDesc, setMotivoDesc] = useState({})   // motivo del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})
   const [lps, setLps] = useState(LIBRAS_POR_SACO)    // libras por saco (del parámetro de la base)
@@ -137,7 +139,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         supabase.schema('produccion').from('precio_producto')
           .select('producto_id, plazo, precio_saco, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
         supabase.schema('produccion').from('toma_balanceado')
-          .select('id, fecha, observacion, es_inicial, creado_por').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
+          .select('id, fecha, observacion, es_inicial, creado_por, conto_despues').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('finca').select('libras_por_saco').eq('id', finca.id).maybeSingle(),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
@@ -202,6 +204,24 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   useEffect(() => { cargar() }, [cargar])
 
   const primeraVez = tomas.length === 0
+
+  // Consumo (alimentación) registrado EL DÍA del conteo, por producto, en sacos.
+  // Sirve para avisar del cruce y para la calculadora "antes/después de alimentar".
+  useEffect(() => {
+    if (!contando || primeraVez) { setConsumoDia({}); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('alimentacion')
+        .select('producto_id, libras, piscina!inner(finca_id)')
+        .eq('piscina.finca_id', finca.id).eq('fecha', fecha).eq('sin_alimentacion', false)
+      if (!vivo) return
+      const f = lps || LIBRAS_POR_SACO
+      const m = {}
+      ;(data || []).forEach(r => { if (r.producto_id) m[r.producto_id] = (m[r.producto_id] || 0) + Number(r.libras || 0) / f })
+      setConsumoDia(m)
+    })()
+    return () => { vivo = false }
+  }, [contando, fecha, finca.id, primeraVez, lps])
 
   // Períodos "entre conteos": de cada conteo hasta el siguiente (o hasta hoy).
   const periodos = useMemo(() => {
@@ -334,9 +354,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
     const c = (hayS || hayL) ? (hayS ? Number(txt) : 0) + (hayL ? Number(String(lib).replace(',', '.')) / (lps || LIBRAS_POR_SACO) : 0) : null
-    return { ...s, precio: precios[s.producto_id] || 0, contado: c,
-             diferencia: c !== null ? c - Number(s.saldo) : null }
-  }), [saldos, precios, contado, sueltas, lps])
+    // El saldo cargado (s.saldo) ya tiene restado el consumo de HOY. Si contaste
+    // ANTES de alimentar, lo que debes encontrar es s.saldo + lo de hoy (aún no
+    // salía); si contaste DESPUÉS, debes encontrar s.saldo (ya salió).
+    const sis = Number(s.saldo)
+    const cons = Number(consumoDia[s.producto_id] || 0)
+    const esperado = (cons > 0.0001 && !contoDespues) ? sis + cons : sis
+    const saldoFinal = c !== null ? (contoDespues ? c : c - cons) : null
+    return { ...s, precio: precios[s.producto_id] || 0, contado: c, cons, esperado, saldoFinal,
+             diferencia: c !== null ? c - esperado : null }
+  }), [saldos, precios, contado, sueltas, lps, consumoDia, contoDespues])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
@@ -502,7 +529,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       }
     })
     setContado(mapa); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
-    setFecha(t.fecha); setObs(t.observacion || '')
+    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(!!t.conto_despues)
     setEditToma(t); setContando(true); setAviso(null)
   }
 
@@ -521,13 +548,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       let tomaId
       if (editToma) {
         const { error: eU } = await supabase.schema('produccion').from('toma_balanceado')
-          .update({ fecha, observacion: obs || null }).eq('id', editToma.id)
+          .update({ fecha, observacion: obs || null, conto_despues: contoDespues }).eq('id', editToma.id)
         if (eU) throw eU
         await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
       } else {
         const { data: toma, error } = await supabase.schema('produccion').from('toma_balanceado')
-          .insert({ finca_id: finca.id, fecha, observacion: obs || null }).select('id').single()
+          .insert({ finca_id: finca.id, fecha, observacion: obs || null, conto_despues: contoDespues }).select('id').single()
         if (error) throw error
         tomaId = toma.id
       }
@@ -537,13 +564,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         const motivoD = hayDesc && cat ? (cat === 'Otro' ? (motivoOtro[f.producto_id]?.trim() || 'Otro') : cat) : null
         return {
           toma_id: tomaId, producto_id: f.producto_id, cantidad_contada: f.contado,
-          cantidad_sistema: Number(f.saldo), diferencia: f.diferencia, motivo_descuadre: motivoD,
+          cantidad_sistema: Number(f.esperado), diferencia: f.diferencia, motivo_descuadre: motivoD,
         }
       })
       const { error: e2 } = await supabase.schema('produccion').from('toma_balanceado_linea').insert(lineas)
       if (e2) throw e2
       setAviso({ tipo: 'ok', texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} productos.` })
-      setContando(false); setEditToma(null); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setObs(''); await cargar()
+      setContando(false); setEditToma(null); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setObs(''); setContoDespues(false); await cargar()
     } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') }) }
     finally { setGuardando(false) }
   }
@@ -725,7 +752,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         {seccion === 'bodega' && !contando && !cargando && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
             {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
-            <button onClick={() => setContando(true)} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>
+            <button onClick={() => { setContoDespues(false); setContando(true) }} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>
               {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
             </button>
           </div>
@@ -758,6 +785,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               </Campo>
             </div>
           </div>
+
+          {/* Si ese día ya hay consumos, preguntar si contó antes o después de
+              alimentar (el default "Antes" = como funciona hoy). */}
+          {!primeraVez && Object.values(consumoDia).some(v => v > 0.0001) && (
+            <div style={{ padding: '13px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#FDF3DF',
+                          display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '13px', color: '#6b4e12', fontWeight: 600, flex: 1, minWidth: '240px' }}>
+                Ese día ya hay consumos registrados. ¿Contaste antes o después de alimentar?
+              </span>
+              <Seg valor={contoDespues ? 'despues' : 'antes'}
+                   onCambio={v => setContoDespues(v === 'despues')}
+                   opciones={[['antes', 'Conté antes de alimentar'], ['despues', 'Conté después']]} />
+            </div>
+          )}
 
           {/* Agregar balanceados que faltan, varios a la vez. */}
           <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
@@ -799,7 +840,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             <Fila gtc={G_CONTEO} key={f.producto_id}>
               <Cel>{f.producto}</Cel>
               <Cel gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
-              <Cel der gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Cel>
+              <Cel der gris>{(primeraVez || editToma) ? '' : (<>
+                {limpio(f.esperado)}
+                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ya sin ${limpio(f.cons)} de hoy` : `incl. ${limpio(f.cons)} de hoy`}</div>}
+              </>)}</Cel>
               <div style={{ padding: '5px 10px' }}>
                 {primeraVez ? (
                   <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="Sacos"
@@ -827,6 +871,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
                       </div>
                     )}
+                    {f.contado !== null && f.cons > 0.0001 && (
+                      <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '2px', textAlign: 'right' }}>
+                        🦐 comió {limpio(f.cons)} hoy · saldo quedará <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -851,7 +900,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           ))}
           <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
                         display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button onClick={() => { setContando(false); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null) }} style={btn}>Cancelar</button>
+            <button onClick={() => { setContando(false); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }} style={btn}>Cancelar</button>
             <button onClick={guardarToma} disabled={guardando || !llenadas}
               style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL,
                        opacity: (guardando || !llenadas) ? 0.5 : 1 }}>
