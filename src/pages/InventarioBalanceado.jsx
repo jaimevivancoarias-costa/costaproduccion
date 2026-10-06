@@ -183,15 +183,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_balanceado')
-          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, motivo_descuadre, diferencia)')
-          .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+          .select('fecha, creado_por, es_inicial, conto_despues, toma_balanceado_linea(producto_id, motivo_descuadre, diferencia)')
+          .eq('finca_id', finca.id).gte('fecha', sumarDias(desde, -1)).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}, dm = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
-        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
+        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial, despues: !!tt.conto_despues }
         // El último motivo del rango con descuadre (las tomas vienen en orden ascendente).
         if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
       }))
@@ -224,11 +224,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   }, [contando, fecha, finca.id, primeraVez, lps])
 
   // Períodos "entre conteos": de cada conteo hasta el siguiente (o hasta hoy).
+  // El "corte" de un conteo cae al inicio de su día (antes de alimentar) o al
+  // inicio del día siguiente (después de alimentar). El consumo del día del
+  // conteo "después" pertenece al corte ANTERIOR, por eso la ventana arranca al
+  // día siguiente.
+  const cut = t => sumarDias(t.fecha, t.conto_despues ? 1 : 0)
   const periodos = useMemo(() => {
     const ts = [...tomas].sort((a, b) => (a.fecha < b.fecha ? 1 : -1))  // más reciente primero
     return ts.map((t, i) => ({
-      desde: t.fecha,
-      hasta: i === 0 ? hoyISO() : sumarDias(ts[i - 1].fecha, -1),
+      desde: cut(t),
+      hasta: i === 0 ? hoyISO() : sumarDias(cut(ts[i - 1]), -1),
       label: i === 0 ? `Conteo ${corta(t.fecha)} → Hoy` : `Conteo ${corta(t.fecha)} → Conteo ${corta(ts[i - 1].fecha)}`,
     }))
   }, [tomas])
@@ -244,7 +249,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const anclaInicio = m => {
     if (m.conteo === null) return false
     const c = conteoQuien[m.producto_id]
-    if (c && c.fecha === desde) return true
+    // El corte arranca en el "cut" del conteo: su fecha (antes) o el día
+    // siguiente (después). Por eso se compara el cut, no la fecha pelada.
+    if (c && sumarDias(c.fecha, c.despues ? 1 : 0) === desde) return true
     if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
     return false
   }
@@ -271,8 +278,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       setLineasToma(byToma)
       if (!esJefe) return
       const res = await Promise.all(tomas.map((t, i) => {
-        const h = i === 0 ? hoyISO() : sumarDias(tomas[i - 1].fecha, -1)
-        return supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: t.fecha, p_hasta: h })
+        // Ventana del corte respetando antes/después (igual que en periodos).
+        const d = sumarDias(t.fecha, t.conto_despues ? 1 : 0)
+        const h = i === 0 ? hoyISO() : sumarDias(sumarDias(tomas[i - 1].fecha, tomas[i - 1].conto_despues ? 1 : 0), -1)
+        return supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: d, p_hasta: h })
           .then(r => ({ id: t.id, rows: r.data || [] }))
       }))
       if (!vivo) return
