@@ -396,6 +396,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [noContados, setNoContados] = useState('mantiene')  // 'mantiene' | 'cero' — qué pasa con lo que no se cuenta
   const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
   const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
+  const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de aplicar ese día
+  const [consumoDia, setConsumoDia] = useState({})   // insumoId -> consumo del día del conteo, en unidad de compra
   const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
   const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
@@ -540,6 +542,25 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   useEffect(() => { cargar() }, [cargar])
 
   const primeraVez = conteos.length === 0
+
+  // Consumo (aplicación) registrado EL DÍA del conteo, por insumo, pasado a la
+  // unidad de COMPRA (÷ factor) para poder reconstruir el "había".
+  useEffect(() => {
+    if (!contando || primeraVez) { setConsumoDia({}); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('consumo_insumo')
+        .select('insumo_id, cantidad, piscina!inner(finca_id)')
+        .eq('piscina.finca_id', finca.id).eq('fecha', fecha)
+      if (!vivo) return
+      const m = {}
+      ;(data || []).forEach(r => { if (r.insumo_id) m[r.insumo_id] = (m[r.insumo_id] || 0) + Number(r.cantidad || 0) })
+      const sac = {}
+      Object.entries(m).forEach(([id, v]) => { const fa = factores[id]?.factor || 1; sac[id] = v / fa })
+      setConsumoDia(sac)
+    })()
+    return () => { vivo = false }
+  }, [contando, fecha, finca.id, primeraVez, factores])
   const ultimo = conteos[0]
 
   // El valor se calcula a PRECIO ACTUAL: saldo × precio vigente. Así, al
@@ -569,9 +590,20 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     // El conteo se guarda en unidad de compra (presentación). El sobrante
     // viene en unidad de aplicación → se divide por el factor para sumarlo.
     const c = (hayMain || haySob) ? (hayMain ? Number(txt) : 0) + (haySob ? Number(String(sob).replace(',', '.')) / fac : 0) : null
+    // Modelo "había": el conteo guarda lo que había al INICIO del día (en unidad
+    // de compra). s.saldo ya tiene restado el consumo de hoy, así que había =
+    // s.saldo + lo de hoy. Si contó DESPUÉS, escribió lo que quedó → se le suma
+    // lo de hoy. "El sistema dice" muestra el había (antes) o lo de ahora (después).
+    const sis = Number(s.saldo)
+    const cons = Number(consumoDia[s.insumo_id] || 0)
+    const habiaSistema = cons > 0.0001 ? sis + cons : sis
+    const esperado = (contoDespues && cons > 0.0001) ? sis : habiaSistema
+    const habiaContado = c === null ? null : ((contoDespues && cons > 0.0001) ? c + cons : c)
+    const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
     return { ...s, precio: precios[s.insumo_id] || 0,
-             contado: c, diferencia: c !== null ? c - Number(s.saldo) : null }
-  }), [saldos, precios, contado, sobrante, factores])
+             contado: c, cons, esperado, habiaSistema, habiaContado, saldoFinal,
+             diferencia: habiaContado === null ? null : habiaContado - habiaSistema }
+  }), [saldos, precios, contado, sobrante, factores, consumoDia, contoDespues])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
@@ -914,7 +946,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     })
     setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
-    setEditToma(c); setContando(true); setAviso(null)
+    setContoDespues(false); setEditToma(c); setContando(true); setAviso(null)
   }
 
   async function verDescuadres(c) {
@@ -1025,7 +1057,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         ? filas.filter(f => f.contado === null && !esSinInvFila(f))
         : []
       const lineas = [...contadas, ...enCero].map(f => {
-        const contadoVal = f.contado !== null ? f.contado : 0
+        const contadoVal = f.contado !== null ? f.habiaContado : 0
+        const sistemaVal = f.contado !== null ? f.habiaSistema : Number(f.saldo)
         const difVal = f.contado !== null ? f.diferencia : (0 - Number(f.saldo))
         // En un recuento normal, hay descuadre si la diferencia no es cero.
         // Al editar, conservamos el motivo que ya se había cargado.
@@ -1037,7 +1070,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         return {
           toma_id: tomaId, insumo_id: f.insumo_id,
           cantidad_contada: contadoVal,
-          cantidad_sistema: Number(f.saldo),
+          cantidad_sistema: Number(sistemaVal),
           diferencia: difVal,
           motivo_descuadre: motivoD,
         }
@@ -1048,7 +1081,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       setAviso({ tipo: 'ok',
         texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
-      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({})
+      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({}); setContoDespues(false)
       await cargar()
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -1071,7 +1104,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         {seccion === 'bodega' && !contando && !cargando && (
           <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
             {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
-            <Btn primario onClick={() => setContando(true)}>
+            <Btn primario onClick={() => { setContoDespues(false); setContando(true); }}>
               {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
             </Btn>
           </div>
@@ -1285,6 +1318,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             )}
           </div>
 
+          {!primeraVez && Object.values(consumoDia).some(v => v > 0.0001) && (
+            <div style={{ padding: '13px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#FDF3DF',
+                          display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '13px', color: '#6b4e12', fontWeight: 600, flex: 1, minWidth: '240px' }}>
+                Ese día ya hay consumos registrados. ¿Contaste antes o después de aplicar?
+              </span>
+              <Seg valor={contoDespues ? 'despues' : 'antes'}
+                   onCambio={v => setContoDespues(v === 'despues')}
+                   opciones={[['antes', 'Conté antes de aplicar'], ['despues', 'Conté después']]} />
+            </div>
+          )}
+
           <Tabla
             columnas={(primeraVez || editToma)
               ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
@@ -1306,7 +1351,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </>}
                   {conPesoF && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.contenido)} {cap1(UNIDAD[facF.uCont] || facF.uCont)}</div>}
                 </Celda>
-                <Celda derecha gris>{(primeraVez || editToma) ? '' : limpio(f.saldo)}</Celda>
+                <Celda derecha gris>{(primeraVez || editToma) ? '' : (<>
+                  {limpio(f.esperado)}
+                  {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (ya aplicó ${limpio(f.cons)})` : `había (antes de aplicar ${limpio(f.cons)})`}</div>}
+                </>)}</Celda>
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                   {convF ? (
                     <>
@@ -1336,6 +1384,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       onChange={v => setContado(c => ({ ...c, [f.insumo_id]: v }))}
                       style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                   )}
+                  {f.contado !== null && f.cons > 0.0001 && (() => {
+                    const u = cap1(UNIDAD[f.unidad] || f.unidad)
+                    return (
+                    <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
+                      {contoDespues
+                        ? <>Contaste {limpio(f.contado)} + {limpio(f.cons)} de hoy = <b style={{ color: NAVY }}>{limpio(f.habiaContado)}</b> había · saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> {u}</>
+                        : <>Contaste {limpio(f.habiaContado)} (había) − {limpio(f.cons)} que aplicó hoy → saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> {u}</>}
+                    </div>
+                    )
+                  })()}
                 </div>
                 {/* La primera vez no hay contra que comparar: es la carga
                     inicial. La diferencia aparece de la segunda en adelante. */}
@@ -1380,7 +1438,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {llenadas} de {saldos.length} contados
               {!primeraVez && descuadres.length > 0 && ` · ${descuadres.length} no cuadran`}
             </span>
-            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null) }}>Cancelar</Btn>
+            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }}>Cancelar</Btn>
             <Btn primario onClick={guardar} disabled={guardando || !llenadas}>
               {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
             </Btn>
