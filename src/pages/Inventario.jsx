@@ -602,7 +602,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
     return { ...s, precio: precios[s.insumo_id] || 0,
              contado: c, cons, esperado, habiaSistema, habiaContado, saldoFinal,
-             diferencia: habiaContado === null ? null : habiaContado - habiaSistema }
+             // Redondeada a 2 decimales para que una diferencia minúscula por la
+             // conversión cuente como "cuadra", no "sobran 0".
+             diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
   }), [saldos, precios, contado, sobrante, factores, consumoDia, contoDespues])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)

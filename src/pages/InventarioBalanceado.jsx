@@ -368,7 +368,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const habiaContado = c === null ? null : ((contoDespues && cons > 0.0001) ? c + cons : c)
     const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
     return { ...s, precio: precios[s.producto_id] || 0, contado: c, cons, esperado, habiaSistema, habiaContado, saldoFinal,
-             diferencia: habiaContado === null ? null : habiaContado - habiaSistema }
+             // Redondeada a 2 decimales: así una diferencia minúscula por la
+             // conversión (ej. 0.002) cuenta como "Cuadra", no "Sobran 0".
+             diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
   }), [saldos, precios, contado, sueltas, lps, consumoDia, contoDespues])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
