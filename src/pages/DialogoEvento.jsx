@@ -191,6 +191,14 @@ export async function eliminarEvento({ evento, cicloId }) {
     .select('id').eq('ciclo_padre_id', cicloId).eq('fecha_ocupacion', fecha)
   const idsHijos = (hijos || []).map(h => h.id)
 
+  // Destinos que se JUNTARON con un ciclo que ya existía (no son hijos nuevos):
+  // al deshacer hay que restarles la cantidad que esta transferencia les sumó,
+  // si no, quedan inflados (el ciclo se queda, solo se corrige su larva).
+  const { data: destTodos } = await supabase.schema('produccion').from('evento_destino')
+    .select('ciclo_destino_id, cantidad').eq('evento_id', id)
+  const juntados = (destTodos || []).filter(d =>
+    d.ciclo_destino_id && !idsHijos.includes(d.ciclo_destino_id) && d.cantidad != null)
+
   if (idsHijos.length) {
     // Solo bloquea el cultivo REAL posterior a la transferencia. La
     // preparación de la piscina destino (secado/insumos de antes) no
@@ -223,6 +231,14 @@ export async function eliminarEvento({ evento, cicloId }) {
   }
   await supabase.schema('produccion').from('ciclo_piscina')
     .update({ fecha_hasta: null }).eq('ciclo_id', cicloId).eq('fecha_hasta', fecha)
+  // Restar lo que la transferencia sumó a los ciclos con los que se juntó.
+  for (const j of juntados) {
+    const { data: cic } = await supabase.schema('produccion').from('ciclo')
+      .select('cantidad_larva').eq('id', j.ciclo_destino_id).maybeSingle()
+    const nueva = Math.max(0, (Number(cic?.cantidad_larva) || 0) - (Number(j.cantidad) || 0))
+    await supabase.schema('produccion').from('ciclo')
+      .update({ cantidad_larva: nueva }).eq('id', j.ciclo_destino_id)
+  }
   await supabase.schema('produccion').from('evento_destino').delete().eq('evento_id', id)
   await supabase.schema('produccion').from('evento').delete().eq('id', id)
 }
