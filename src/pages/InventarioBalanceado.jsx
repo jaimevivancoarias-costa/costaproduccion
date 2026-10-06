@@ -20,7 +20,7 @@ const ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#BA7517'
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
 const ddmm = iso => corta(iso).slice(0, 5)
-const G_CONTEO = '1fr 90px 100px 250px 120px'
+const G_CONTEO = '1fr 110px 130px 250px 120px'
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 const G_SALDO_J = '1fr 150px 130px 140px 110px'
 const G_SALDO_B = '1fr 140px'
@@ -800,49 +800,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </div>
           )}
 
-          {/* Agregar balanceados que faltan, varios a la vez. */}
-          <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
-            {nuevos.length === 0 ? (
-              <button onClick={() => setNuevos([filaNueva()])} style={btnLink}>
-                + ¿Falta un balanceado? {esJefeGlobal ? 'Agrégalo aquí' : 'Pídelo al jefe'}
-              </button>
-            ) : (
-              <div>
-                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
-                  Balanceados nuevos (puedes agregar varios):
-                </div>
-                {nuevos.map((n, i) => (
-                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '7px', flexWrap: 'wrap' }}>
-                    <input autoFocus={i === nuevos.length - 1} value={n.nombre} placeholder="Nombre del balanceado"
-                      onChange={e => setNuevo(i, 'nombre', e.target.value)} style={{ ...inp, flex: 1, minWidth: '200px' }} />
-                    <input value={n.marca} placeholder="Marca (opcional)"
-                      onChange={e => setNuevo(i, 'marca', e.target.value)} style={{ ...inp, width: '160px' }} />
-                    <button onClick={() => setNuevos(ns => ns.filter((_, j) => j !== i))} title="Quitar"
-                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
-                  </div>
-                ))}
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
-                  <button onClick={() => setNuevos(ns => [...ns, filaNueva()])} style={btnLink}>+ Otro balanceado</button>
-                  <span style={{ marginLeft: 'auto' }} />
-                  <button onClick={() => setNuevos([])} style={btn}>Cancelar</button>
-                  <button onClick={guardarNuevos} disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}
-                    style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL,
-                             opacity: (guardandoNuevos || !nuevos.some(n => n.nombre.trim())) ? 0.5 : 1 }}>
-                    {guardandoNuevos ? (esJefeGlobal ? 'Agregando...' : 'Enviando...') : (esJefeGlobal ? 'Agregar a la lista' : 'Enviar pedido al jefe')}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <Encabezado gtc={G_CONTEO} cols={['Balanceado', 'Llega / se aplica', (primeraVez || editToma) ? '' : 'El sistema dice', editToma ? 'Contado' : primeraVez ? 'Inventario inicial' : 'Contado', (primeraVez || editToma) ? '' : 'Diferencia']} />
+          <Encabezado gtc={G_CONTEO} centrar cols={['Balanceado', 'Llega / se aplica', (primeraVez || editToma) ? '' : 'El sistema dice', editToma ? 'Contado' : primeraVez ? 'Inventario inicial' : 'Contado', (primeraVez || editToma) ? '' : 'Diferencia']} />
           {(primeraVez || editToma ? filas : filas.filter(f => coincide(f.producto))).map(f => (
             <Fila gtc={G_CONTEO} key={f.producto_id}>
               <Cel>{f.producto}</Cel>
-              <Cel gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
-              <Cel der gris>{(primeraVez || editToma) ? '' : (<>
+              <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
+              <Cel centro gris>{(primeraVez || editToma) ? '' : (<>
                 {limpio(f.esperado)}
-                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ya sin ${limpio(f.cons)} de hoy` : `incl. ${limpio(f.cons)} de hoy`}</div>}
+                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ya comió ${limpio(f.cons)} hoy` : `antes de comer ${limpio(f.cons)} hoy`}</div>}
               </>)}</Cel>
               <div style={{ padding: '5px 10px' }}>
                 {primeraVez ? (
@@ -879,7 +844,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   </>
                 )}
               </div>
-              <Cel der color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
+              <Cel centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
                 {(primeraVez || editToma) ? '' : f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra'
                   : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
               </Cel>
@@ -2198,16 +2163,16 @@ function Nota({ children, color, bg }) { return <div style={{ background: bg, co
 function Caja({ children }) { return <div style={cajaS}>{children}</div> }
 const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'auto', maxHeight: '68vh' }
 function Campo({ label, children }) { return <div><div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{label}</div>{children}</div> }
-function Encabezado({ cols, gtc }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '10px 14px', fontSize: '12px', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, position: 'sticky', top: 0, zIndex: 3 }}>
-    {cols.map((c, i) => <span key={i} style={{ textAlign: i === 0 ? 'left' : 'right' }}>{c}</span>)}
+function Encabezado({ cols, gtc, centrar }) {
+  return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '12px 14px', fontSize: '11.5px', fontWeight: 600, letterSpacing: '.02em', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, position: 'sticky', top: 0, zIndex: 3 }}>
+    {cols.map((c, i) => <span key={i} style={{ textAlign: i === 0 ? 'left' : (centrar ? 'center' : 'right') }}>{c}</span>)}
   </div>
 }
 function Fila({ children, gtc }) {
   return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', alignItems: 'center', borderBottom: '0.5px solid #f1f6f9' }}>{children}</div>
 }
-function Cel({ children, der, gris, fuerte, color }) {
-  return <div style={{ padding: '10px 12px', fontSize: '13px', textAlign: der ? 'right' : 'left', color: color || (gris ? GRIS : NAVY), fontWeight: fuerte ? 500 : 400, fontVariantNumeric: der ? 'tabular-nums' : 'normal' }}>{children}</div>
+function Cel({ children, der, centro, gris, fuerte, color }) {
+  return <div style={{ padding: '10px 12px', fontSize: '13px', textAlign: centro ? 'center' : der ? 'right' : 'left', color: color || (gris ? GRIS : NAVY), fontWeight: fuerte ? 500 : 400, fontVariantNumeric: (der || centro) ? 'tabular-nums' : 'normal' }}>{children}</div>
 }
 const badgeIni = { display: 'block', fontSize: '9.5px', fontWeight: 400, color: '#9fb0bf', marginTop: '2px', letterSpacing: '.01em' }
 const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
