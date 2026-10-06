@@ -1252,71 +1252,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   Cuenta solo lo que verifiques. <b style={{ fontWeight: 600 }}>Lo que dejes en blanco se mantiene</b> en su saldo actual — no se pone en 0.
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginTop: '10px' }}>
-                <span style={{ fontSize: '12px', color: GRIS }}>Lo que no cuente:</span>
-                <Seg valor={noContados} onCambio={setNoContados}
-                     opciones={[['mantiene', 'Se mantiene'], ['cero', 'Queda en 0']]} />
-                {noContados === 'cero' && <span style={{ fontSize: '11.5px', color: AMBAR }}>Los que dejes en blanco se pondrán en 0 (para cuando cuentas toda la bodega).</span>}
-              </div>
             </div>
           )}
-
-          {/* Agregar insumos que faltan, varios a la vez. */}
-          <div style={{ padding: '12px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#fbfdfe' }}>
-            {nuevos.length === 0 ? (
-              <button onClick={() => setNuevos([filaNueva()])} style={{ ...btnLink }}>
-                + ¿Falta un insumo? {esJefeGlobal ? 'Agrégalo aquí' : 'Pídelo al jefe'}
-              </button>
-            ) : (
-              <div>
-                <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
-                  Insumos nuevos para esta bodega (puedes agregar varios):
-                </div>
-                {nuevos.map((n, i) => (
-                  <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center',
-                                        marginBottom: '7px', flexWrap: 'wrap' }}>
-                    <input autoFocus={i === nuevos.length - 1} value={n.nombre}
-                      placeholder="Nombre del insumo"
-                      onChange={e => setNuevo(i, 'nombre', e.target.value)}
-                      style={{ ...entrada, flex: 1, minWidth: '180px' }} />
-                    <select value={n.unidad} onChange={e => setNuevo(i, 'unidad', e.target.value)}
-                      style={{ ...entrada, width: '130px' }}>
-                      {UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}
-                    </select>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: GRIS, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={n.compraDistinta}
-                        onChange={e => setNuevo(i, 'compraDistinta', e.target.checked)} />
-                      se compra en otra presentación
-                    </label>
-                    {n.compraDistinta && (
-                      <>
-                        <input value={n.unidadCompra} placeholder="ej. tambor"
-                          onChange={e => setNuevo(i, 'unidadCompra', e.target.value)}
-                          style={{ ...entrada, width: '110px' }} />
-                        <CampoNumero maxDec={6} value={n.factor} placeholder={`${UNIDAD[n.unidad]} por unidad`}
-                          onChange={v => setNuevo(i, 'factor', v)}
-                          style={{ ...entrada, width: '140px' }} />
-                      </>
-                    )}
-                    <button onClick={() => setNuevos(ns => ns.filter((_, j) => j !== i))}
-                      title="Quitar" style={{ border: 'none', background: 'none', cursor: 'pointer',
-                        color: '#c3d0db', fontSize: '18px', lineHeight: 1 }}>×</button>
-                  </div>
-                ))}
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
-                  <button onClick={() => setNuevos(ns => [...ns, filaNueva()])} style={btnLink}>
-                    + Otro insumo
-                  </button>
-                  <span style={{ marginLeft: 'auto' }} />
-                  <Btn onClick={() => setNuevos([])}>Cancelar</Btn>
-                  <Btn primario onClick={guardarNuevos}
-                       disabled={guardandoNuevos || !nuevos.some(n => n.nombre.trim())}>
-                    {guardandoNuevos ? (esJefeGlobal ? 'Agregando...' : 'Enviando...') : (esJefeGlobal ? 'Agregar a la lista' : 'Enviar pedido al jefe')}
-                  </Btn>
-                </div>
-              </div>
-            )}
-          </div>
 
           {!primeraVez && Object.values(consumoDia).some(v => v > 0.0001) && (
             <div style={{ padding: '13px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#FDF3DF',
