@@ -21,7 +21,8 @@ const ROJO = '#A32D2D'
 const sumarDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 
 export default function CatalogoDiesel({ fincas }) {
-  const activas = (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA')
+  // PRUEBA habilitada: entra como una finca más para ponerle precio de diesel.
+  const activas = fincas || []
   const [tipos, setTipos] = useState([])
   const [precios, setPrecios] = useState({})   // fincaId|tipoId -> { precio, desde }
   const [cargando, setCargando] = useState(true)
