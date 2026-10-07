@@ -701,7 +701,44 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     )
   }
 
-  // Detalle por lote (FIFO) de un tipo · se usa en "Cuánto hay" y "Qué se movió".
+  // "Cuánto queda a cada precio" (línea de tiempo) · se usa en "Cuánto hay".
+  function DetalleQueda({ tipoId }) {
+    const ls = (lotes[tipoId] || []).filter(l => l.queda > 0.0001)
+    const p = precios[tipoId]
+    return (
+      <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
+        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '11px' }}>Cuánto queda a cada precio</div>
+        {ls.length === 0 ? (
+          <div style={{ fontSize: '13px', color: GRIS }}>Sin saldo.</div>
+        ) : (
+          <div style={{ position: 'relative', paddingLeft: '20px' }}>
+            <div style={{ position: 'absolute', left: '4px', top: '6px', bottom: '6px', width: '1.5px', background: BORDE }} />
+            {ls.map((L, li) => (
+              <div key={li} style={{ position: 'relative', padding: '7px 0' }}>
+                <div style={{ position: 'absolute', left: '-20px', top: '11px', width: '9px', height: '9px', borderRadius: '50%', background: L.precio == null ? '#FAEEDA' : '#fff', border: '1.5px solid ' + (L.precio == null ? '#d9a441' : AZUL) }} />
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 650, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{miles(L.queda)} gal</span>
+                  <span style={{ fontSize: '11.5px', color: L.precio == null ? AMBAR : GRIS }}>
+                    {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del conteo físico' : 'compra ' + corta(L.fecha)}
+                  </span>
+                  {li === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
+                  {esJefeGlobal && !L.inicial && (
+                    <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
+                      style={{ marginLeft: 'auto', fontSize: '12px', padding: '3px 10px', background: '#eef4fb', color: AZUL, border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                      Corregir precio
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {p?.desde && <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '11px' }}>Precio que rige desde {corta(p.desde)}</div>}
+      </div>
+    )
+  }
+
+  // Detalle por lote (FIFO) en tabla · se usa en "Qué se movió".
   function DetalleLote({ tipoId }) {
     const ls = lotes[tipoId] || []
     const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
@@ -858,7 +895,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                           p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
                           <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
                         ]} />
-                        {abierto && <DetalleLote tipoId={s.tipo_id} />}
+                        {abierto && <DetalleQueda tipoId={s.tipo_id} />}
                       </div>
                     )
                   })}
