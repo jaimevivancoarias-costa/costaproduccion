@@ -814,6 +814,26 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
           )}
         </Caja>
 
+        {/* Qué se movió en el período */}
+        <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Qué se movió <span style={{ fontWeight: 400, color: GRIS }}>· {label}</span></div>
+        <Caja>
+          <Fila cabecera gtc={G_MOV} cols={['Diesel', 'Saldo inicio', 'Ingresos', 'Consumo', 'Saldo final']} der={[false, true, true, true, true]} />
+          {tipos.map((t, i) => {
+            const m = movDe(t.id)
+            const ini = Number(m?.saldo_inicial) || 0, ing = Number(m?.ingresos) || 0
+            const con = Number(m?.consumo) || 0, fin = Number(m?.saldo_final) || 0
+            return (
+              <Fila key={t.id} gtc={G_MOV} cebra={i % 2 === 1} der={[false, true, true, true, true]} cols={[
+                <b style={{ fontWeight: 500 }}>{t.nombre}</b>,
+                <span style={{ color: GRIS }}>{miles(ini)}</span>,
+                <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
+                <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
+                <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
+              ]} />
+            )
+          })}
+        </Caja>
+
         {/* Conteos anteriores */}
         <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Conteos anteriores</div>
         {cortes.length === 0 ? (
@@ -842,6 +862,7 @@ const GRES_J = '1.8fr 1fr 1fr 1.1fr'
 const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 const G_CORTE = '1fr 1.4fr 1fr 1fr 1.2fr'
+const G_MOV = '1.6fr 1fr 1fr 1fr 1fr'
 
 const inp = { padding: '9px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY }
 const btnOk = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid #3B6D11', background: '#EAF3DE', color: '#27500A', fontFamily: 'inherit', cursor: 'pointer' }
