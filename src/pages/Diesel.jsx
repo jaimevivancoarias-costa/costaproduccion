@@ -556,9 +556,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       {cargando ? (
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div></Caja>
       ) : sub === 'registro' ? (
-        <RegistroVista />
+        RegistroVista()
       ) : (
-        <BodegaVista />
+        BodegaVista()
       )}
     </div>
   )
@@ -881,7 +881,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                       <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
                       <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
                     ]} />
-                    {esJefe && abierto && <DetalleLote tipoId={t.id} />}
+                    {esJefe && abierto && DetalleLote({ tipoId: t.id })}
                   </div>
                 )
               })}
@@ -909,7 +909,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                           p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
                           <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
                         ]} />
-                        {abierto && <DetalleQueda tipoId={s.tipo_id} />}
+                        {abierto && DetalleQueda({ tipoId: s.tipo_id })}
                       </div>
                     )
                   })}
