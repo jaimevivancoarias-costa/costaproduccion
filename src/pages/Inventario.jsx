@@ -50,7 +50,7 @@ const navBtn = { padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', b
 
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
 const ANCHOS_SALDO_JEFE = '1fr 180px 160px 195px 150px 115px'   // sin "Equivale a" (lo reemplaza el toggle)
-const ANCHOS_SALDO_BOD  = '1.4fr 220px 170px'       // bodeguero: sin dolares ni "Equivale a"
+const ANCHOS_SALDO_BOD  = '1.4fr 220px 160px 160px' // bodeguero: Saldo + Equivalente (sin toggle)
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
@@ -1136,7 +1136,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap',
                       marginBottom: '14px' }}>
           <Seg valor={vista} onCambio={setVista} opciones={[['saldo', 'Cuánto hay'], ['movimientos', 'Qué se movió']]} />
-          {vista === 'saldo' && (
+          {/* El bodeguero ve Saldo + Equivalente en columnas (sin toggle). El jefe mantiene el toggle. */}
+          {vista === 'saldo' && esJefe && (
             <>
               <span style={{ fontSize: '12.5px', color: GRIS }}>Ver en:</span>
               <Seg valor={unidadSaldo} onCambio={setUnidadSaldo}
@@ -1679,8 +1680,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             caja min={esJefe ? '760px' : '620px'}
             columnas={esJefe
               ? ['Insumo', 'Llega / se aplica', 'Saldo', 'Precio', 'Valor', '']
-              : ['Insumo', 'Llega / se aplica', 'Saldo']}
+              : ['Insumo', 'Llega / se aplica', 'Saldo', 'Equivalente']}
             anchos={esJefe ? ANCHOS_SALDO_JEFE : ANCHOS_SALDO_BOD}
+            alinear={esJefe ? undefined : ['left', 'left', 'center', 'center']}
           >
             {filas.filter(f => coincide(f.insumo) && (verSinInv || !esSinInvFila(f)))
                   .sort((a, b) => (esSinInvFila(a) ? 1 : 0) - (esSinInvFila(b) ? 1 : 0))
@@ -1735,10 +1737,22 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     const factor = enUso ? (fac.factor || 1) : 1
                     const uLabel = ((enUso ? (UNIDAD[fac.uApp] || fac.uApp) : (UNIDAD[f.unidad] || f.unidad)) || '').toLowerCase()
                     return (
-                    <Celda derecha fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
+                    <Celda derecha={esJefe} centro={!esJefe} fuerte color={Number(f.saldo) < 0 ? ROJO : NAVY}>
                       <span style={{ fontVariantNumeric: 'tabular-nums' }}>{limpio(Number(f.saldo) * factor)} <span style={{ fontSize: '12px', fontWeight: 400, color: GRIS }}>{uLabel}</span></span>
                       {bajoMin(f) && <span style={{ display: 'block', fontSize: '10px', fontWeight: 500, color: ROJO }}>Bajo mínimo</span>}
                     </Celda>
+                    )
+                  })()}
+                  {/* Bodeguero: columna Equivalente (como se aplica) en vez del toggle */}
+                  {!esJefe && (() => {
+                    const fac = factores[f.insumo_id]
+                    const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
+                    if (!conv) return <Celda centro gris>—</Celda>
+                    const uApp = ((UNIDAD[fac.uApp] || fac.uApp) || '').toLowerCase()
+                    return (
+                      <Celda centro color={AZUL}>
+                        <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{limpio(Number(f.saldo) * (fac.factor || 1))} <span style={{ fontSize: '12px', fontWeight: 400, color: '#a7b4c1' }}>{uApp}</span></span>
+                      </Celda>
                     )
                   })()}
                   {/* Precio (una línea, con plazo corto). Detalle completo al desplegar. */}
@@ -1900,7 +1914,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 // ---------------------------------------------------------------------
 // Piezas de tabla
 // ---------------------------------------------------------------------
-function Tabla({ columnas, anchos, children, caja, min }) {
+function Tabla({ columnas, anchos, children, caja, min, alinear }) {
   const cuerpo = (
     <div style={{ minWidth: min || 'auto' }}>
       <div style={{ display: 'grid', gridTemplateColumns: anchos,
@@ -1909,7 +1923,7 @@ function Tabla({ columnas, anchos, children, caja, min }) {
         {columnas.map((c, i) => (
           <div key={c} style={{ padding: '12px 18px', fontSize: '11px', fontWeight: 500,
                   color: GRIS, letterSpacing: '0.02em', textTransform: 'uppercase',
-                  textAlign: i >= 2 ? 'right' : 'left',
+                  textAlign: alinear ? alinear[i] : (i >= 2 ? 'right' : 'left'),
                   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {c}
           </div>
@@ -1940,13 +1954,13 @@ function Fila({ anchos, children, total }) {
   )
 }
 
-function Celda({ children, derecha, gris, fuerte, color }) {
+function Celda({ children, derecha, centro, gris, fuerte, color }) {
   return (
     <div style={{ padding: '13px 18px', fontSize: '13px',
-                  textAlign: derecha ? 'right' : 'left',
+                  textAlign: centro ? 'center' : derecha ? 'right' : 'left',
                   color: color || (gris ? GRIS : NAVY),
                   fontWeight: fuerte ? 500 : 400,
-                  fontVariantNumeric: derecha ? 'tabular-nums' : 'normal' }}>
+                  fontVariantNumeric: (derecha || centro) ? 'tabular-nums' : 'normal' }}>
       {children}
     </div>
   )
