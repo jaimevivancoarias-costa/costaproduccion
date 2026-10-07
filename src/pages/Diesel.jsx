@@ -80,19 +80,20 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
   const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
   const [cortesAbiertos, setCortesAbiertos] = useState({})  // conteo_id -> abierto
-  const [nombresU, setNombresU] = useState({})          // id usuario -> nombre (quién contó)
+  const [nombresU, setNombresU] = useState({})          // id usuario -> nombre
+  const [pedExp, setPedExp] = useState(null)            // ingreso expandido (quién registró)
 
   const puedeRegistrar = !soloLectura
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }, { data: usuarios }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hastaSaldo }),
       supabase.schema('produccion').rpc('fn_movimiento_diesel', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').from('diesel_pedido')
-        .select('id, tipo_id, galones, fecha, estado').eq('finca_id', finca.id)
+        .select('id, tipo_id, galones, fecha, estado, solicitado_por, solicitado_en').eq('finca_id', finca.id)
         .gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }),
       supabase.schema('produccion').from('diesel_consumo')
         .select('id, tipo_id, galones, fecha').eq('finca_id', finca.id)
@@ -111,7 +112,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       supabase.schema('produccion').from('diesel_precio')
         .select('id, tipo_id, finca_id, precio_galon, vigente_desde, vigente_hasta')
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`).order('vigente_desde', { ascending: true }),
+      supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
     ])
+    const nu = {}; (usuarios || []).forEach(x => { nu[x.id] = x.nombre }); setNombresU(nu)
     setUserId(u?.user?.id || null)
     setTipos(tp || [])
     setSaldos(sal || [])
@@ -659,16 +662,27 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               <Caja>
                 {pedidos.map(p => {
                   const pr = precios[p.tipo_id]
+                  const ab = pedExp === p.id
+                  const quien = nombresU[p.solicitado_por]
                   return (
-                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
-                      <span>
-                        <span style={{ fontWeight: 500 }}>{nombreTipo(p.tipo_id)}</span>
-                        <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(p.fecha)}{esJefe && pr ? ` · ${precio6(pr.precio)}/gal` : ''}</span>
-                      </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <span style={{ color: VERDE, fontVariantNumeric: 'tabular-nums' }}>+{miles(Number(p.galones))} gal</span>
-                        <Acciones tabla="diesel_pedido" row={p} />
-                      </span>
+                    <div key={p.id} style={{ borderBottom: '0.5px solid #f1f6f9' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', fontSize: '14px' }}>
+                        <span onClick={() => setPedExp(ab ? null : p.id)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                          <span style={{ color: '#aab8c6', fontSize: '11px', marginRight: '7px' }}>{ab ? '▾' : '▸'}</span>
+                          <span style={{ fontWeight: 500 }}>{nombreTipo(p.tipo_id)}</span>
+                          <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(p.fecha)}{esJefe && pr ? ` · ${precio6(pr.precio)}/gal` : ''}</span>
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <span style={{ color: VERDE, fontVariantNumeric: 'tabular-nums' }}>+{miles(Number(p.galones))} gal</span>
+                          <Acciones tabla="diesel_pedido" row={p} />
+                        </span>
+                      </div>
+                      {ab && (
+                        <div style={{ background: '#f8fafc', padding: '10px 16px 12px 33px', fontSize: '12.5px', color: GRIS }}>
+                          Ingresó: <b style={{ color: NAVY, fontWeight: 600 }}>{quien || 'No registrado'}</b>
+                          {p.solicitado_en ? ` · el ${corta(p.solicitado_en.slice(0, 10))}` : ''}
+                        </div>
+                      )}
                     </div>
                   )
                 })}
