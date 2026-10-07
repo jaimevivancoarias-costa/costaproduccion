@@ -1,13 +1,17 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, sumarDias, corta, semanaISO, numDec, miles } from '../lib/fechas'
+import { hoyISO, sumarDias, corta, semanaISO, lunesDe, miles, numDec, dinero, MESES } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
+import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import BotonDescargar from '../components/BotonDescargar'
 
-// Registro de diesel · semanal, separado del registro diario.
-// Flujo: el bodeguero pide galones -> el jefe aprueba -> recién ahí suma
-// al saldo. El consumo se reporta por semana (total por finca y tipo).
-// Corregir/borrar: el jefe lo hace directo; el bodeguero pide permiso y
-// le llega al jefe a la campana (solicitud_correccion).
+// Diesel unificado · dos subsecciones:
+//  - Registro: ingresos y consumos (lo del día) con resumen del período y
+//    desglose. El bodeguero registra solo galones; el precio lo pone el jefe
+//    (pop-up al ingresar) y nunca lo ve el bodeguero.
+//  - Bodega: cuánto hay (galones, y para el jefe precio/valor), contar la
+//    bodega y los conteos anteriores.
+// El navegador con chips (Esta semana / Este mes / Mes pasado) manda el período.
 
 const NAVY = '#022847'
 const AZUL = '#0D6CB0'
@@ -16,70 +20,135 @@ const GRIS = '#7d8fa0'
 const VERDE = '#0F6E56'
 const AMBAR = '#BA7517'
 const ROJO = '#A32D2D'
-// Precio del galón con hasta 6 decimales (como el Catálogo de diesel).
-const precio6 = n => '$' + (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
+const precio6 = n => (n === null || n === undefined || n === '') ? '' :
+  '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 6 })
 
-export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, onCambio }) {
-  const domingo = sumarDias(lunes, 6)
+// --- Período (semana / mes) ---
+const primerDia = (y, m) => `${y}-${String(m).padStart(2, '0')}-01`
+const ultimoDia = (y, m) => { const d = new Date(y, m, 0).getDate(); return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` }
+const mesDe = iso => ({ y: +iso.slice(0, 4), m: +iso.slice(5, 7) })
+function rangoDe(tipo, ancla) {
+  if (tipo === 'semana') {
+    const l = lunesDe(ancla), d = sumarDias(l, 6)
+    return { desde: l, hasta: d, label: `Semana ${semanaISO(l).semana} · del ${corta(l)} al ${corta(d)}` }
+  }
+  const { y, m } = mesDe(ancla)
+  return { desde: primerDia(y, m), hasta: ultimoDia(y, m), label: `${MESES[m - 1]} ${y}` }
+}
+function moverAncla(tipo, ancla, dir) {
+  if (tipo === 'semana') return sumarDias(lunesDe(ancla), dir * 7)
+  const { y, m } = mesDe(ancla); const nm = m + dir
+  const ny = y + Math.floor((nm - 1) / 12); const mm = ((nm - 1) % 12 + 12) % 12 + 1
+  return primerDia(ny, mm)
+}
+function periodoInicial(tipo) {
+  const h = hoyISO()
+  if (tipo === 'semana') return { tipo, ancla: lunesDe(h) }
+  if (tipo === 'mespasado') { const { y, m } = mesDe(h); return { tipo: 'mes', ancla: moverAncla('mes', primerDia(y, m), -1) } }
+  const { y, m } = mesDe(h); return { tipo: 'mes', ancla: primerDia(y, m) }
+}
+
+export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCambio }) {
+  const [sub, setSub] = useState('registro')           // 'registro' | 'bodega'
+  const [per, setPer] = useState(() => periodoInicial('semana'))
+  const { desde, hasta, label } = rangoDe(per.tipo, per.ancla)
+  const hastaSaldo = hasta < hoyISO() ? hasta : hoyISO()
+
   const [tipos, setTipos] = useState([])
-  const [saldos, setSaldos] = useState({})
+  const [saldos, setSaldos] = useState([])              // fn_saldo_diesel (bodega, a hastaSaldo)
+  const [movs, setMovs] = useState([])                  // fn_movimiento_diesel (resumen del período)
   const [pedidos, setPedidos] = useState([])
   const [consumos, setConsumos] = useState([])
-  const [solis, setSolis] = useState([])        // correcciones pendientes de esta finca (diesel)
+  const [solis, setSolis] = useState([])
+  const [precios, setPrecios] = useState({})
   const [userId, setUserId] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [form, setForm] = useState(null)
-  const [precios, setPrecios] = useState({})    // tipo_id -> { precio, desde } (catálogo vigente)
-  const [revPrecio, setRevPrecio] = useState(null)  // pop-up verificar precio al registrar el pedido
+  const [revPrecio, setRevPrecio] = useState(null)
+
+  // Bodega / conteo
+  const [primeraVez, setPrimeraVez] = useState(false)
+  const [inicial, setInicial] = useState(null)
+  const [conteo, setConteo] = useState(null)
+  const [guardando, setGuardando] = useState(false)
+  const [cortes, setCortes] = useState([])              // conteos anteriores con su diferencia
 
   const puedeRegistrar = !soloLectura
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: pe }, { data: co }, { data: sc }, { data: pr }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
-      // "Saldo actual" = hoy (o el fin de la semana vista si es futura), no
-      // el domingo de una semana pasada.
-      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: (domingo < hoyISO() ? domingo : hoyISO()) }),
+      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hastaSaldo }),
+      supabase.schema('produccion').rpc('fn_movimiento_diesel', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').from('diesel_pedido')
         .select('id, tipo_id, galones, fecha, estado').eq('finca_id', finca.id)
-        .gte('fecha', lunes).lte('fecha', domingo).order('solicitado_en', { ascending: false }),
+        .gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }),
       supabase.schema('produccion').from('diesel_consumo')
         .select('id, tipo_id, galones, fecha').eq('finca_id', finca.id)
-        .gte('fecha', lunes).lte('fecha', domingo).order('fecha', { ascending: false }),
+        .gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }),
       supabase.schema('produccion').from('solicitud_correccion')
         .select('id, tabla, registro_id, valor_propuesto').eq('finca_id', finca.id)
         .in('tabla', ['diesel_pedido', 'diesel_consumo']).eq('estado', 'pendiente'),
       supabase.schema('produccion').from('diesel_precio')
         .select('tipo_id, finca_id, precio_galon, vigente_desde').is('vigente_hasta', null)
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
+      supabase.schema('produccion').from('diesel_conteo')
+        .select('id', { count: 'exact', head: true }).eq('finca_id', finca.id),
     ])
     setUserId(u?.user?.id || null)
     setTipos(tp || [])
-    const s = {}; (sal || []).forEach(r => { s[r.tipo_id] = r }); setSaldos(s)
+    setSaldos(sal || [])
+    setMovs(mv || [])
     setPedidos(pe || [])
     setConsumos(co || [])
     setSolis(sc || [])
-    // Precio del catálogo que rige por tipo (la de la finca gana a la general).
+    setPrimeraVez((count || 0) === 0)
     const pm = {}
     ;(pr || []).forEach(r => {
       const esFinca = !!r.finca_id
       if (pm[r.tipo_id] == null || esFinca) pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
     })
     setPrecios(pm)
+
+    // Inventario inicial existente (para editarlo).
+    const { data: iniC } = await supabase.schema('produccion').from('diesel_conteo')
+      .select('id, fecha').eq('finca_id', finca.id).eq('es_inicial', true)
+      .order('fecha', { ascending: true }).limit(1).maybeSingle()
+    if (iniC) {
+      const { data: lin } = await supabase.schema('produccion').from('diesel_conteo_linea')
+        .select('tipo_id, galones').eq('conteo_id', iniC.id)
+      const vals = {}; (lin || []).forEach(l => { vals[l.tipo_id] = String(Number(l.galones)) })
+      setInicial({ id: iniC.id, fecha: iniC.fecha, valores: vals })
+    } else setInicial(null)
+
+    // Conteos anteriores (cortes): los últimos, con su diferencia vs lo que
+    // el sistema decía ese día (teórico = fn_saldo_diesel a esa fecha).
+    const { data: cts } = await supabase.schema('produccion').from('diesel_conteo')
+      .select('id, fecha, es_inicial, diesel_conteo_linea(tipo_id, galones)')
+      .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(6)
+    const teos = await Promise.all((cts || []).map(c =>
+      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: c.fecha })))
+    const lista = (cts || []).map((c, i) => {
+      const teo = {}; (teos[i]?.data || []).forEach(r => { teo[r.tipo_id] = Number(r.saldo) })
+      const lineas = (c.diesel_conteo_linea || []).map(l => {
+        const contado = Number(l.galones); const sistema = teo[l.tipo_id] || 0
+        return { tipo_id: l.tipo_id, contado, sistema, dif: contado - sistema }
+      })
+      return { id: c.id, fecha: c.fecha, esInicial: !!c.es_inicial, lineas }
+    })
+    setCortes(lista)
     setCargando(false)
-  }, [finca.id, lunes, domingo])
+  }, [finca.id, desde, hasta, hastaSaldo])
 
   useEffect(() => { cargar() }, [cargar])
 
-  const galSemana = (lista, tipoId, estado) => lista
-    .filter(x => x.tipo_id === tipoId && (estado === undefined || x.estado === estado))
-    .reduce((t, x) => t + Number(x.galones), 0)
-
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
+  const movDe = id => movs.find(m => m.tipo_id === id)
   const solDe = (tabla, id) => solis.find(x => x.tabla === tabla && x.registro_id === id)
+  const valorTotal = saldos.reduce((t, s) => { const p = precios[s.tipo_id]; return t + Number(s.saldo) * (p ? p.precio : 0) }, 0)
 
   async function refrescar() { await cargar(); onCambio && onCambio() }
 
@@ -88,14 +157,20 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Pon los galones.' }); return }
     if (!form.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
     const fecha = form.fecha || hoyISO()
-    if (form.modo === 'pedido') {
-      // Antes de registrar el ingreso, abrir el pop-up para verificar el precio
-      // del catálogo (cambia mensualmente). Se guarda desde ahí.
-      const p = precios[form.tipoId]
-      setRevPrecio({ tipoId: form.tipoId, galones: gal, fecha,
-                     precioActual: p ? p.precio : null,
-                     precio: p ? String(p.precio) : '' })
-      return
+    if (form.modo === 'ingreso') {
+      // El jefe verifica/actualiza el precio del catálogo con un pop-up.
+      // El bodeguero no ve ni pone precio: se registra directo.
+      if (esJefe) {
+        const p = precios[form.tipoId]
+        setRevPrecio({ tipoId: form.tipoId, galones: gal, fecha,
+                       precioActual: p ? p.precio : null, precio: p ? String(p.precio) : '' })
+        return
+      }
+      const { error } = await supabase.schema('produccion').from('diesel_pedido')
+        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha, estado: 'aprobado' })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
+      setAviso({ tipo: 'ok', texto: 'Ingreso registrado.' })
+      setForm(null); await refrescar(); return
     }
     const { error } = await supabase.schema('produccion').from('diesel_consumo')
       .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha })
@@ -104,16 +179,12 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     setForm(null); await refrescar()
   }
 
-  // Confirmar el ingreso de diesel: si el precio del catálogo cambió, lo
-  // actualiza (rige desde la fecha del ingreso) y recién ahí registra el pedido.
-  async function guardarPedido() {
+  async function guardarIngreso() {
     const r = revPrecio
     const nuevo = numDec(r.precio)
     if (!(nuevo > 0)) { setAviso({ tipo: 'error', texto: 'Pon el precio del galón.' }); return }
     const cambio = r.precioActual == null || Math.abs(nuevo - r.precioActual) > 1e-9
     if (cambio) {
-      // Catálogo: una sola fila vigente. Borra las del mismo día/posterior,
-      // cierra la anterior y mete la nueva (mismo patrón que CatalogoDiesel).
       await supabase.schema('produccion').from('diesel_precio')
         .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).gte('vigente_desde', r.fecha)
       await supabase.schema('produccion').from('diesel_precio')
@@ -127,11 +198,11 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
       .insert({ finca_id: finca.id, tipo_id: r.tipoId, galones: r.galones, fecha: r.fecha,
                 estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString() })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: cambio ? 'Pedido registrado y precio actualizado en el catálogo.' : 'Pedido registrado.' })
+    setAviso({ tipo: 'ok', texto: cambio ? 'Ingreso registrado y precio actualizado en el catálogo.' : 'Ingreso registrado.' })
     setRevPrecio(null); setForm(null); await refrescar()
   }
 
-  // --- Jefe: edita/borra directo ---
+  // --- Jefe edita/borra directo; bodeguero pide permiso ---
   async function jefeEditar(tabla, row) {
     const txt = window.prompt('Nuevos galones:', String(row.galones))
     if (txt == null) return
@@ -139,22 +210,16 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Galones no válidos.' }); return }
     const { data, error } = await supabase.schema('produccion').from(tabla).update({ galones: gal }).eq('id', row.id).select('id')
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    if (!data || data.length === 0) {
-      setAviso({ tipo: 'error', texto: 'No se corrigió: no tienes permiso sobre este registro (revisar RLS de diesel).' }); return
-    }
+    if (!data || data.length === 0) { setAviso({ tipo: 'error', texto: 'No se corrigió: sin permiso (revisar RLS de diesel).' }); return }
     setAviso({ tipo: 'ok', texto: 'Corregido.' }); await refrescar()
   }
   async function jefeBorrar(tabla, row) {
     if (!window.confirm(`¿Borrar este registro de ${miles(Number(row.galones))} gal?`)) return
     const { data, error } = await supabase.schema('produccion').from(tabla).delete().eq('id', row.id).select('id')
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
-    if (!data || data.length === 0) {
-      setAviso({ tipo: 'error', texto: 'No se borró: no tienes permiso sobre este registro (revisar RLS de diesel).' }); return
-    }
+    if (!data || data.length === 0) { setAviso({ tipo: 'error', texto: 'No se borró: sin permiso (revisar RLS de diesel).' }); return }
     setAviso({ tipo: 'ok', texto: 'Borrado.' }); await refrescar()
   }
-
-  // --- Bodeguero: pide permiso (solicitud_correccion) ---
   async function pedirCorregir(tabla, row) {
     const txt = window.prompt('¿A cuántos galones debería corregirse?', String(row.galones))
     if (txt == null) return
@@ -176,18 +241,93 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Pedido de borrado enviado. El jefe lo revisará.' }); await refrescar()
   }
-
   async function resolver(sol, aprobar) {
     const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Corrección rechazada.' }); await refrescar()
   }
 
-  // Acciones por fila según rol (jefe edita/borra; bodeguero pide permiso).
+  // --- Conteo de la bodega ---
+  async function guardarConteo() {
+    setGuardando(true); setAviso(null)
+    if (conteo.inicialId) {
+      const { error: eF } = await supabase.schema('produccion').from('diesel_conteo').update({ fecha: conteo.fecha }).eq('id', conteo.inicialId)
+      if (eF) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo. ' + eF.message }); return }
+      await supabase.schema('produccion').from('diesel_conteo_linea').delete().eq('conteo_id', conteo.inicialId)
+      const lin = tipos.map(t => ({ conteo_id: conteo.inicialId, tipo_id: t.id, galones: numDec(conteo.valores[t.id] || '') || 0 }))
+      const { error: eL } = await supabase.schema('produccion').from('diesel_conteo_linea').insert(lin)
+      if (eL) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudieron guardar las líneas. ' + eL.message }); return }
+      setGuardando(false); setConteo(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial actualizado.' }); await refrescar(); return
+    }
+    const { data: cab, error: e1 } = await supabase.schema('produccion').from('diesel_conteo')
+      .insert({ finca_id: finca.id, fecha: conteo.fecha, es_inicial: primeraVez }).select('id').single()
+    if (e1) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e1.message }); return }
+    const lineas = tipos.map(t => ({ conteo_id: cab.id, tipo_id: t.id, galones: numDec(conteo.valores[t.id] || '') || 0 }))
+    const { error: e2 } = await supabase.schema('produccion').from('diesel_conteo_linea').insert(lineas)
+    if (e2) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudieron guardar las líneas. ' + e2.message }); return }
+    setGuardando(false); setConteo(null)
+    setAviso({ tipo: 'ok', texto: primeraVez ? 'Inventario inicial cargado.' : 'Conteo guardado.' }); await refrescar()
+  }
+
+  // --- Reporte de bodega (jefe) ---
+  function construirReporte() {
+    const gal = v => miles(Number(v) || 0)
+    const mas = v => { const x = Number(v) || 0; return x > 0.001 ? '+' + gal(x) : '—' }
+    const menos = v => { const x = Number(v) || 0; return x > 0.001 ? '−' + gal(x) : '—' }
+    const conSigno = v => { const x = Number(v) || 0; if (Math.abs(x) < 0.001) return '0'; return (x > 0 ? '+' : '−') + gal(Math.abs(x)) }
+    const movById = {}; (movs || []).forEach(m => { movById[m.tipo_id] = m })
+    const sById = {}; (saldos || []).forEach(s => { sById[s.tipo_id] = s })
+    const ultCorte = cortes[0]
+    const contById = {}; if (ultCorte) ultCorte.lineas.forEach(l => { contById[l.tipo_id] = l })
+    const ids = [...new Set([...(saldos || []).map(s => s.tipo_id), ...(movs || []).map(m => m.tipo_id)])]
+    let totIng = 0, totCon = 0, totSaldo = 0, totValor = 0, totDif = 0, nDesc = 0
+    const filasRep = []
+    ids.forEach(id => {
+      const s = sById[id]; const m = movById[id]
+      const nombre = (s && s.tipo) || (m && m.tipo) || ''
+      const saldoHoy = s ? Number(s.saldo) : (m ? Number(m.saldo_final) : 0)
+      const p = precios[id]; const valor = p ? saldoHoy * p.precio : 0
+      const ct = contById[id]; const contado = ct ? ct.contado : null; const dif = ct ? ct.dif : null
+      totIng += Number(m?.ingresos) || 0; totCon += Number(m?.consumo) || 0; totSaldo += saldoHoy; totValor += valor
+      if (dif != null) { totDif += dif; if (Math.abs(dif) > 0.001) nDesc++ }
+      filasRep.push({
+        nombre, inicial: gal(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), consumo: menos(m?.consumo),
+        saldoHoy: gal(saldoHoy), precio: p ? precio6(p.precio) : '—', precioDesde: p?.desde ? corta(p.desde) : '',
+        valor: dinero(valor), contado: contado != null ? gal(contado) : '',
+        contadoInfo: ultCorte?.fecha ? corta(ultCorte.fecha) + (ultCorte.esInicial ? ' (inicial)' : '') : '',
+        dif: dif != null ? conSigno(dif) : '',
+      })
+    })
+    filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
+    const hayConteo = filasRep.some(f => f.contado !== '')
+    const columnas = [
+      { titulo: 'Diesel', campo: 'nombre' },
+      { titulo: 'Inicial', der: true, campo: 'inicial' },
+      { titulo: 'Ingresos', der: true, campo: 'ingresos' },
+      { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Saldo (gal)', der: true, campo: 'saldoHoy', destacar: true },
+      ...(esJefe ? [{ titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' }, { titulo: 'Valor', der: true, campo: 'valor' }] : []),
+      ...(hayConteo ? [{ titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' }, { titulo: 'Dif.', der: true, campo: 'dif' }] : []),
+    ]
+    const total = { nombre: 'Total', inicial: '', ingresos: '+' + gal(totIng), consumo: totCon ? '−' + gal(totCon) : '—',
+      saldoHoy: gal(totSaldo), precio: '', precioDesde: '', valor: dinero(totValor), contado: '', contadoInfo: '',
+      dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + gal(Math.abs(totDif)) }
+    const cards = [
+      ...(esJefe ? [{ k: 'Valor del diesel', v: dinero(totValor) }] : [{ k: 'Saldo hoy (gal)', v: gal(totSaldo) }]),
+      { k: 'Ingresos del rango', v: gal(totIng) },
+      { k: 'Consumo del rango', v: gal(totCon) },
+      hayConteo ? { k: 'Con descuadre', v: '' + nDesc, alerta: nDesc > 0 } : { k: 'Saldo hoy (gal)', v: gal(totSaldo) },
+    ]
+    return { titulo: 'Reporte de Bodega — Diesel', finca: finca.nombre, categoria: 'Diesel',
+      meta: [{ k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` }, { k: 'Impreso', v: corta(hoyISO()) }],
+      cards, columnas, filas: filasRep, total }
+  }
+  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
+  function exportarPDF() { if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' }) }
+
   function Acciones({ tabla, row }) {
     if (!puedeRegistrar) return null
-    const yaPidio = solDe(tabla, row.id)
-    if (yaPidio) return <span style={{ fontSize: '12px', padding: '3px 10px', borderRadius: '20px', background: '#FAEEDA', color: '#854F0B' }}>Cambio enviado</span>
+    if (solDe(tabla, row.id)) return <span style={{ fontSize: '12px', padding: '3px 10px', borderRadius: '20px', background: '#FAEEDA', color: '#854F0B' }}>Cambio enviado</span>
     if (esJefe) return (
       <span style={{ display: 'flex', gap: '6px' }}>
         <button onClick={() => jefeEditar(tabla, row)} style={btnGhost}>Editar</button>
@@ -201,6 +341,17 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
       </span>
     )
   }
+
+  const chips = [['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado']]
+  const chipActivo = (() => {
+    const ini = periodoInicial(per.tipo === 'mes' ? 'mes' : per.tipo)
+    if (per.tipo === 'semana' && per.ancla === periodoInicial('semana').ancla) return 'semana'
+    if (per.tipo === 'mes') {
+      if (per.ancla === periodoInicial('mes').ancla) return 'mes'
+      if (per.ancla === periodoInicial('mespasado').ancla) return 'mespasado'
+    }
+    return null
+  })()
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1080px' }}>
@@ -217,8 +368,7 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
             <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Precio por galón</div>
-                <CampoNumero maxDec={6} autoFocus value={revPrecio.precio} onChange={v => setRevPrecio(x => ({ ...x, precio: v }))}
-                  style={{ ...inp, width: '150px', textAlign: 'right' }} />
+                <CampoNumero maxDec={6} autoFocus value={revPrecio.precio} onChange={v => setRevPrecio(x => ({ ...x, precio: v }))} style={{ ...inp, width: '150px', textAlign: 'right' }} />
               </div>
               <div style={{ fontSize: '12px', color: GRIS, paddingBottom: '9px' }}>
                 {revPrecio.precioActual != null ? <>catálogo {precio6(revPrecio.precioActual)}</> : 'sin precio en catálogo'}
@@ -228,165 +378,190 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
               {cambio ? `Cambiaste el precio → se actualizará en el catálogo y regirá desde ${corta(revPrecio.fecha)}.` : 'Si el precio sigue igual, solo confirma.'}
             </div>
             <div style={{ display: 'flex', gap: '9px' }}>
-              <Btn primario onClick={guardarPedido}>Guardar ingreso</Btn>
+              <Btn primario onClick={guardarIngreso}>Guardar ingreso</Btn>
               <Btn onClick={() => setRevPrecio(null)}>Volver</Btn>
             </div>
           </div>
         </div>
         )
       })()}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
+
+      {/* Encabezado: título + navegador */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: 0 }}>Diesel</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-          <BtnMini onClick={() => setLunes(sumarDias(lunes, -7))}>‹</BtnMini>
-          <span style={{ fontSize: '13px', color: GRIS, minWidth: '210px', textAlign: 'center' }}>
-            Semana {semanaISO(lunes).semana} · del {corta(lunes)} al {corta(domingo)}
-          </span>
-          <BtnMini onClick={() => setLunes(sumarDias(lunes, 7))}>›</BtnMini>
+          <BtnMini onClick={() => setPer(p => ({ ...p, ancla: moverAncla(p.tipo, p.ancla, -1) }))}>‹</BtnMini>
+          <span style={{ fontSize: '13px', color: GRIS, minWidth: '210px', textAlign: 'center' }}>{label}</span>
+          <BtnMini onClick={() => setPer(p => ({ ...p, ancla: moverAncla(p.tipo, p.ancla, 1) }))}>›</BtnMini>
         </div>
+      </div>
+
+      {/* Chips de período */}
+      <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        {chips.map(([id, txt]) => {
+          const on = chipActivo === id
+          return (
+            <button key={id} onClick={() => setPer(periodoInicial(id))} style={{
+              fontSize: '13px', cursor: 'pointer', padding: '7px 15px', borderRadius: '30px', fontFamily: 'inherit', fontWeight: 500,
+              border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? AZUL : 'white', color: on ? 'white' : GRIS }}>{txt}</button>
+          )
+        })}
+      </div>
+
+      {/* Sub-pestañas */}
+      <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, marginBottom: '18px' }}>
+        {[['registro', 'Registro'], ['bodega', 'Bodega']].map(([id, txt]) => (
+          <button key={id} onClick={() => setSub(id)} style={{
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14.5px', fontWeight: sub === id ? 600 : 500,
+            padding: '10px 20px 12px', background: 'none', color: sub === id ? NAVY : GRIS,
+            borderBottom: '2px solid ' + (sub === id ? AZUL : 'transparent'), marginBottom: '-1px' }}>{txt}</button>
+        ))}
       </div>
 
       {aviso && (
         <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
-                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
-                      color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
+                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE', color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
       )}
 
       {cargando ? (
         <Caja><div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div></Caja>
+      ) : sub === 'registro' ? (
+        <RegistroVista />
       ) : (
-        <>
-          <Caja>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr', gap: '10px',
-                          padding: '11px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb',
-                          fontSize: '12px', color: GRIS }}>
-              <span>Diesel</span>
-              <span style={{ textAlign: 'right' }}>Saldo al inicio</span>
-              <span style={{ textAlign: 'right' }}>Pedidos (sem)</span>
-              <span style={{ textAlign: 'right' }}>Consumo (sem)</span>
-              <span style={{ textAlign: 'right' }}>Saldo (gal)</span>
+        <BodegaVista />
+      )}
+    </div>
+  )
+
+  // ====================== REGISTRO ======================
+  function RegistroVista() {
+    return (
+      <>
+        {puedeRegistrar && (
+          <Caja estilo={{ marginBottom: '14px' }}>
+            <div style={{ padding: '14px 16px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600 }}>Registrar</div>
+              <div style={{ fontSize: '12.5px', color: GRIS, marginTop: '2px', marginBottom: '12px' }}>
+                {esJefe ? 'El diesel que llega o que se consume.' : 'Registra solo los galones. El precio lo pone el jefe.'}
+              </div>
+              {!form ? (
+                <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap' }}>
+                  <Btn primario onClick={() => setForm({ modo: 'ingreso', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>+ Registrar ingreso</Btn>
+                  <Btn onClick={() => setForm({ modo: 'consumo', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>Registrar consumo</Btn>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontSize: '13.5px', fontWeight: 500, marginBottom: '11px' }}>
+                    {form.modo === 'ingreso' ? 'Nuevo ingreso de diesel' : 'Registrar consumo'}
+                  </div>
+                  <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <Campo label="Tipo">
+                      <select value={form.tipoId} onChange={e => setForm(f => ({ ...f, tipoId: e.target.value }))} style={{ ...inp, width: '170px' }}>
+                        {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                      </select>
+                    </Campo>
+                    <Campo label="Galones">
+                      <CampoNumero value={form.galones} placeholder="ej. 200" onChange={v => setForm(f => ({ ...f, galones: v }))} style={{ ...inp, width: '110px', textAlign: 'right' }} />
+                    </Campo>
+                    <Campo label="Fecha">
+                      <input type="date" value={form.fecha} max={hoyISO()} onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} style={{ ...inp, width: '160px' }} />
+                    </Campo>
+                    <Btn primario onClick={guardarForm}>{form.modo === 'ingreso' ? 'Guardar ingreso' : 'Guardar consumo'}</Btn>
+                    <Btn onClick={() => setForm(null)}>Cancelar</Btn>
+                  </div>
+                  {form.modo === 'ingreso' && esJefe && (
+                    <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '10px' }}>Al guardar verás el pop-up para confirmar/actualizar el precio del catálogo.</div>
+                  )}
+                </div>
+              )}
             </div>
-            {tipos.map(t => {
-              const ped = galSemana(pedidos, t.id)
-              const con = galSemana(consumos, t.id)
-              const saldo = Number(saldos[t.id]?.saldo || 0)
-              // Saldo al inicio = saldo del fin de la semana menos lo que entró y más
-              // lo que salió. Así incluye un inventario inicial que caiga dentro de
-              // la semana y la fila SIEMPRE cuadra (inicio + pedidos − consumo = saldo).
-              const ini = saldo - ped + con
-              return (
-                <div key={t.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1fr 1fr 1fr', gap: '10px',
-                        padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9', alignItems: 'center', fontSize: '14px' }}>
-                  <span style={{ fontWeight: 500 }}>{t.nombre}
-                    <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '7px' }}>diesel</span></span>
-                  <span style={{ textAlign: 'right', color: GRIS }}>{miles(ini)}</span>
-                  <span style={{ textAlign: 'right', color: ped ? VERDE : '#c3d0db' }}>{ped ? '+' + miles(ped) : '—'}</span>
-                  <span style={{ textAlign: 'right', color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>
-                  <span style={{ textAlign: 'right', fontWeight: 500, color: saldo < 0 ? ROJO : NAVY }}>{miles(saldo)}</span>
-                </div>
-              )
-            })}
-            {puedeRegistrar && (
-              <div style={{ display: 'flex', gap: '9px', padding: '13px 16px', flexWrap: 'wrap' }}>
-                <Btn onClick={() => setForm({ modo: 'pedido', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>Registrar pedido</Btn>
-                <Btn onClick={() => setForm({ modo: 'consumo', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>Registrar consumo</Btn>
-              </div>
-            )}
           </Caja>
+        )}
 
-          {form && (
-            <Caja estilo={{ marginTop: '12px' }}>
-              <div style={{ padding: '14px 16px' }}>
-                <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '11px' }}>
-                  {form.modo === 'pedido' ? 'Nuevo pedido de diesel' : 'Registrar consumo de la semana'}
-                </div>
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                  <Campo label="Tipo">
-                    <select value={form.tipoId} onChange={e => setForm(f => ({ ...f, tipoId: e.target.value }))} style={{ ...inp, width: '170px' }}>
-                      {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                    </select>
-                  </Campo>
-                  <Campo label="Galones">
-                    <CampoNumero value={form.galones} placeholder="ej. 200"
-                      onChange={v => setForm(f => ({ ...f, galones: v }))}
-                      style={{ ...inp, width: '110px', textAlign: 'right' }} />
-                  </Campo>
-                  <Campo label="Fecha">
-                    <input type="date" value={form.fecha} max={hoyISO()}
-                      onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} style={{ ...inp, width: '160px' }} />
-                  </Campo>
-                  <Btn primario onClick={guardarForm}>{form.modo === 'pedido' ? 'Enviar pedido' : 'Guardar consumo'}</Btn>
-                  <Btn onClick={() => setForm(null)}>Cancelar</Btn>
-                </div>
-              </div>
+        {/* Resumen del período */}
+        <div style={{ fontSize: '13px', fontWeight: 650, margin: '0 0 10px' }}>Resumen del período</div>
+        <Caja>
+          <Fila cabecera gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true] : [false, true, true]}
+            cols={esJefe ? ['Diesel', 'Ingresos (gal)', 'Consumo (gal)', 'Valor ingresos'] : ['Diesel', 'Ingresos (gal)', 'Consumo (gal)']} />
+          {tipos.map((t, i) => {
+            const m = movDe(t.id); const ing = Number(m?.ingresos) || 0; const con = Number(m?.consumo) || 0
+            const p = precios[t.id]; const valIng = p ? ing * p.precio : 0
+            return (
+              <Fila key={t.id} cebra={i % 2 === 1} gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true] : [false, true, true]} cols={[
+                <b style={{ fontWeight: 600 }}>{t.nombre}</b>,
+                <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
+                <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
+                ...(esJefe ? [<span>{ing ? dinero(valIng) : '—'}</span>] : []),
+              ]} />
+            )
+          })}
+        </Caja>
+
+        {/* Correcciones pendientes · jefe */}
+        {esJefe && solis.length > 0 && (
+          <div style={{ marginTop: '18px' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>Correcciones por aprobar</h3>
+            <Caja>
+              {solis.map(sc => {
+                const borrar = !!sc.valor_propuesto?.borrar
+                return (
+                  <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
+                    <span>
+                      <span style={{ fontWeight: 500 }}>{sc.tabla === 'diesel_pedido' ? 'Ingreso' : 'Consumo'}</span>
+                      <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{borrar ? 'Borrar' : `Corregir a ${miles(Number(sc.valor_propuesto?.galones))} gal`}</span>
+                    </span>
+                    <span style={{ display: 'flex', gap: '6px' }}>
+                      <button onClick={() => resolver(sc, true)} style={btnOk}>Aprobar</button>
+                      <button onClick={() => resolver(sc, false)} style={btnNo}>Rechazar</button>
+                    </span>
+                  </div>
+                )
+              })}
             </Caja>
-          )}
+          </div>
+        )}
 
-          {/* Correcciones pendientes · solo jefe */}
-          {esJefe && solis.length > 0 && (
-            <div style={{ marginTop: '18px' }}>
-              <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>Correcciones por aprobar</h3>
+        {/* Desglose */}
+        <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Desglose</div>
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div style={{ flex: 1, minWidth: '320px' }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Ingresos</div>
+            {pedidos.length === 0 ? (
+              <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Sin ingresos en el período.</div></Caja>
+            ) : (
               <Caja>
-                {solis.map(sc => {
-                  const borrar = !!sc.valor_propuesto?.borrar
+                {pedidos.map(p => {
+                  const pr = precios[p.tipo_id]
                   return (
-                    <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
+                    <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
                       <span>
-                        <span style={{ fontWeight: 500 }}>{sc.tabla === 'diesel_pedido' ? 'Pedido' : 'Consumo'}</span>
-                        <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>
-                          {borrar ? 'Borrar' : `Corregir a ${miles(Number(sc.valor_propuesto?.galones))} gal`}
-                        </span>
+                        <span style={{ fontWeight: 500 }}>{nombreTipo(p.tipo_id)}</span>
+                        <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(p.fecha)}{esJefe && pr ? ` · ${precio6(pr.precio)}/gal` : ''}</span>
                       </span>
-                      <span style={{ display: 'flex', gap: '6px' }}>
-                        <button onClick={() => resolver(sc, true)} style={btnOk}>Aprobar</button>
-                        <button onClick={() => resolver(sc, false)} style={btnNo}>Rechazar</button>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <span style={{ color: VERDE, fontVariantNumeric: 'tabular-nums' }}>+{miles(Number(p.galones))} gal</span>
+                        <Acciones tabla="diesel_pedido" row={p} />
                       </span>
                     </div>
                   )
                 })}
               </Caja>
-            </div>
-          )}
-
-          <div style={{ marginTop: '18px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>Pedidos de la semana</h3>
-            {pedidos.length === 0 ? (
-              <Caja><div style={{ padding: '20px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Sin pedidos esta semana.</div></Caja>
-            ) : (
-              <Caja>
-                {pedidos.map(p => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
-                    <span>
-                      <span style={{ fontWeight: 500 }}>{nombreTipo(p.tipo_id)}</span>
-                      <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(p.fecha)}</span>
-                    </span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ color: VERDE, fontVariantNumeric: 'tabular-nums' }}>+{miles(Number(p.galones))} gal</span>
-                      <Acciones tabla="diesel_pedido" row={p} />
-                    </span>
-                  </div>
-                ))}
-              </Caja>
             )}
           </div>
-
-          <div style={{ marginTop: '18px' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>Consumo de la semana</h3>
+          <div style={{ flex: 1, minWidth: '320px' }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Consumos</div>
             {consumos.length === 0 ? (
-              <Caja><div style={{ padding: '20px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Sin consumo registrado esta semana.</div></Caja>
+              <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Sin consumo en el período.</div></Caja>
             ) : (
               <Caja>
                 {consumos.map(c => (
-                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
+                  <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
                     <span>
                       <span style={{ fontWeight: 500 }}>{nombreTipo(c.tipo_id)}</span>
                       <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{corta(c.fecha)}</span>
                     </span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ color: ROJO, fontVariantNumeric: 'tabular-nums' }}>{miles(Number(c.galones))} gal</span>
+                      <span style={{ color: ROJO, fontVariantNumeric: 'tabular-nums' }}>−{miles(Number(c.galones))} gal</span>
                       <Acciones tabla="diesel_consumo" row={c} />
                     </span>
                   </div>
@@ -394,45 +569,160 @@ export default function Diesel({ finca, esJefe, soloLectura, lunes, setLunes, on
               </Caja>
             )}
           </div>
-        </>
-      )}
-    </div>
-  )
+        </div>
+      </>
+    )
+  }
+
+  // ====================== BODEGA ======================
+  function BodegaVista() {
+    return (
+      <>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
+          {esJefe && (
+            <div style={{ background: '#fbfcfe', border: '1px solid ' + BORDE, borderRadius: '14px', padding: '13px 18px', minWidth: '180px' }}>
+              <div style={{ fontSize: '11.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.04em' }}>Valor del diesel</div>
+              <div style={{ fontSize: '22px', fontWeight: 700, marginTop: '4px', color: NAVY }}>{dinero(valorTotal)}</div>
+            </div>
+          )}
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {esJefe && <BotonDescargar conRango={false} desde={desde} hasta={hasta} setDesde={() => {}} setHasta={() => {}} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            {!soloLectura && !conteo && (
+              <button onClick={() => setConteo({ fecha: hoyISO(), valores: {} })} style={{ background: AZUL, color: 'white', border: '0.5px solid ' + AZUL, borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
+              </button>
+            )}
+            {!soloLectura && !conteo && inicial && (
+              <button onClick={() => setConteo({ fecha: inicial.fecha, valores: { ...inicial.valores }, inicialId: inicial.id })} style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
+                Editar inventario inicial
+              </button>
+            )}
+          </span>
+        </div>
+
+        {conteo && (
+          <Caja estilo={{ marginBottom: '14px' }}>
+            <div style={{ padding: '14px 16px' }}>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <span style={{ fontSize: '14px', fontWeight: 500 }}>{conteo.inicialId ? 'Editar inventario inicial' : primeraVez ? 'Inventario inicial de diesel' : 'Contar la bodega'}</span>
+                <span style={{ fontSize: '12px', color: GRIS }}>Fecha</span>
+                <input type="date" value={conteo.fecha} max={hoyISO()} onChange={e => setConteo(c => ({ ...c, fecha: e.target.value }))} style={inp} />
+              </div>
+              {tipos.map(t => {
+                const sist = Number(saldos.find(s => s.tipo_id === t.id)?.saldo || 0)
+                const v = conteo.valores[t.id]; const contado = numDec(v || '')
+                const dif = v !== undefined && v !== '' ? contado - sist : null
+                return (
+                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '9px 0', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
+                    <span style={{ fontWeight: 500 }}>{t.nombre} {esJefe && <span style={{ fontSize: '12px', color: GRIS, fontWeight: 400 }}>· el sistema dice {miles(sist)} gal</span>}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {dif != null && <span style={{ fontSize: '12px', color: Math.abs(dif) < 0.005 ? VERDE : ROJO }}>{Math.abs(dif) < 0.005 ? 'cuadra' : (dif > 0 ? '+' : '−') + miles(Math.abs(dif)) + ' gal'}</span>}
+                      <CampoNumero maxDec={2} placeholder="0" value={conteo.valores[t.id] || ''} onChange={val => setConteo(c => ({ ...c, valores: { ...c.valores, [t.id]: val } }))} style={{ ...inp, width: '100px', textAlign: 'right' }} />
+                      <span style={{ color: GRIS, fontSize: '13px' }}>gal</span>
+                    </span>
+                  </div>
+                )
+              })}
+              <div style={{ display: 'flex', gap: '9px', marginTop: '12px' }}>
+                <button onClick={guardarConteo} disabled={guardando} style={{ background: AZUL, color: 'white', border: '0.5px solid ' + AZUL, borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
+                  {guardando ? 'Guardando...' : conteo.inicialId ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
+                </button>
+                <button onClick={() => setConteo(null)} style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
+              </div>
+            </div>
+          </Caja>
+        )}
+
+        {/* Lo que hay */}
+        <div style={{ fontSize: '13px', fontWeight: 650, margin: '0 0 10px' }}>Lo que hay en bodega</div>
+        <Caja>
+          {esJefe ? (
+            <>
+              <Fila cabecera gtc={G_HAY_J} cols={['Diesel', 'Saldo (gal)', 'Precio/gal · desde', 'Valor']} der={[false, true, true, true]} />
+              {saldos.map((s, i) => {
+                const p = precios[s.tipo_id]
+                return (
+                  <Fila key={s.tipo_id} gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
+                    <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
+                    <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                    p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
+                    <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
+                  ]} />
+                )
+              })}
+            </>
+          ) : (
+            <>
+              <Fila cabecera gtc={G_HAY} cols={['Diesel', 'Saldo (gal)']} der={[false, true]} />
+              {saldos.map((s, i) => (
+                <Fila key={s.tipo_id} gtc={G_HAY} cebra={i % 2 === 1} der={[false, true]} cols={[
+                  <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
+                  <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                ]} />
+              ))}
+            </>
+          )}
+        </Caja>
+
+        {/* Conteos anteriores */}
+        <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Conteos anteriores</div>
+        {cortes.length === 0 ? (
+          <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay conteos.</div></Caja>
+        ) : (
+          <Caja>
+            <Fila cabecera gtc={G_CORTE} cols={['Fecha', 'Diesel', 'Sistema', 'Contado', 'Diferencia']} der={[false, false, true, true, true]} />
+            {cortes.flatMap((c, ci) => c.lineas.map((l, li) => (
+              <Fila key={c.id + '-' + l.tipo_id} gtc={G_CORTE} cebra={ci % 2 === 1} der={[false, false, true, true, true]} cols={[
+                <span>{corta(c.fecha)}{c.esInicial ? <span style={{ fontSize: '11px', color: GRIS, marginLeft: '5px' }}>inicial</span> : ''}</span>,
+                nombreTipo(l.tipo_id),
+                <span style={{ color: GRIS }}>{miles(l.sistema)}</span>,
+                <span style={{ fontWeight: 500 }}>{miles(l.contado)}</span>,
+                <span style={{ color: Math.abs(l.dif) < 0.005 ? VERDE : ROJO }}>{Math.abs(l.dif) < 0.005 ? '0 · cuadra' : (l.dif > 0 ? '+' : '−') + miles(Math.abs(l.dif)) + ' gal'}</span>,
+              ]} />
+            )))}
+          </Caja>
+        )}
+      </>
+    )
+  }
 }
 
-const inp = { padding: '9px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
-              borderRadius: '9px', background: 'white', color: NAVY }
-const btnOk = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid #3B6D11',
-                background: '#EAF3DE', color: '#27500A', fontFamily: 'inherit', cursor: 'pointer' }
-const btnNo = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid ' + BORDE,
-                background: 'white', color: GRIS, fontFamily: 'inherit', cursor: 'pointer' }
-const btnGhost = { fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: '0.5px solid ' + BORDE,
-                   background: 'white', color: GRIS, fontFamily: 'inherit', cursor: 'pointer' }
-const btnDel = { fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: '0.5px solid #e8c9c9',
-                 background: 'white', color: ROJO, fontFamily: 'inherit', cursor: 'pointer' }
+const GRES = '2fr 1fr 1fr'
+const GRES_J = '1.8fr 1fr 1fr 1.1fr'
+const G_HAY = '2fr 1fr'
+const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
+const G_CORTE = '1fr 1.4fr 1fr 1fr 1.2fr'
+
+const inp = { padding: '9px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY }
+const btnOk = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid #3B6D11', background: '#EAF3DE', color: '#27500A', fontFamily: 'inherit', cursor: 'pointer' }
+const btnNo = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid ' + BORDE, background: 'white', color: GRIS, fontFamily: 'inherit', cursor: 'pointer' }
+const btnGhost = { fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: '0.5px solid ' + BORDE, background: 'white', color: GRIS, fontFamily: 'inherit', cursor: 'pointer' }
+const btnDel = { fontSize: '12px', padding: '5px 10px', borderRadius: '8px', border: '0.5px solid #e8c9c9', background: 'white', color: ROJO, fontFamily: 'inherit', cursor: 'pointer' }
 const btnLink = { fontSize: '12px', border: 'none', background: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }
 
 function Caja({ children, estilo }) {
   return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden', ...estilo }}>{children}</div>
 }
 function Campo({ label, children }) {
-  return (
-    <div>
-      <label style={{ display: 'block', fontSize: '11px', color: GRIS, margin: '0 0 5px' }}>{label}</label>
-      {children}
-    </div>
-  )
+  return <div><label style={{ display: 'block', fontSize: '11px', color: GRIS, margin: '0 0 5px' }}>{label}</label>{children}</div>
 }
 function Btn({ children, onClick, primario }) {
   return (
-    <button onClick={onClick} style={{ background: primario ? AZUL : 'white', color: primario ? 'white' : NAVY,
-      border: '0.5px solid ' + (primario ? AZUL : BORDE), borderRadius: '9px', padding: '9px 15px',
-      fontFamily: 'inherit', fontSize: '13px', fontWeight: primario ? 500 : 400, cursor: 'pointer' }}>{children}</button>
+    <button onClick={onClick} style={{ background: primario ? AZUL : 'white', color: primario ? 'white' : NAVY, border: '0.5px solid ' + (primario ? AZUL : BORDE), borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: primario ? 500 : 400, cursor: 'pointer' }}>{children}</button>
   )
 }
 function BtnMini({ children, onClick }) {
   return (
-    <button onClick={onClick} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px',
-      width: '30px', height: '30px', cursor: 'pointer', color: NAVY, fontSize: '15px', fontFamily: 'inherit' }}>{children}</button>
+    <button onClick={onClick} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', color: NAVY, fontSize: '15px', fontFamily: 'inherit' }}>{children}</button>
+  )
+}
+function Fila({ cols, der = [], cabecera, gtc, cebra }) {
+  const auto = cols.length === 2 ? '1.6fr 1fr' : cols.length === 3 ? '1.4fr 1fr 1fr' : '1.4fr 1fr 1fr 1fr 1fr'
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: gtc || auto, gap: '10px', padding: cabecera ? '11px 16px' : '13px 16px',
+                  borderBottom: '0.5px solid ' + (cabecera ? BORDE : '#f1f6f9'), background: cabecera ? '#f6f9fb' : (cebra ? '#fbfcfe' : 'white'),
+                  fontSize: cabecera ? '12px' : '14px', color: cabecera ? GRIS : NAVY, alignItems: 'center' }}>
+      {cols.map((c, i) => <span key={i} style={{ textAlign: der[i] ? 'right' : 'left', fontVariantNumeric: der[i] ? 'tabular-nums' : 'normal' }}>{c}</span>)}
+    </div>
   )
 }
