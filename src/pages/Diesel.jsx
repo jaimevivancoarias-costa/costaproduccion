@@ -601,14 +601,16 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     </Campo>
                     {form.modo === 'ingreso' && (
                       <>
-                        <Campo label="Número de guía (opcional)">
+                        <Campo label="Número de guía">
                           <input type="text" value={form.guia || ''} placeholder="ej. 001-234567" onChange={e => setForm(f => ({ ...f, guia: e.target.value }))} style={{ ...inp, width: '150px' }} />
                         </Campo>
-                        <Campo label="Proveedor (opcional)">
+                        <Campo label="Proveedor">
                           <input type="text" value={form.proveedor || ''} placeholder="ej. Primax" onChange={e => setForm(f => ({ ...f, proveedor: e.target.value }))} style={{ ...inp, width: '180px' }} />
                         </Campo>
                       </>
                     )}
+                  </div>
+                  <div style={{ display: 'flex', gap: '9px', marginTop: '14px' }}>
                     <Btn primario onClick={guardarForm}>{form.modo === 'ingreso' ? 'Guardar ingreso' : 'Guardar consumo'}</Btn>
                     <Btn onClick={() => setForm(null)}>Cancelar</Btn>
                   </div>
