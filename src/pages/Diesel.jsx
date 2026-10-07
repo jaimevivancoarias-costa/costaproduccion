@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, sumarDias, corta, semanaISO, lunesDe, miles, numDec, dinero, MESES, aFecha } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
+import { Seg } from '../components/controles'
 
 // Diesel unificado · dos subsecciones:
 //  - Registro: ingresos y consumos (lo del día) con resumen del período y
@@ -59,8 +60,9 @@ function periodoInicial(tipo) {
 
 export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCambio }) {
   const [sub, setSub] = useState('registro')           // 'registro' | 'bodega'
-  const [per, setPer] = useState(() => periodoInicial('semana'))
+  const [per, setPer] = useState(() => periodoInicial('mes'))
   const [cal, setCal] = useState(null)                 // popover de rango por fechas { desde, hasta }
+  const [vistaBod, setVistaBod] = useState('hay')      // Bodega: 'hay' | 'movio'
   const { desde, hasta, label } = rangoDe(per)
   const hastaSaldo = hasta < hoyISO() ? hasta : hoyISO()
 
@@ -166,8 +168,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       const entrado = arr.reduce((s, l) => s + l.galones, 0)
       let consumo = entrado - (saldoDe[t.id] ?? entrado)      // = inicial + ingresos − saldo
       if (consumo < 0) consumo = 0
-      arr.forEach(l => { const take = Math.min(l.galones, consumo); l.queda = l.galones - take; consumo -= take })
-      porTipo[t.id] = arr.filter(l => l.queda > 0.0001)
+      arr.forEach(l => { const take = Math.min(l.galones, consumo); l.entro = l.galones; l.consumio = take; l.queda = l.galones - take; consumo -= take })
+      porTipo[t.id] = arr      // todos los lotes (entró/consumió/queda)
     })
     setLotes(porTipo)
 
@@ -711,6 +713,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
           </span>
         </div>
 
+        <div style={{ marginBottom: '14px' }}>
+          <Seg valor={vistaBod} onCambio={setVistaBod} opciones={[['hay', 'Cuánto hay'], ['movio', 'Qué se movió']]} />
+        </div>
+
         {conteo && (
           <Caja estilo={{ marginBottom: '14px' }}>
             <div style={{ padding: '14px 16px' }}>
@@ -744,113 +750,138 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
           </Caja>
         )}
 
-        {/* Lo que hay */}
-        <div style={{ fontSize: '13px', fontWeight: 650, margin: '0 0 10px' }}>Lo que hay en bodega</div>
-        <Caja>
-          {esJefe ? (
-            <>
-              <Fila cabecera gtc={G_HAY_J} cols={['Diesel', 'Saldo (gal)', 'Precio/gal · desde', 'Valor']} der={[false, true, true, true]} />
-              {saldos.map((s, i) => {
-                const p = precios[s.tipo_id]
-                const ls = lotes[s.tipo_id] || []
-                const abierto = expandido === s.tipo_id
+        {vistaBod === 'movio' ? (
+          <>
+            {/* Qué se movió en el período */}
+            <div style={{ fontSize: '13px', fontWeight: 650, margin: '0 0 10px' }}>Qué se movió <span style={{ fontWeight: 400, color: GRIS }}>· {label}</span></div>
+            <Caja>
+              <Fila cabecera gtc={G_MOV} cols={['Diesel', 'Saldo inicio', 'Ingresos', 'Consumo', 'Saldo final']} der={[false, true, true, true, true]} />
+              {tipos.map((t, i) => {
+                const m = movDe(t.id)
+                const ini = Number(m?.saldo_inicial) || 0, ing = Number(m?.ingresos) || 0
+                const con = Number(m?.consumo) || 0, fin = Number(m?.saldo_final) || 0
                 return (
-                  <div key={s.tipo_id}>
-                    <Fila gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
-                      <span onClick={() => setExpandido(abierto ? null : s.tipo_id)} style={{ cursor: 'pointer', userSelect: 'none' }}>
-                        <span style={{ color: '#aab8c6', fontSize: '11px', marginRight: '7px' }}>{abierto ? '▾' : '▸'}</span>
-                        <b style={{ fontWeight: 600 }}>{s.tipo}</b>
-                      </span>,
-                      <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
-                      p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
-                      <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
-                    ]} />
-                    {abierto && (
-                      <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 16px' }}>
-                        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '10px' }}>
-                          Detalle por lote — cuánto queda a cada precio (el más viejo se gasta primero)
-                        </div>
-                        {ls.length === 0 ? (
-                          <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes con saldo.</div>
-                        ) : (
-                          <div style={{ position: 'relative', paddingLeft: '20px' }}>
-                            <div style={{ position: 'absolute', left: '4px', top: '6px', bottom: '6px', width: '1.5px', background: BORDE }} />
-                            {ls.map((L, li) => (
-                              <div key={li} style={{ position: 'relative', padding: '7px 0' }}>
-                                <div style={{ position: 'absolute', left: '-20px', top: '11px', width: '9px', height: '9px', borderRadius: '50%', background: L.precio == null ? '#FAEEDA' : '#fff', border: '1.5px solid ' + (L.precio == null ? '#d9a441' : AZUL) }} />
-                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', flexWrap: 'wrap' }}>
-                                  <span style={{ fontWeight: 650, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{miles(L.queda)} gal</span>
-                                  <span style={{ fontSize: '11.5px', color: L.precio == null ? AMBAR : GRIS }}>
-                                    {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del inventario inicial' : 'compra ' + corta(L.fecha)}
-                                  </span>
-                                  {li === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
-                                  {esJefeGlobal && !L.inicial && (
-                                    <button onClick={() => setCorrLote({ tipoId: s.tipo_id, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
-                                      style={{ marginLeft: 'auto', fontSize: '12px', padding: '3px 10px', background: '#eef4fb', color: AZUL, border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
-                                      Corregir precio
-                                    </button>
-                                  )}
+                  <Fila key={t.id} gtc={G_MOV} cebra={i % 2 === 1} der={[false, true, true, true, true]} cols={[
+                    <b style={{ fontWeight: 500 }}>{t.nombre}</b>,
+                    <span style={{ color: GRIS }}>{miles(ini)}</span>,
+                    <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
+                    <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
+                    <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
+                  ]} />
+                )
+              })}
+            </Caja>
+          </>
+        ) : (
+          <>
+            {/* Lo que hay */}
+            <div style={{ fontSize: '13px', fontWeight: 650, margin: '0 0 10px' }}>Lo que hay en bodega</div>
+            <Caja>
+              {esJefe ? (
+                <>
+                  <Fila cabecera gtc={G_HAY_J} cols={['Diesel', 'Saldo (gal)', 'Precio/gal · desde', 'Valor']} der={[false, true, true, true]} />
+                  {saldos.map((s, i) => {
+                    const p = precios[s.tipo_id]
+                    const ls = lotes[s.tipo_id] || []
+                    const abierto = expandido === s.tipo_id
+                    return (
+                      <div key={s.tipo_id}>
+                        <Fila gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
+                          <span onClick={() => setExpandido(abierto ? null : s.tipo_id)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                            <span style={{ color: '#aab8c6', fontSize: '11px', marginRight: '7px' }}>{abierto ? '▾' : '▸'}</span>
+                            <b style={{ fontWeight: 600 }}>{s.tipo}</b>
+                          </span>,
+                          <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                          p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
+                          <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
+                        ]} />
+                        {abierto && (
+                          <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
+                            <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
+                            <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Se consume del más viejo primero · en galones</div>
+                            {ls.length === 0 ? (
+                              <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes.</div>
+                            ) : (() => {
+                              const tEntro = ls.reduce((a, l) => a + l.entro, 0)
+                              const tCons = ls.reduce((a, l) => a + l.consumio, 0)
+                              const tQueda = ls.reduce((a, l) => a + l.queda, 0)
+                              const tCosto = ls.reduce((a, l) => a + l.consumio * (l.precio || 0), 0)
+                              const primerQueda = ls.findIndex(l => l.queda > 0.0001)
+                              const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                              const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
+                              const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '8px' }
+                              return (
+                                <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
+                                  <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                                  <div style={cab}>Entró</div>
+                                  <div style={cab}>Consumió</div>
+                                  <div style={cab}>Queda</div>
+                                  <div style={cab}>Costo consumido</div>
+                                  {ls.map((L, li) => (
+                                    <Fragment key={li}>
+                                      <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                        <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
+                                        <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
+                                        {li === primerQueda && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                        {esJefeGlobal && !L.inicial && (
+                                          <button onClick={() => setCorrLote({ tipoId: s.tipo_id, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
+                                            style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                            Corregir precio
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div style={cel}>{miles(L.entro)}</div>
+                                      <div style={{ ...cel, color: L.consumio ? ROJO : '#c3d0db' }}>{L.consumio ? miles(L.consumio) : '—'}</div>
+                                      <div style={{ ...cel, fontWeight: 600 }}>{miles(L.queda)}</div>
+                                      <div style={cel}>{dinero(L.consumio * (L.precio || 0))}</div>
+                                    </Fragment>
+                                  ))}
+                                  <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                                  <div style={tot}>{miles(tEntro)}</div>
+                                  <div style={tot}>{miles(tCons)}</div>
+                                  <div style={tot}>{miles(tQueda)}</div>
+                                  <div style={tot}>{dinero(tCosto)}</div>
                                 </div>
-                              </div>
-                            ))}
+                              )
+                            })()}
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                )
-              })}
-            </>
-          ) : (
-            <>
-              <Fila cabecera gtc={G_HAY} cols={['Diesel', 'Saldo (gal)']} der={[false, true]} />
-              {saldos.map((s, i) => (
-                <Fila key={s.tipo_id} gtc={G_HAY} cebra={i % 2 === 1} der={[false, true]} cols={[
-                  <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
-                  <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
-                ]} />
-              ))}
-            </>
-          )}
-        </Caja>
+                    )
+                  })}
+                </>
+              ) : (
+                <>
+                  <Fila cabecera gtc={G_HAY} cols={['Diesel', 'Saldo (gal)']} der={[false, true]} />
+                  {saldos.map((s, i) => (
+                    <Fila key={s.tipo_id} gtc={G_HAY} cebra={i % 2 === 1} der={[false, true]} cols={[
+                      <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
+                      <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                    ]} />
+                  ))}
+                </>
+              )}
+            </Caja>
 
-        {/* Qué se movió en el período */}
-        <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Qué se movió <span style={{ fontWeight: 400, color: GRIS }}>· {label}</span></div>
-        <Caja>
-          <Fila cabecera gtc={G_MOV} cols={['Diesel', 'Saldo inicio', 'Ingresos', 'Consumo', 'Saldo final']} der={[false, true, true, true, true]} />
-          {tipos.map((t, i) => {
-            const m = movDe(t.id)
-            const ini = Number(m?.saldo_inicial) || 0, ing = Number(m?.ingresos) || 0
-            const con = Number(m?.consumo) || 0, fin = Number(m?.saldo_final) || 0
-            return (
-              <Fila key={t.id} gtc={G_MOV} cebra={i % 2 === 1} der={[false, true, true, true, true]} cols={[
-                <b style={{ fontWeight: 500 }}>{t.nombre}</b>,
-                <span style={{ color: GRIS }}>{miles(ini)}</span>,
-                <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
-                <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
-                <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
-              ]} />
-            )
-          })}
-        </Caja>
-
-        {/* Conteos anteriores */}
-        <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Conteos anteriores</div>
-        {cortes.length === 0 ? (
-          <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay conteos.</div></Caja>
-        ) : (
-          <Caja>
-            <Fila cabecera gtc={G_CORTE} cols={['Fecha', 'Diesel', 'Sistema', 'Contado', 'Diferencia']} der={[false, false, true, true, true]} />
-            {cortes.flatMap((c, ci) => c.lineas.map((l, li) => (
-              <Fila key={c.id + '-' + l.tipo_id} gtc={G_CORTE} cebra={ci % 2 === 1} der={[false, false, true, true, true]} cols={[
-                <span>{corta(c.fecha)}{c.esInicial ? <span style={{ fontSize: '11px', color: GRIS, marginLeft: '5px' }}>inicial</span> : ''}</span>,
-                nombreTipo(l.tipo_id),
-                <span style={{ color: GRIS }}>{miles(l.sistema)}</span>,
-                <span style={{ fontWeight: 500 }}>{miles(l.contado)}</span>,
-                <span style={{ color: Math.abs(l.dif) < 0.005 ? VERDE : ROJO }}>{Math.abs(l.dif) < 0.005 ? '0 · cuadra' : (l.dif > 0 ? '+' : '−') + miles(Math.abs(l.dif)) + ' gal'}</span>,
-              ]} />
-            )))}
-          </Caja>
+            {/* Conteos anteriores */}
+            <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Conteos anteriores</div>
+            {cortes.length === 0 ? (
+              <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay conteos.</div></Caja>
+            ) : (
+              <Caja>
+                <Fila cabecera gtc={G_CORTE} cols={['Fecha', 'Diesel', 'Sistema', 'Contado', 'Diferencia']} der={[false, false, true, true, true]} />
+                {cortes.flatMap((c, ci) => c.lineas.map((l) => (
+                  <Fila key={c.id + '-' + l.tipo_id} gtc={G_CORTE} cebra={ci % 2 === 1} der={[false, false, true, true, true]} cols={[
+                    <span>{corta(c.fecha)}{c.esInicial ? <span style={{ fontSize: '11px', color: GRIS, marginLeft: '5px' }}>inicial</span> : ''}</span>,
+                    nombreTipo(l.tipo_id),
+                    <span style={{ color: GRIS }}>{miles(l.sistema)}</span>,
+                    <span style={{ fontWeight: 500 }}>{miles(l.contado)}</span>,
+                    <span style={{ color: Math.abs(l.dif) < 0.005 ? VERDE : ROJO }}>{Math.abs(l.dif) < 0.005 ? '0 · cuadra' : (l.dif > 0 ? '+' : '−') + miles(Math.abs(l.dif)) + ' gal'}</span>,
+                  ]} />
+                )))}
+              </Caja>
+            )}
+          </>
         )}
       </>
     )
@@ -863,6 +894,7 @@ const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 const G_CORTE = '1fr 1.4fr 1fr 1fr 1.2fr'
 const G_MOV = '1.6fr 1fr 1fr 1fr 1fr'
+const G_LOTE = '1.8fr 1fr 1fr 1fr 1.3fr'
 
 const inp = { padding: '9px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY }
 const btnOk = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid #3B6D11', background: '#EAF3DE', color: '#27500A', fontFamily: 'inherit', cursor: 'pointer' }
