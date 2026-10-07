@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, sumarDias, corta, semanaISO, lunesDe, miles, numDec, dinero, MESES, aFecha } from '../lib/fechas'
+import { hoyISO, sumarDias, corta, semanaISO, lunesDe, miles, numDec, dinero, MESES } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
@@ -28,7 +28,6 @@ const precio6 = n => (n === null || n === undefined || n === '') ? '' :
 const primerDia = (y, m) => `${y}-${String(m).padStart(2, '0')}-01`
 const ultimoDia = (y, m) => { const d = new Date(y, m, 0).getDate(); return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` }
 const mesDe = iso => ({ y: +iso.slice(0, 4), m: +iso.slice(5, 7) })
-const diasEntre = (a, b) => Math.round((aFecha(b) - aFecha(a)) / 86400000)
 function moverAncla(tipo, ancla, dir) {
   if (tipo === 'semana') return sumarDias(lunesDe(ancla), dir * 7)
   const { y, m } = mesDe(ancla); const nm = m + dir
@@ -44,13 +43,6 @@ function rangoDe(per) {
   const { y, m } = mesDe(per.ancla)
   return { desde: primerDia(y, m), hasta: ultimoDia(y, m), label: `${MESES[m - 1]} ${y}` }
 }
-function mover(per, dir) {
-  if (per.tipo === 'custom') {
-    const span = diasEntre(per.desde, per.hasta) + 1
-    return { tipo: 'custom', desde: sumarDias(per.desde, dir * span), hasta: sumarDias(per.hasta, dir * span) }
-  }
-  return { ...per, ancla: moverAncla(per.tipo, per.ancla, dir) }
-}
 function periodoInicial(tipo) {
   const h = hoyISO()
   if (tipo === 'semana') return { tipo, ancla: lunesDe(h) }
@@ -61,7 +53,6 @@ function periodoInicial(tipo) {
 export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCambio }) {
   const [sub, setSub] = useState('registro')           // 'registro' | 'bodega'
   const [per, setPer] = useState(() => periodoInicial('mes'))
-  const [cal, setCal] = useState(null)                 // popover de rango por fechas { desde, hasta }
   const [vistaBod, setVistaBod] = useState('hay')      // Bodega: 'hay' | 'movio'
   const { desde, hasta, label } = rangoDe(per)
   const hastaSaldo = hasta < hoyISO() ? hasta : hoyISO()
@@ -203,7 +194,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
   const movDe = id => movs.find(m => m.tipo_id === id)
   const solDe = (tabla, id) => solis.find(x => x.tabla === tabla && x.registro_id === id)
-  const valorTotal = saldos.reduce((t, s) => { const p = precios[s.tipo_id]; return t + Number(s.saldo) * (p ? p.precio : 0) }, 0)
 
   async function refrescar() { await cargar(); onCambio && onCambio() }
 
@@ -529,45 +519,24 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         </div>
       )}
 
-      {/* Encabezado: título + navegador */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+      {/* Encabezado: título + filtro de fechas (estilo insumos/balanceado) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: 0 }}>Diesel</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', position: 'relative' }}>
-          <BtnMini onClick={() => setPer(p => mover(p, -1))}>‹</BtnMini>
-          <button onClick={() => setCal({ desde, hasta })} title="Elegir rango de fechas" style={{
-            fontSize: '13px', color: NAVY, minWidth: '210px', textAlign: 'center', background: 'white',
-            border: '0.5px solid ' + (per.tipo === 'custom' ? AZUL : BORDE), borderRadius: '9px', padding: '7px 12px',
-            fontFamily: 'inherit', cursor: 'pointer', fontWeight: 500 }}>{label}</button>
-          <BtnMini onClick={() => setPer(p => mover(p, 1))}>›</BtnMini>
-          {cal && (
-            <div style={{ position: 'absolute', top: '40px', right: 0, zIndex: 50, background: 'white',
-                          border: '0.5px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 10px 30px rgba(2,40,71,.15)', padding: '14px', width: '280px' }}>
-              <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '10px' }}>Elegir rango de fechas</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
-                <label style={{ fontSize: '11px', color: GRIS }}>Desde
-                  <input type="date" value={cal.desde} max={cal.hasta} onChange={e => setCal(c => ({ ...c, desde: e.target.value }))} style={{ ...inp, width: '100%', marginTop: '4px' }} /></label>
-                <label style={{ fontSize: '11px', color: GRIS }}>Hasta
-                  <input type="date" value={cal.hasta} min={cal.desde} max={hoyISO()} onChange={e => setCal(c => ({ ...c, hasta: e.target.value }))} style={{ ...inp, width: '100%', marginTop: '4px' }} /></label>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
-                <Btn primario onClick={() => { if (cal.desde && cal.hasta && cal.desde <= cal.hasta) { setPer({ tipo: 'custom', desde: cal.desde, hasta: cal.hasta }); setCal(null) } }}>Aplicar</Btn>
-                <Btn onClick={() => setCal(null)}>Cancelar</Btn>
-              </div>
-            </div>
-          )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginLeft: 'auto' }}>
+          <span style={{ fontSize: '13px', color: GRIS }}>Del</span>
+          <input type="date" value={desde} max={hasta} onChange={e => setPer({ tipo: 'custom', desde: e.target.value, hasta })} style={inp} />
+          <span style={{ fontSize: '13px', color: GRIS }}>a</span>
+          <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setPer({ tipo: 'custom', desde, hasta: e.target.value })} style={inp} />
+          {chips.map(([id, txt]) => {
+            const on = chipActivo === id
+            return (
+              <button key={id} onClick={() => setPer(periodoInicial(id))} style={{
+                fontSize: '12.5px', color: on ? AZUL : GRIS, border: '1px solid ' + (on ? '#bcd8f2' : BORDE),
+                background: on ? '#e8f1fb' : '#fff', borderRadius: '8px', padding: '6px 11px', cursor: 'pointer',
+                fontFamily: 'inherit', fontWeight: on ? 600 : 500 }}>{txt}</button>
+            )
+          })}
         </div>
-      </div>
-
-      {/* Chips de período */}
-      <div style={{ display: 'flex', gap: '7px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        {chips.map(([id, txt]) => {
-          const on = chipActivo === id
-          return (
-            <button key={id} onClick={() => setPer(periodoInicial(id))} style={{
-              fontSize: '13px', cursor: 'pointer', padding: '7px 15px', borderRadius: '30px', fontFamily: 'inherit', fontWeight: 500,
-              border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? AZUL : 'white', color: on ? 'white' : GRIS }}>{txt}</button>
-          )
-        })}
       </div>
 
       {/* Sub-pestañas */}
@@ -741,12 +710,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     return (
       <>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '14px' }}>
-          {esJefe && (
-            <div style={{ background: '#fbfcfe', border: '1px solid ' + BORDE, borderRadius: '14px', padding: '13px 18px', minWidth: '180px' }}>
-              <div style={{ fontSize: '11.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.04em' }}>Valor del diesel</div>
-              <div style={{ fontSize: '22px', fontWeight: 700, marginTop: '4px', color: NAVY }}>{dinero(valorTotal)}</div>
-            </div>
-          )}
+          <Seg valor={vistaBod} onCambio={setVistaBod} opciones={[['hay', 'Cuánto hay'], ['movio', 'Qué se movió']]} />
           <span style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
             {esJefe && <BotonDescargar conRango={false} desde={desde} hasta={hasta} setDesde={() => {}} setHasta={() => {}} onPDF={exportarPDF} onExcel={exportarExcel} />}
             {!soloLectura && !conteo && (
@@ -755,10 +719,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               </button>
             )}
           </span>
-        </div>
-
-        <div style={{ marginBottom: '14px' }}>
-          <Seg valor={vistaBod} onCambio={setVistaBod} opciones={[['hay', 'Cuánto hay'], ['movio', 'Qué se movió']]} />
         </div>
 
         {conteo && (
@@ -906,9 +866,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 </>
               )}
             </Caja>
+          </>
+        )}
 
-            {/* Conteos anteriores · tarjetas por corte */}
-            <div style={{ fontSize: '15px', fontWeight: 500, margin: '22px 0 12px' }}>Conteos anteriores</div>
+        {/* Conteos anteriores · se mantiene en ambas vistas (Cuánto hay / Qué se movió) */}
+        <div style={{ fontSize: '15px', fontWeight: 500, margin: '22px 0 12px' }}>Conteos anteriores</div>
             {cortes.length === 0 ? (
               <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay conteos.</div></Caja>
             ) : cortes.map((c, idx) => {
@@ -964,8 +926,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 </div>
               )
             })}
-          </>
-        )}
       </>
     )
   }
@@ -995,11 +955,6 @@ function Campo({ label, children }) {
 function Btn({ children, onClick, primario }) {
   return (
     <button onClick={onClick} style={{ background: primario ? AZUL : 'white', color: primario ? 'white' : NAVY, border: '0.5px solid ' + (primario ? AZUL : BORDE), borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: primario ? 500 : 400, cursor: 'pointer' }}>{children}</button>
-  )
-}
-function BtnMini({ children, onClick }) {
-  return (
-    <button onClick={onClick} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', color: NAVY, fontSize: '15px', fontFamily: 'inherit' }}>{children}</button>
   )
 }
 function Fila({ cols, der = [], cabecera, gtc, cebra }) {
