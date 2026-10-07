@@ -168,13 +168,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
     // Conteos anteriores (cortes): los últimos, con su diferencia vs lo que
     // el sistema decía ese día (teórico = fn_saldo_diesel a esa fecha).
-    const [{ data: cts }, { data: usuarios }] = await Promise.all([
-      supabase.schema('produccion').from('diesel_conteo')
-        .select('id, fecha, es_inicial, creado_por, observacion, diesel_conteo_linea(tipo_id, galones)')
-        .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(6),
-      supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
-    ])
-    const nombreU = {}; (usuarios || []).forEach(x => { nombreU[x.id] = x.nombre }); setNombresU(nombreU)
+    const { data: cts } = await supabase.schema('produccion').from('diesel_conteo')
+      .select('id, fecha, es_inicial, diesel_conteo_linea(tipo_id, galones)')
+      .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(6)
     const teos = await Promise.all((cts || []).map(c =>
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: c.fecha })))
     const lista = (cts || []).map((c, i) => {
@@ -183,7 +179,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         const contado = Number(l.galones); const sistema = teo[l.tipo_id] || 0
         return { tipo_id: l.tipo_id, contado, sistema, dif: contado - sistema }
       })
-      return { id: c.id, fecha: c.fecha, esInicial: !!c.es_inicial, creadoPor: c.creado_por, observacion: c.observacion, lineas }
+      return { id: c.id, fecha: c.fecha, esInicial: !!c.es_inicial, creadoPor: null, observacion: null, lineas }
     })
     setCortes(lista)
     setCargando(false)
@@ -705,6 +701,60 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     )
   }
 
+  // Detalle por lote (FIFO) de un tipo · se usa en "Cuánto hay" y "Qué se movió".
+  function DetalleLote({ tipoId }) {
+    const ls = lotes[tipoId] || []
+    const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+    const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
+    const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '8px' }
+    const tEntro = ls.reduce((a, l) => a + l.entro, 0)
+    const tCons = ls.reduce((a, l) => a + l.consumio, 0)
+    const tQueda = ls.reduce((a, l) => a + l.queda, 0)
+    const tCosto = ls.reduce((a, l) => a + l.consumio * (l.precio || 0), 0)
+    const primerQueda = ls.findIndex(l => l.queda > 0.0001)
+    return (
+      <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
+        <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
+        <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Se consume del más viejo primero · en galones</div>
+        {ls.length === 0 ? (
+          <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes.</div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
+            <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+            <div style={cab}>Entró</div>
+            <div style={cab}>Consumió</div>
+            <div style={cab}>Queda</div>
+            <div style={cab}>Costo consumido</div>
+            {ls.map((L, li) => (
+              <Fragment key={li}>
+                <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                  <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
+                  <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
+                  {li === primerQueda && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                  {esJefeGlobal && !L.inicial && (
+                    <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
+                      style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                      Corregir precio
+                    </button>
+                  )}
+                </div>
+                <div style={cel}>{miles(L.entro)}</div>
+                <div style={{ ...cel, color: L.consumio ? ROJO : '#c3d0db' }}>{L.consumio ? miles(L.consumio) : '—'}</div>
+                <div style={{ ...cel, fontWeight: 600 }}>{miles(L.queda)}</div>
+                <div style={cel}>{dinero(L.consumio * (L.precio || 0))}</div>
+              </Fragment>
+            ))}
+            <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+            <div style={tot}>{miles(tEntro)}</div>
+            <div style={tot}>{miles(tCons)}</div>
+            <div style={tot}>{miles(tQueda)}</div>
+            <div style={tot}>{dinero(tCosto)}</div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // ====================== BODEGA ======================
   function BodegaVista() {
     return (
@@ -764,14 +814,24 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 const m = movDe(t.id)
                 const ini = Number(m?.saldo_inicial) || 0, ing = Number(m?.ingresos) || 0
                 const con = Number(m?.consumo) || 0, fin = Number(m?.saldo_final) || 0
+                const abierto = expandido === t.id
+                const nombreCol = esJefe ? (
+                  <span onClick={() => setExpandido(abierto ? null : t.id)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                    <span style={{ color: '#aab8c6', fontSize: '11px', marginRight: '7px' }}>{abierto ? '▾' : '▸'}</span>
+                    <b style={{ fontWeight: 500 }}>{t.nombre}</b>
+                  </span>
+                ) : <b style={{ fontWeight: 500 }}>{t.nombre}</b>
                 return (
-                  <Fila key={t.id} gtc={G_MOV} cebra={i % 2 === 1} der={[false, true, true, true, true]} cols={[
-                    <b style={{ fontWeight: 500 }}>{t.nombre}</b>,
-                    <span style={{ color: GRIS }}>{miles(ini)}</span>,
-                    <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
-                    <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
-                    <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
-                  ]} />
+                  <div key={t.id}>
+                    <Fila gtc={G_MOV} cebra={i % 2 === 1} der={[false, true, true, true, true]} cols={[
+                      nombreCol,
+                      <span style={{ color: GRIS }}>{miles(ini)}</span>,
+                      <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
+                      <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
+                      <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
+                    ]} />
+                    {esJefe && abierto && <DetalleLote tipoId={t.id} />}
+                  </div>
                 )
               })}
             </Caja>
@@ -786,7 +846,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                   <Fila cabecera gtc={G_HAY_J} cols={['Diesel', 'Saldo (gal)', 'Precio/gal · desde', 'Valor']} der={[false, true, true, true]} />
                   {saldos.map((s, i) => {
                     const p = precios[s.tipo_id]
-                    const ls = lotes[s.tipo_id] || []
                     const abierto = expandido === s.tipo_id
                     return (
                       <div key={s.tipo_id}>
@@ -799,57 +858,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                           p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
                           <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
                         ]} />
-                        {abierto && (
-                          <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
-                            <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
-                            <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Se consume del más viejo primero · en galones</div>
-                            {ls.length === 0 ? (
-                              <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes.</div>
-                            ) : (() => {
-                              const tEntro = ls.reduce((a, l) => a + l.entro, 0)
-                              const tCons = ls.reduce((a, l) => a + l.consumio, 0)
-                              const tQueda = ls.reduce((a, l) => a + l.queda, 0)
-                              const tCosto = ls.reduce((a, l) => a + l.consumio * (l.precio || 0), 0)
-                              const primerQueda = ls.findIndex(l => l.queda > 0.0001)
-                              const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
-                              const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
-                              const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '8px' }
-                              return (
-                                <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
-                                  <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
-                                  <div style={cab}>Entró</div>
-                                  <div style={cab}>Consumió</div>
-                                  <div style={cab}>Queda</div>
-                                  <div style={cab}>Costo consumido</div>
-                                  {ls.map((L, li) => (
-                                    <Fragment key={li}>
-                                      <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                        <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
-                                        <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
-                                        {li === primerQueda && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                                        {esJefeGlobal && !L.inicial && (
-                                          <button onClick={() => setCorrLote({ tipoId: s.tipo_id, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
-                                            style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
-                                            Corregir precio
-                                          </button>
-                                        )}
-                                      </div>
-                                      <div style={cel}>{miles(L.entro)}</div>
-                                      <div style={{ ...cel, color: L.consumio ? ROJO : '#c3d0db' }}>{L.consumio ? miles(L.consumio) : '—'}</div>
-                                      <div style={{ ...cel, fontWeight: 600 }}>{miles(L.queda)}</div>
-                                      <div style={cel}>{dinero(L.consumio * (L.precio || 0))}</div>
-                                    </Fragment>
-                                  ))}
-                                  <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-                                  <div style={tot}>{miles(tEntro)}</div>
-                                  <div style={tot}>{miles(tCons)}</div>
-                                  <div style={tot}>{miles(tQueda)}</div>
-                                  <div style={tot}>{dinero(tCosto)}</div>
-                                </div>
-                              )
-                            })()}
-                          </div>
-                        )}
+                        {abierto && <DetalleLote tipoId={s.tipo_id} />}
                       </div>
                     )
                   })}
