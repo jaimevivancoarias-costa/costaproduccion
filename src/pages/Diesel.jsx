@@ -93,7 +93,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hastaSaldo }),
       supabase.schema('produccion').rpc('fn_movimiento_diesel', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').from('diesel_pedido')
-        .select('id, tipo_id, galones, fecha, estado, solicitado_por, solicitado_en').eq('finca_id', finca.id)
+        .select('id, tipo_id, galones, fecha, estado, solicitado_por, solicitado_en, numero_guia, proveedor').eq('finca_id', finca.id)
         .gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }),
       supabase.schema('produccion').from('diesel_consumo')
         .select('id, tipo_id, galones, fecha').eq('finca_id', finca.id)
@@ -202,16 +202,18 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     if (!form.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
     const fecha = form.fecha || hoyISO()
     if (form.modo === 'ingreso') {
+      const guia = (form.guia || '').trim() || null
+      const proveedor = (form.proveedor || '').trim() || null
       // El jefe verifica/actualiza el precio del catálogo con un pop-up.
       // El bodeguero no ve ni pone precio: se registra directo.
       if (esJefe) {
         const p = precios[form.tipoId]
-        setRevPrecio({ tipoId: form.tipoId, galones: gal, fecha,
+        setRevPrecio({ tipoId: form.tipoId, galones: gal, fecha, guia, proveedor,
                        precioActual: p ? p.precio : null, precio: p ? String(p.precio) : '' })
         return
       }
       const { error } = await supabase.schema('produccion').from('diesel_pedido')
-        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha, estado: 'aprobado' })
+        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha, estado: 'aprobado', numero_guia: guia, proveedor })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
       setAviso({ tipo: 'ok', texto: 'Ingreso registrado.' })
       setForm(null); await refrescar(); return
@@ -240,7 +242,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     }
     const { error } = await supabase.schema('produccion').from('diesel_pedido')
       .insert({ finca_id: finca.id, tipo_id: r.tipoId, galones: r.galones, fecha: r.fecha,
-                estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString() })
+                estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString(),
+                numero_guia: r.guia || null, proveedor: r.proveedor || null })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: cambio ? 'Ingreso registrado y precio actualizado en el catálogo.' : 'Ingreso registrado.' })
     setRevPrecio(null); setForm(null); await refrescar()
@@ -576,7 +579,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               </div>
               {!form ? (
                 <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap' }}>
-                  <Btn primario onClick={() => setForm({ modo: 'ingreso', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>+ Registrar ingreso</Btn>
+                  <Btn primario onClick={() => setForm({ modo: 'ingreso', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO(), guia: '', proveedor: '' })}>+ Registrar ingreso</Btn>
                   <Btn onClick={() => setForm({ modo: 'consumo', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>Registrar consumo</Btn>
                 </div>
               ) : (
@@ -596,6 +599,16 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     <Campo label="Fecha">
                       <input type="date" value={form.fecha} max={hoyISO()} onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} style={{ ...inp, width: '160px' }} />
                     </Campo>
+                    {form.modo === 'ingreso' && (
+                      <>
+                        <Campo label="Número de guía (opcional)">
+                          <input type="text" value={form.guia || ''} placeholder="ej. 001-234567" onChange={e => setForm(f => ({ ...f, guia: e.target.value }))} style={{ ...inp, width: '150px' }} />
+                        </Campo>
+                        <Campo label="Proveedor (opcional)">
+                          <input type="text" value={form.proveedor || ''} placeholder="ej. Primax" onChange={e => setForm(f => ({ ...f, proveedor: e.target.value }))} style={{ ...inp, width: '180px' }} />
+                        </Campo>
+                      </>
+                    )}
                     <Btn primario onClick={guardarForm}>{form.modo === 'ingreso' ? 'Guardar ingreso' : 'Guardar consumo'}</Btn>
                     <Btn onClick={() => setForm(null)}>Cancelar</Btn>
                   </div>
@@ -678,9 +691,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                         </span>
                       </div>
                       {ab && (
-                        <div style={{ background: '#f8fafc', padding: '10px 16px 12px 33px', fontSize: '12.5px', color: GRIS }}>
-                          Ingresó: <b style={{ color: NAVY, fontWeight: 600 }}>{quien || 'No registrado'}</b>
-                          {p.solicitado_en ? ` · el ${corta(p.solicitado_en.slice(0, 10))}` : ''}
+                        <div style={{ background: '#f8fafc', padding: '10px 16px 12px 33px', fontSize: '12.5px', color: GRIS, lineHeight: 1.6 }}>
+                          <div>Ingresó: <b style={{ color: NAVY, fontWeight: 600 }}>{quien || 'No registrado'}</b>{p.solicitado_en ? ` · el ${corta(p.solicitado_en.slice(0, 10))}` : ''}</div>
+                          <div>Guía: <b style={{ color: NAVY, fontWeight: 600 }}>{p.numero_guia || '—'}</b> · Proveedor: <b style={{ color: NAVY, fontWeight: 600 }}>{p.proveedor || '—'}</b></div>
                         </div>
                       )}
                     </div>
