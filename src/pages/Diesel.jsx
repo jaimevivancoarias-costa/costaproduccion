@@ -88,6 +88,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [lotes, setLotes] = useState({})                // tipo_id -> [{fecha, galones, queda, precio, rowId, inicial}]
   const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
   const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
+  const [cortesAbiertos, setCortesAbiertos] = useState({})  // conteo_id -> abierto
+  const [nombresU, setNombresU] = useState({})          // id usuario -> nombre (quién contó)
 
   const puedeRegistrar = !soloLectura
 
@@ -175,9 +177,13 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
     // Conteos anteriores (cortes): los últimos, con su diferencia vs lo que
     // el sistema decía ese día (teórico = fn_saldo_diesel a esa fecha).
-    const { data: cts } = await supabase.schema('produccion').from('diesel_conteo')
-      .select('id, fecha, es_inicial, diesel_conteo_linea(tipo_id, galones)')
-      .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(6)
+    const [{ data: cts }, { data: usuarios }] = await Promise.all([
+      supabase.schema('produccion').from('diesel_conteo')
+        .select('id, fecha, es_inicial, creado_por, observacion, diesel_conteo_linea(tipo_id, galones)')
+        .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(6),
+      supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
+    ])
+    const nombreU = {}; (usuarios || []).forEach(x => { nombreU[x.id] = x.nombre }); setNombresU(nombreU)
     const teos = await Promise.all((cts || []).map(c =>
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: c.fecha })))
     const lista = (cts || []).map((c, i) => {
@@ -186,7 +192,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         const contado = Number(l.galones); const sistema = teo[l.tipo_id] || 0
         return { tipo_id: l.tipo_id, contado, sistema, dif: contado - sistema }
       })
-      return { id: c.id, fecha: c.fecha, esInicial: !!c.es_inicial, lineas }
+      return { id: c.id, fecha: c.fecha, esInicial: !!c.es_inicial, creadoPor: c.creado_por, observacion: c.observacion, lineas }
     })
     setCortes(lista)
     setCargando(false)
@@ -321,14 +327,15 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   // --- Conteo de la bodega ---
   async function guardarConteo() {
     setGuardando(true); setAviso(null)
-    if (conteo.inicialId) {
-      const { error: eF } = await supabase.schema('produccion').from('diesel_conteo').update({ fecha: conteo.fecha }).eq('id', conteo.inicialId)
+    const editId = conteo.editId || conteo.inicialId   // editar un conteo existente (inicial o normal)
+    if (editId) {
+      const { error: eF } = await supabase.schema('produccion').from('diesel_conteo').update({ fecha: conteo.fecha }).eq('id', editId)
       if (eF) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo. ' + eF.message }); return }
-      await supabase.schema('produccion').from('diesel_conteo_linea').delete().eq('conteo_id', conteo.inicialId)
-      const lin = tipos.map(t => ({ conteo_id: conteo.inicialId, tipo_id: t.id, galones: numDec(conteo.valores[t.id] || '') || 0 }))
+      await supabase.schema('produccion').from('diesel_conteo_linea').delete().eq('conteo_id', editId)
+      const lin = tipos.map(t => ({ conteo_id: editId, tipo_id: t.id, galones: numDec(conteo.valores[t.id] || '') || 0 }))
       const { error: eL } = await supabase.schema('produccion').from('diesel_conteo_linea').insert(lin)
       if (eL) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudieron guardar las líneas. ' + eL.message }); return }
-      setGuardando(false); setConteo(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial actualizado.' }); await refrescar(); return
+      setGuardando(false); setConteo(null); setAviso({ tipo: 'ok', texto: 'Conteo actualizado.' }); await refrescar(); return
     }
     const { data: cab, error: e1 } = await supabase.schema('produccion').from('diesel_conteo')
       .insert({ finca_id: finca.id, fecha: conteo.fecha, es_inicial: primeraVez }).select('id').single()
@@ -338,6 +345,48 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     if (e2) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudieron guardar las líneas. ' + e2.message }); return }
     setGuardando(false); setConteo(null)
     setAviso({ tipo: 'ok', texto: primeraVez ? 'Inventario inicial cargado.' : 'Conteo guardado.' }); await refrescar()
+  }
+
+  // Editar un conteo anterior: carga sus galones en el formulario.
+  async function editarCorte(c) {
+    const { data: lin } = await supabase.schema('produccion').from('diesel_conteo_linea')
+      .select('tipo_id, galones').eq('conteo_id', c.id)
+    const vals = {}; (lin || []).forEach(l => { vals[l.tipo_id] = String(Number(l.galones)) })
+    setVistaBod('hay'); setConteo({ fecha: c.fecha, valores: vals, editId: c.id, esInicial: c.esInicial })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  async function borrarCorte(c) {
+    if (!window.confirm(`¿Borrar el conteo del ${corta(c.fecha)}?`)) return
+    await supabase.schema('produccion').from('diesel_conteo_linea').delete().eq('conteo_id', c.id)
+    const { error } = await supabase.schema('produccion').from('diesel_conteo').delete().eq('id', c.id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo borrar. ' + error.message }); return }
+    setAviso({ tipo: 'ok', texto: 'Conteo borrado.' }); await refrescar()
+  }
+  // Imprimir el acta del conteo: por tipo, sistema · contó · diferencia.
+  function imprimirCorte(c) {
+    const filas = c.lineas.map(l => ({
+      tipo: nombreTipo(l.tipo_id), sistema: miles(l.sistema), contado: miles(l.contado),
+      diferencia: Math.abs(l.dif) < 0.005 ? 'Cuadró' : (l.dif < 0 ? 'faltó ' : 'sobró ') + miles(Math.abs(l.dif)),
+    })).sort((a, b) => String(a.tipo).localeCompare(String(b.tipo), 'es'))
+    const ok = reporteBodegaPDF({
+      titulo: 'Reporte de conteo de bodega', finca: String(finca.nombre).toUpperCase(), categoria: 'Diesel',
+      subtitulo: 'Saldo, conteo y diferencias · diesel (galones)',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que decía el sistema. Contó = lo contado físicamente. Diferencia: "faltó" = menos de lo que decía; "sobró" = más; "Cuadró" = igual.',
+      meta: [
+        { k: 'Fecha del conteo', v: corta(c.fecha) },
+        { k: 'Tipo', v: c.esInicial ? 'Inventario inicial' : 'Conteo' },
+        ...(nombresU[c.creadoPor] ? [{ k: 'Contó', v: nombresU[c.creadoPor] }] : []),
+        ...(c.observacion ? [{ k: 'Observación', v: c.observacion }] : []),
+      ],
+      columnas: [
+        { titulo: 'Diesel', campo: 'tipo' },
+        { titulo: 'Sistema', campo: 'sistema', der: true },
+        { titulo: 'Contó', campo: 'contado', der: true },
+        { titulo: 'Diferencia', campo: 'diferencia', der: true },
+      ],
+      filas,
+    })
+    if (!ok) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para imprimir.' })
   }
 
   // --- Reporte de bodega (jefe) ---
@@ -705,11 +754,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
               </button>
             )}
-            {!soloLectura && !conteo && inicial && (
-              <button onClick={() => setConteo({ fecha: inicial.fecha, valores: { ...inicial.valores }, inicialId: inicial.id })} style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
-                Editar inventario inicial
-              </button>
-            )}
           </span>
         </div>
 
@@ -721,7 +765,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
           <Caja estilo={{ marginBottom: '14px' }}>
             <div style={{ padding: '14px 16px' }}>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
-                <span style={{ fontSize: '14px', fontWeight: 500 }}>{conteo.inicialId ? 'Editar inventario inicial' : primeraVez ? 'Inventario inicial de diesel' : 'Contar la bodega'}</span>
+                <span style={{ fontSize: '14px', fontWeight: 500 }}>{conteo.editId ? (conteo.esInicial ? 'Editar inventario inicial' : 'Editar conteo') : primeraVez ? 'Inventario inicial de diesel' : 'Contar la bodega'}</span>
                 <span style={{ fontSize: '12px', color: GRIS }}>Fecha</span>
                 <input type="date" value={conteo.fecha} max={hoyISO()} onChange={e => setConteo(c => ({ ...c, fecha: e.target.value }))} style={inp} />
               </div>
@@ -742,7 +786,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               })}
               <div style={{ display: 'flex', gap: '9px', marginTop: '12px' }}>
                 <button onClick={guardarConteo} disabled={guardando} style={{ background: AZUL, color: 'white', border: '0.5px solid ' + AZUL, borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: guardando ? 'default' : 'pointer', opacity: guardando ? 0.6 : 1 }}>
-                  {guardando ? 'Guardando...' : conteo.inicialId ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
+                  {guardando ? 'Guardando...' : conteo.editId ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
                 </button>
                 <button onClick={() => setConteo(null)} style={{ background: 'white', color: NAVY, border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '9px 15px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer' }}>Cancelar</button>
               </div>
@@ -863,24 +907,63 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               )}
             </Caja>
 
-            {/* Conteos anteriores */}
-            <div style={{ fontSize: '13px', fontWeight: 650, margin: '20px 0 10px' }}>Conteos anteriores</div>
+            {/* Conteos anteriores · tarjetas por corte */}
+            <div style={{ fontSize: '15px', fontWeight: 500, margin: '22px 0 12px' }}>Conteos anteriores</div>
             {cortes.length === 0 ? (
               <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay conteos.</div></Caja>
-            ) : (
-              <Caja>
-                <Fila cabecera gtc={G_CORTE} cols={['Fecha', 'Diesel', 'Sistema', 'Contado', 'Diferencia']} der={[false, false, true, true, true]} />
-                {cortes.flatMap((c, ci) => c.lineas.map((l) => (
-                  <Fila key={c.id + '-' + l.tipo_id} gtc={G_CORTE} cebra={ci % 2 === 1} der={[false, false, true, true, true]} cols={[
-                    <span>{corta(c.fecha)}{c.esInicial ? <span style={{ fontSize: '11px', color: GRIS, marginLeft: '5px' }}>inicial</span> : ''}</span>,
-                    nombreTipo(l.tipo_id),
-                    <span style={{ color: GRIS }}>{miles(l.sistema)}</span>,
-                    <span style={{ fontWeight: 500 }}>{miles(l.contado)}</span>,
-                    <span style={{ color: Math.abs(l.dif) < 0.005 ? VERDE : ROJO }}>{Math.abs(l.dif) < 0.005 ? '0 · cuadra' : (l.dif > 0 ? '+' : '−') + miles(Math.abs(l.dif)) + ' gal'}</span>,
-                  ]} />
-                )))}
-              </Caja>
-            )}
+            ) : cortes.map((c, idx) => {
+              const abierto = !!cortesAbiertos[c.id]
+              const autor = nombresU[c.creadoPor]
+              const nFalt = c.esInicial ? 0 : c.lineas.filter(l => l.dif < -0.005).length
+              const nTipo = c.lineas.length
+              const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(cortes[idx - 1].fecha, -1))
+              return (
+                <div key={c.id} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', padding: '14px 16px' }}>
+                    <button onClick={() => setCortesAbiertos(a => ({ ...a, [c.id]: !abierto }))}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', flex: 1, minWidth: '240px' }}>
+                      <div style={{ fontSize: '14.5px', fontWeight: 700, color: NAVY }}>
+                        <span style={{ color: GRIS, marginRight: '8px', fontSize: '12px' }}>{abierto ? '▾' : '▸'}</span>
+                        Conteo del {corta(c.fecha)}
+                        <span style={{ fontSize: '10px', fontWeight: 700, borderRadius: '20px', padding: '2px 9px', marginLeft: '8px',
+                          background: idx === 0 ? '#E6F1FB' : '#eef2f6', color: idx === 0 ? AZUL : GRIS }}>
+                          {idx === 0 ? 'Corte actual' : c.esInicial ? 'Inventario inicial' : 'Corte anterior'}</span>
+                      </div>
+                      <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
+                        {idx === 0 ? 'Desde este conteo hasta hoy' : `${corta(c.fecha)} → ${hastaTxt}`}
+                        {autor ? ` · contó ${autor}` : ''} · {nTipo} {nTipo === 1 ? 'tipo' : 'tipos'} · {c.esInicial
+                          ? <span style={{ color: GRIS }}>inventario inicial</span>
+                          : nFalt > 0
+                            ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
+                            : <span style={{ color: VERDE }}>todo cuadró</span>}
+                      </div>
+                    </button>
+                    <div style={{ display: 'flex', gap: '7px' }}>
+                      <button onClick={() => imprimirCorte(c)}
+                        style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid ' + AZUL, borderRadius: '8px', background: AZUL, color: '#fff', cursor: 'pointer' }}>Imprimir</button>
+                      {esJefe && !soloLectura && <>
+                        <button onClick={() => editarCorte(c)} style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: 'white', color: NAVY, cursor: 'pointer' }}>Editar</button>
+                        <button onClick={() => borrarCorte(c)} style={{ padding: '6px 12px', fontSize: '12px', fontFamily: 'inherit', border: '0.5px solid #e7cccb', borderRadius: '8px', background: 'white', color: ROJO, cursor: 'pointer' }}>Borrar</button>
+                      </>}
+                    </div>
+                  </div>
+                  {abierto && (
+                    <>
+                      <Fila cabecera gtc={G_CORTE2} cols={['Diesel', 'Sistema', 'Contó', 'Diferencia']} der={[false, true, true, true]} />
+                      {c.lineas.map(l => (
+                        <Fila key={l.tipo_id} gtc={G_CORTE2} der={[false, true, true, true]} cols={[
+                          nombreTipo(l.tipo_id),
+                          c.esInicial ? <span style={{ color: '#c3d0db' }}>—</span> : <span style={{ color: GRIS }}>{miles(l.sistema)}</span>,
+                          <span style={{ fontWeight: 500 }}>{miles(l.contado)}</span>,
+                          c.esInicial ? <span style={{ color: VERDE }}>Inicial</span>
+                            : <span style={{ color: Math.abs(l.dif) < 0.005 ? VERDE : l.dif < 0 ? ROJO : AMBAR }}>{Math.abs(l.dif) < 0.005 ? 'Cuadró' : (l.dif < 0 ? 'Faltó ' : 'Sobró ') + miles(Math.abs(l.dif))}</span>,
+                        ]} />
+                      ))}
+                    </>
+                  )}
+                </div>
+              )
+            })}
           </>
         )}
       </>
@@ -892,7 +975,7 @@ const GRES = '2fr 1fr 1fr'
 const GRES_J = '1.8fr 1fr 1fr 1.1fr'
 const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
-const G_CORTE = '1fr 1.4fr 1fr 1fr 1.2fr'
+const G_CORTE2 = '2fr 1fr 1fr 1.2fr'
 const G_MOV = '1.6fr 1fr 1fr 1fr 1fr'
 const G_LOTE = '1.8fr 1fr 1fr 1fr 1.3fr'
 
