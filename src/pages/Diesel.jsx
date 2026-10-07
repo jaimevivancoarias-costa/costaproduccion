@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, sumarDias, corta, semanaISO, lunesDe, miles, numDec, dinero, MESES } from '../lib/fechas'
+import { hoyISO, sumarDias, corta, semanaISO, lunesDe, miles, numDec, dinero, MESES, aFecha } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
@@ -27,19 +27,28 @@ const precio6 = n => (n === null || n === undefined || n === '') ? '' :
 const primerDia = (y, m) => `${y}-${String(m).padStart(2, '0')}-01`
 const ultimoDia = (y, m) => { const d = new Date(y, m, 0).getDate(); return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}` }
 const mesDe = iso => ({ y: +iso.slice(0, 4), m: +iso.slice(5, 7) })
-function rangoDe(tipo, ancla) {
-  if (tipo === 'semana') {
-    const l = lunesDe(ancla), d = sumarDias(l, 6)
-    return { desde: l, hasta: d, label: `Semana ${semanaISO(l).semana} · del ${corta(l)} al ${corta(d)}` }
-  }
-  const { y, m } = mesDe(ancla)
-  return { desde: primerDia(y, m), hasta: ultimoDia(y, m), label: `${MESES[m - 1]} ${y}` }
-}
+const diasEntre = (a, b) => Math.round((aFecha(b) - aFecha(a)) / 86400000)
 function moverAncla(tipo, ancla, dir) {
   if (tipo === 'semana') return sumarDias(lunesDe(ancla), dir * 7)
   const { y, m } = mesDe(ancla); const nm = m + dir
   const ny = y + Math.floor((nm - 1) / 12); const mm = ((nm - 1) % 12 + 12) % 12 + 1
   return primerDia(ny, mm)
+}
+function rangoDe(per) {
+  if (per.tipo === 'custom') return { desde: per.desde, hasta: per.hasta, label: `del ${corta(per.desde)} al ${corta(per.hasta)}` }
+  if (per.tipo === 'semana') {
+    const l = lunesDe(per.ancla), d = sumarDias(l, 6)
+    return { desde: l, hasta: d, label: `Semana ${semanaISO(l).semana} · del ${corta(l)} al ${corta(d)}` }
+  }
+  const { y, m } = mesDe(per.ancla)
+  return { desde: primerDia(y, m), hasta: ultimoDia(y, m), label: `${MESES[m - 1]} ${y}` }
+}
+function mover(per, dir) {
+  if (per.tipo === 'custom') {
+    const span = diasEntre(per.desde, per.hasta) + 1
+    return { tipo: 'custom', desde: sumarDias(per.desde, dir * span), hasta: sumarDias(per.hasta, dir * span) }
+  }
+  return { ...per, ancla: moverAncla(per.tipo, per.ancla, dir) }
 }
 function periodoInicial(tipo) {
   const h = hoyISO()
@@ -51,7 +60,8 @@ function periodoInicial(tipo) {
 export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCambio }) {
   const [sub, setSub] = useState('registro')           // 'registro' | 'bodega'
   const [per, setPer] = useState(() => periodoInicial('semana'))
-  const { desde, hasta, label } = rangoDe(per.tipo, per.ancla)
+  const [cal, setCal] = useState(null)                 // popover de rango por fechas { desde, hasta }
+  const { desde, hasta, label } = rangoDe(per)
   const hastaSaldo = hasta < hoyISO() ? hasta : hoyISO()
 
   const [tipos, setTipos] = useState([])
@@ -73,12 +83,15 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [conteo, setConteo] = useState(null)
   const [guardando, setGuardando] = useState(false)
   const [cortes, setCortes] = useState([])              // conteos anteriores con su diferencia
+  const [lotes, setLotes] = useState({})                // tipo_id -> [{fecha, galones, queda, precio, rowId, inicial}]
+  const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
+  const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
 
   const puedeRegistrar = !soloLectura
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hastaSaldo }),
@@ -97,6 +110,12 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
       supabase.schema('produccion').from('diesel_conteo')
         .select('id', { count: 'exact', head: true }).eq('finca_id', finca.id),
+      // Todos los ingresos (para los lotes FIFO) y el historial de precios.
+      supabase.schema('produccion').from('diesel_pedido')
+        .select('tipo_id, galones, fecha').eq('finca_id', finca.id).eq('estado', 'aprobado').lte('fecha', hastaSaldo),
+      supabase.schema('produccion').from('diesel_precio')
+        .select('id, tipo_id, finca_id, precio_galon, vigente_desde, vigente_hasta')
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`).order('vigente_desde', { ascending: true }),
     ])
     setUserId(u?.user?.id || null)
     setTipos(tp || [])
@@ -117,12 +136,40 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const { data: iniC } = await supabase.schema('produccion').from('diesel_conteo')
       .select('id, fecha').eq('finca_id', finca.id).eq('es_inicial', true)
       .order('fecha', { ascending: true }).limit(1).maybeSingle()
+    let iniFecha = null; const iniGal = {}
     if (iniC) {
       const { data: lin } = await supabase.schema('produccion').from('diesel_conteo_linea')
         .select('tipo_id, galones').eq('conteo_id', iniC.id)
-      const vals = {}; (lin || []).forEach(l => { vals[l.tipo_id] = String(Number(l.galones)) })
+      const vals = {}; (lin || []).forEach(l => { vals[l.tipo_id] = String(Number(l.galones)); iniGal[l.tipo_id] = Number(l.galones) })
+      iniFecha = iniC.fecha
       setInicial({ id: iniC.id, fecha: iniC.fecha, valores: vals })
     } else setInicial(null)
+
+    // Detalle por lote (FIFO): cada ingreso es un lote valorado al precio del
+    // catálogo que regía en su fecha; el inventario inicial es el lote más
+    // viejo. Se consume del más viejo primero. queda = lo que sobró tras el
+    // consumo total. (saldo = inicial + ingresos − consumo.)
+    const precioEnFecha = (tipoId, fecha) => {
+      const cand = (prh || []).filter(r => r.tipo_id === tipoId
+        && r.vigente_desde <= fecha && (r.vigente_hasta == null || r.vigente_hasta >= fecha))
+      if (!cand.length) return { precio: null, rowId: null }
+      const fincaRow = cand.find(r => r.finca_id) || cand[0]
+      return { precio: Number(fincaRow.precio_galon), rowId: fincaRow.id }
+    }
+    const saldoDe = {}; (sal || []).forEach(r => { saldoDe[r.tipo_id] = Number(r.saldo) })
+    const porTipo = {}
+    ;(tp || []).forEach(t => {
+      const arr = []
+      if (iniFecha && iniGal[t.id] > 0) arr.push({ fecha: iniFecha, galones: iniGal[t.id], precio: null, rowId: null, inicial: true })
+      ;(peAll || []).filter(p => p.tipo_id === t.id).forEach(p => arr.push({ fecha: p.fecha, galones: Number(p.galones), ...precioEnFecha(t.id, p.fecha) }))
+      arr.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)
+      const entrado = arr.reduce((s, l) => s + l.galones, 0)
+      let consumo = entrado - (saldoDe[t.id] ?? entrado)      // = inicial + ingresos − saldo
+      if (consumo < 0) consumo = 0
+      arr.forEach(l => { const take = Math.min(l.galones, consumo); l.queda = l.galones - take; consumo -= take })
+      porTipo[t.id] = arr.filter(l => l.queda > 0.0001)
+    })
+    setLotes(porTipo)
 
     // Conteos anteriores (cortes): los últimos, con su diferencia vs lo que
     // el sistema decía ese día (teórico = fn_saldo_diesel a esa fecha).
@@ -247,6 +294,28 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Corrección rechazada.' }); await refrescar()
   }
 
+  // Corregir el precio de un lote (si se tecleó mal). Si ese lote ya tiene una
+  // fila de catálogo que lo cubre, se actualiza; si no, se crea una que rija
+  // desde la fecha del lote (cerrando la anterior).
+  async function guardarCorrLote() {
+    const r = corrLote; const nuevo = numDec(r.precio)
+    if (!(nuevo > 0)) { setAviso({ tipo: 'error', texto: 'Pon el precio del galón.' }); return }
+    if (r.rowId) {
+      const { error } = await supabase.schema('produccion').from('diesel_precio').update({ precio_galon: nuevo }).eq('id', r.rowId)
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
+    } else {
+      await supabase.schema('produccion').from('diesel_precio')
+        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).gte('vigente_desde', r.fecha)
+      await supabase.schema('produccion').from('diesel_precio')
+        .update({ vigente_hasta: sumarDias(r.fecha, -1) })
+        .eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', r.fecha)
+      const { error } = await supabase.schema('produccion').from('diesel_precio')
+        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: r.fecha })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
+    }
+    setAviso({ tipo: 'ok', texto: 'Precio corregido.' }); setCorrLote(null); await refrescar()
+  }
+
   // --- Conteo de la bodega ---
   async function guardarConteo() {
     setGuardando(true); setAviso(null)
@@ -344,7 +413,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
   const chips = [['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado']]
   const chipActivo = (() => {
-    const ini = periodoInicial(per.tipo === 'mes' ? 'mes' : per.tipo)
     if (per.tipo === 'semana' && per.ancla === periodoInicial('semana').ancla) return 'semana'
     if (per.tipo === 'mes') {
       if (per.ancla === periodoInicial('mes').ancla) return 'mes'
@@ -386,13 +454,56 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         )
       })()}
 
+      {corrLote && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '420px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
+            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>Corregir precio del lote</div>
+            <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '16px', lineHeight: 1.5 }}>
+              {nombreTipo(corrLote.tipoId)} · compra {corta(corrLote.fecha)}. Corrige el precio del galón si se tecleó mal; se ajusta en el catálogo para esa fecha.
+            </div>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Precio por galón</div>
+                <CampoNumero maxDec={6} autoFocus value={corrLote.precio} onChange={v => setCorrLote(x => ({ ...x, precio: v }))} style={{ ...inp, width: '150px', textAlign: 'right' }} />
+              </div>
+              <div style={{ fontSize: '12px', color: GRIS, paddingBottom: '9px' }}>
+                {corrLote.precioActual != null ? <>antes {precio6(corrLote.precioActual)}</> : 'sin precio'}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '9px', marginTop: '16px' }}>
+              <Btn primario onClick={guardarCorrLote}>Guardar</Btn>
+              <Btn onClick={() => setCorrLote(null)}>Cancelar</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Encabezado: título + navegador */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: 0 }}>Diesel</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-          <BtnMini onClick={() => setPer(p => ({ ...p, ancla: moverAncla(p.tipo, p.ancla, -1) }))}>‹</BtnMini>
-          <span style={{ fontSize: '13px', color: GRIS, minWidth: '210px', textAlign: 'center' }}>{label}</span>
-          <BtnMini onClick={() => setPer(p => ({ ...p, ancla: moverAncla(p.tipo, p.ancla, 1) }))}>›</BtnMini>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto', position: 'relative' }}>
+          <BtnMini onClick={() => setPer(p => mover(p, -1))}>‹</BtnMini>
+          <button onClick={() => setCal({ desde, hasta })} title="Elegir rango de fechas" style={{
+            fontSize: '13px', color: NAVY, minWidth: '210px', textAlign: 'center', background: 'white',
+            border: '0.5px solid ' + (per.tipo === 'custom' ? AZUL : BORDE), borderRadius: '9px', padding: '7px 12px',
+            fontFamily: 'inherit', cursor: 'pointer', fontWeight: 500 }}>{label}</button>
+          <BtnMini onClick={() => setPer(p => mover(p, 1))}>›</BtnMini>
+          {cal && (
+            <div style={{ position: 'absolute', top: '40px', right: 0, zIndex: 50, background: 'white',
+                          border: '0.5px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 10px 30px rgba(2,40,71,.15)', padding: '14px', width: '280px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '10px' }}>Elegir rango de fechas</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
+                <label style={{ fontSize: '11px', color: GRIS }}>Desde
+                  <input type="date" value={cal.desde} max={cal.hasta} onChange={e => setCal(c => ({ ...c, desde: e.target.value }))} style={{ ...inp, width: '100%', marginTop: '4px' }} /></label>
+                <label style={{ fontSize: '11px', color: GRIS }}>Hasta
+                  <input type="date" value={cal.hasta} min={cal.desde} max={hoyISO()} onChange={e => setCal(c => ({ ...c, hasta: e.target.value }))} style={{ ...inp, width: '100%', marginTop: '4px' }} /></label>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <Btn primario onClick={() => { if (cal.desde && cal.hasta && cal.desde <= cal.hasta) { setPer({ tipo: 'custom', desde: cal.desde, hasta: cal.hasta }); setCal(null) } }}>Aplicar</Btn>
+                <Btn onClick={() => setCal(null)}>Cancelar</Btn>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -641,13 +752,52 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               <Fila cabecera gtc={G_HAY_J} cols={['Diesel', 'Saldo (gal)', 'Precio/gal · desde', 'Valor']} der={[false, true, true, true]} />
               {saldos.map((s, i) => {
                 const p = precios[s.tipo_id]
+                const ls = lotes[s.tipo_id] || []
+                const abierto = expandido === s.tipo_id
                 return (
-                  <Fila key={s.tipo_id} gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
-                    <b style={{ fontWeight: 600 }}>{s.tipo}</b>,
-                    <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
-                    p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
-                    <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
-                  ]} />
+                  <div key={s.tipo_id}>
+                    <Fila gtc={G_HAY_J} cebra={i % 2 === 1} der={[false, true, true, true]} cols={[
+                      <span onClick={() => setExpandido(abierto ? null : s.tipo_id)} style={{ cursor: 'pointer', userSelect: 'none' }}>
+                        <span style={{ color: '#aab8c6', fontSize: '11px', marginRight: '7px' }}>{abierto ? '▾' : '▸'}</span>
+                        <b style={{ fontWeight: 600 }}>{s.tipo}</b>
+                      </span>,
+                      <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
+                      p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
+                      <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
+                    ]} />
+                    {abierto && (
+                      <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 16px' }}>
+                        <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '10px' }}>
+                          Detalle por lote — cuánto queda a cada precio (el más viejo se gasta primero)
+                        </div>
+                        {ls.length === 0 ? (
+                          <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes con saldo.</div>
+                        ) : (
+                          <div style={{ position: 'relative', paddingLeft: '20px' }}>
+                            <div style={{ position: 'absolute', left: '4px', top: '6px', bottom: '6px', width: '1.5px', background: BORDE }} />
+                            {ls.map((L, li) => (
+                              <div key={li} style={{ position: 'relative', padding: '7px 0' }}>
+                                <div style={{ position: 'absolute', left: '-20px', top: '11px', width: '9px', height: '9px', borderRadius: '50%', background: L.precio == null ? '#FAEEDA' : '#fff', border: '1.5px solid ' + (L.precio == null ? '#d9a441' : AZUL) }} />
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 650, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{miles(L.queda)} gal</span>
+                                  <span style={{ fontSize: '11.5px', color: L.precio == null ? AMBAR : GRIS }}>
+                                    {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del inventario inicial' : 'compra ' + corta(L.fecha)}
+                                  </span>
+                                  {li === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
+                                  {esJefeGlobal && !L.inicial && (
+                                    <button onClick={() => setCorrLote({ tipoId: s.tipo_id, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
+                                      style={{ marginLeft: 'auto', fontSize: '12px', padding: '3px 10px', background: '#eef4fb', color: AZUL, border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
+                                      Corregir precio
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </>
