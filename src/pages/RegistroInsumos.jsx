@@ -24,6 +24,8 @@ const VERDE = '#0F6E56'
 // Genérica = contar envases (unidad/unidades). kilos/litros/gramos SÍ son
 // unidades de uso reales aunque el factor sea 1.
 const esUnidadGenerica = u => { const x = String(u || '').toLowerCase(); return !x || x === 'unidad' || x === 'unidades' || x === 'u' || x === 'un' || x === 'unid' }
+// Cantidad con hasta 2 decimales (NO redondea a entero como miles): 0.8 funda no debe salir 0.
+const limpio = n => (n === null || n === undefined || n === '') ? '' : Number(n).toLocaleString('es-EC', { maximumFractionDigits: 2 })
 
 const UNIDAD = {
   sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
@@ -579,7 +581,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                               ...(li > 0 ? { borderTop: '1px dashed ' + BORDE, paddingTop: '6px', marginTop: '6px' } : {}) }}>
                           <div style={{ fontSize: '11px', color: GRIS }}>{nombreInsumo(l.insumoId)}</div>
                           <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>
-                            <b style={{ fontWeight: 600 }}>{miles(numDec(l.cantidad))}</b>{' '}
+                            <b style={{ fontWeight: 600 }}>{limpio(numDec(l.cantidad))}</b>{' '}
                             <span style={{ fontSize: '10px', color: '#9fb0bf' }}>{unidadInsumo(l.insumoId)}</span>
                           </div>
                         </div>
@@ -705,7 +707,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
                   <tr key={c.id}>
                     <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', fontWeight: 600 }}>{nombreInsumo(c.id)}</td>
                     <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      <b style={{ fontWeight: 600 }}>{miles(c.cant)}</b> <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{unidadInsumo(c.id)}</span>
+                      <b style={{ fontWeight: 600 }}>{limpio(c.cant)}</b> <span style={{ fontSize: '11px', color: GRIS, fontWeight: 400 }}>{unidadInsumo(c.id)}</span>
                     </td>
                     <td style={{ padding: '11px 12px', borderBottom: '1px solid #eef3f8', fontSize: '13px', textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
                       {eq ? <>{Number(eq.cant).toLocaleString('es-EC', { maximumFractionDigits: 2 })} {eq.u}</> : '—'}
