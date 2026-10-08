@@ -21,6 +21,7 @@ const primeroDelMes = iso => iso.slice(0, 8) + '01'
 const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
 const ddmm = iso => corta(iso).slice(0, 5)
 const G_CONTEO = '1.6fr 1fr 130px 250px 120px'
+const G_CONTEO_REC = '1.3fr 1fr 110px 110px 250px 120px'  // recuento: con columna Equivalente
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 const G_SALDO_J = '1fr 150px 130px 140px 110px'
 const G_SALDO_B = '1fr 140px'
@@ -820,15 +821,36 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </div>
           )}
 
-          <Encabezado gtc={G_CONTEO} centrar cols={['Balanceado', 'Llega / se aplica', (primeraVez || editToma) ? '' : 'El sistema dice', editToma ? 'Contado' : primeraVez ? 'Inventario inicial' : 'Contado', (primeraVez || editToma) ? '' : 'Diferencia']} />
-          {(primeraVez || editToma ? filas : filas.filter(f => coincide(f.producto))).map(f => (
-            <Fila gtc={G_CONTEO} key={f.producto_id}>
+          {(() => {
+          const esRecuento = !(primeraVez || editToma)
+          const gtcC = esRecuento ? G_CONTEO_REC : G_CONTEO
+          const base = esRecuento ? filas.filter(f => coincide(f.producto)) : filas
+          const lista = esRecuento
+            ? [...base].sort((a, b) => {
+                const ia = Number(a.esperado) > 0.0001 ? 0 : 1, ib = Number(b.esperado) > 0.0001 ? 0 : 1
+                return ia !== ib ? ia - ib : String(a.producto).localeCompare(String(b.producto), 'es')
+              })
+            : base
+          const primeraSin = esRecuento ? lista.findIndex(f => !(Number(f.esperado) > 0.0001)) : -1
+          return (<>
+          <Encabezado gtc={gtcC} centrar cols={esRecuento
+            ? ['Balanceado', 'Llega / se aplica', 'El sistema dice', 'Equivalente', 'Conteo', 'Diferencia']
+            : ['Balanceado', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']} />
+          {lista.map((f, idx) => (
+            <Fragment key={f.producto_id}>
+            {esRecuento && primeraSin > 0 && idx === primeraSin && (
+              <div style={{ padding: '9px 14px', background: '#fbfcfe', borderTop: '1px solid ' + BORDE, borderBottom: '0.5px solid ' + BORDE, fontSize: '11px', fontWeight: 600, color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em' }}>Sin inventario</div>
+            )}
+            <Fila gtc={gtcC}>
               <Cel>{f.producto}</Cel>
               <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
               <Cel centro gris>{(primeraVez || editToma) ? '' : (<>
-                {limpio(f.esperado)}
+                <span style={{ fontWeight: 500 }}>{limpio(f.esperado)}</span> <span style={{ fontSize: '10px', color: '#aab8c6' }}>sacos</span>
                 {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (ya comió ${limpio(f.cons)})` : `había (antes de comer ${limpio(f.cons)})`}</div>}
               </>)}</Cel>
+              {esRecuento && (
+                <Cel centro><span style={{ color: AZUL, fontWeight: 500 }}>{limpio(Number(f.esperado) * lps)} <span style={{ fontSize: '10px', color: '#aab8c6', fontWeight: 400 }}>lb</span></span></Cel>
+              )}
               <div style={{ padding: '5px 10px' }}>
                 {primeraVez ? (
                   <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="Sacos"
@@ -838,14 +860,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                        <span style={{ fontSize: '10px', color: GRIS }}>Sacos completos</span>
+                        <span style={{ fontSize: '10px', color: GRIS }}>Sacos</span>
                         <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="0"
                           onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))}
                           style={{ ...inp, width: '100%', textAlign: 'right' }} />
                       </div>
                       <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                        <span style={{ fontSize: '10px', color: GRIS }}>Libras sueltas</span>
+                        <span style={{ fontSize: '10px', color: GRIS }}>Libras</span>
                         <CampoNumero maxDec={2} value={sueltas[f.producto_id] ?? ''} placeholder="0"
                           onChange={v => setSueltas(c => ({ ...c, [f.producto_id]: v }))}
                           style={{ ...inp, width: '100%', textAlign: 'right' }} />
@@ -884,7 +906,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 </div>
               )}
             </Fila>
+            </Fragment>
           ))}
+          </>)
+          })()}
           <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
                         display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button onClick={() => { setContando(false); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }} style={btn}>Cancelar</button>

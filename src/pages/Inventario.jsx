@@ -51,6 +51,9 @@ const navBtn = { padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', b
 const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
 const ANCHOS_SALDO_JEFE = '1fr 180px 160px 195px 150px 115px'   // sin "Equivale a" (lo reemplaza el toggle)
 const ANCHOS_SALDO_BOD  = '1.4fr 220px 160px 160px' // bodeguero: Saldo + Equivalente (sin toggle)
+// Contar la bodega: recuento añade columna Equivalente; inicial/edición no.
+const ANCHOS_CONTEO_REC = '0.85fr 170px 110px 110px 250px 115px'
+const ANCHOS_CONTEO_INI = '1fr 185px 95px 250px 115px'
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 const ANCHOS_MOV        = '1fr 100px 110px 100px 100px 100px 100px 110px 120px'
@@ -1273,15 +1276,30 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           <Tabla
             columnas={(primeraVez || editToma)
               ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
-              : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Contado', 'Diferencia']}
-            anchos="1fr 185px 95px 250px 115px"
+              : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Equivalente', 'Conteo', 'Diferencia']}
+            anchos={(primeraVez || editToma) ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_REC}
           >
-            {filas.map(f => {
+            {(() => {
+              const esRecuento = !(primeraVez || editToma)
+              const lista = esRecuento
+                ? [...filas].sort((a, b) => {
+                    const ia = Number(a.esperado) > 0.0001 ? 0 : 1, ib = Number(b.esperado) > 0.0001 ? 0 : 1
+                    return ia !== ib ? ia - ib : String(a.insumo).localeCompare(String(b.insumo), 'es')
+                  })
+                : filas
+              const primeraSin = esRecuento ? lista.findIndex(f => !(Number(f.esperado) > 0.0001)) : -1
+              return lista.map((f, idx) => {
               const facF = factores[f.insumo_id]
               const convF = facF && (facF.factor || 1) !== 1
               const conPesoF = !convF && facF && facF.contenido && facF.contenido !== 1 && facF.uCont
+              const uPresF = (UNIDAD[f.unidad] || f.unidad || '').toLowerCase()
+              const uAppF = facF && facF.uApp ? (UNIDAD[facF.uApp] || facF.uApp || '').toLowerCase() : ''
               return (
-              <Fila key={f.insumo_id} anchos="1fr 185px 95px 250px 115px">
+              <Fragment key={f.insumo_id}>
+              {esRecuento && primeraSin > 0 && idx === primeraSin && (
+                <div style={{ padding: '9px 16px', background: '#fbfcfe', borderTop: '1px solid ' + BORDE, borderBottom: '0.5px solid ' + BORDE, fontSize: '11px', fontWeight: 600, color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em' }}>Sin inventario</div>
+              )}
+              <Fila anchos={esRecuento ? ANCHOS_CONTEO_REC : ANCHOS_CONTEO_INI}>
                 <Celda>{f.insumo}</Celda>
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[f.unidad] || f.unidad)}</span>
@@ -1292,22 +1310,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {conPesoF && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.contenido)} {cap1(UNIDAD[facF.uCont] || facF.uCont)}</div>}
                 </Celda>
                 <Celda derecha gris>{(primeraVez || editToma) ? '' : (<>
-                  {limpio(f.esperado)}
+                  <span style={{ fontWeight: 500 }}>{limpio(f.esperado)}</span> <span style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</span>
                   {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (ya aplicó ${limpio(f.cons)})` : `había (antes de aplicar ${limpio(f.cons)})`}</div>}
                 </>)}</Celda>
+                {!(primeraVez || editToma) && (
+                  <Celda derecha>{convF
+                    ? <span style={{ color: AZUL, fontWeight: 500 }}>{limpio(Number(f.esperado) * (facF.factor || 1))} <span style={{ fontSize: '10px', color: '#aab8c6', fontWeight: 400 }}>{uAppF}</span></span>
+                    : <span style={{ color: '#c3d0db' }}>—</span>}</Celda>
+                )}
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                   {convF ? (
                     <>
                       <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[f.unidad] || f.unidad)} completas</span>
+                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[f.unidad] || f.unidad)}</span>
                           <CampoNumero maxDec={2} value={contado[f.insumo_id] ?? ''} placeholder="0"
                             onChange={v => setContado(c => ({ ...c, [f.insumo_id]: v }))}
                             style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                         </div>
                         <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[facF.uApp] || facF.uApp)} sueltos</span>
+                          <span style={{ fontSize: '10px', color: GRIS }}>{cap1(UNIDAD[facF.uApp] || facF.uApp)}</span>
                           <CampoNumero maxDec={2} value={sobrante[f.insumo_id] ?? ''} placeholder="0"
                             onChange={v => setSobrante(s => ({ ...s, [f.insumo_id]: v }))}
                             style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
@@ -1344,8 +1367,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 }>
                   {(primeraVez || editToma) ? ''
                     : f.diferencia === null ? (noContados === 'cero' ? 'Queda en 0' : 'Se mantiene')
-                    : f.diferencia === 0 ? 'cuadra'
-                    : (f.diferencia < 0 ? 'faltan ' : 'sobran ') + limpio(Math.abs(f.diferencia))}
+                    : f.diferencia === 0 ? 'Cuadra'
+                    : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
                 </Celda>
                 {/* Motivo del descuadre: solo cuando no cuadra (recuento). */}
                 {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.0001 && (
@@ -1369,7 +1392,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>
                 )}
               </Fila>
-            )})}
+              </Fragment>
+            )})
+            })()}
           </Tabla>
 
           <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
