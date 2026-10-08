@@ -21,7 +21,7 @@ const primeroDelMes = iso => iso.slice(0, 8) + '01'
 const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7) - 1; if (m === 0) { m = 12; y-- }; return `${y}-${String(m).padStart(2, '0')}-01` }
 const ddmm = iso => corta(iso).slice(0, 5)
 const G_CONTEO = '1.6fr 1fr 130px 250px 120px'
-const G_CONTEO_REC = '1.3fr 1fr 110px 110px 250px 120px'  // recuento: con columna Equivalente
+const G_CONTEO_REC = '1.1fr 150px 100px 120px 240px 110px'  // recuento: con columna Equivalente
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 const G_SALDO_J = '1fr 150px 130px 140px 110px'
 const G_SALDO_B = '1fr 140px'
@@ -834,7 +834,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           const primeraSin = esRecuento ? lista.findIndex(f => !(Number(f.esperado) > 0.0001)) : -1
           return (<>
           <Encabezado gtc={gtcC} centrar cols={esRecuento
-            ? ['Balanceado', 'Llega / se aplica', 'El sistema dice', 'Equivalente', 'Conteo', 'Diferencia']
+            ? ['Balanceado', 'Llega / se aplica', 'Sistema', 'Equivalente', 'Conteo', 'Diferencia']
             : ['Balanceado', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']} />
           {lista.map((f, idx) => (
             <Fragment key={f.producto_id}>
@@ -845,11 +845,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               <Cel>{f.producto}</Cel>
               <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
               <Cel centro gris>{(primeraVez || editToma) ? '' : (<>
-                <span style={{ fontWeight: 500 }}>{limpio(f.esperado)}</span> <span style={{ fontSize: '10px', color: '#aab8c6' }}>sacos</span>
-                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (ya comió ${limpio(f.cons)})` : `había (antes de comer ${limpio(f.cons)})`}</div>}
+                <span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span>
+                <div style={{ fontSize: '10px', color: '#aab8c6' }}>sacos</div>
+                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (comió ${limpio(f.cons)})` : `había (−${limpio(f.cons)} de hoy)`}</div>}
               </>)}</Cel>
               {esRecuento && (
-                <Cel centro><span style={{ color: AZUL, fontWeight: 500 }}>{limpio(Number(f.esperado) * lps)} <span style={{ fontSize: '10px', color: '#aab8c6', fontWeight: 400 }}>lb</span></span></Cel>
+                <Cel centro><span style={{ color: AZUL, fontWeight: 600 }}>{limpio(Number(f.esperado) * lps)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>lb</div></Cel>
               )}
               <div style={{ padding: '5px 10px' }}>
                 {primeraVez ? (
