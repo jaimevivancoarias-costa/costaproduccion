@@ -52,7 +52,7 @@ const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
 const ANCHOS_SALDO_JEFE = '1fr 180px 160px 195px 150px 115px'   // sin "Equivale a" (lo reemplaza el toggle)
 const ANCHOS_SALDO_BOD  = '1.4fr 220px 160px 160px' // bodeguero: Saldo + Equivalente (sin toggle)
 // Contar la bodega: recuento añade columna Equivalente; inicial/edición no.
-const ANCHOS_CONTEO_REC = '0.85fr 170px 110px 110px 250px 115px'
+const ANCHOS_CONTEO_REC = '0.8fr 155px 100px 130px 240px 110px'
 const ANCHOS_CONTEO_INI = '1fr 185px 95px 250px 115px'
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
@@ -1276,8 +1276,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           <Tabla
             columnas={(primeraVez || editToma)
               ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
-              : ['Insumo', 'Llega / se aplica', 'El sistema dice', 'Equivalente', 'Conteo', 'Diferencia']}
+              : ['Insumo', 'Llega / se aplica', 'Sistema', 'Equivalente', 'Conteo', 'Diferencia']}
             anchos={(primeraVez || editToma) ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_REC}
+            alinear={(primeraVez || editToma) ? undefined : ['left', 'left', 'center', 'center', 'center', 'right']}
           >
             {(() => {
               const esRecuento = !(primeraVez || editToma)
@@ -1309,13 +1310,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </>}
                   {conPesoF && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.contenido)} {cap1(UNIDAD[facF.uCont] || facF.uCont)}</div>}
                 </Celda>
-                <Celda derecha gris>{(primeraVez || editToma) ? '' : (<>
-                  <span style={{ fontWeight: 500 }}>{limpio(f.esperado)}</span> <span style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</span>
-                  {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (ya aplicó ${limpio(f.cons)})` : `había (antes de aplicar ${limpio(f.cons)})`}</div>}
+                <Celda centro={!(primeraVez || editToma)} derecha={primeraVez || editToma} gris>{(primeraVez || editToma) ? '' : (<>
+                  <span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span>
+                  <div style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</div>
+                  {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (aplicó ${limpio(f.cons)})` : `había (−${limpio(f.cons)} de hoy)`}</div>}
                 </>)}</Celda>
                 {!(primeraVez || editToma) && (
-                  <Celda derecha>{convF
-                    ? <span style={{ color: AZUL, fontWeight: 500 }}>{limpio(Number(f.esperado) * (facF.factor || 1))} <span style={{ fontSize: '10px', color: '#aab8c6', fontWeight: 400 }}>{uAppF}</span></span>
+                  <Celda centro>{convF
+                    ? <><span style={{ color: AZUL, fontWeight: 600 }}>{limpio(Number(f.esperado) * (facF.factor || 1))}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>{uAppF}</div></>
                     : <span style={{ color: '#c3d0db' }}>—</span>}</Celda>
                 )}
                 <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
