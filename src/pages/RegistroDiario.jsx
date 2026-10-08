@@ -485,12 +485,15 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     piscinas.forEach(p => dias.forEach(f => {
       const c = celdas[clave(p, f)]
       if (!c || c.sinAlimentacion) return
-      const add = (pid, lb) => { const x = numDec(lb) || 0; if (pid && x) { m[pid] = (m[pid] || 0) + x } }
+      const add = (pid, lb) => {
+        if (filtros.length > 0 && !filtros.includes(pid)) return  // respeta el filtro "Ver:"
+        const x = numDec(lb) || 0; if (pid && x) { m[pid] = (m[pid] || 0) + x }
+      }
       add(c.productoId, c.libras)
       ;(c.extras || []).forEach(e => add(e.productoId, e.libras))
     }))
     return Object.entries(m).map(([pid, lb]) => ({ nombre: productos.find(x => x.id === pid)?.nombre || '', lb })).sort((a, b) => b.lb - a.lb)
-  }, [celdas, piscinas, fechas, productos, diaResumen])
+  }, [celdas, piscinas, fechas, productos, diaResumen, filtros])
   const totalBalLb = desgloseBal.reduce((s, r) => s + r.lb, 0)
   // ¿Hubo consumo en la semana? (para mostrar el panel aunque el día filtrado esté vacío)
   const hayConsumoBalSemana = useMemo(() =>
