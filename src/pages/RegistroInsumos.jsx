@@ -311,12 +311,15 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     Object.entries(lineas).forEach(([k, arr]) => {
       const f = k.split('|')[1]
       if (diaResumen && f !== diaResumen) return
-      arr.forEach(l => { m[l.insumoId] = (m[l.insumoId] || 0) + numDec(l.cantidad) })
+      arr.forEach(l => {
+        if (filtros.length > 0 && !filtros.includes(l.insumoId)) return  // respeta el filtro "Ver:"
+        m[l.insumoId] = (m[l.insumoId] || 0) + numDec(l.cantidad)
+      })
     })
     return Object.entries(m)
       .map(([id, cant]) => ({ id, cant }))
       .sort((a, b) => b.cant - a.cant)
-  }, [lineas, diaResumen])
+  }, [lineas, diaResumen, filtros])
   const hayConsumoSemana = useMemo(() => Object.values(lineas).some(arr => arr.length > 0), [lineas])
 
   // Resumen de la semana para las tarjetas de arriba.
