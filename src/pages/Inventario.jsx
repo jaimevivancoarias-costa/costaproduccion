@@ -52,7 +52,7 @@ const ANCHOS_SALDO      = '1.3fr 200px 130px 120px 130px'
 const ANCHOS_SALDO_JEFE = '1fr 180px 160px 195px 150px 115px'   // sin "Equivale a" (lo reemplaza el toggle)
 const ANCHOS_SALDO_BOD  = '1.4fr 220px 160px 160px' // bodeguero: Saldo + Equivalente (sin toggle)
 // Contar la bodega: recuento añade columna Equivalente; inicial/edición no.
-const ANCHOS_CONTEO_REC = '0.8fr 155px 100px 130px 240px 110px'
+const ANCHOS_CONTEO_REC = '0.8fr 150px 95px 125px 235px 135px'
 const ANCHOS_CONTEO_INI = '1fr 185px 95px 250px 115px'
 // Capitaliza cualquier texto (POMA / poma / Poma -> Poma).
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
@@ -1278,7 +1278,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               ? ['Insumo', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']
               : ['Insumo', 'Llega / se aplica', 'Sistema', 'Equivalente', 'Conteo', 'Diferencia']}
             anchos={(primeraVez || editToma) ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_REC}
-            alinear={(primeraVez || editToma) ? undefined : ['left', 'left', 'center', 'center', 'center', 'right']}
+            alinear={(primeraVez || editToma) ? undefined : ['left', 'left', 'center', 'center', 'center', 'center']}
           >
             {(() => {
               const esRecuento = !(primeraVez || editToma)
@@ -1293,8 +1293,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const facF = factores[f.insumo_id]
               const convF = facF && (facF.factor || 1) !== 1
               const conPesoF = !convF && facF && facF.contenido && facF.contenido !== 1 && facF.uCont
-              const uPresF = (UNIDAD[f.unidad] || f.unidad || '').toLowerCase()
-              const uAppF = facF && facF.uApp ? (UNIDAD[facF.uApp] || facF.uApp || '').toLowerCase() : ''
+              const uPresF = cap1(UNIDAD[f.unidad] || f.unidad || '')
+              const uAppF = facF && facF.uApp ? cap1(UNIDAD[facF.uApp] || facF.uApp || '') : ''
               return (
               <Fragment key={f.insumo_id}>
               {esRecuento && primeraSin > 0 && idx === primeraSin && (
@@ -1362,7 +1362,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 </div>
                 {/* La primera vez no hay contra que comparar: es la carga
                     inicial. La diferencia aparece de la segunda en adelante. */}
-                <Celda derecha color={
+                <Celda centro color={
                   f.diferencia === null ? '#c3d0db'
                   : f.diferencia < 0 ? ROJO
                   : f.diferencia > 0 ? AMBAR : VERDE
