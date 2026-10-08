@@ -2212,7 +2212,7 @@ function Caja({ children }) { return <div style={cajaS}>{children}</div> }
 const cajaS = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'auto', maxHeight: '68vh' }
 function Campo({ label, children }) { return <div><div style={{ fontSize: '12px', color: GRIS, marginBottom: '5px' }}>{label}</div>{children}</div> }
 function Encabezado({ cols, gtc, centrar }) {
-  return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '12px 14px', fontSize: '11.5px', fontWeight: 600, letterSpacing: '.02em', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, position: 'sticky', top: 0, zIndex: 3 }}>
+  return <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '10px', padding: '12px 14px', fontSize: '11px', fontWeight: 500, letterSpacing: '.02em', textTransform: 'uppercase', color: GRIS, background: '#f6f9fb', borderBottom: '0.5px solid ' + BORDE, position: 'sticky', top: 0, zIndex: 3 }}>
     {cols.map((c, i) => <span key={i} style={{ textAlign: i === 0 ? 'left' : (centrar ? 'center' : 'right') }}>{c}</span>)}
   </div>
 }
