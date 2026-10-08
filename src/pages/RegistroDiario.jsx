@@ -60,6 +60,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [dialogo, setDialogo] = useState(null)   // { tipo, fila }
   const [verIndicadores, setVerIndicadores] = useState(false)
   const [verSacos, setVerSacos] = useState(false)   // mostrar los sacos debajo de las libras en la cuadrícula (por defecto ocultos)
+  const [diaResumen, setDiaResumen] = useState(null) // null = toda la semana; si no, una fecha (filtro del consumo)
   const [lps, setLps] = useState(LIBRAS_POR_SACO)   // libras por saco de ESTA finca (Marexport 55.1156, resto 55)
   const [acumulado, setAcumulado] = useState({})   // cicloId -> libras desde la siembra
   const [raleado, setRaleado] = useState({})       // cicloId -> libras raleadas
@@ -480,7 +481,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   // Se arma desde las mismas celdas (libras por producto).
   const desgloseBal = useMemo(() => {
     const m = {}
-    piscinas.forEach(p => fechas.forEach(f => {
+    const dias = diaResumen ? [diaResumen] : fechas
+    piscinas.forEach(p => dias.forEach(f => {
       const c = celdas[clave(p, f)]
       if (!c || c.sinAlimentacion) return
       const add = (pid, lb) => { const x = numDec(lb) || 0; if (pid && x) { m[pid] = (m[pid] || 0) + x } }
@@ -488,8 +490,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       ;(c.extras || []).forEach(e => add(e.productoId, e.libras))
     }))
     return Object.entries(m).map(([pid, lb]) => ({ nombre: productos.find(x => x.id === pid)?.nombre || '', lb })).sort((a, b) => b.lb - a.lb)
-  }, [celdas, piscinas, fechas, productos])
+  }, [celdas, piscinas, fechas, productos, diaResumen])
   const totalBalLb = desgloseBal.reduce((s, r) => s + r.lb, 0)
+  // ¿Hubo consumo en la semana? (para mostrar el panel aunque el día filtrado esté vacío)
+  const hayConsumoBalSemana = useMemo(() =>
+    piscinas.some(p => fechas.some(f => librasCelda(celdas[clave(p, f)]) > 0)),
+    [piscinas, fechas, celdas])
 
   async function reabrirDia(fecha) {
     const id = diasId[fecha]
@@ -1238,7 +1244,6 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             {/* Barra de guardar / cerrar día (arriba del desglose) */}
             {!soloLectura && modo === 'registrar' && (semanaDeHoy || sucio || !semanaCerrada) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', marginTop: '16px' }}>
-                {semanaDeHoy && <Dato k="Libras de hoy" v={miles(totalDia(hoy)) || '0'} />}
                 {sucio && <span style={{ fontSize: '12.5px', color: '#854F0B' }}>Tienes cambios sin guardar.</span>}
                 {!semanaCerrada && (
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
@@ -1281,13 +1286,33 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
           </div>
 
-          {/* Desglose de balanceado de la semana */}
-          {desgloseBal.length > 0 && (
+          {/* Desglose de balanceado de la semana (con filtro por día) */}
+          {hayConsumoBalSemana && (
             <div style={{ marginTop: '34px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '16px 18px 18px', boxShadow: '0 1px 4px rgba(2,40,71,.07)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de balanceado de la semana</h3>
-                <span style={{ fontSize: '12px', color: GRIS }}>{corta(fechas[0])} – {corta(fechas[6])}</span>
+                <h3 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Consumo de balanceado{diaResumen ? ' del día' : ' de la semana'}</h3>
+                <span style={{ fontSize: '12px', color: GRIS }}>{diaResumen ? cortita(diaResumen) : `${cortita(fechas[0])} – ${cortita(fechas[6])}`}</span>
               </div>
+              {/* Filtro por día (o toda la semana). */}
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                {(() => {
+                  const chip = (on, label, onClick) => (
+                    <button onClick={onClick} style={{ fontFamily: 'inherit', fontSize: '12px', cursor: 'pointer',
+                      padding: '5px 11px', borderRadius: '20px', border: '0.5px solid ' + (on ? AZUL : BORDE),
+                      background: on ? AZUL : 'white', color: on ? 'white' : GRIS, fontWeight: on ? 600 : 400, textTransform: 'capitalize' }}>{label}</button>
+                  )
+                  return (
+                    <>
+                      {chip(!diaResumen, 'Semanal', () => setDiaResumen(null))}
+                      {fechas.filter(f => situacionDia(f, hoy) !== 'futuro').map(f =>
+                        chip(diaResumen === f, `${nombreDia(f)} ${cortita(f)}`, () => setDiaResumen(f)))}
+                    </>
+                  )
+                })()}
+              </div>
+              {desgloseBal.length === 0 ? (
+                <div style={{ fontSize: '13px', color: GRIS, padding: '8px 2px' }}>Sin consumo de balanceado ese día.</div>
+              ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr><th style={dThL}>Balanceado</th><th style={dThR}>Libras</th><th style={dThR}>Sacos</th></tr></thead>
                 <tbody>
@@ -1305,6 +1330,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                   </tr>
                 </tbody>
               </table>
+              )}
             </div>
           )}
 
