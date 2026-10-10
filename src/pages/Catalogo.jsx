@@ -1423,13 +1423,25 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
     if (!listo) { onError('Revisa la presentación y el contenido (factor).'); return }
     setEnviando(true)
     try {
+      // Unidad/factor ACTUAL por finca: para NO reconvertir las que no cambian.
+      // (Antes toda finca sin excepción se forzaba al estándar y, si su unidad
+      // difería, intentaba convertir → error "No hay conversión..." al editar
+      // SOLO el precio. Ahora una finca sin excepción conserva su unidad.)
+      const { data: ufAct } = await supabase.schema('produccion').from('insumo_finca')
+        .select('finca_id, unidad, factor').eq('insumo_id', insumo.id)
+      const uActual = {}, facActual = {}
+      ;(ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad; facActual[r.finca_id] = Number(r.factor) })
+
       const excUnit = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excUnit[e.fincaId] = e.unidad })
       const facMap = {}; const ids = []; const filas = []
       for (const f of activas) {
         // '__completo' es "envase entero": se guarda como 'unidad' (enum
         // válido) con factor 1, igual que el estándar.
-        const uFinca = excUnit[f.id] ? (excUnit[f.id] === '__completo' ? 'unidad' : excUnit[f.id]) : uStd
-        const facFinca = excUnit[f.id] ? factorFinca(excUnit[f.id]) : factor
+        // Sin excepción: conserva su unidad actual (si la tiene); las fincas
+        // NUEVAS heredan el estándar. Con excepción: la unidad elegida.
+        const tieneExc = !!excUnit[f.id]
+        const uFinca = tieneExc ? (excUnit[f.id] === '__completo' ? 'unidad' : excUnit[f.id]) : (uActual[f.id] ?? uStd)
+        const facFinca = tieneExc ? factorFinca(excUnit[f.id]) : (uActual[f.id] != null ? (facActual[f.id] || factor) : factor)
         if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
         facMap[f.id] = facFinca; ids.push(f.id)
         filas.push({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
@@ -1437,13 +1449,6 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
           stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })
       }
-      // 0) Si cambió la unidad de aplicación de una finca, convertir el
-      //    histórico ANTES de guardar (igual que "Ajustar unidad"). Así el
-      //    consumo viejo se pasa de gramos a kilos, etc., y no se descuadra.
-      const { data: ufAct } = await supabase.schema('produccion').from('insumo_finca')
-        .select('finca_id, unidad, factor').eq('insumo_id', insumo.id)
-      const uActual = {}, facActual = {}
-      ;(ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad; facActual[r.finca_id] = Number(r.factor) })
       // Toda finca a la que le cambió la unidad se convierte AQUÍ mismo con la
       // misma función que usa "Ajustar unidad". La equivalencia que necesita
       // (cuánto trae un saco, o la densidad) YA la tiene la app: se toma sola
