@@ -1423,7 +1423,7 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
           <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Aplica a todas las fincas (menos las que elijas abajo)</span>
         </div>
         <div style={{ padding: '15px' }}>
-          <PlzGrid obj={std} onP={(pz, v) => setStd(s => ({ ...s, precios: { ...s.precios, [pz]: v }, plazoRige: (s.plazoRige == null && numDec(v) > 0) ? pz : s.plazoRige }))} onRige={pz => setStd(s => ({ ...s, plazoRige: pz }))} />
+          {PlzGrid({ obj: std, onP: (pz, v) => setStd(s => ({ ...s, precios: { ...s.precios, [pz]: v }, plazoRige: (s.plazoRige == null && numDec(v) > 0) ? pz : s.plazoRige })), onRige: pz => setStd(s => ({ ...s, plazoRige: pz })) })}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '13px' }}>
             <label style={{ fontSize: '11px', color: C.gris }}>Rige desde</label>
             <input type="date" value={std.desde} max={hoyISO()} onChange={e => setStd(s => ({ ...s, desde: e.target.value }))} style={dateP} />
@@ -1433,8 +1433,8 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
 
       {/* Grupos de precio distinto */}
       {grupos.map(g => (
-        <div key={g.id} style={{ border: '1px solid #e4d8c2', borderRadius: '14px', marginBottom: '14px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#fdf7ec', borderBottom: '1px solid #e4d8c2' }}>
+        <div key={g.id} style={{ border: '1px solid #e4d8c2', borderRadius: '14px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#fdf7ec', borderBottom: '1px solid #e4d8c2', borderTopLeftRadius: '13px', borderTopRightRadius: '13px' }}>
             <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#fdf4e3', color: C.ambar }}>Precio distinto</span>
             <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Para las fincas que elijas</span>
             <button onClick={() => setGrupos(gs => gs.filter(x => x.id !== g.id))} style={{ marginLeft: 'auto', color: '#aab8c6', cursor: 'pointer', border: 'none', background: 'none', fontSize: '15px' }}>✕</button>
@@ -1464,7 +1464,7 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
               )}
             </div>
             <div style={{ fontSize: '11px', color: C.gris, margin: '4px 0 14px' }}>Elige <b>una o varias</b> · todas tendrán este mismo precio.</div>
-            <PlzGrid obj={g} onP={(pz, v) => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, precios: { ...x.precios, [pz]: v }, plazoRige: (x.plazoRige == null && numDec(v) > 0) ? pz : x.plazoRige }))} onRige={pz => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, plazoRige: pz }))} />
+            {PlzGrid({ obj: g, onP: (pz, v) => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, precios: { ...x.precios, [pz]: v }, plazoRige: (x.plazoRige == null && numDec(v) > 0) ? pz : x.plazoRige })), onRige: pz => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, plazoRige: pz })) })}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '13px' }}>
               <label style={{ fontSize: '11px', color: C.gris }}>Rige desde</label>
               <input type="date" value={g.desde} max={hoyISO()} onChange={e => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, desde: e.target.value }))} style={dateP} />
