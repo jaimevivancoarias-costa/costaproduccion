@@ -1456,6 +1456,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       const convertidas = new Set()
       const porCache = {}
       for (const fila of filas) {
+        // Solo se convierte la unidad de las fincas que el usuario cambió
+        // EXPLÍCITAMENTE (excepción por finca / masivo). Nunca una finca que
+        // solo recibe el precio estándar — eso disparaba la conversión y
+        // fallaba (ej. PRUEBA, con movimientos y unidad distinta al estándar).
+        if (!excUnit[fila.finca_id]) continue
         const antes = uActual[fila.finca_id] || insumo.unidad
         if (fila.unidad === antes) continue
         const nom = activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'
@@ -1506,7 +1511,10 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       //    tienen su unidad/factor correctos por la función: a esas NO se les
       //    reescribe la fila (para no pisar la conversión ni mandar unidad
       //    nula), solo se les actualiza el mínimo/objetivo aparte.
-      const filasUpsert = filas.filter(fl => !convertidas.has(fl.finca_id))
+      // No se crea/pisa config de unidad para fincas que solo reciben precio y
+      // no tienen fila propia (ej. PRUEBA): se les deja su config global. Solo
+      // se escribe la fila si la finca cambió explícitamente o ya tenía una.
+      const filasUpsert = filas.filter(fl => !convertidas.has(fl.finca_id) && (excUnit[fl.finca_id] || uActual[fl.finca_id] != null))
       if (filasUpsert.length) {
         const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filasUpsert, { onConflict: 'insumo_id,finca_id' })
         if (e1) throw e1
