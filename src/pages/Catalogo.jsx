@@ -555,10 +555,25 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                     grpMap[key].fincaIds.push(e.fincaId)
                   })
                   const initGrupos = Object.values(grpMap)
+                  // --- Datos para MÍNIMOS ---
+                  const minUnitLabel = (!uApp || uApp === 'unidad') ? String(presLabel).toLowerCase() : uAppLabel
+                  const minStd = { min: o?.stock_minimo ?? null, obj: o?.stock_objetivo ?? null }
+                  const mgrp = {}
+                  ;(fincas || []).forEach(f => {
+                    if (f.id === f0) return
+                    const ov = over[k(p.id, f.id)]
+                    const mMin = ov?.stock_minimo ?? null, mObj = ov?.stock_objetivo ?? null
+                    if ((mMin ?? null) === (minStd.min ?? null) && (mObj ?? null) === (minStd.obj ?? null)) return
+                    const key = JSON.stringify({ m: mMin, o: mObj })
+                    if (!mgrp[key]) mgrp[key] = { fincaIds: [], min: mMin, obj: mObj }
+                    mgrp[key].fincaIds.push(f.id)
+                  })
+                  const minGrupos = Object.values(mgrp)
                   return (
                     <ConfigInsumoTabs insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
                       actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
                       facFinca={facFinca} factorStd={factorStd} presLabel={presLabel} uAppLabel={uAppLabel}
+                      minUnitLabel={minUnitLabel} minStd={minStd} minGrupos={minGrupos}
                       initStd={initStd} initGrupos={initGrupos}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
                       onHechoPrecios={() => {}}
@@ -1494,7 +1509,122 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
   )
 }
 
-// Contenedor con pestañas: Precios (nuevo) + Unidad y mínimos (editor actual sin precio).
+// ── Editor de MÍNIMOS (rediseño) ────────────────────────────────────────────
+// Estándar (todas) + bloques "Mínimo distinto" con selector de fincas.
+// Guarda SOLO stock_minimo / stock_objetivo (no toca unidad ni precio).
+function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError, onCancelar }) {
+  const activas = fincas || []
+  const [std, setStd] = useState(() => ({ min: initStd?.min != null ? String(initStd.min) : '', obj: initStd?.obj != null ? String(initStd.obj) : '' }))
+  const [grupos, setGrupos] = useState(() => (initGrupos || []).map((g, i) => ({ id: 'g' + i, fincaIds: [...(g.fincaIds || [])], min: g.min != null ? String(g.min) : '', obj: g.obj != null ? String(g.obj) : '' })))
+  const [enviando, setEnviando] = useState(false)
+  const [toast, setToast] = useState(null)
+  const [pickFor, setPickFor] = useState(null)
+  const iniRef = useRef(null)
+  useEffect(() => { iniRef.current = JSON.parse(JSON.stringify({ std, grupos })) }, [])   // eslint-disable-line
+
+  const fincaNom = id => activas.find(f => f.id === id)?.nombre || ''
+  const enGrupos = new Set(grupos.flatMap(g => g.fincaIds))
+  const stdFincaIds = activas.filter(f => !enGrupos.has(f.id)).map(f => f.id)
+  const perFinca = snap => { const m = {}; const us = new Set((snap.grupos || []).flatMap(g => g.fincaIds)); activas.forEach(f => { if (!us.has(f.id)) m[f.id] = { min: snap.std.min, obj: snap.std.obj } }); (snap.grupos || []).forEach(g => g.fincaIds.forEach(fid => m[fid] = { min: g.min, obj: g.obj })); return m }
+  const nn = v => { const s = String(v ?? '').trim(); return s === '' ? null : (numDec(s) > 0 ? numDec(s) : null) }
+  const eqN = (a, b) => (nn(a) ?? -1) === (nn(b) ?? -1)
+
+  async function guardar() {
+    for (const g of grupos) if (!g.fincaIds.length) { onError && onError('Un bloque de "mínimo distinto" no tiene fincas. Elige fincas o quítalo.'); return }
+    setEnviando(true); setToast(null)
+    try {
+      const iniPF = perFinca(iniRef.current || { std, grupos })
+      const bloques = [{ fincaIds: stdFincaIds, min: std.min, obj: std.obj }, ...grupos.map(g => ({ fincaIds: g.fincaIds, min: g.min, obj: g.obj }))]
+      const touched = new Set()
+      for (const b of bloques) {
+        const chg = b.fincaIds.filter(fid => !eqN(b.min, iniPF[fid]?.min) || !eqN(b.obj, iniPF[fid]?.obj))
+        if (!chg.length) continue
+        const { error } = await supabase.schema('produccion').from('insumo_finca')
+          .update({ stock_minimo: nn(b.min), stock_objetivo: nn(b.obj) })
+          .eq('insumo_id', insumo.id).in('finca_id', chg)
+        if (error) throw error
+        chg.forEach(fid => touched.add(fid))
+      }
+      iniRef.current = JSON.parse(JSON.stringify({ std, grupos }))
+      setToast(touched.size ? `✓ Guardado · ${touched.size} finca${touched.size === 1 ? '' : 's'}` : '✓ Sin cambios que guardar')
+    } catch (err) { onError && onError(err.message || 'No se pudo guardar.') }
+    finally { setEnviando(false) }
+  }
+
+  const inpN = { border: '1px solid #e6edf3', borderRadius: '9px', padding: '9px 10px', fontSize: '14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'inherit', width: '90px', color: NAVY, background: '#fff' }
+  function Campos({ obj, on }) {
+    return (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', flexWrap: 'wrap' }}>
+          <div style={{ width: '230px' }}><div style={{ fontSize: '13px', fontWeight: 600 }}>Mínimo para reponer</div><div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>si baja de aquí, avisa "Por reponer"</div></div>
+          <CampoNumero maxDec={2} value={obj.min ?? ''} placeholder="—" onChange={v => on('min', v)} style={inpN} /><span style={{ fontSize: '13px', color: GRIS }}>{unitLabel}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <div style={{ width: '230px' }}><div style={{ fontSize: '13px', fontWeight: 600 }}>Objetivo <span style={{ color: '#aab8c6', fontWeight: 400 }}>(opcional)</span></div><div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>cuánto querrías tener</div></div>
+          <CampoNumero maxDec={2} value={obj.obj ?? ''} placeholder="—" onChange={v => on('obj', v)} style={inpN} /><span style={{ fontSize: '13px', color: GRIS }}>{unitLabel}</span>
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <div style={{ padding: '14px 2px 4px' }}>
+      <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '14px' }}>El <b style={{ color: NAVY }}>mínimo</b> es el nivel al que, cuando el saldo baja, la finca sale en <b style={{ color: NAVY }}>"Por reponer"</b>.</div>
+
+      <div style={{ border: '1px solid #d5e3f2', borderRadius: '14px', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#f3f8fe', borderBottom: '1px solid #d5e3f2', borderTopLeftRadius: '13px', borderTopRightRadius: '13px' }}>
+          <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#e8f1fb', color: AZUL }}>Estándar</span>
+          <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Aplica a todas las fincas (menos las que elijas abajo)</span>
+        </div>
+        <div style={{ padding: '15px' }}>{Campos({ obj: std, on: (k, v) => setStd(s => ({ ...s, [k]: v })) })}</div>
+      </div>
+
+      {grupos.map(g => (
+        <div key={g.id} style={{ border: '1px solid #e4d8c2', borderRadius: '14px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#fdf7ec', borderBottom: '1px solid #e4d8c2', borderTopLeftRadius: '13px', borderTopRightRadius: '13px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#fdf4e3', color: '#b9801b' }}>Mínimo distinto</span>
+            <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Para las fincas que elijas</span>
+            <button onClick={() => setGrupos(gs => gs.filter(x => x.id !== g.id))} style={{ marginLeft: 'auto', color: '#aab8c6', cursor: 'pointer', border: 'none', background: 'none', fontSize: '15px' }}>✕</button>
+          </div>
+          <div style={{ padding: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '14px', position: 'relative' }}>
+              <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Fincas:</span>
+              {g.fincaIds.map(fid => (
+                <span key={fid} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fdf4e3', border: '1px solid #ecd9b4', color: '#7a5410', fontSize: '12.5px', fontWeight: 600, borderRadius: '20px', padding: '5px 11px' }}>
+                  {fincaNom(fid)}<span onClick={() => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, fincaIds: x.fincaIds.filter(y => y !== fid) }))} style={{ cursor: 'pointer', color: '#b79a63', fontWeight: 700 }}>✕</span>
+                </span>
+              ))}
+              <button onClick={() => setPickFor(pickFor === g.id ? null : g.id)} style={{ fontSize: '12.5px', color: AZUL, background: '#fff', border: '1px solid #bcd3ec', borderRadius: '20px', padding: '6px 13px', cursor: 'pointer', fontWeight: 600 }}>+ Elegir fincas ▾</button>
+              {pickFor === g.id && (
+                <div style={{ position: 'absolute', top: '36px', left: 0, zIndex: 20, background: '#fff', border: '1px solid #e6edf3', borderRadius: '12px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '8px', width: '230px', maxHeight: '260px', overflow: 'auto' }}>
+                  {activas.map(f => { const enOtro = enGrupos.has(f.id) && !g.fincaIds.includes(f.id); const on = g.fincaIds.includes(f.id); return (
+                    <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '7px 9px', borderRadius: '8px', fontSize: '13px', cursor: enOtro ? 'default' : 'pointer', opacity: enOtro ? 0.4 : 1 }}>
+                      <input type="checkbox" checked={on} disabled={enOtro} onChange={() => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, fincaIds: on ? x.fincaIds.filter(y => y !== f.id) : [...x.fincaIds, f.id] }))} />
+                      {f.nombre}{enOtro ? ' (en otro bloque)' : ''}
+                    </label>) })}
+                </div>
+              )}
+            </div>
+            {Campos({ obj: g, on: (k, v) => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, [k]: v })) })}
+          </div>
+        </div>
+      ))}
+
+      <button onClick={() => setGrupos(gs => [...gs, { id: 'g' + Date.now(), fincaIds: [], min: '', obj: '' }])}
+        style={{ width: '100%', border: '1px dashed #cdd8e2', background: '#fafcfe', borderRadius: '12px', padding: '13px', color: '#b9801b', fontWeight: 600, fontSize: '13.5px', cursor: 'pointer', marginBottom: '14px', fontFamily: 'inherit' }}>
+        + Agregar otro mínimo distinto (para otras fincas)
+      </button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '13px', flexWrap: 'wrap' }}>
+        <button disabled={enviando} onClick={guardar} style={{ background: AZUL, color: '#fff', border: 'none', borderRadius: '11px', padding: '12px 24px', fontSize: '14px', fontWeight: 650, cursor: enviando ? 'default' : 'pointer', fontFamily: 'inherit', opacity: enviando ? 0.6 : 1 }}>{enviando ? 'Guardando...' : 'Guardar mínimos'}</button>
+        <button onClick={onCancelar} style={{ background: 'none', border: 'none', color: GRIS, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cerrar</button>
+        {toast && <span style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#e7f6ef', border: '1px solid #bfe6d2', color: '#0F8A5F', borderRadius: '11px', padding: '9px 14px', fontSize: '13px', fontWeight: 600 }}>{toast}</span>}
+      </div>
+    </div>
+  )
+}
+
+// Contenedor con pestañas: Precios (nuevo) + Unidad (editor actual sin precio) + Mínimos.
 function ConfigInsumoTabs(p) {
   const [tab, setTab] = useState('precios')
   const tb = (id, txt) => (
@@ -1505,7 +1635,7 @@ function ConfigInsumoTabs(p) {
   return (
     <div style={{ background: '#fff', borderBottom: '0.5px solid #e6edf3' }}>
       <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, padding: '12px 18px 0' }}>
-        {tb('precios', 'Precios')}{tb('config', 'Unidad y mínimos')}
+        {tb('precios', 'Precios')}{tb('config', 'Unidad')}{tb('minimos', 'Mínimos')}
       </div>
       {tab === 'precios'
         ? <div style={{ padding: '2px 18px 14px' }}>
@@ -1513,6 +1643,11 @@ function ConfigInsumoTabs(p) {
               factorStd={p.factorStd} initStd={p.initStd} initGrupos={p.initGrupos}
               onHecho={p.onHechoPrecios} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar}
               onCambiarPresentacion={() => setTab('config')} />
+          </div>
+        : tab === 'minimos'
+        ? <div style={{ padding: '2px 18px 14px' }}>
+            <EditorMinimos insumo={p.insumo} fincas={p.fincas} unitLabel={p.minUnitLabel}
+              initStd={p.minStd} initGrupos={p.minGrupos} onError={p.onError} onCancelar={p.onCancelar} />
           </div>
         : <EditorConfigTodo insumo={p.insumo} fincas={p.fincas} presentaciones={p.presentaciones} actual={p.actual}
             excIni={p.excIni} sinPrecio onHecho={p.onHecho} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar} />}
@@ -1660,9 +1795,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
       // difería, intentaba convertir → error "No hay conversión..." al editar
       // SOLO el precio. Ahora una finca sin excepción conserva su unidad.)
       const { data: ufAct } = await supabase.schema('produccion').from('insumo_finca')
-        .select('finca_id, unidad, factor').eq('insumo_id', insumo.id)
-      const uActual = {}, facActual = {}
-      ;(ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad; facActual[r.finca_id] = Number(r.factor) })
+        .select('finca_id, unidad, factor, stock_minimo, stock_objetivo').eq('insumo_id', insumo.id)
+      const uActual = {}, facActual = {}, minAct = {}, objAct = {}
+      ;(ufAct || []).forEach(r => { uActual[r.finca_id] = r.unidad; facActual[r.finca_id] = Number(r.factor); minAct[r.finca_id] = r.stock_minimo; objAct[r.finca_id] = r.stock_objetivo })
 
       const excUnit = {}; exc.forEach(e => { if (e.fincaId && e.unidad) excUnit[e.fincaId] = e.unidad })
       const facMap = {}; const ids = []; const filas = []
@@ -1681,8 +1816,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
         facMap[f.id] = facFinca; ids.push(f.id)
         filas.push({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
           contenido: numDec(contenido) > 0 ? numDec(contenido) : 1, unidad_contenido: uCont, factor: facFinca,
-          stock_minimo: numDec(minimo) > 0 ? numDec(minimo) : null,
-          stock_objetivo: numDec(deseable) > 0 ? numDec(deseable) : null })
+          // Los mínimos se gestionan en su pestaña; aquí se CONSERVA el actual.
+          stock_minimo: minAct[f.id] ?? null, stock_objetivo: objAct[f.id] ?? null })
       }
       // Toda finca a la que le cambió la unidad se convierte AQUÍ mismo con la
       // misma función que usa "Ajustar unidad". La equivalencia que necesita
@@ -2140,19 +2275,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
       </div>
       )}
 
-      {/* 4. Alertas */}
-      <div style={seccion}>
-        <div style={tit}>4 · Alertas de inventario</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label={`Mínimo (${UNIDAD[uStd] || uStd})`}>
-            <CampoNumero maxDec={2} value={minimo} onChange={v => setMinimo(v)} placeholder="opcional" style={{ ...inp, width: '130px', textAlign: 'right' }} />
-          </Campo>
-          <Campo label={`Cantidad deseable (${UNIDAD[uStd] || uStd})`}>
-            <CampoNumero maxDec={2} value={deseable} onChange={v => setDeseable(v)} placeholder="opcional" style={{ ...inp, width: '150px', textAlign: 'right' }} />
-          </Campo>
-        </div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '8px' }}>Bajo el mínimo = “Bajo”. En o sobre la cantidad deseable = “Suficiente”. En medio = “Medio”.</div>
-      </div>
+      {/* Los mínimos se gestionan en la pestaña "Mínimos" (sección movida). */}
 
       <div style={{ display: 'flex', gap: '8px', marginTop: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
         <button disabled={!listo || enviando} onClick={guardar} style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
