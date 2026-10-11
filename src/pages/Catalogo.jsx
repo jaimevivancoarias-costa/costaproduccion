@@ -1672,8 +1672,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
         // Sin excepción: conserva su unidad actual (si la tiene); las fincas
         // NUEVAS heredan el estándar. Con excepción: la unidad elegida.
         const tieneExc = !!excUnit[f.id]
-        const uFinca = tieneExc ? (excUnit[f.id] === '__completo' ? 'unidad' : excUnit[f.id]) : (uActual[f.id] ?? uStd)
-        const facFinca = tieneExc ? factorFinca(excUnit[f.id]) : (uActual[f.id] != null ? (facActual[f.id] || factor) : factor)
+        // Sin excepción: hereda el estándar (uStd). Si el estándar NO cambió,
+        // uStd === su unidad actual → no se convierte (abajo se salta). Si el
+        // estándar cambió, se propaga (y las que no se puedan convertir se saltan).
+        const uFinca = tieneExc ? (excUnit[f.id] === '__completo' ? 'unidad' : excUnit[f.id]) : uStd
+        const facFinca = tieneExc ? factorFinca(excUnit[f.id]) : factor
         if (facFinca == null || facFinca <= 0) { onError(`Conversión inválida para ${f.nombre} (unidad de otra familia).`); setEnviando(false); return }
         facMap[f.id] = facFinca; ids.push(f.id)
         filas.push({ insumo_id: insumo.id, finca_id: f.id, unidad: uFinca, unidad_compra: presentacion.trim(),
@@ -1686,15 +1689,11 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
       // (cuánto trae un saco, o la densidad) YA la tiene la app: se toma sola
       // del factor/densidad configurados. Solo se pregunta si de verdad falta.
       const convertidas = new Set()
+      const fallaron = []      // fincas que no se pudieron convertir (se saltan, no abortan)
       const porCache = {}
       for (const fila of filas) {
-        // Solo se convierte la unidad de las fincas que el usuario cambió
-        // EXPLÍCITAMENTE (excepción por finca / masivo). Nunca una finca que
-        // solo recibe el precio estándar — eso disparaba la conversión y
-        // fallaba (ej. PRUEBA, con movimientos y unidad distinta al estándar).
-        if (!excUnit[fila.finca_id]) continue
         const antes = uActual[fila.finca_id] || insumo.unidad
-        if (fila.unidad === antes) continue
+        if (fila.unidad === antes) continue   // esa finca no cambia de unidad
         const nom = activas.find(f => f.id === fila.finca_id)?.nombre || 'esa finca'
         const famOld = U_FAMILIA(antes), famNew = U_FAMILIA(fila.unidad)
         // p_por sólo aplica a cambios "fuertes": hacia/desde conteo (usa el
@@ -1735,9 +1734,12 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
           }
           ;({ error: eU } = await llamar(por))
         }
-        if (eU) { onError('No se pudo convertir ' + nom + '. ' + eU.message.replace(/^.*?:\s*/, '').replace('FALTA_POR', 'Falta la equivalencia.').replace('FALTA_DENSIDAD', 'Falta la densidad.')); setEnviando(false); return }
+        // Si una finca no se puede convertir (ej. PRUEBA sin equivalencia), se
+        // SALTA (conserva su unidad) y se avisa al final — ya no aborta todo.
+        if (eU) { fallaron.push({ id: fila.finca_id, nom }); continue }
         convertidas.add(fila.finca_id)
       }
+      const fallaronIds = new Set(fallaron.map(x => x.id))
 
       // 1) Unidades/mínimos. Las fincas que se acaban de convertir arriba ya
       //    tienen su unidad/factor correctos por la función: a esas NO se les
@@ -1746,7 +1748,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
       // No se crea/pisa config de unidad para fincas que solo reciben precio y
       // no tienen fila propia (ej. PRUEBA): se les deja su config global. Solo
       // se escribe la fila si la finca cambió explícitamente o ya tenía una.
-      const filasUpsert = filas.filter(fl => !convertidas.has(fl.finca_id) && (excUnit[fl.finca_id] || uActual[fl.finca_id] != null))
+      const filasUpsert = filas.filter(fl => !convertidas.has(fl.finca_id) && !fallaronIds.has(fl.finca_id) && (excUnit[fl.finca_id] || uActual[fl.finca_id] != null))
       if (filasUpsert.length) {
         const { error: e1 } = await supabase.schema('produccion').from('insumo_finca').upsert(filasUpsert, { onConflict: 'insumo_id,finca_id' })
         if (e1) throw e1
@@ -1844,8 +1846,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
       } // fin if (!sinPrecio)
       // Mensaje honesto: dice qué UNIDAD cambió (no el total de fincas tocadas).
       const nomUnid = [...convertidas].map(fid => activas.find(f => f.id === fid)?.nombre).filter(Boolean)
-      const msgUnid = nomUnid.length ? `Unidad actualizada en ${nomUnid.length === 1 ? nomUnid[0] : nomUnid.length + ' fincas'}.` : 'Guardado.'
-      await onHecho(sinPrecio ? msgUnid : (nomUnid.length ? msgUnid : `Guardado en ${activas.length} fincas.`))
+      let msgUnid = nomUnid.length ? `Unidad actualizada en ${nomUnid.length === 1 ? nomUnid[0] : nomUnid.length + ' fincas'}.` : 'Guardado.'
+      if (fallaron.length) msgUnid += ` No se pudo convertir ${fallaron.map(x => x.nom).join(', ')} (falta la equivalencia) — se dejó su unidad.`
+      await onHecho(sinPrecio ? msgUnid : (nomUnid.length || fallaron.length ? msgUnid : `Guardado en ${activas.length} fincas.`))
       // Recosteo: solo las fincas cuyo precio realmente cambió.
       if (!sinPrecio && onRecosteo && desde < hoyISO()) {
         const ini = iniRef.current || {}
