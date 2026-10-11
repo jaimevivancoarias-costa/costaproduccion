@@ -1413,13 +1413,12 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
     return (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '9px' }}>
         {PLAZOS.map(pz => {
-          const on = obj.plazoRige === pz; const cv = convDisp(obj.precios[pz])
+          const on = obj.plazoRige === pz
           return (
-            <div key={pz} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div key={pz} style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
               <span style={{ fontSize: '11px', color: C.gris, textAlign: 'center', fontWeight: 600 }}>{PLAZO_LBL[pz]}</span>
               <CampoNumero maxDec={6} value={obj.precios[pz] ?? ''} placeholder="—" onChange={v => onP(pz, v)}
                 style={{ ...inpP, borderColor: on ? '#9cc4e8' : C.borde, boxShadow: on ? '0 0 0 2px rgba(13,108,176,.08)' : 'none' }} />
-              <span style={{ fontSize: '9.5px', color: '#aab8c6', textAlign: 'center', minHeight: '12px' }}>{cv != null ? '= ' + (Math.round(cv * 10000) / 10000) + '/' + uAppLabel : ''}</span>
               <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '10.5px', color: on ? C.azul : C.gris, fontWeight: on ? 600 : 400, cursor: 'pointer' }}>
                 <input type="radio" checked={on} onChange={() => onRige(pz)} /> Rige
               </label>
@@ -1569,8 +1568,6 @@ function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError
 
   return (
     <div style={{ padding: '14px 2px 4px' }}>
-      <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '14px' }}>El <b style={{ color: NAVY }}>mínimo</b> es el nivel al que, cuando el saldo baja, la finca sale en <b style={{ color: NAVY }}>"Por reponer"</b>.</div>
-
       <div style={{ border: '1px solid #d5e3f2', borderRadius: '14px', marginBottom: '14px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#f3f8fe', borderBottom: '1px solid #d5e3f2', borderTopLeftRadius: '13px', borderTopRightRadius: '13px' }}>
           <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#e8f1fb', color: AZUL }}>Estándar</span>
@@ -2008,51 +2005,59 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
   const tit = { fontSize: '11px', letterSpacing: '.05em', textTransform: 'uppercase', color: GRIS, margin: '0 0 13px', fontWeight: 600 }
   const usados = [...new Set([presentacion, ...presLista])].filter(Boolean)
 
+  const filaU = { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }
+  const etqU = { width: '210px' }
+  const kU = { fontSize: '13px', fontWeight: 600 }
+  const dU = { fontSize: '11px', color: GRIS, marginTop: '2px' }
+  const resumenU = { background: '#f3f8fe', border: '1px solid #d5e3f2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: NAVY, marginTop: '14px' }
   return (
-    <div style={{ background: '#f0f6f2', padding: '16px 18px', borderBottom: '0.5px solid #e6edf3' }}>
-      <div style={{ fontSize: '14px', fontWeight: 600, color: VERDE, marginBottom: '14px' }}>Configurar {insumo.nombre}</div>
+    <div style={{ padding: '14px 2px 4px' }}>
+      <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '14px' }}>Cómo se compra el producto, cuánto trae y cómo se usa en la piscina.</div>
 
-      {/* 1. Unidades */}
-      <div style={seccion}>
-        <div style={tit}>1 · Unidades y conversión</div>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <Campo label="Llega en (envase)">
-            <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '160px' }}>
+      {/* Estándar: unidad / presentación */}
+      <div style={{ border: '1px solid #d5e3f2', borderRadius: '14px', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#f3f8fe', borderBottom: '1px solid #d5e3f2', borderTopLeftRadius: '13px', borderTopRightRadius: '13px' }}>
+          <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#e8f1fb', color: AZUL }}>Estándar</span>
+          <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Aplica a todas las fincas (menos las que elijas abajo)</span>
+        </div>
+        <div style={{ padding: '16px' }}>
+          <div style={filaU}>
+            <div style={etqU}><div style={kU}>1 · Cómo se compra</div><div style={dU}>el envase / presentación</div></div>
+            <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '170px' }}>
               {usados.map(pn => <option key={pn} value={pn}>{pn}</option>)}
               <option value="__nueva">＋ Agregar presentación…</option>
             </select>
-          </Campo>
-          <Campo label={esComp ? 'Peso del envase (ref.)' : 'Cada envase trae'}>
+          </div>
+          <div style={filaU}>
+            <div style={etqU}><div style={kU}>{esComp ? '2 · Peso de referencia' : '2 · Cuánto trae'}</div><div style={dU}>{esComp ? 'peso de un envase' : 'contenido de un envase'}</div></div>
             <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 45" style={{ ...inp, width: '90px', textAlign: 'right' }} />
-          </Campo>
-          <Campo label={esComp ? 'Unidad del peso' : 'Unidad del contenido'}>
-            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '175px' }}>
+            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '160px' }}>
               {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
             </select>
-          </Campo>
-          <Campo label="Se aplica en (estándar)">
-            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v && v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '190px', borderColor: unidad ? BORDE : '#e0b64a' }}>
+          </div>
+          <div style={{ ...filaU, marginBottom: 0 }}>
+            <div style={etqU}><div style={kU}>3 · Cómo se usa</div><div style={dU}>unidad en que se aplica en piscina</div></div>
+            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v && v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '200px', borderColor: unidad ? BORDE : '#e0b64a' }}>
               <option value="">Elige la unidad…</option>
               <optgroup label="Por envase entero"><option value="__completo">Envase completo ({cap1(presentacion)})</option></optgroup>
               {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
             </select>
-          </Campo>
+          </div>
+          {esComp ? (
+            <div style={resumenU}>Se compra por <b>{cap1(presentacion)}</b> · se usa por <b>envase entero</b>{numDec(contenido) > 0 ? <> · 1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont}</> : null}</div>
+          ) : factor != null && contenido ? (
+            <div style={resumenU}>Se compra por <b>{cap1(presentacion)} de {contenido} {UNIDAD[uCont] || uCont}</b> · se aplica en <b>{UNIDAD[uStd] || uStd}</b> → <b>1 {cap1(presentacion)} = {Math.round(factor * 10000) / 10000} {UNIDAD[uStd] || uStd}</b></div>
+          ) : null}
+          {contenido && !esComp && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '8px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
         </div>
-        {esComp ? (
-          <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
-            Se cuenta y consume por <b>{cap1(presentacion)}</b> entero{numDec(contenido) > 0 ? <> · 1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} (referencia)</> : null}
-          </div>
-        ) : factor != null && contenido ? (
-          <div style={{ fontSize: '12.5px', color: VERDE, background: '#E1F5EE', border: '0.5px solid #cfe9df', borderRadius: '9px', padding: '8px 12px', marginTop: '12px', display: 'inline-block' }}>
-            1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont} = <b>{Math.round(factor * 10000) / 10000} {UNIDAD[uStd] || uStd}</b>
-          </div>
-        ) : null}
-        {contenido && !esComp && factor == null && <div style={{ fontSize: '11px', color: ROJO, marginTop: '6px' }}>El contenido debe estar en la misma familia que la unidad de aplicación.</div>}
       </div>
 
       {/* 2. Excepciones */}
-      <div style={{ ...seccion, borderColor: '#e8d9b8', background: '#FBF7EE' }}>
-        <div style={{ ...tit, color: AMBAR }}>2 · ¿Alguna finca aplica distinto?</div>
+      <div style={{ border: '1px solid #e4d8c2', borderRadius: '14px', background: '#FBF7EE', padding: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '11px' }}>
+          <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#fdf4e3', color: AMBAR }}>Unidad distinta</span>
+          <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Para las fincas que elijas</span>
+        </div>
         <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>
           Aplica el mismo cambio a varias fincas de una vez, o agrégalas una por una abajo. Lo que dejes vacío usa el estándar.
         </div>
