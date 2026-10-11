@@ -539,10 +539,29 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                     const plazoRige = (hayPrecio || (pzF != null && pzF !== pzAct)) ? (pzF ?? 0) : null
                     if (unidadExc || hayPrecio) excIni.push({ fincaId: f.id, unidad: unidadExc, desde: desdeExc, precios, plazoRige, abierto: hayPrecio })
                   })
+                  // --- Datos para el editor de PRECIOS nuevo ---
+                  const factorStd = Number(o?.factor) || Number(p.factor) || 1
+                  const presLabel = o?.unidad_compra || p.unidad_compra || 'Saco'
+                  const uApp = o?.unidad || p.unidad
+                  const uAppLabel = ({ libras: 'lb', kilos: 'kg', gramos: 'g', miligramos: 'mg', litros: 'L', mililitros: 'ml' }[uApp]) || (UNIDAD[uApp] || uApp || '').toLowerCase()
+                  const facFinca = {}; (fincas || []).forEach(f => { facFinca[f.id] = Number(over[k(p.id, f.id)]?.factor) || Number(p.factor) || 1 })
+                  const initStd = { precios: Object.fromEntries(PLAZOS.map(pz => [pz, preciosAct[pz] != null ? Math.round(preciosAct[pz] * factorStd * 10000) / 10000 : null])), plazoRige: pzAct, desde: desdeAct || hoyISO() }
+                  const grpMap = {}
+                  excIni.forEach(e => {
+                    if (!e.precios || !Object.keys(e.precios).length) return
+                    const pn = {}; PLAZOS.forEach(pz => { if (e.precios[pz] != null && e.precios[pz] !== '') pn[pz] = numDec(e.precios[pz]) })
+                    const key = JSON.stringify({ p: PLAZOS.map(pz => pn[pz] ?? null), r: e.plazoRige ?? 0, d: e.desde || '' })
+                    if (!grpMap[key]) grpMap[key] = { fincaIds: [], precios: pn, plazoRige: e.plazoRige ?? 0, desde: e.desde || desdeAct || hoyISO() }
+                    grpMap[key].fincaIds.push(e.fincaId)
+                  })
+                  const initGrupos = Object.values(grpMap)
                   return (
-                    <EditorConfigTodo insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
+                    <ConfigInsumoTabs insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
                       actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
+                      facFinca={facFinca} factorStd={factorStd} presLabel={presLabel} uAppLabel={uAppLabel}
+                      initStd={initStd} initGrupos={initGrupos}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                      onHechoPrecios={async () => { await cargar() }}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onRecosteo={ofrecerRecosteo}
                       onCancelar={() => setEditConfig(null)} />
@@ -1288,7 +1307,213 @@ function PopCopia({ tipo, origen, valor, otras, copia, setCopia, onAplicar, yaTi
   )
 }
 
-function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHecho, onError, onCancelar, onRecosteo }) {
+// ── Editor de PRECIOS (rediseño) ────────────────────────────────────────────
+// Bloque Estándar (todas) + bloques "Precio distinto" con selector de fincas.
+// Guarda SOLO precios (nunca toca unidades). Solo re-guarda/recostea lo que
+// realmente cambió, para no ensuciar el historial.
+function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorStd, initStd, initGrupos, onHecho, onError, onRecosteo, onCancelar, onCambiarPresentacion }) {
+  const activas = fincas || []
+  const sPrecios = src => Object.fromEntries(PLAZOS.map(pz => [pz, (src && src[pz] != null) ? String(src[pz]) : '']))
+  const [std, setStd] = useState(() => ({ precios: sPrecios(initStd?.precios), plazoRige: initStd?.plazoRige ?? 0, desde: initStd?.desde || hoyISO() }))
+  const [grupos, setGrupos] = useState(() => (initGrupos || []).map((g, i) => ({ id: 'g' + i, fincaIds: [...(g.fincaIds || [])], precios: sPrecios(g.precios), plazoRige: g.plazoRige ?? 0, desde: g.desde || hoyISO() })))
+  const [enviando, setEnviando] = useState(false)
+  const [toast, setToast] = useState(null)
+  const [pickFor, setPickFor] = useState(null)
+  const iniRef = useRef(null)
+  useEffect(() => { iniRef.current = JSON.parse(JSON.stringify({ std, grupos })) }, [])   // eslint-disable-line
+
+  const fincaNom = id => activas.find(f => f.id === id)?.nombre || ''
+  const enGrupos = new Set(grupos.flatMap(g => g.fincaIds))
+  const stdFincaIds = activas.filter(f => !enGrupos.has(f.id)).map(f => f.id)
+  const facDe = fid => Number(facFinca?.[fid]) || Number(insumo.factor) || 1
+  const convDisp = raw => { const r = numDec(raw); return (r > 0 && factorStd) ? (r / factorStd) : null }
+
+  function perFinca(snap) {
+    const m = {}; const us = new Set((snap.grupos || []).flatMap(g => g.fincaIds))
+    activas.forEach(f => { if (!us.has(f.id)) m[f.id] = { precios: snap.std.precios, rige: snap.std.plazoRige, desde: snap.std.desde } })
+    ;(snap.grupos || []).forEach(g => g.fincaIds.forEach(fid => m[fid] = { precios: g.precios, rige: g.plazoRige, desde: g.desde }))
+    return m
+  }
+  const eq = (a, b) => Math.abs((numDec(String(a ?? '')) || 0) - (numDec(String(b ?? '')) || 0)) < 0.00001
+  const cambio = (cur, ini) => !ini || PLAZOS.some(pz => !eq(cur.precios[pz], ini.precios?.[pz])) || (cur.rige ?? 0) !== (ini.rige ?? 0) || (cur.desde || '') !== (ini.desde || '')
+
+  async function cerrarYAbrir(fincaIds, pz, rows, dfecha) {
+    if (!fincaIds.length) return
+    await supabase.schema('produccion').from('precio_insumo').delete().eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
+    await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) }).eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
+    if (rows.length) { const { error } = await supabase.schema('produccion').from('precio_insumo').insert(rows); if (error) throw error }
+  }
+  async function setRige(fincaIds, pz, dfecha) {
+    if (!fincaIds.length) return
+    await supabase.schema('produccion').from('plazo_insumo').delete().eq('insumo_id', insumo.id).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
+    await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) }).eq('insumo_id', insumo.id).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
+    const { error } = await supabase.schema('produccion').from('plazo_insumo').insert(fincaIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfecha })))
+    if (error) throw error
+  }
+
+  async function guardar() {
+    for (const g of grupos) if (!g.fincaIds.length) { onError && onError('Un bloque de "precio distinto" no tiene fincas. Elige fincas o quítalo.'); return }
+    setEnviando(true); setToast(null)
+    try {
+      const iniPF = perFinca(iniRef.current || { std, grupos })
+      const curPF = perFinca({ std, grupos })
+      const bloques = [{ fincaIds: stdFincaIds, precios: std.precios, plazoRige: std.plazoRige, desde: std.desde }, ...grupos.map(g => ({ fincaIds: g.fincaIds, precios: g.precios, plazoRige: g.plazoRige, desde: g.desde }))]
+      const recost = new Set(); let minDesde = null
+      for (const b of bloques) {
+        const dfe = b.desde || hoyISO()
+        const changed = b.fincaIds.filter(fid => cambio(curPF[fid], iniPF[fid]))
+        if (!changed.length) continue
+        for (const pz of PLAZOS) {
+          const raw = numDec(b.precios?.[pz] || '')
+          if (raw > 0) await cerrarYAbrir(changed, pz, changed.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz, precio_unitario: raw / facDe(fid), vigente_desde: dfe })), dfe)
+          else await supabase.schema('produccion').from('precio_insumo').delete().eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', changed).is('vigente_hasta', null)
+        }
+        let rige = b.plazoRige
+        if (rige != null && !(numDec(b.precios?.[rige] || '') > 0)) { const c = PLAZOS.find(pz => numDec(b.precios?.[pz] || '') > 0); if (c != null) rige = c }
+        if (rige != null) await setRige(changed, rige, dfe)
+        if (dfe < hoyISO()) changed.forEach(fid => recost.add(fid))
+        if (!minDesde || dfe < minDesde) minDesde = dfe
+      }
+      if (onRecosteo && recost.size && minDesde) await onRecosteo(insumo.id, [...recost], minDesde)
+      const nF = new Set(bloques.flatMap(b => b.fincaIds.filter(fid => cambio(curPF[fid], iniPF[fid])))).size
+      iniRef.current = JSON.parse(JSON.stringify({ std, grupos }))
+      setToast(nF ? `✓ Guardado · ${nF} finca${nF === 1 ? '' : 's'} actualizada${nF === 1 ? '' : 's'}` : '✓ Sin cambios que guardar')
+      onHecho && onHecho()
+    } catch (err) { onError && onError(err.message || 'No se pudo guardar.') }
+    finally { setEnviando(false) }
+  }
+
+  // estilos
+  const C = { azul: AZUL, ambar: '#b9801b', gris: GRIS, borde: '#e6edf3', navy: NAVY }
+  const inpP = { border: '1px solid ' + C.borde, borderRadius: '9px', padding: '9px 10px', fontSize: '14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontFamily: 'inherit', width: '100%', color: C.navy, background: '#fff' }
+  const dateP = { border: '1px solid ' + C.borde, borderRadius: '9px', padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit', color: C.navy }
+  function PlzGrid({ obj, onP, onRige }) {
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: '9px' }}>
+        {PLAZOS.map(pz => {
+          const on = obj.plazoRige === pz; const cv = convDisp(obj.precios[pz])
+          return (
+            <div key={pz} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ fontSize: '11px', color: C.gris, textAlign: 'center', fontWeight: 600 }}>{PLAZO_LBL[pz]}</span>
+              <CampoNumero maxDec={6} value={obj.precios[pz] ?? ''} placeholder="—" onChange={v => onP(pz, v)}
+                style={{ ...inpP, borderColor: on ? '#9cc4e8' : C.borde, boxShadow: on ? '0 0 0 2px rgba(13,108,176,.08)' : 'none' }} />
+              <span style={{ fontSize: '9.5px', color: '#aab8c6', textAlign: 'center', minHeight: '12px' }}>{cv != null ? '= ' + (Math.round(cv * 10000) / 10000) + '/' + uAppLabel : ''}</span>
+              <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', fontSize: '10.5px', color: on ? C.azul : C.gris, fontWeight: on ? 600 : 400, cursor: 'pointer' }}>
+                <input type="radio" checked={on} onChange={() => onRige(pz)} /> Rige
+              </label>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ padding: '14px 2px 4px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', fontSize: '12.5px', color: C.gris, marginBottom: '14px' }}>
+        <span>Precios <b style={{ color: C.navy }}>por {cap1(presLabel)}</b></span><span style={{ color: '#aab8c6' }}>·</span>
+        <span>1 {cap1(presLabel)} = <b style={{ color: C.navy }}>{Math.round((factorStd || 1) * 10000) / 10000} {uAppLabel}</b></span><span style={{ color: '#aab8c6' }}>·</span>
+        <button onClick={onCambiarPresentacion} style={{ background: 'none', border: 'none', color: C.azul, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, padding: 0, fontSize: '12px' }}>Cambiar</button>
+      </div>
+
+      {/* Estándar */}
+      <div style={{ border: '1px solid #d5e3f2', borderRadius: '14px', marginBottom: '14px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#f3f8fe', borderBottom: '1px solid #d5e3f2' }}>
+          <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#e8f1fb', color: C.azul }}>Estándar</span>
+          <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Aplica a todas las fincas (menos las que elijas abajo)</span>
+        </div>
+        <div style={{ padding: '15px' }}>
+          <PlzGrid obj={std} onP={(pz, v) => setStd(s => ({ ...s, precios: { ...s.precios, [pz]: v }, plazoRige: (s.plazoRige == null && numDec(v) > 0) ? pz : s.plazoRige }))} onRige={pz => setStd(s => ({ ...s, plazoRige: pz }))} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '13px' }}>
+            <label style={{ fontSize: '11px', color: C.gris }}>Rige desde</label>
+            <input type="date" value={std.desde} max={hoyISO()} onChange={e => setStd(s => ({ ...s, desde: e.target.value }))} style={dateP} />
+          </div>
+        </div>
+      </div>
+
+      {/* Grupos de precio distinto */}
+      {grupos.map(g => (
+        <div key={g.id} style={{ border: '1px solid #e4d8c2', borderRadius: '14px', marginBottom: '14px', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#fdf7ec', borderBottom: '1px solid #e4d8c2' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#fdf4e3', color: C.ambar }}>Precio distinto</span>
+            <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Para las fincas que elijas</span>
+            <button onClick={() => setGrupos(gs => gs.filter(x => x.id !== g.id))} style={{ marginLeft: 'auto', color: '#aab8c6', cursor: 'pointer', border: 'none', background: 'none', fontSize: '15px' }}>✕</button>
+          </div>
+          <div style={{ padding: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '5px', position: 'relative' }}>
+              <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Fincas:</span>
+              {g.fincaIds.map(fid => (
+                <span key={fid} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fdf4e3', border: '1px solid #ecd9b4', color: '#7a5410', fontSize: '12.5px', fontWeight: 600, borderRadius: '20px', padding: '5px 11px' }}>
+                  {fincaNom(fid)}<span onClick={() => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, fincaIds: x.fincaIds.filter(y => y !== fid) }))} style={{ cursor: 'pointer', color: '#b79a63', fontWeight: 700 }}>✕</span>
+                </span>
+              ))}
+              <button onClick={() => setPickFor(pickFor === g.id ? null : g.id)} style={{ fontSize: '12.5px', color: C.azul, background: '#fff', border: '1px solid #bcd3ec', borderRadius: '20px', padding: '6px 13px', cursor: 'pointer', fontWeight: 600 }}>+ Elegir fincas ▾</button>
+              {pickFor === g.id && (
+                <div style={{ position: 'absolute', top: '36px', left: 0, zIndex: 20, background: '#fff', border: '1px solid ' + C.borde, borderRadius: '12px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '8px', width: '230px', maxHeight: '260px', overflow: 'auto' }}>
+                  {activas.map(f => {
+                    const enOtro = enGrupos.has(f.id) && !g.fincaIds.includes(f.id)
+                    const on = g.fincaIds.includes(f.id)
+                    return (
+                      <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '7px 9px', borderRadius: '8px', fontSize: '13px', cursor: enOtro ? 'default' : 'pointer', opacity: enOtro ? 0.4 : 1 }}>
+                        <input type="checkbox" checked={on} disabled={enOtro} onChange={() => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, fincaIds: on ? x.fincaIds.filter(y => y !== f.id) : [...x.fincaIds, f.id] }))} />
+                        {f.nombre}{enOtro ? ' (en otro bloque)' : ''}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div style={{ fontSize: '11px', color: C.gris, margin: '4px 0 14px' }}>Elige <b>una o varias</b> · todas tendrán este mismo precio.</div>
+            <PlzGrid obj={g} onP={(pz, v) => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, precios: { ...x.precios, [pz]: v }, plazoRige: (x.plazoRige == null && numDec(v) > 0) ? pz : x.plazoRige }))} onRige={pz => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, plazoRige: pz }))} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '13px' }}>
+              <label style={{ fontSize: '11px', color: C.gris }}>Rige desde</label>
+              <input type="date" value={g.desde} max={hoyISO()} onChange={e => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, desde: e.target.value }))} style={dateP} />
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <button onClick={() => setGrupos(gs => [...gs, { id: 'g' + Date.now(), fincaIds: [], precios: sPrecios(null), plazoRige: 0, desde: hoyISO() }])}
+        style={{ width: '100%', border: '1px dashed #cdd8e2', background: '#fafcfe', borderRadius: '12px', padding: '13px', color: C.ambar, fontWeight: 600, fontSize: '13.5px', cursor: 'pointer', marginBottom: '14px', fontFamily: 'inherit' }}>
+        + Agregar otro precio distinto (para otras fincas)
+      </button>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '13px', flexWrap: 'wrap' }}>
+        <button disabled={enviando} onClick={guardar} style={{ background: C.azul, color: '#fff', border: 'none', borderRadius: '11px', padding: '12px 24px', fontSize: '14px', fontWeight: 650, cursor: enviando ? 'default' : 'pointer', fontFamily: 'inherit', opacity: enviando ? 0.6 : 1 }}>{enviando ? 'Guardando...' : 'Guardar precios'}</button>
+        <button onClick={onCancelar} style={{ background: 'none', border: 'none', color: C.gris, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cerrar</button>
+        {toast && <span style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#e7f6ef', border: '1px solid #bfe6d2', color: '#0F8A5F', borderRadius: '11px', padding: '9px 14px', fontSize: '13px', fontWeight: 600 }}>{toast}</span>}
+      </div>
+    </div>
+  )
+}
+
+// Contenedor con pestañas: Precios (nuevo) + Unidad y mínimos (editor actual sin precio).
+function ConfigInsumoTabs(p) {
+  const [tab, setTab] = useState('precios')
+  const tb = (id, txt) => (
+    <button onClick={() => setTab(id)} style={{ border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14px',
+      fontWeight: tab === id ? 650 : 500, padding: '10px 18px 12px', background: 'none', color: tab === id ? NAVY : GRIS,
+      borderBottom: '2px solid ' + (tab === id ? AZUL : 'transparent'), marginBottom: '-1px' }}>{txt}</button>
+  )
+  return (
+    <div style={{ background: '#fff', borderBottom: '0.5px solid #e6edf3' }}>
+      <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, padding: '12px 18px 0' }}>
+        {tb('precios', 'Precios')}{tb('config', 'Unidad y mínimos')}
+      </div>
+      {tab === 'precios'
+        ? <div style={{ padding: '2px 18px 14px' }}>
+            <EditorPrecios insumo={p.insumo} fincas={p.fincas} facFinca={p.facFinca} presLabel={p.presLabel} uAppLabel={p.uAppLabel}
+              factorStd={p.factorStd} initStd={p.initStd} initGrupos={p.initGrupos}
+              onHecho={p.onHechoPrecios} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar}
+              onCambiarPresentacion={() => setTab('config')} />
+          </div>
+        : <EditorConfigTodo insumo={p.insumo} fincas={p.fincas} presentaciones={p.presentaciones} actual={p.actual}
+            excIni={p.excIni} sinPrecio onHecho={p.onHecho} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar} />}
+    </div>
+  )
+}
+
+function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinPrecio, onHecho, onError, onCancelar, onRecosteo }) {
   const a = actual || {}
   const activas = (fincas || [])
   const [presentacion, setPresentacion] = useState(cap1(a.unidad_compra || insumo.unidad_compra) || 'Saco')
@@ -1548,6 +1773,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
       // pop-up de recosteo (por finca) se ofrece al terminar de guardar.
       const desdeGen = desde
 
+      if (!sinPrecio) {
       // 2) Precios estándar por plazo. Si el plazo tiene precio, se abre;
       //    si quedó vacío/0, se BORRA el precio vigente de ese plazo.
       for (const pz of PLAZOS) {
@@ -1608,9 +1834,10 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           .insert([{ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfe }])
         if (e5) throw e5
       }
+      } // fin if (!sinPrecio)
       await onHecho(`Configurado en ${activas.length} fincas.`)
       // Recosteo: solo las fincas cuyo precio realmente cambió.
-      if (onRecosteo && desde < hoyISO()) {
+      if (!sinPrecio && onRecosteo && desde < hoyISO()) {
         const ini = iniRef.current || {}
         const numEq = (x, y) => Math.abs((numDec(String(x ?? '')) || 0) - (numDec(String(y ?? '')) || 0)) < 0.0001
         const excFincaIds = exc.filter(e => e.fincaId).map(e => e.fincaId)
@@ -1721,6 +1948,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
             )}
 
             {/* Precios */}
+            {!sinPrecio && (<>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarPrecio ? '10px' : '12px' }}>
               <input type="checkbox" checked={bulk.usarPrecio} onChange={e => setBulk(b => ({ ...b, usarPrecio: e.target.checked }))} />
               Cambiar el precio
@@ -1746,6 +1974,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
                 </div>
               </div>
             )}
+            </>)}
 
             <div style={{ display: 'flex', alignItems: 'end', gap: '16px', flexWrap: 'wrap' }}>
               <div>
@@ -1820,8 +2049,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
               <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '7px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
             ))}
 
-            {/* Precio propio por plazo */}
-            {!e.abierto ? (
+            {/* Precio propio por plazo (oculto en el editor de solo unidad+mínimos) */}
+            {sinPrecio ? null : !e.abierto ? (
               <div style={{ marginTop: '9px' }}>
                 <button style={enlace} onClick={() => setRow(i, 'abierto', true)}>＋ Precio propio</button>
                 <span style={{ color: '#c3d0db', fontSize: '11.5px', marginLeft: '8px' }}>— usa el precio estándar</span>
@@ -1860,7 +2089,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
         <button onClick={addExc} style={miniLink}>＋ Agregar finca distinta</button>
       </div>
 
-      {/* 3. Precio */}
+      {/* 3. Precio (oculto cuando este editor es solo unidad+mínimos) */}
+      {!sinPrecio && (
       <div style={seccion}>
         <div style={tit}>3 · Precio</div>
         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '12px' }}>
@@ -1895,6 +2125,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, onHe
           </div>
         )}
       </div>
+      )}
 
       {/* 4. Alertas */}
       <div style={seccion}>
