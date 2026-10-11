@@ -1842,7 +1842,10 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
         if (e5) throw e5
       }
       } // fin if (!sinPrecio)
-      await onHecho(`Configurado en ${activas.length} fincas.`)
+      // Mensaje honesto: dice qué UNIDAD cambió (no el total de fincas tocadas).
+      const nomUnid = [...convertidas].map(fid => activas.find(f => f.id === fid)?.nombre).filter(Boolean)
+      const msgUnid = nomUnid.length ? `Unidad actualizada en ${nomUnid.length === 1 ? nomUnid[0] : nomUnid.length + ' fincas'}.` : 'Guardado.'
+      await onHecho(sinPrecio ? msgUnid : (nomUnid.length ? msgUnid : `Guardado en ${activas.length} fincas.`))
       // Recosteo: solo las fincas cuyo precio realmente cambió.
       if (!sinPrecio && onRecosteo && desde < hoyISO()) {
         const ini = iniRef.current || {}
