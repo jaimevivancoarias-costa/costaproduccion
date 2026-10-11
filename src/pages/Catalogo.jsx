@@ -1335,7 +1335,6 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
     return m
   }
   const eq = (a, b) => Math.abs((numDec(String(a ?? '')) || 0) - (numDec(String(b ?? '')) || 0)) < 0.00001
-  const cambio = (cur, ini) => !ini || PLAZOS.some(pz => !eq(cur.precios[pz], ini.precios?.[pz])) || (cur.rige ?? 0) !== (ini.rige ?? 0) || (cur.desde || '') !== (ini.desde || '')
 
   async function cerrarYAbrir(fincaIds, pz, rows, dfecha) {
     if (!fincaIds.length) return
@@ -1356,26 +1355,34 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
     setEnviando(true); setToast(null)
     try {
       const iniPF = perFinca(iniRef.current || { std, grupos })
-      const curPF = perFinca({ std, grupos })
       const bloques = [{ fincaIds: stdFincaIds, precios: std.precios, plazoRige: std.plazoRige, desde: std.desde }, ...grupos.map(g => ({ fincaIds: g.fincaIds, precios: g.precios, plazoRige: g.plazoRige, desde: g.desde }))]
-      const recost = new Set(); let minDesde = null
+      const recost = new Set(); const touchedAll = new Set(); let minDesde = null
       for (const b of bloques) {
         const dfe = b.desde || hoyISO()
-        const changed = b.fincaIds.filter(fid => cambio(curPF[fid], iniPF[fid]))
-        if (!changed.length) continue
+        const touched = new Set()
         for (const pz of PLAZOS) {
           const raw = numDec(b.precios?.[pz] || '')
-          if (raw > 0) await cerrarYAbrir(changed, pz, changed.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz, precio_unitario: raw / facDe(fid), vigente_desde: dfe })), dfe)
-          else await supabase.schema('produccion').from('precio_insumo').delete().eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', changed).is('vigente_hasta', null)
+          // SOLO las fincas de este bloque cuyo precio de ESTE plazo cambió de
+          // verdad (valor distinto, o misma fecha movida). Un plazo vacío que
+          // ya estaba vacío NO se toca → nunca borra un precio que no editaste.
+          const chg = b.fincaIds.filter(fid => {
+            const iniV = numDec(iniPF[fid]?.precios?.[pz] || '')
+            return !eq(raw, iniV) || (raw > 0 && dfe !== (iniPF[fid]?.desde || ''))
+          })
+          if (!chg.length) continue
+          if (raw > 0) await cerrarYAbrir(chg, pz, chg.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz, precio_unitario: raw / facDe(fid), vigente_desde: dfe })), dfe)
+          else await supabase.schema('produccion').from('precio_insumo').delete().eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', chg).is('vigente_hasta', null)
+          chg.forEach(fid => touched.add(fid))
         }
+        // Plazo que rige: solo las fincas cuyo "rige" cambió.
         let rige = b.plazoRige
         if (rige != null && !(numDec(b.precios?.[rige] || '') > 0)) { const c = PLAZOS.find(pz => numDec(b.precios?.[pz] || '') > 0); if (c != null) rige = c }
-        if (rige != null) await setRige(changed, rige, dfe)
-        if (dfe < hoyISO()) changed.forEach(fid => recost.add(fid))
-        if (!minDesde || dfe < minDesde) minDesde = dfe
+        const rigeChg = b.fincaIds.filter(fid => (b.plazoRige ?? 0) !== (iniPF[fid]?.rige ?? 0))
+        if (rige != null && rigeChg.length) { await setRige(rigeChg, rige, dfe); rigeChg.forEach(fid => touched.add(fid)) }
+        if (touched.size) { if (dfe < hoyISO()) touched.forEach(fid => recost.add(fid)); if (!minDesde || dfe < minDesde) minDesde = dfe; touched.forEach(fid => touchedAll.add(fid)) }
       }
       if (onRecosteo && recost.size && minDesde) await onRecosteo(insumo.id, [...recost], minDesde)
-      const nF = new Set(bloques.flatMap(b => b.fincaIds.filter(fid => cambio(curPF[fid], iniPF[fid])))).size
+      const nF = touchedAll.size
       iniRef.current = JSON.parse(JSON.stringify({ std, grupos }))
       setToast(nF ? `✓ Guardado · ${nF} finca${nF === 1 ? '' : 's'} actualizada${nF === 1 ? '' : 's'}` : '✓ Sin cambios que guardar')
       onHecho && onHecho()
