@@ -561,10 +561,10 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       facFinca={facFinca} factorStd={factorStd} presLabel={presLabel} uAppLabel={uAppLabel}
                       initStd={initStd} initGrupos={initGrupos}
                       onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
-                      onHechoPrecios={async () => { await cargar() }}
+                      onHechoPrecios={() => {}}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onRecosteo={ofrecerRecosteo}
-                      onCancelar={() => setEditConfig(null)} />
+                      onCancelar={async () => { setEditConfig(null); await cargar() }} />
                   )
                 })()}
 
