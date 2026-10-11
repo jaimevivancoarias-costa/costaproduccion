@@ -1670,9 +1670,17 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
   const [unidad, setUnidad] = useState(compIni ? '__completo' : uIni)   // '__completo' = envase entero
   // Precarga las excepciones ya guardadas (qué finca aplica distinto), para
   // que al abrir Configurar veas lo que pusiste antes.
-  const [exc, setExc] = useState(() => (excIni || []).map(e => ({
-    fincaId: e.fincaId, unidad: e.unidad || '', desde: e.desde || '',
-    precios: e.precios || {}, plazoRige: e.plazoRige ?? null, abierto: !!e.abierto })))
+  // Cada fila lleva un "grp": las fincas con la misma unidad se muestran juntas
+  // en un bloque "Unidad distinta" (multi-selección, como en Precios/Mínimos).
+  const [exc, setExc] = useState(() => {
+    const byU = {}
+    return (excIni || []).map(e => {
+      const u = e.unidad || ''
+      if (!byU[u]) byU[u] = 'g' + Object.keys(byU).length
+      return { grp: byU[u], fincaId: e.fincaId, unidad: u, desde: e.desde || '',
+        precios: e.precios || {}, plazoRige: e.plazoRige ?? null, abierto: !!e.abierto }
+    })
+  })
   // Popover de copiar: { tipo:'unidad'|'precio', idx, sel:{fincaId:true} }
   const [copia, setCopia] = useState(null)
   // Panel "Aplicar a varias fincas" a la vez.
@@ -1765,6 +1773,47 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
     })
     setBulk(bulkVacio)
   }
+
+  // --- Bloques "Unidad distinta" (multi-selección de fincas por bloque) ---
+  const [pickFor, setPickFor] = useState(null)
+  const zonaLbl = { jambeli: 'Jambelí', puna: 'Puná' }
+  const zonasDisp = [...new Set(activas.map(f => f.zona))].filter(Boolean)
+  const gruposU = () => {
+    const order = [], map = {}
+    exc.forEach(r => { if (!map[r.grp]) { map[r.grp] = { grp: r.grp, unidad: r.unidad || '', fincaIds: [] }; order.push(r.grp) } if (r.fincaId) map[r.grp].fincaIds.push(r.fincaId) })
+    return order.map(g => map[g])
+  }
+  const enAlgunGrupo = new Set(exc.map(r => r.fincaId).filter(Boolean))
+  const nuevoGrpId = () => 'g' + Date.now() + Math.random().toString(36).slice(2, 5)
+  const addGrupoU = () => { const grp = nuevoGrpId(); setExc(x => [...x, { grp, fincaId: '', unidad: '', desde: '', precios: {}, plazoRige: null, abierto: false }]); setPickFor(grp) }
+  const rmGrupoU = grp => setExc(x => x.filter(r => r.grp !== grp))
+  const setUnidadGrupo = (grp, u) => setExc(x => x.map(r => r.grp === grp ? { ...r, unidad: u } : r))
+  const quitarFincaGrupo = (grp, fid) => setExc(x => {
+    let arr = x.filter(r => !(r.grp === grp && r.fincaId === fid))
+    if (!arr.some(r => r.grp === grp)) { const u = (x.find(r => r.grp === grp)?.unidad) || ''; arr = [...arr, { grp, fincaId: '', unidad: u, desde: '', precios: {}, plazoRige: null, abierto: false }] }
+    return arr
+  })
+  const agregarFincaGrupo = (grp, fid) => setExc(x => {
+    if (x.some(r => r.grp === grp && r.fincaId === fid)) return x
+    const u = (x.find(r => r.grp === grp)?.unidad) || ''
+    const ph = x.findIndex(r => r.grp === grp && !r.fincaId)
+    if (ph >= 0) { const arr = [...x]; arr[ph] = { ...arr[ph], fincaId: fid }; return arr }
+    return [...x, { grp, fincaId: fid, unidad: u, desde: '', precios: {}, plazoRige: null, abierto: false }]
+  })
+  const toggleFincaGrupo = (grp, fid) => (exc.some(r => r.grp === grp && r.fincaId === fid) ? quitarFincaGrupo(grp, fid) : agregarFincaGrupo(grp, fid))
+  const agregarZonaGrupo = (grp, zona) => setExc(x => {
+    const yaUsadas = new Set(x.map(r => r.fincaId).filter(Boolean))
+    const nuevas = activas.filter(f => f.zona === zona && !yaUsadas.has(f.id)).map(f => f.id)
+    if (!nuevas.length) return x
+    const u = (x.find(r => r.grp === grp)?.unidad) || ''
+    let arr = [...x]
+    nuevas.forEach(fid => {
+      const ph = arr.findIndex(r => r.grp === grp && !r.fincaId)
+      if (ph >= 0) arr[ph] = { ...arr[ph], fincaId: fid }
+      else arr = [...arr, { grp, fincaId: fid, unidad: u, desde: '', precios: {}, plazoRige: null, abierto: false }]
+    })
+    return arr
+  })
 
   async function crearPresentacion() {
     const nom = window.prompt('Nueva presentación (ej. Galonera):')
@@ -2052,195 +2101,93 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
         </div>
       </div>
 
-      {/* 2. Excepciones */}
-      <div style={{ border: '1px solid #e4d8c2', borderRadius: '14px', background: '#FBF7EE', padding: '16px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '11px' }}>
-          <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#fdf4e3', color: AMBAR }}>Unidad distinta</span>
-          <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Para las fincas que elijas</span>
-        </div>
-        <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px' }}>
-          Aplica el mismo cambio a varias fincas de una vez, o agrégalas una por una abajo. Lo que dejes vacío usa el estándar.
-        </div>
-
-        {/* Aplicar a varias fincas a la vez */}
-        {!bulk.open ? (
-          <button onClick={() => setBulk({ ...bulkVacio, open: true })}
-            style={{ border: '0.5px solid #d8c48f', background: '#fdf8ec', color: '#8a5a12', borderRadius: '9px',
-                     padding: '9px 14px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer', marginBottom: '13px' }}>
-            ＋ Aplicar a varias fincas
-          </button>
-        ) : (
-          <div style={{ border: '0.5px solid #d8c48f', background: '#fffdf7', borderRadius: '12px', padding: '15px 16px', marginBottom: '14px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: AMBAR, marginBottom: '10px' }}>Aplicar el mismo cambio a varias fincas</div>
-
-            <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 6px' }}>Fincas</label>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px', marginBottom: '14px' }}>
-              {activas.map(f => {
-                const on = !!bulk.fincas[f.id]
-                return (
-                  <button key={f.id} onClick={() => setBulk(b => ({ ...b, fincas: { ...b.fincas, [f.id]: !b.fincas[f.id] } }))}
-                    style={{ border: '0.5px solid ' + (on ? NAVY : BORDE), background: on ? NAVY : 'white', color: on ? 'white' : NAVY,
-                             borderRadius: '999px', padding: '6px 13px', fontFamily: 'inherit', fontSize: '13px', cursor: 'pointer' }}>
-                    {f.nombre}{on ? ' ✓' : ''}
-                  </button>
-                )
-              })}
+      {/* 2. Unidad distinta por finca — bloques con multi-selección (como Precios) */}
+      {gruposU().map(g => {
+        const facF = g.unidad && g.unidad !== '__completo' ? factorFinca(g.unidad) : null
+        return (
+        <div key={g.grp} style={{ border: '1px solid #e4d8c2', borderRadius: '14px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 15px', background: '#fdf7ec', borderBottom: '1px solid #e4d8c2', borderTopLeftRadius: '13px', borderTopRightRadius: '13px' }}>
+            <span style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', padding: '3px 9px', borderRadius: '20px', background: '#fdf4e3', color: AMBAR }}>Unidad distinta</span>
+            <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Para las fincas que elijas</span>
+            <button onClick={() => rmGrupoU(g.grp)} style={{ marginLeft: 'auto', color: '#aab8c6', cursor: 'pointer', border: 'none', background: 'none', fontSize: '15px' }}>✕</button>
+          </div>
+          <div style={{ padding: '15px' }}>
+            {/* Fincas: multi-selección + zona */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '5px', position: 'relative' }}>
+              <span style={{ fontSize: '12.5px', fontWeight: 600 }}>Fincas:</span>
+              {g.fincaIds.map(fid => (
+                <span key={fid} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#fdf4e3', border: '1px solid #ecd9b4', color: '#7a5410', fontSize: '12.5px', fontWeight: 600, borderRadius: '20px', padding: '5px 11px' }}>
+                  {fincaNom(fid)}<span onClick={() => quitarFincaGrupo(g.grp, fid)} style={{ cursor: 'pointer', color: '#b79a63', fontWeight: 700 }}>✕</span>
+                </span>
+              ))}
+              <button onClick={() => setPickFor(pickFor === g.grp ? null : g.grp)} style={{ fontSize: '12.5px', color: AZUL, background: '#fff', border: '1px solid #bcd3ec', borderRadius: '20px', padding: '6px 13px', cursor: 'pointer', fontWeight: 600 }}>+ Elegir fincas ▾</button>
+              {pickFor === g.grp && (
+                <div style={{ position: 'absolute', top: '36px', left: 0, zIndex: 20, background: '#fff', border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '8px', width: '240px', maxHeight: '300px', overflow: 'auto' }}>
+                  {zonasDisp.length > 1 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingBottom: '8px', marginBottom: '6px', borderBottom: '1px solid ' + BORDE }}>
+                      {zonasDisp.map(z => (
+                        <button key={z} onClick={() => agregarZonaGrupo(g.grp, z)} style={{ textAlign: 'left', fontSize: '12.5px', color: AMBAR, fontWeight: 600, background: '#fdf7ec', border: '1px solid #ecd9b4', borderRadius: '8px', padding: '7px 10px', cursor: 'pointer', fontFamily: 'inherit' }}>+ Toda la zona {zonaLbl[z] || cap1(z)}</button>
+                      ))}
+                    </div>
+                  )}
+                  {activas.map(f => {
+                    const enOtro = enAlgunGrupo.has(f.id) && !g.fincaIds.includes(f.id)
+                    const on = g.fincaIds.includes(f.id)
+                    return (
+                      <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '7px 9px', borderRadius: '8px', fontSize: '13px', cursor: enOtro ? 'default' : 'pointer', opacity: enOtro ? 0.4 : 1 }}>
+                        <input type="checkbox" checked={on} disabled={enOtro} onChange={() => toggleFincaGrupo(g.grp, f.id)} />
+                        {f.nombre}{enOtro ? ' (en otro bloque)' : ''}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
             </div>
+            <div style={{ fontSize: '11px', color: GRIS, margin: '4px 0 16px' }}>Elige <b>una o varias</b> · todas se aplican en esta unidad.</div>
 
-            {/* Unidad */}
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarUnidad ? '8px' : '12px' }}>
-              <input type="checkbox" checked={bulk.usarUnidad} onChange={e => setBulk(b => ({ ...b, usarUnidad: e.target.checked }))} />
-              Cambiar la unidad
-            </label>
-            {bulk.usarUnidad && (
-              <select value={bulk.unidad} onChange={e => setBulk(b => ({ ...b, unidad: e.target.value }))} style={{ ...inp, width: '260px', marginBottom: '14px' }}>
+            {/* Cómo se usa */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+              <div style={{ width: '210px' }}><div style={{ fontSize: '13px', fontWeight: 600 }}>Cómo se usa</div><div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>unidad en que se aplica</div></div>
+              <select value={g.unidad} onChange={ev => setUnidadGrupo(g.grp, ev.target.value)} style={{ ...inp, width: '240px' }}>
                 <option value="">(igual al estándar)</option>
                 <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
                 {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
               </select>
-            )}
-
-            {/* Precios */}
-            {!sinPrecio && (<>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13.5px', cursor: 'pointer', marginBottom: bulk.usarPrecio ? '10px' : '12px' }}>
-              <input type="checkbox" checked={bulk.usarPrecio} onChange={e => setBulk(b => ({ ...b, usarPrecio: e.target.checked }))} />
-              Cambiar el precio
-            </label>
-            {bulk.usarPrecio && (
-              <div style={{ marginBottom: '14px' }}>
-                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '7px' }}>Precio por envase ({cap1(presentacion)}) — llena los que apliquen y marca cuál rige</div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
-                  {PLAZOS.map(pz => {
-                    const on = bulk.plazoRige === pz
-                    return (
-                      <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
-                        <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                        <CampoNumero maxDec={6} value={bulk.precios[pz] ?? ''} placeholder="—"
-                          onChange={val => setBulk(b => ({ ...b, precios: { ...b.precios, [pz]: val }, plazoRige: b.plazoRige == null && numDec(val) > 0 ? pz : b.plazoRige }))}
-                          style={{ ...inp, textAlign: 'right', padding: '6px' }} />
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
-                          <input type="radio" name="bulk-rige" checked={on} onChange={() => setBulk(b => ({ ...b, plazoRige: pz }))} /> Rige
-                        </label>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-            </>)}
-
-            <div style={{ display: 'flex', alignItems: 'end', gap: '16px', flexWrap: 'wrap' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '10px', letterSpacing: '.05em', color: GRIS, margin: '0 0 5px' }}>Rige desde</label>
-                <input type="date" value={bulk.desde || ''} max={hoyISO()} onChange={e => setBulk(b => ({ ...b, desde: e.target.value }))} style={{ ...inp, width: '170px' }} />
-              </div>
-              <div style={{ display: 'flex', gap: '9px', marginLeft: 'auto' }}>
-                <button onClick={() => setBulk(bulkVacio)} style={{ background: 'none', border: 'none', color: GRIS, fontSize: '13px', fontFamily: 'inherit', cursor: 'pointer' }}>Cancelar</button>
-                <button onClick={aplicarBulk} disabled={!bulkPuede}
-                  style={{ background: bulkPuede ? NAVY : '#c3d0db', color: 'white', border: 'none', borderRadius: '9px', padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit', cursor: bulkPuede ? 'pointer' : 'default' }}>
-                  Aplicar a {bulkFincas().length} finca{bulkFincas().length === 1 ? '' : 's'}
-                </button>
-              </div>
-            </div>
-            <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px' }}>Se crea/actualiza la fila de cada finca marcada. Luego puedes ajustar alguna por separado abajo.</div>
-          </div>
-        )}
-
-        {exc.map((e, i) => {
-          const facF = e.unidad && e.unidad !== '__completo' ? factorFinca(e.unidad) : null
-          const enlace = { background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', color: '#8a5a12', fontSize: '11.5px', padding: 0 }
-          const otras = activas.filter(f => f.id !== e.fincaId)
-          return (
-          <div key={i} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '11px', padding: '13px 14px', marginBottom: '11px', position: 'relative' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1.2fr 150px auto', gap: '11px', alignItems: 'start' }}>
-              <Campo label="Finca">
-                <select value={e.fincaId} onChange={ev => setRow(i, 'fincaId', ev.target.value)} style={inp}>
-                  <option value="">Elegir finca</option>
-                  {activas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-                </select>
-              </Campo>
-              <div style={{ position: 'relative' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <label style={{ fontSize: '11.5px', color: GRIS }}>Se aplica en</label>
-                  {e.fincaId && e.unidad && <button style={enlace} onClick={() => abrirCopia('unidad', i)}>Copiar unidad a…</button>}
-                </div>
-                <select value={e.unidad} onChange={ev => setRow(i, 'unidad', ev.target.value)} style={{ ...inp, marginTop: '5px' }}>
-                  <option value="">(igual al estándar)</option>
-                  <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
-                  {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-                </select>
-                {copia && copia.tipo === 'unidad' && copia.idx === i && (
-                  <PopCopia tipo="unidad" origen={fincaNom(e.fincaId)} valor={e.unidad === '__completo' ? `Envase entero (${cap1(presentacion)})` : (UNIDAD[e.unidad] || e.unidad)}
-                    otras={otras} copia={copia} setCopia={setCopia} onAplicar={aplicarCopia}
-                    yaTiene={fid => { const r = exc.find(x => x.fincaId === fid); return !!(r && r.unidad) }} />
-                )}
-              </div>
-              <Campo label="Rige desde">
-                <input type="date" value={e.desde || ''} max={hoyISO()} onChange={ev => setRow(i, 'desde', ev.target.value)} style={inp} />
-              </Campo>
-              <button onClick={() => rmExc(i)} title="Quitar" style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#c7ccd2', fontSize: '17px', marginTop: '22px' }}>✕</button>
             </div>
 
-            {e.unidad && (e.unidad === '__completo' ? (
-              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
+            {g.unidad && (g.unidad === '__completo' ? (
+              <div style={{ background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: '#7a5410', marginTop: '14px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
             ) : facF ? (
-              <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[e.unidad] || e.unidad}</b> (misma cantidad, otra unidad)</div>
-            ) : cruzaFamilia(uCont, e.unidad) ? (
-              <div style={{ marginTop: '7px', background: '#FFF7E8', border: '0.5px solid #f0dcae', borderRadius: '9px', padding: '9px 11px' }}>
-                <div style={{ fontSize: '11.5px', color: '#8a5a12', marginBottom: '6px' }}>
-                  Pasa de {U_FAMILIA(uCont) === 'masa' ? 'peso' : 'volumen'} a {U_FAMILIA(e.unidad) === 'masa' ? 'peso' : 'volumen'}. Dinos cuánto rinde:
+              <div style={{ background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: '#7a5410', marginTop: '14px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[g.unidad] || g.unidad}</b> (misma cantidad, otra unidad)</div>
+            ) : cruzaFamilia(uCont, g.unidad) ? (
+              <div style={{ marginTop: '14px', background: '#FFF7E8', border: '1px solid #f0dcae', borderRadius: '11px', padding: '11px 13px' }}>
+                <div style={{ fontSize: '12px', color: '#8a5a12', marginBottom: '6px' }}>
+                  Pasa de {U_FAMILIA(uCont) === 'masa' ? 'peso' : 'volumen'} a {U_FAMILIA(g.unidad) === 'masa' ? 'peso' : 'volumen'}. Dinos cuánto rinde:
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '12.5px' }}>
                   <span>1 {UNIDAD[uCont] || uCont} =</span>
                   <CampoNumero maxDec={6} value={densTxt}
-                    onChange={val => { setDensTxt(val); setDensD(densInterna(numDec(val), uCont, e.unidad)) }}
+                    onChange={val => { setDensTxt(val); setDensD(densInterna(numDec(val), uCont, g.unidad)) }}
                     placeholder="ej. 0.71" style={{ ...inp, width: '80px', textAlign: 'right' }} />
-                  <span>{UNIDAD[e.unidad] || e.unidad}</span>
+                  <span>{UNIDAD[g.unidad] || g.unidad}</span>
                 </div>
               </div>
             ) : (
-              <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '7px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
+              <div style={{ fontSize: '12px', color: ROJO, marginTop: '14px' }}>Esa unidad es de otra familia — no se puede convertir.</div>
             ))}
 
-            {/* Precio propio por plazo (oculto en el editor de solo unidad+mínimos) */}
-            {sinPrecio ? null : !e.abierto ? (
-              <div style={{ marginTop: '9px' }}>
-                <button style={enlace} onClick={() => setRow(i, 'abierto', true)}>＋ Precio propio</button>
-                <span style={{ color: '#c3d0db', fontSize: '11.5px', marginLeft: '8px' }}>— usa el precio estándar</span>
-              </div>
-            ) : (
-              <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '11px 12px', marginTop: '9px', position: 'relative' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '9px' }}>
-                  <span style={{ fontSize: '11.5px', color: GRIS }}>Precio propio · por {precioPor === 'presentacion' ? `envase (${cap1(presentacion)})` : `${UNIDAD[uStd] || uStd}`}</span>
-                  {e.fincaId && rowTienePrecio(e) && <button style={enlace} onClick={() => abrirCopia('precio', i)}>Copiar precio a…</button>}
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '8px' }}>
-                  {PLAZOS.map(pz => {
-                    const on = e.plazoRige === pz
-                    return (
-                    <div key={pz} style={{ textAlign: 'center', border: '0.5px solid ' + (on ? '#e0cd9a' : 'transparent'), background: on ? '#fdf9ee' : 'transparent', borderRadius: '9px', padding: '6px 5px' }}>
-                      <div style={{ fontSize: '10.5px', color: on ? AMBAR : GRIS, fontWeight: on ? 700 : 400, marginBottom: '4px' }}>{PLAZO_LBL[pz]}</div>
-                      <CampoNumero maxDec={6} value={e.precios?.[pz] ?? ''} placeholder="—" onChange={val => setRowPrecio(i, pz, val)} style={{ ...inp, textAlign: 'right', padding: '6px' }} />
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', fontSize: '10.5px', color: GRIS, marginTop: '5px', cursor: 'pointer' }}>
-                        <input type="radio" name={`rige-${i}`} checked={on} onChange={() => setRow(i, 'plazoRige', pz)} /> Rige
-                      </label>
-                    </div>
-                    )
-                  })}
-                </div>
-                <div style={{ fontSize: '11px', color: AMBAR, marginTop: '8px' }}>Marca cuál plazo se cobra hoy en {e.fincaId ? fincaNom(e.fincaId) : 'esta finca'}. Los demás quedan guardados.</div>
-                {copia && copia.tipo === 'precio' && copia.idx === i && (
-                  <PopCopia tipo="precio" origen={fincaNom(e.fincaId)}
-                    otras={otras} copia={copia} setCopia={setCopia} onAplicar={aplicarCopia}
-                    yaTiene={fid => { const r = exc.find(x => x.fincaId === fid); return !!(r && rowTienePrecio(r)) }} />
-                )}
-              </div>
-            )}
+            <div style={{ marginTop: '12px', display: 'flex', gap: '9px', background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '10px', padding: '9px 12px', fontSize: '11.5px', color: '#7a5410', lineHeight: 1.5 }}>
+              <span>⚠️</span><div>Cambiar la unidad de una finca con movimientos <b>convierte su histórico</b> para que no se descuadre. Si falta la equivalencia, te la pregunta una sola vez.</div>
+            </div>
           </div>
-          )
-        })}
-        <button onClick={addExc} style={miniLink}>＋ Agregar finca distinta</button>
-      </div>
+        </div>
+        )
+      })}
+
+      <button onClick={addGrupoU}
+        style={{ width: '100%', border: '1px dashed #cdd8e2', background: '#fafcfe', borderRadius: '12px', padding: '13px', color: AMBAR, fontWeight: 600, fontSize: '13.5px', cursor: 'pointer', marginBottom: '14px', fontFamily: 'inherit' }}>
+        + Agregar otra unidad distinta (para otras fincas)
+      </button>
 
       {/* 3. Precio (oculto cuando este editor es solo unidad+mínimos) */}
       {!sinPrecio && (
