@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
@@ -162,7 +162,8 @@ export default function CatalogoDiesel({ fincas }) {
             {tipos.map(t => <span key={t.id} style={{ textAlign: 'center' }}>{t.nombre} · $/gal</span>)}
             <span></span>
           </div>
-          {activas.map(f => {
+          {(() => {
+          const fila = f => {
             const enEdit = edit && edit.fincaId === f.id
             const enHist = hist === f.id
             return (
@@ -222,7 +223,19 @@ export default function CatalogoDiesel({ fincas }) {
                 )}
               </div>
             )
-          })}
+          }
+          const banda = label => (
+            <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '.07em', textTransform: 'uppercase', color: GRIS, padding: '16px 16px 6px' }}>{label}</div>
+          )
+          const jam = activas.filter(f => f.zona === 'jambeli')
+          const pun = activas.filter(f => f.zona === 'puna')
+          const otras = activas.filter(f => f.zona !== 'jambeli' && f.zona !== 'puna')
+          return (<>
+            {jam.length > 0 && <Fragment key="z-jambeli">{banda('Jambelí')}{jam.map(fila)}</Fragment>}
+            {pun.length > 0 && <Fragment key="z-puna">{banda('Puná')}{pun.map(fila)}</Fragment>}
+            {otras.map(fila)}
+          </>)
+          })()}
         </div>
       )}
     </div>
