@@ -22,6 +22,7 @@ const primeroMesPasado = iso => { let y = +iso.slice(0, 4), m = +iso.slice(5, 7)
 const ddmm = iso => corta(iso).slice(0, 5)
 const G_CONTEO = '1.6fr 1fr 130px 250px 120px'
 const G_CONTEO_REC = '1.1fr 150px 95px 120px 235px 135px'  // recuento: con columna Equivalente
+const G_CONTEO_EDIT = '1.0fr 130px 95px 215px 110px 100px 95px'  // editar: Había antes · Contó · Consumo · Dif · Queda
 const MOTIVOS_DESCUADRE = ['Merma', 'Rotura', 'Robo', 'Error de registro', 'Otro']
 const G_SALDO_J = '1fr 150px 130px 140px 110px'
 const G_SALDO_B = '1fr 140px'
@@ -931,7 +932,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {(() => {
           const esRecuento = !(primeraVez || editToma)
-          const gtcC = esRecuento ? G_CONTEO_REC : G_CONTEO
+          const gtcC = editToma ? G_CONTEO_EDIT : esRecuento ? G_CONTEO_REC : G_CONTEO
           const base = esRecuento ? filas.filter(f => coincide(f.producto)) : filas
           const lista = esRecuento
             ? [...base].sort((a, b) => {
@@ -941,9 +942,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             : base
           const primeraSin = esRecuento ? lista.findIndex(f => !(Number(f.esperado) > 0.0001)) : -1
           return (<>
-          <Encabezado gtc={gtcC} centrar cols={esRecuento
+          <Encabezado gtc={gtcC} centrar cols={editToma
+            ? ['Balanceado', 'Llega / se aplica', 'Había antes', 'Contó', 'Consumo del día', 'Diferencia', 'Queda']
+            : esRecuento
             ? ['Balanceado', 'Llega / se aplica', 'Sistema', 'Equivalente', 'Conteo', 'Diferencia']
-            : ['Balanceado', 'Llega / se aplica', '', editToma ? 'Contado' : 'Inventario inicial', '']} />
+            : ['Balanceado', 'Llega / se aplica', '', 'Inventario inicial', '']} />
           {lista.map((f, idx) => (
             <Fragment key={f.producto_id}>
             {esRecuento && primeraSin > 0 && idx === primeraSin && (
@@ -952,7 +955,45 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             <Fila gtc={gtcC}>
               <Cel>{f.producto}</Cel>
               <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
-              <Cel centro gris>{(primeraVez || editToma) ? '' : (<>
+              {editToma ? (<>
+                <Cel centro gris>
+                  {sistemaEdit[f.producto_id] != null
+                    ? <><span style={{ fontWeight: 700, color: NAVY }}>{limpio(sistemaEdit[f.producto_id])}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>
+                    : <span style={{ color: '#c3d0db' }}>—</span>}
+                </Cel>
+                <div style={{ padding: '5px 10px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end', justifyContent: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontSize: '10px', color: GRIS }}>Sacos</span>
+                      <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="0" onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))} style={{ ...inp, width: '70px', textAlign: 'right' }} />
+                    </div>
+                    <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <span style={{ fontSize: '10px', color: GRIS }}>Libras</span>
+                      <CampoNumero maxDec={2} value={sueltas[f.producto_id] ?? ''} placeholder="0" onChange={v => setSueltas(c => ({ ...c, [f.producto_id]: v }))} style={{ ...inp, width: '70px', textAlign: 'right' }} />
+                    </div>
+                  </div>
+                  {f.contado !== null && <div style={{ fontSize: '9.5px', color: GRIS, marginTop: '4px', textAlign: 'center' }}>= {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb</div>}
+                </div>
+                <Cel centro>
+                  {f.cons > 0.0001
+                    ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>del {ddmm(fecha)}</span></span>
+                    : <span style={{ color: '#c3d0db' }}>—</span>}
+                </Cel>
+                {(() => {
+                  const sisV = sistemaEdit[f.producto_id] != null ? Number(sistemaEdit[f.producto_id]) : null
+                  const d = (sisV != null && f.contado !== null) ? Number(f.habiaContado) - sisV : null
+                  return <Cel centro color={d === null ? '#c3d0db' : Math.abs(d) < 0.001 ? VERDE : d < 0 ? ROJO : AMBAR}>
+                    {d === null ? '—' : Math.abs(d) < 0.001 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(d))}
+                  </Cel>
+                })()}
+                <Cel centro fuerte color={NAVY}>
+                  {f.contado !== null
+                    ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>Sacos</div></>
+                    : <span style={{ color: '#c3d0db' }}>—</span>}
+                </Cel>
+              </>) : (<>
+              <Cel centro gris>{primeraVez ? '' : (<>
                 <span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span>
                 <div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div>
                 {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (comió ${limpio(f.cons)})` : `había (−${limpio(f.cons)} de hoy)`}</div>}
@@ -987,30 +1028,18 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
                       </div>
                     )}
-                    {editToma && sistemaEdit[f.producto_id] != null && f.contado !== null && (() => {
-                      const sisV = Number(sistemaEdit[f.producto_id])
-                      const d = Number(f.habiaContado) - sisV
-                      const desc = Math.abs(d) < 0.001 ? <b style={{ color: VERDE }}>cuadra</b> : (d < 0 ? <>faltan <b>{limpio(Math.abs(d))}</b></> : <>sobran <b>{limpio(d)}</b></>)
-                      return <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '5px', textAlign: 'right' }}>El sistema tenía <b style={{ color: NAVY }}>{limpio(sisV)} sacos</b> · {desc}</div>
-                    })()}
                     {(f.cons > 0.0001 || f.consRef > 0.0001) && (
                       <div style={{ marginTop: '7px', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 9px' }}>
                         <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#BA7517', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           Consumo del día
-                          <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>{editToma ? 'congelado' : 'se congela'}</span>
+                          <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>se congela</span>
                         </div>
-                        {editToma ? (
-                          <div style={{ fontSize: '11px', textAlign: 'right' }}>
-                            <b style={{ color: '#7a5410' }}>{limpio(f.cons)} sacos</b> <span style={{ color: '#BA7517' }}>· del {ddmm(fecha)}</span>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
-                            <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0"
-                              onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))}
-                              style={{ ...inp, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
-                            <span style={{ fontSize: '10px', color: '#BA7517' }}>sacos · registrado hoy: {limpio(f.consRef)}</span>
-                          </div>
-                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
+                          <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0"
+                            onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))}
+                            style={{ ...inp, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
+                          <span style={{ fontSize: '10px', color: '#BA7517' }}>sacos · registrado hoy: {limpio(f.consRef)}</span>
+                        </div>
                       </div>
                     )}
                     {f.contado !== null && f.cons > 0.0001 && (
@@ -1024,9 +1053,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 )}
               </div>
               <Cel centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
-                {(primeraVez || editToma) ? '' : f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra'
+                {primeraVez ? '' : f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra'
                   : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
               </Cel>
+              </>)}
               {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.001 && (
                 <div style={{ gridColumn: '1 / -1', padding: '0 12px 11px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', borderBottom: '0.5px solid #f1f6f9', marginTop: '-2px' }}>
                   <span style={{ fontSize: '11px', color: GRIS }}>{f.diferencia < 0 ? '¿Por qué faltan?' : '¿Por qué sobran?'}</span>
