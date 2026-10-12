@@ -63,7 +63,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [contado, setContado] = useState({})        // sacos completos
   const [sueltas, setSueltas] = useState({})         // libras sueltas
   const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de alimentar ese día
-  const [consumoDia, setConsumoDia] = useState({})   // producto_id -> sacos consumidos el día del conteo
+  const [consumoDia, setConsumoDia] = useState({})   // producto_id -> sacos consumidos el día del conteo (editable)
+  const [consDiaRef, setConsDiaRef] = useState({})   // producto_id -> sacos consumidos REGISTRADOS HOY (referencia)
   const [motivoDesc, setMotivoDesc] = useState({})   // motivo del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})
   const [lps, setLps] = useState(LIBRAS_POR_SACO)    // libras por saco (del parámetro de la base)
@@ -209,7 +210,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // Consumo (alimentación) registrado EL DÍA del conteo, por producto, en sacos.
   // Sirve para avisar del cruce y para la calculadora "antes/después de alimentar".
   useEffect(() => {
-    if (!contando || primeraVez) { setConsumoDia({}); return }
+    if (!contando || primeraVez) { setConsumoDia({}); setConsDiaRef({}); return }
     let vivo = true
     ;(async () => {
       const { data } = await supabase.schema('produccion').from('alimentacion')
@@ -219,10 +220,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const f = lps || LIBRAS_POR_SACO
       const m = {}
       ;(data || []).forEach(r => { if (r.producto_id) m[r.producto_id] = (m[r.producto_id] || 0) + Number(r.libras || 0) / f })
-      setConsumoDia(m)
+      const sac = {}; Object.entries(m).forEach(([id, v]) => { sac[id] = String(Math.round(v * 1e6) / 1e6) })
+      setConsDiaRef(sac)
+      // Conteo nuevo: arranca del registrado. Al EDITAR: usa el CONGELADO donde
+      // exista (cargado en editarConteo); donde no haya (conteos viejos) cae al vivo.
+      if (!editToma) setConsumoDia(sac)
+      else setConsumoDia(prev => ({ ...sac, ...prev }))
     })()
     return () => { vivo = false }
-  }, [contando, fecha, finca.id, primeraVez, lps])
+  }, [contando, fecha, finca.id, primeraVez, lps, editToma])
 
   // Períodos "entre conteos": de cada conteo hasta el siguiente (o hasta hoy).
   const periodos = useMemo(() => {
@@ -360,7 +366,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     // Si contó DESPUÉS, escribió lo que quedó → se le suma lo de hoy para
     // reconstruir el "había". Si contó ANTES, ya escribió el "había".
     const sis = Number(s.saldo)
-    const cons = Number(consumoDia[s.producto_id] || 0)
+    const cons = numDec(String(consumoDia[s.producto_id] ?? ''))
+    const consRef = numDec(String(consDiaRef[s.producto_id] ?? ''))
     const habiaSistema = cons > 0.0001 ? sis + cons : sis        // lo que había al inicio del día (para guardar)
     // "El sistema dice" = lo que deberías encontrar EN EL MOMENTO que cuentas:
     //   antes de alimentar  -> el había (todavía no sale lo de hoy)
@@ -368,11 +375,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const esperado = (contoDespues && cons > 0.0001) ? sis : habiaSistema
     const habiaContado = c === null ? null : ((contoDespues && cons > 0.0001) ? c + cons : c)
     const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
-    return { ...s, precio: precios[s.producto_id] || 0, contado: c, cons, esperado, habiaSistema, habiaContado, saldoFinal,
+    return { ...s, precio: precios[s.producto_id] || 0, contado: c, cons, consRef, esperado, habiaSistema, habiaContado, saldoFinal,
              // Redondeada a 2 decimales: así una diferencia minúscula por la
              // conversión (ej. 0.002) cuenta como "Cuadra", no "Sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sueltas, lps, consumoDia, contoDespues])
+  }), [saldos, precios, contado, sueltas, lps, consumoDia, consDiaRef, contoDespues])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
@@ -528,15 +535,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
   async function editarToma(t) {
     const { data } = await supabase.schema('produccion').from('toma_balanceado_linea')
-      .select('producto_id, cantidad_contada, motivo_descuadre').eq('toma_id', t.id)
-    const mapa = {}, md = {}, mo = {}
+      .select('producto_id, cantidad_contada, consumo_dia, motivo_descuadre').eq('toma_id', t.id)
+    const mapa = {}, md = {}, mo = {}, cd = {}
     ;(data || []).forEach(l => {
       mapa[l.producto_id] = String(l.cantidad_contada)
+      if (l.consumo_dia != null) cd[l.producto_id] = String(l.consumo_dia)
       if (l.motivo_descuadre) {
         if (MOTIVOS_DESCUADRE.includes(l.motivo_descuadre)) md[l.producto_id] = l.motivo_descuadre
         else { md[l.producto_id] = 'Otro'; mo[l.producto_id] = l.motivo_descuadre }
       }
     })
+    setConsumoDia(cd)   // consumo del día CONGELADO del conteo (el efecto no lo pisa)
     setContado(mapa); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(false)
     setEditToma(t); setContando(true); setAviso(null)
@@ -586,6 +595,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         return {
           toma_id: tomaId, producto_id: f.producto_id, cantidad_contada: f.habiaContado,
           cantidad_sistema: Number(f.habiaSistema), diferencia: f.diferencia, motivo_descuadre: motivoD,
+          // Consumo del día CONGELADO (queda fijo aunque luego registren comida de ese día).
+          consumo_dia: f.cons > 0.0001 ? f.cons : null,
         }
       })
       const { error: e2 } = await supabase.schema('produccion').from('toma_balanceado_linea').insert(lineas)
@@ -877,6 +888,25 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {f.contado !== null && (
                       <div style={{ fontSize: '10.5px', color: VERDE, marginTop: '4px', textAlign: 'right' }}>
                         = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
+                      </div>
+                    )}
+                    {(f.cons > 0.0001 || f.consRef > 0.0001) && (
+                      <div style={{ marginTop: '7px', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 9px' }}>
+                        <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#BA7517', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          Consumo del día
+                          <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>{editToma ? 'congelado' : 'se congela'}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
+                          <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0"
+                            onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))}
+                            style={{ ...inp, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
+                          <span style={{ fontSize: '10px', color: '#BA7517' }}>
+                            sacos
+                            {editToma && Math.abs(f.consRef - f.cons) > 0.001
+                              ? <> · registrado hasta hoy: {limpio(f.consRef)} ⚠️</>
+                              : <> · registrado hoy: {limpio(f.consRef)}</>}
+                          </span>
+                        </div>
                       </div>
                     )}
                     {f.contado !== null && f.cons > 0.0001 && (
