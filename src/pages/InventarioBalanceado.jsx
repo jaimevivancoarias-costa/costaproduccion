@@ -185,7 +185,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_balanceado')
-          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, motivo_descuadre, diferencia)')
+          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
@@ -193,7 +193,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}, dm = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
-        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
+        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
+          consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
         // El último motivo del rango con descuadre (las tomas vienen en orden ascendente).
         if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
       }))
@@ -444,6 +445,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
+      const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
+      const consDia = cd != null ? `${limpio(cd)} sacos · congelado` : ''
+      const consDiaCalc = (cd != null && cq.habia != null) ? `contó ${limpio(cq.habia - cd)} + ${limpio(cd)} = ${limpio(cq.habia)} había` : ''
       filasRep.push({
         nombre, lotesLinea, viaTop: 'Saco → lb', viaSub: `1 Saco = ${lps || LIBRAS_POR_SACO} lb`,
         inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
@@ -452,6 +456,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
+        consDia, consDiaCalc,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
         motivo: descMotivo[id] || '',
       })
@@ -459,6 +464,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
     // Solo mostramos las columnas del conteo si hay al menos un producto contado.
     const hayConteo = filasRep.some(f => f.contado !== '')
+    const hayConsDiaRep = filasRep.some(f => f.consDia !== '')
 
     const columnas = [
       { titulo: 'Balanceado', campo: 'nombre', sub: 'lotesLinea' },
@@ -473,6 +479,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       { titulo: 'Valor', der: true, campo: 'valor' },
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
+        ...(hayConsDiaRep ? [{ titulo: 'Consumo del día', der: true, campo: 'consDia', sub: 'consDiaCalc' }] : []),
         { titulo: 'Dif.', der: true, campo: 'dif' },
         { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
         { titulo: 'Motivo', campo: 'motivo' },
@@ -482,7 +489,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       nombre: 'Total', lotesLinea: '', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
       devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
       saldoHoy: `${limpio(totAlaFecha)} sacos`, saldoEquiv: '', consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
-      valor: dinero(totValor), contado: '', contadoInfo: '',
+      valor: dinero(totValor), contado: '', contadoInfo: '', consDia: '', consDiaCalc: '',
       dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
       descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
     }
