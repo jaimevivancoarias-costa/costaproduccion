@@ -275,7 +275,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // haya conteos posteriores. Devuelve el valor de apertura o null.
   const aperturaInicial = m => {
     const ini = iniRango[m.producto_id]
-    if (ini && ini.fecha >= desde && Math.abs(Number(m?.saldo_inicial)) < 0.0001) return ini.valor
+    // iniRango solo tiene inventarios iniciales DENTRO del rango (fecha ≥ desde),
+    // así que si existe, ese valor contado ES la apertura del corte.
+    if (ini) return ini.valor
     return null
   }
   // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
