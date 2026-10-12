@@ -288,17 +288,14 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
 
   const solActual = tab === 'insumos' ? solIns : solBal
   const lista = (tab === 'insumos' ? insumos : productos)
-    .filter(p => !busqCat || p.nombre === busqCat)
+    .filter(p => !busqCat.trim() || p.nombre.toLowerCase().includes(busqCat.trim().toLowerCase()))
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1040px', color: NAVY, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <h1 style={{ fontSize: '22px', fontWeight: 500, margin: '0 0 4px' }}>Catálogo</h1>
       <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 16px', maxWidth: '660px' }}>
         Todos los productos. Toca uno para ver, por finca, cómo entra, en qué se cuenta y su precio.
-        El jefe define productos y presentaciones; el precio lo ponen el jefe y las contadoras.
       </p>
-
-      <InformeDoblePrecio fincas={fincas} />
 
       {recostModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex',
@@ -366,12 +363,16 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
             color: tab === id ? AZUL : NAVY, fontWeight: tab === id ? 500 : 400 }}>{txt}</button>
         ))}
         {tab !== 'diesel' && (
-          <select value={busqCat} onChange={e => setBusqCat(e.target.value)}
-                  style={{ padding: '8px 12px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
-                           borderRadius: '9px', background: 'white', minWidth: '220px', marginLeft: esJefeGlobal ? '0' : 'auto' }}>
-            <option value="">Todos los {tab === 'insumos' ? 'insumos' : 'balanceados'}</option>
-            {(tab === 'insumos' ? insumos : productos).map(p => <option key={p.id} value={p.nombre}>{p.nombre}</option>)}
-          </select>
+          <div style={{ position: 'relative', marginLeft: esJefeGlobal ? '0' : 'auto' }}>
+            <input type="text" value={busqCat} onChange={e => setBusqCat(e.target.value)}
+                   placeholder={`Buscar ${tab === 'insumos' ? 'insumo' : 'balanceado'}…`}
+                   style={{ padding: '8px 30px 8px 12px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
+                            borderRadius: '9px', background: 'white', minWidth: '220px', color: NAVY }} />
+            {busqCat && (
+              <button onClick={() => setBusqCat('')} title="Limpiar"
+                      style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '15px', padding: 0, lineHeight: 1 }}>✕</button>
+            )}
+          </div>
         )}
         {esJefeGlobal && tab !== 'diesel' && (
           <button onClick={() => { setNuevo(true); setAviso(null) }} style={{ ...btn, marginLeft: 'auto' }}>
