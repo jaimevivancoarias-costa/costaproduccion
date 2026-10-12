@@ -100,9 +100,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         supabase.schema('produccion').from('evento_destino')
           .select('cantidad, piscina:piscina_id ( nombre ), evento:evento_id!inner(ciclo_id, tipo)')
           .in('evento.ciclo_id', ids).eq('evento.tipo', 'transferencia'),
-        // Entradas: de qué piscina vino este ciclo (el origen de la transferencia).
+        // Entradas: de qué piscina vino este ciclo y cuánto recibió.
         supabase.schema('produccion').from('evento_destino')
-          .select('ciclo_destino_id, evento:evento_id!inner(tipo, ciclo:ciclo_id ( piscina:piscina_origen_id ( nombre ) ))')
+          .select('ciclo_destino_id, cantidad, evento:evento_id!inner(tipo, ciclo:ciclo_id ( piscina:piscina_origen_id ( nombre ) ))')
           .in('ciclo_destino_id', ids).eq('evento.tipo', 'transferencia'),
       ])
       if (!vivo) return
@@ -114,7 +114,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
         const n = x.piscina?.nombre; if (n && !o.nombres.includes(n)) o.nombres.push(n)
       })
       const me = {}
-      ;(ent || []).forEach(x => { const cid = x.ciclo_destino_id; const n = x.evento?.ciclo?.piscina?.nombre; if (cid && n && !me[cid]) me[cid] = n })
+      ;(ent || []).forEach(x => {
+        const cid = x.ciclo_destino_id; if (!cid) return
+        const o = me[cid] || (me[cid] = { total: 0, origen: null })
+        o.total += Number(x.cantidad || 0)
+        if (!o.origen) o.origen = x.evento?.ciclo?.piscina?.nombre || null
+      })
       setSalidaPorCiclo(ms); setEntradaPorCiclo(me)
     })()
     return () => { vivo = false }
@@ -1246,19 +1251,29 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         {p.cicloId && (() => {
                           const sal = salidaPorCiclo[p.cicloId]
                           const salida = Number(sal?.total) || 0
-                          const origen = entradaPorCiclo[p.cicloId]
+                          const ent = entradaPorCiclo[p.cicloId]
+                          const recibido = Number(ent?.total) || 0
                           const base = p.larva != null ? Number(p.larva) : null
                           const pobl = base != null ? Math.max(0, base - salida) : null
                           // De dónde viene mi población, en una línea.
-                          let viene = ''
-                          if (salida > 0 && base != null) {
-                            const aQuien = sal?.nombres?.length ? ' a ' + sal.nombres.join(', ') : ''
-                            viene = `tenía ${miles(base)} · pasó ${miles(salida)}${aQuien}`
-                          } else if (origen) {
-                            viene = `viene de ${origen}`
+                          const partes = []
+                          if (ent && ent.origen) {
+                            // Si además fue sembrada directa (no es hija de transferencia) y
+                            // la base es mayor que lo recibido, hubo siembra propia + recibido.
+                            const propio = base != null ? base - recibido : null
+                            if (!p.cicloPadreId && recibido > 0 && propio != null && propio > 0.5) {
+                              partes.push(`sembró ${miles(propio)} + recibió ${miles(recibido)} de ${ent.origen}`)
+                            } else {
+                              partes.push(`viene de ${ent.origen}`)
+                            }
                           } else if (p.fechaSiembra) {
-                            viene = `sembrada el ${cortita(p.fechaSiembra)}`
+                            partes.push(`sembrada el ${cortita(p.fechaSiembra)}`)
                           }
+                          if (salida > 0) {
+                            const aQuien = sal?.nombres?.length ? ' a ' + sal.nombres.join(', ') : ''
+                            partes.push(`pasó ${miles(salida)}${aQuien}`)
+                          }
+                          const viene = partes.join(' · ')
                           return (
                             <div>
                               <div style={etq}>Población</div>
