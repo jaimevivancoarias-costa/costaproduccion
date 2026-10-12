@@ -272,7 +272,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     ;(async () => {
       const ids = tomas.map(t => t.id)
       const { data: lins } = await supabase.schema('produccion').from('toma_balanceado_linea')
-        .select('toma_id, producto_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').in('toma_id', ids)
+        .select('toma_id, producto_id, cantidad_sistema, cantidad_contada, consumo_dia, diferencia, motivo_descuadre').in('toma_id', ids)
       if (!vivo) return
       const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
       setLineasToma(byToma)
@@ -320,30 +320,34 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const autor = nombresU[t.creado_por]
     const nFalt = lins.filter(l => difCorte(l, cons) < -0.001).length
     const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(tomas[idx - 1].fecha, -1))
+    const hayConsDia = lins.some(l => l.consumo_dia != null && Number(l.consumo_dia) > 0.0001)
     const columnas = [
       { titulo: 'Balanceado', campo: 'nombre' },
       { titulo: 'Sistema', der: true, campo: 'sistema' },
       { titulo: 'Contó', der: true, campo: 'conto' },
+      ...(hayConsDia ? [{ titulo: 'Consumo del día', der: true, campo: 'consDia' }] : []),
       { titulo: 'Diferencia', der: true, campo: 'dif' },
       { titulo: 'Motivo', campo: 'motivo' },
       ...(esJefe ? [{ titulo: 'Consumo $', der: true, campo: 'consumo' }] : []),
     ]
     const filas = lins.map(l => {
       const dif = difCorte(l, cons)
+      const cd = l.consumo_dia != null ? Number(l.consumo_dia) : null
       return {
         nombre: nombreProducto(l.producto_id),
         sistema: t.es_inicial ? '—' : limpio(sisCorte(l, cons)),
         conto: limpio(l.cantidad_contada),
+        consDia: cd != null && cd > 0.0001 ? limpio(cd) : '—',
         dif: t.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(dif)),
         motivo: l.motivo_descuadre || (t.es_inicial || Math.abs(dif) < 0.001 ? '—' : 'sin motivo'),
         consumo: cons ? dinero(cons.porProd[l.producto_id] || 0) : '—',
       }
     })
-    const total = esJefe && cons ? { nombre: 'Total del corte', sistema: '', conto: '', dif: '', motivo: '', consumo: dinero(cons.total) } : null
+    const total = esJefe && cons ? { nombre: 'Total del corte', sistema: '', conto: '', consDia: '', dif: '', motivo: '', consumo: dinero(cons.total) } : null
     return {
       titulo: 'Acta de conteo — Balanceado', finca: finca.nombre, categoria: 'Balanceado',
       subtitulo: `Conteo del ${corta(t.fecha)}${t.es_inicial ? ' (inventario inicial)' : ''}`,
-      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. &nbsp; Contó = lo físico. &nbsp; Diferencia = Contó − Sistema. &nbsp; Consumo $ = lo consumido del corte.',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. &nbsp; Contó = lo que había al inicio del día. &nbsp; Consumo del día = lo comido ese día (congelado). &nbsp; Diferencia = Contó − Sistema. &nbsp; Consumo $ = lo consumido del corte.',
       meta: [
         { k: 'Período', v: idx === 0 ? `${corta(t.fecha)} – hoy` : `${corta(t.fecha)} – ${hastaTxt}` },
         { k: 'Contó', v: autor || '—' },
