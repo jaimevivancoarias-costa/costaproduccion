@@ -76,6 +76,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [nuevos, setNuevos] = useState([])
   const [guardandoNuevos, setGuardandoNuevos] = useState(false)
   const [conteoQuien, setConteoQuien] = useState({})   // producto_id -> {fecha, autor}
+  const [iniRango, setIniRango] = useState({})         // producto_id -> {fecha, valor} del inventario inicial DENTRO del rango
   const [descMotivo, setDescMotivo] = useState({})     // producto_id -> motivo del descuadre (para el reporte)
   const [nombresU, setNombresU] = useState({})         // id usuario -> nombre
   const [lineasToma, setLineasToma] = useState({})     // toma_id -> [líneas completas] (resumen Conteos anteriores)
@@ -200,14 +201,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
-      const cq = {}, dm = {}
+      const cq = {}, dm = {}, iniR = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
         cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
           consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
         // El último motivo del rango con descuadre (las tomas vienen en orden ascendente).
         if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
+        // El inventario inicial del rango (el más antiguo) = la apertura.
+        if (tt.es_inicial && !iniR[l.producto_id]) iniR[l.producto_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
-      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU)
+      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
@@ -264,6 +267,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (c && c.fecha === desde) return true
     if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
     return false
+  }
+  // Si el inventario inicial cae DENTRO del rango y antes no había nada (saldo
+  // víspera ≈ 0), ese valor contado ES la apertura (Saldo Ini.), aunque luego
+  // haya conteos posteriores. Devuelve el valor de apertura o null.
+  const aperturaInicial = m => {
+    const ini = iniRango[m.producto_id]
+    if (ini && ini.fecha >= desde && Math.abs(Number(m?.saldo_inicial)) < 0.0001) return ini.valor
+    return null
   }
   // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
   const hayConteoSuelto = movs.some(m => m.conteo !== null && !anclaInicio(m))
@@ -482,11 +493,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const desde = precioInfo[id]?.aplicado?.desde
       const valor = Number(valorFifo[id] || 0)
       // Si el período arranca en el inventario inicial (o en un conteo), ese
-      // valor contado ES el Saldo Ini. — igual que en pantalla (anclaInicio).
+      // valor contado ES el Saldo Ini. — igual que en pantalla.
       const iniEsConteo = anclaInicio(m)
+      const apertura = aperturaInicial(m)
       const conteoRaw = m && m.conteo != null ? Number(m.conteo) : null
       const conteo = iniEsConteo ? null : conteoRaw
-      const iniVal = iniEsConteo ? conteoRaw : numDec(m?.saldo_inicial)
+      const iniVal = apertura != null ? apertura : (iniEsConteo ? conteoRaw : numDec(m?.saldo_inicial))
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
@@ -1288,10 +1300,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 // Si el período arranca en un conteo (o en el inventario inicial),
                 // ese valor contado ES el Saldo Ini. — no se repite en "Conteo".
                 const iniEsConteo = anclaInicio(m)
-                const contInicial = iniEsConteo && cq?.esInicial
-                const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
+                const apertura = aperturaInicial(m)
+                const usaApertura = apertura != null
+                const contInicial = usaApertura || (iniEsConteo && cq?.esInicial)
+                const iniMostrar = usaApertura ? apertura : (iniEsConteo ? m.conteo : m.saldo_inicial)
+                const iniEsAncla = usaApertura || iniEsConteo
                 const conteoMostrar = iniEsConteo ? null : m.conteo
-                const fechaConteoIni = cq?.fecha || desde
+                const fechaConteoIni = iniRango[m.producto_id]?.fecha || cq?.fecha || desde
                 const detalle = cq && (
                   <>
                     <button onClick={() => setConteoDet(conteoDet === m.producto_id ? null : m.producto_id)}
@@ -1334,11 +1349,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       <span style={{ color: GRIS, marginRight: '7px', fontSize: '11px' }}>{movDet === m.producto_id ? '▾' : '▸'}</span>{m.producto}
                     </button>
                   </Cel>
-                  <Cel der gris={!iniEsConteo} fuerte={iniEsConteo}>
+                  <Cel der gris={!iniEsAncla} fuerte={iniEsAncla}>
                     <div>{limpio(iniMostrar)}</div>
                     {contInicial && <>
                       <span style={badgeIni}>Inicial</span>
-                      {detalle}
+                      {usaApertura
+                        ? <span style={{ display: 'block', fontSize: '9.5px', color: GRIS }}>{corta(fechaConteoIni)}</span>
+                        : detalle}
                     </>}
                     {iniEsConteo && !contInicial && (
                       <span style={badgeIni}>Conteo {ddmm(fechaConteoIni)}</span>
