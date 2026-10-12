@@ -876,15 +876,17 @@ function Cierre({ validaciones, cerrada, puedeCerrar, fechas = [], dias = {}, ho
 // la cuadrícula: al filtrar solo se ven esos insumos, los demás quedan en "—".
 function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
   const [abierto, setAbierto] = useState(false)
+  const [busq, setBusq] = useState('')
   const ref = useRef(null)
   useEffect(() => {
     if (!abierto) return
-    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false) }
+    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) { setAbierto(false); setBusq('') } }
     document.addEventListener('mousedown', fuera)
     return () => document.removeEventListener('mousedown', fuera)
   }, [abierto])
   const activo = valor.length > 0
   const toggle = id => onCambio(valor.includes(id) ? valor.filter(x => x !== id) : [...valor, id])
+  const filtradas = opciones.filter(o => o.nombre.toLowerCase().includes(busq.trim().toLowerCase()))
   const nombre = id => opciones.find(o => o.id === id)?.nombre || ''
   const sel = { border: '1px solid ' + (activo ? '#9cc4e8' : BORDE), background: activo ? '#f4f9ff' : 'white',
                 borderRadius: '10px', padding: '9px 13px', fontSize: '13px', color: activo ? NAVY : GRIS,
@@ -900,13 +902,18 @@ function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
       ))}
       {activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
       <div style={{ position: 'relative' }}>
-        <button onClick={() => setAbierto(a => !a)} style={sel}>
-          {activo ? '+ insumo' : 'Filtrar por insumo…'} <span style={{ color: '#9fb0bf' }}>▾</span>
-        </button>
+        <input
+          value={busq}
+          onChange={e => { setBusq(e.target.value); setAbierto(true) }}
+          onFocus={() => setAbierto(true)}
+          placeholder={activo ? '+ insumo…' : 'Filtrar por insumo…'}
+          style={{ ...sel, width: '210px', outline: 'none' }}
+        />
         {abierto && (
           <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, width: '290px', background: '#fff',
                         border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 12px 30px rgba(12,39,66,.15)', padding: '6px', zIndex: 20, maxHeight: '320px', overflow: 'auto' }}>
-            {opciones.map(o => {
+            {filtradas.length === 0 && <div style={{ padding: '12px 10px', fontSize: '13px', color: GRIS, textAlign: 'center' }}>Sin resultados</div>}
+            {filtradas.map(o => {
               const on = valor.includes(o.id)
               return (
                 <button key={o.id} onClick={() => toggle(o.id)} style={{ display: 'flex', alignItems: 'center', gap: '10px', width: '100%',
@@ -921,7 +928,7 @@ function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
             })}
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 10px 4px', borderTop: '1px solid #eef3f8', marginTop: '4px' }}>
               <button onClick={() => onCambio([])} style={{ background: 'none', border: 'none', color: activo ? AZUL : '#c3d0db', cursor: activo ? 'pointer' : 'default', fontFamily: 'inherit', fontSize: '12.5px', padding: 0 }}>Limpiar</button>
-              <button onClick={() => setAbierto(false)} style={{ background: 'none', border: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 600, padding: 0 }}>Listo</button>
+              <button onClick={() => { setAbierto(false); setBusq('') }} style={{ background: 'none', border: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 600, padding: 0 }}>Listo</button>
             </div>
           </div>
         )}
