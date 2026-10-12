@@ -67,6 +67,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [consumoDia, setConsumoDia] = useState({})   // producto_id -> sacos consumidos el día del conteo (editable)
   const [sistemaEdit, setSistemaEdit] = useState({}) // producto_id -> cantidad_sistema GUARDADA (al editar)
   const [consDiaRef, setConsDiaRef] = useState({})   // producto_id -> sacos consumidos REGISTRADOS HOY (referencia)
+  const [saldoFecha, setSaldoFecha] = useState({})   // producto_id -> saldo del sistema A LA FECHA del conteo (conteo nuevo con fecha pasada)
   const [motivoDesc, setMotivoDesc] = useState({})   // motivo del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})
   const [lps, setLps] = useState(LIBRAS_POR_SACO)    // libras por saco (del parámetro de la base)
@@ -244,6 +245,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     })()
     return () => { vivo = false }
   }, [contando, fecha, finca.id, primeraVez, lps, editToma])
+
+  // Saldo del SISTEMA a la fecha del conteo (para conteos con fecha pasada: el
+  // sistema debe mostrar lo que había ESE día, no el saldo de hoy). Al editar un
+  // conteo se usa el sistema GUARDADO, así que aquí no se recalcula.
+  useEffect(() => {
+    if (!contando || primeraVez || editToma) { setSaldoFecha({}); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: fecha })
+      if (!vivo) return
+      const m = {}; (data || []).forEach(r => { m[r.producto_id] = Number(r.saldo) })
+      setSaldoFecha(m)
+    })()
+    return () => { vivo = false }
+  }, [contando, fecha, finca.id, primeraVez, editToma])
 
   // Períodos "entre conteos": de cada conteo hasta el siguiente (o hasta hoy).
   const periodos = useMemo(() => {
@@ -444,7 +460,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     // s.saldo ya tiene restado el consumo de hoy, así que había = s.saldo + hoy.
     // Si contó DESPUÉS, escribió lo que quedó → se le suma lo de hoy para
     // reconstruir el "había". Si contó ANTES, ya escribió el "había".
-    const sis = Number(s.saldo)
+    // Para un conteo nuevo con fecha pasada, el sistema es el saldo A ESA FECHA.
+    const sis = (!editToma && saldoFecha[s.producto_id] != null) ? Number(saldoFecha[s.producto_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.producto_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.producto_id] ?? ''))
     const habiaSistema = cons > 0.0001 ? sis + cons : sis        // lo que había al inicio del día (para guardar)
@@ -458,7 +475,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
              // Redondeada a 2 decimales: así una diferencia minúscula por la
              // conversión (ej. 0.002) cuenta como "Cuadra", no "Sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sueltas, lps, consumoDia, consDiaRef, contoDespues])
+  }), [saldos, precios, contado, sueltas, lps, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma])
   const llenadas = filas.filter(f => f.contado !== null).length
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.

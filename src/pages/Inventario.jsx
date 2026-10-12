@@ -533,6 +533,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de aplicar ese día
   const [consumoDia, setConsumoDia] = useState({})   // insumoId -> consumo del día (editable), en unidad de compra
   const [consDiaRef, setConsDiaRef] = useState({})   // insumoId -> consumo del día REGISTRADO HOY (referencia), unidad de compra
+  const [saldoFecha, setSaldoFecha] = useState({})   // insumoId -> saldo del sistema A LA FECHA del conteo (conteo nuevo con fecha pasada)
   const [sistemaEdit, setSistemaEdit] = useState({}) // insumoId -> cantidad_sistema GUARDADA (al editar un conteo)
   const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
@@ -707,6 +708,20 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     })()
     return () => { vivo = false }
   }, [contando, fecha, finca.id, primeraVez, factores, editToma])
+
+  // Saldo del sistema A LA FECHA del conteo (para conteos con fecha pasada: el
+  // sistema debe mostrar lo de ESE día, no el de hoy). Al editar se usa el guardado.
+  useEffect(() => {
+    if (!contando || primeraVez || editToma) { setSaldoFecha({}); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: fecha })
+      if (!vivo) return
+      const m = {}; (data || []).forEach(r => { m[r.insumo_id] = Number(r.saldo) })
+      setSaldoFecha(m)
+    })()
+    return () => { vivo = false }
+  }, [contando, fecha, finca.id, primeraVez, editToma])
   const ultimo = conteos[0]
 
   // El valor se calcula a PRECIO ACTUAL: saldo × precio vigente. Así, al
@@ -740,7 +755,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     // de compra). s.saldo ya tiene restado el consumo de hoy, así que había =
     // s.saldo + lo de hoy. Si contó DESPUÉS, escribió lo que quedó → se le suma
     // lo de hoy. "El sistema dice" muestra el había (antes) o lo de ahora (después).
-    const sis = Number(s.saldo)
+    // Para un conteo nuevo con fecha pasada, el sistema es el saldo A ESA FECHA.
+    const sis = (!editToma && saldoFecha[s.insumo_id] != null) ? Number(saldoFecha[s.insumo_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.insumo_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.insumo_id] ?? ''))
     const habiaSistema = cons > 0.0001 ? sis + cons : sis
@@ -752,7 +768,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
              // Redondeada a 2 decimales para que una diferencia minúscula por la
              // conversión cuente como "cuadra", no "sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sobrante, factores, consumoDia, consDiaRef, contoDespues])
+  }), [saldos, precios, contado, sobrante, factores, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
