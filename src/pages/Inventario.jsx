@@ -104,6 +104,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
   const [conteoQuien, setConteoQuien] = useState({})  // insumo_id -> {fecha, autor, esInicial} del conteo
+  const [iniRango, setIniRango] = useState({})        // insumo_id -> {fecha, valor} del inventario inicial DENTRO del rango
   const [descMotivo, setDescMotivo] = useState({})    // insumo_id -> motivo del descuadre (para el reporte)
   const [nombresU, setNombresU] = useState({})        // id usuario -> nombre
   const [lineasToma, setLineasToma] = useState({})    // toma_id -> [líneas completas] (resumen Conteos anteriores)
@@ -215,6 +216,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     if (c && c.fecha === desde) return true
     if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
     return false
+  }
+  // Si el inventario inicial cae DENTRO del rango y antes no había nada (saldo
+  // víspera ≈ 0), ese valor contado ES la apertura (Saldo Ini.), aunque luego
+  // haya conteos posteriores. Devuelve el valor de apertura o null.
+  const aperturaInicial = m => {
+    const ini = iniRango[m.insumo_id]
+    if (ini && ini.fecha >= desde && Math.abs(Number(m?.saldo_inicial)) < 0.0001) return ini.valor
+    return null
   }
   // La columna "Conteo" solo aparece si hay algún conteo a media vista (no al inicio).
   const hayConteoSuelto = movs.some(m => m.conteo !== null && m.conteo !== undefined && !anclaInicio(m))
@@ -650,13 +659,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
-      const cq = {}, dm = {}
+      const cq = {}, dm = {}, iniR = {}
       ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
         cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
           consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
         if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.insumo_id] = l.motivo_descuadre
+        // El inventario inicial del rango (el más antiguo; tomasP viene ascendente) = la apertura.
+        if (tt.es_inicial && !iniR[l.insumo_id]) iniR[l.insumo_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
-      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU)
+      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
@@ -774,11 +785,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const pdesde = precioInfo[id]?.desde
       const valor = Number(valorFifo[id] || 0)
       // Si el período arranca en el inventario inicial (o en un conteo), ese
-      // valor contado ES el Saldo Ini. — igual que en pantalla (anclaInicio).
+      // valor contado ES el Saldo Ini. — igual que en pantalla.
       const iniEsConteo = anclaInicio(m)
+      const apertura = aperturaInicial(m)
       const conteoRaw = m && m.conteo != null ? Number(m.conteo) : null
       const conteo = iniEsConteo ? null : conteoRaw
-      const iniVal = iniEsConteo ? conteoRaw : nd(m?.saldo_inicial)
+      const iniVal = apertura != null ? apertura : (iniEsConteo ? conteoRaw : nd(m?.saldo_inicial))
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
@@ -1667,10 +1679,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const uLabel = (enUso ? (UNIDAD[fac.uApp] || fac.uApp) : (UNIDAD[m.unidad] || m.unidad) || '').toLowerCase()
               const val = v => limpio(Number(v) * factor)
               const iniEsConteo = anclaInicio(m)
-              const contInicial = iniEsConteo && conteoQuien[m.insumo_id]?.esInicial
-              const iniMostrar = iniEsConteo ? m.conteo : m.saldo_inicial
+              const apertura = aperturaInicial(m)                 // inventario inicial del rango como apertura
+              const usaApertura = apertura != null
+              const contInicial = usaApertura || (iniEsConteo && conteoQuien[m.insumo_id]?.esInicial)
+              const iniMostrar = usaApertura ? apertura : (iniEsConteo ? m.conteo : m.saldo_inicial)
+              const iniEsAncla = usaApertura || iniEsConteo
               const conteoMostrar = iniEsConteo ? null : m.conteo
-              const fechaConteoIni = conteoQuien[m.insumo_id]?.fecha || desde
+              const fechaConteoIni = iniRango[m.insumo_id]?.fecha || conteoQuien[m.insumo_id]?.fecha || desde
               const cq = conteoQuien[m.insumo_id]
               const abierto2 = conteoDet === m.insumo_id
               const porQuien = cq && (
@@ -1719,10 +1734,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   {conv && <> <span style={{ color: '#c3d0db' }}>→</span> {cap1(UNIDAD[fac.uApp] || fac.uApp)}
                     <span style={{ display: 'block', fontSize: '10px', color: GRIS }}>{fac.factor} {abrevU(fac.uApp)}</span></>}
                 </Celda>
-                <Celda derecha gris={!iniEsConteo} fuerte={iniEsConteo}>
+                <Celda derecha gris={!iniEsAncla} fuerte={iniEsAncla}>
                   {iniMostrar === null || iniMostrar === undefined ? '—' : <>
                     <div>{val(iniMostrar)}</div>
-                    {contInicial && <><span style={badgeIni}>Inicial</span>{porQuien}</>}
+                    {contInicial && <><span style={badgeIni}>Inicial</span>{usaApertura
+                      ? <span style={{ display: 'block', fontSize: '9.5px', color: GRIS }}>{corta(fechaConteoIni)}</span>
+                      : porQuien}</>}
                     {iniEsConteo && !contInicial && <span style={badgeIni}>Conteo {ddmm(fechaConteoIni)}</span>}
                   </>}
                 </Celda>
