@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
-import { hoyISO, lunesDe } from './lib/fechas'
+import { hoyISO, lunesDe, sumarDias, cortita } from './lib/fechas'
 import RegistroDiario from './pages/RegistroDiario'
 import RegistroInsumos from './pages/RegistroInsumos'
 import Gramaje from './pages/Gramaje'
@@ -304,6 +304,15 @@ export default function App() {
         />
       )}
 
+      <AvisoCierres
+        fincas={fincas}
+        esJefe={esJefe}
+        onCerrar={(fid, z, amb, dia) => {
+          setFincaId(fid); if (z) setZona(z)
+          setModulo('registro'); setPanelReg(amb); setLunes(lunesDe(dia))
+        }}
+      />
+
       <div style={{ display: 'flex', alignItems: 'flex-start' }}>
         <nav style={{ width: navColapsado ? '58px' : '178px', flexShrink: 0, background: 'white',
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
@@ -447,6 +456,141 @@ export default function App() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Aviso de dias de registro sin cerrar (balanceado / insumos), desde el 1 sep
+// hasta ayer. Franja gris, colapsable, con el signo en ambar para no recargar
+// de color. "Cerrar" lleva a la finca, pestaña y semana del primer dia pendiente.
+const INICIO_CIERRES = '2026-09-01'
+const AZULBG = '#E6F1FB'
+const AMBITOS_CIERRE = [
+  { id: 'balanceado', txt: 'Balanceado', bg: '#efe7fb', col: '#6b43c7' },
+  { id: 'insumos',    txt: 'Insumos',    bg: AZULBG,    col: AZUL },
+]
+const AMBAR = '#BA7517'
+
+function AvisoCierres({ fincas, esJefe, onCerrar }) {
+  const [abierto, setAbierto] = useState(false)
+  const [fincasPend, setFincasPend] = useState([])
+  const [listo, setListo] = useState(false)
+
+  useEffect(() => {
+    let vivo = true
+    async function cargar() {
+      setListo(false)
+      if (!fincas.length) { if (vivo) { setFincasPend([]); setListo(true) } return }
+      const ayer = sumarDias(hoyISO(), -1)
+      if (ayer < INICIO_CIERRES) { if (vivo) { setFincasPend([]); setListo(true) } return }
+      // Todos los dias esperados (1 sep -> ayer). ISO compara bien como texto.
+      const dias = []
+      for (let d = INICIO_CIERRES; d <= ayer; d = sumarDias(d, 1)) dias.push(d)
+      const ids = fincas.map(f => f.id)
+      const { data, error } = await supabase.schema('produccion').from('dia_registro')
+        .select('finca_id, fecha, ambito').eq('estado', 'cerrado')
+        .gte('fecha', INICIO_CIERRES).lte('fecha', ayer).in('finca_id', ids)
+      if (!vivo) return
+      if (error) { setFincasPend([]); setListo(true); return }
+      const cerr = new Set((data || []).map(r => `${r.finca_id}|${r.ambito}|${r.fecha}`))
+      const out = []
+      fincas.forEach(f => {
+        const ambitos = []
+        const todos = new Set()
+        AMBITOS_CIERRE.forEach(a => {
+          const faltan = dias.filter(dd => !cerr.has(`${f.id}|${a.id}|${dd}`))
+          if (faltan.length) { ambitos.push({ ...a, dias: faltan }); faltan.forEach(d => todos.add(d)) }
+        })
+        if (ambitos.length) out.push({ fincaId: f.id, nombre: f.nombre, zona: f.zona, ambitos, total: todos.size })
+      })
+      // Mas atrasadas primero; dentro de zona, por nombre.
+      out.sort((a, b) => (a.zona || '').localeCompare(b.zona || '') || b.total - a.total)
+      setFincasPend(out); setListo(true)
+    }
+    cargar()
+    return () => { vivo = false }
+  }, [fincas])
+
+  if (!listo || !fincasPend.length) return null
+
+  const n = fincasPend.length
+  const titulo = esJefe
+    ? `${n} ${n === 1 ? 'finca' : 'fincas'} con días pendientes de cerrar`
+    : 'Tienes días pendientes de cerrar'
+
+  const Signo = () => (
+    <span style={{ width: '22px', height: '22px', borderRadius: '50%', background: AMBAR, color: 'white',
+                   display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800,
+                   fontSize: '13px', flex: '0 0 auto' }}>!</span>
+  )
+
+  const fechasTexto = ds => {
+    const top = ds.slice(0, 6).map(cortita).join(', ')
+    return ds.length > 6 ? `${top} +${ds.length - 6} más` : top
+  }
+
+  // Agrupar por zona solo para el jefe (ve varias zonas).
+  const zonas = esJefe ? [...new Set(fincasPend.map(f => f.zona).filter(Boolean))] : []
+  const etZona = z => (z === 'puna' ? 'Puná' : z === 'jambeli' ? 'Jambelí' : z)
+
+  const Tarjeta = f => (
+    <div key={f.fincaId} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px',
+                                  padding: '9px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
+        <span style={{ fontWeight: 600, fontSize: '13.5px' }}>{String(f.nombre).toUpperCase()}</span>
+        <span style={{ fontSize: '11px', color: '#c0453f', fontWeight: 700 }}>
+          {f.total} {f.total === 1 ? 'día' : 'días'} sin cerrar
+        </span>
+      </div>
+      {f.ambitos.map(a => (
+        <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', marginTop: '7px' }}>
+          <span style={{ fontSize: '9.5px', fontWeight: 700, borderRadius: '20px', padding: '2px 8px',
+                         background: a.bg, color: a.col, whiteSpace: 'nowrap' }}>{a.txt}</span>
+          <span style={{ fontSize: '11.5px', color: GRIS, flex: 1, minWidth: 0 }}>{fechasTexto(a.dias)}</span>
+          <button onClick={() => onCerrar(f.fincaId, f.zona, a.id, a.dias[0])}
+            style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '8px', fontSize: '11.5px',
+                     fontWeight: 700, padding: '6px 13px', cursor: 'pointer', whiteSpace: 'nowrap',
+                     fontFamily: 'inherit' }}>Cerrar ›</button>
+        </div>
+      ))}
+    </div>
+  )
+
+  return (
+    <div style={{ background: '#f3f6f9', borderBottom: '0.5px solid ' + BORDE }}>
+      {!abierto ? (
+        <div onClick={() => setAbierto(true)}
+          style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '9px 1.25rem', cursor: 'pointer' }}>
+          <Signo />
+          <span style={{ fontSize: '13px', fontWeight: 700, color: NAVY }}>{titulo}</span>
+          {!esJefe && (
+            <span style={{ background: 'white', border: '0.5px solid ' + BORDE, color: GRIS, borderRadius: '20px',
+                           fontSize: '11px', fontWeight: 700, padding: '1px 9px' }}>
+              {n} {n === 1 ? 'finca' : 'fincas'}
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto', color: GRIS, fontSize: '12px', fontWeight: 600 }}>▾ Ver</span>
+        </div>
+      ) : (
+        <div>
+          <div onClick={() => setAbierto(false)}
+            style={{ display: 'flex', alignItems: 'center', gap: '11px', padding: '9px 1.25rem 7px', cursor: 'pointer' }}>
+            <Signo />
+            <span style={{ fontSize: '13px', fontWeight: 700, color: NAVY }}>{titulo}</span>
+            <span style={{ marginLeft: 'auto', color: GRIS, fontSize: '12px', fontWeight: 600 }}>▴ Ocultar</span>
+          </div>
+          <div style={{ padding: '2px 1.25rem 11px', display: 'flex', flexDirection: 'column', gap: '7px',
+                        maxHeight: '340px', overflowY: 'auto' }}>
+            {zonas.length > 1 ? zonas.map(z => (
+              <div key={z} style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                <div style={{ fontSize: '9.5px', fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+                              color: '#a98634', padding: '3px 2px 0' }}>{etZona(z)}</div>
+                {fincasPend.filter(f => f.zona === z).map(Tarjeta)}
+              </div>
+            )) : fincasPend.map(Tarjeta)}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
