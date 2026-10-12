@@ -105,7 +105,9 @@ export default function CatalogoDiesel({ fincas }) {
     setHistRows(data || []); setHist(fincaId); setEdit(null)
   }
 
-  const gtc = `1.4fr repeat(${tipos.length}, 1fr) auto`
+  // Última columna FIJA (no 'auto'): así el header y las filas comparten el
+  // mismo ancho de columnas y los precios quedan centrados bajo su título.
+  const gtc = `1.4fr repeat(${tipos.length}, 1fr) 150px`
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
 
   return (
