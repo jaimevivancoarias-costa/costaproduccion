@@ -613,13 +613,38 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   }
                   let pzAct = 0
                   for (const f of activasList) { const pv = plz[k(p.id, f.id)]?.plazo; if (pv != null) { pzAct = pv; break } }
+                  // --- Datos para el editor de PRECIOS nuevo (por saco) ---
+                  const initStd = { precios: { ...preciosAct }, plazoRige: pzAct, desde: desdeAct || hoyISO() }
+                  const grpMap = {}
+                  excIni.forEach(e => {
+                    if (!e.precios || !Object.keys(e.precios).length) return
+                    const pn = {}; PLAZOS.forEach(pz => { if (e.precios[pz] != null && e.precios[pz] !== '') pn[pz] = numDec(e.precios[pz]) })
+                    const key = JSON.stringify({ p: PLAZOS.map(pz => pn[pz] ?? null), r: e.plazoRige ?? 0, d: e.desde || '' })
+                    if (!grpMap[key]) grpMap[key] = { fincaIds: [], precios: pn, plazoRige: e.plazoRige ?? 0, desde: e.desde || desdeAct || hoyISO() }
+                    grpMap[key].fincaIds.push(e.fincaId)
+                  })
+                  const initGrupos = Object.values(grpMap)
+                  // --- Datos para MÍNIMOS (producto_finca) ---
+                  const mo0 = overB[k(p.id, f0)]
+                  const minStd = { min: mo0?.stock_minimo ?? null, obj: mo0?.stock_objetivo ?? null }
+                  const mgrp = {}
+                  ;(fincas || []).forEach(f => {
+                    if (f.id === f0) return
+                    const ov = overB[k(p.id, f.id)]
+                    const mMin = ov?.stock_minimo ?? null, mObj = ov?.stock_objetivo ?? null
+                    if ((mMin ?? null) === (minStd.min ?? null) && (mObj ?? null) === (minStd.obj ?? null)) return
+                    const key = JSON.stringify({ m: mMin, o: mObj })
+                    if (!mgrp[key]) mgrp[key] = { fincaIds: [], min: mMin, obj: mObj }
+                    mgrp[key].fincaIds.push(f.id)
+                  })
+                  const minGrupos = Object.values(mgrp)
                   return (
-                    <EditorConfigBal producto={p} fincas={fincas}
-                      actual={{ ...(overB[k(p.id, f0)] || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct, exc: excIni, fincasGen }}
-                      onHecho={async (msg) => { setEditConfig(null); await cargar(); setAviso({ tipo: 'ok', texto: msg }) }}
+                    <ConfigBalTabs producto={p} fincas={fincas}
+                      initStd={initStd} initGrupos={initGrupos} minStd={minStd} minGrupos={minGrupos}
+                      onHechoPrecios={() => {}}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
                       onRecosteo={ofrecerRecosteo}
-                      onCancelar={() => setEditConfig(null)} />
+                      onCancelar={async () => { setEditConfig(null); await cargar() }} />
                   )
                 })()}
 
@@ -1326,7 +1351,8 @@ function PopCopia({ tipo, origen, valor, otras, copia, setCopia, onAplicar, yaTi
 // Bloque Estándar (todas) + bloques "Precio distinto" con selector de fincas.
 // Guarda SOLO precios (nunca toca unidades). Solo re-guarda/recostea lo que
 // realmente cambió, para no ensuciar el historial.
-function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorStd, initStd, initGrupos, onHecho, onError, onRecosteo, onCancelar, onCambiarPresentacion }) {
+function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorStd, initStd, initGrupos, onHecho, onError, onRecosteo, onCancelar, onCambiarPresentacion,
+  tablaPrecio = 'precio_insumo', tablaPlazo = 'plazo_insumo', colId = 'insumo_id', colPrecio = 'precio_unitario', conversion = true }) {
   const activas = fincas || []
   const sPrecios = src => Object.fromEntries(PLAZOS.map(pz => [pz, (src && src[pz] != null) ? String(src[pz]) : '']))
   const [std, setStd] = useState(() => ({ precios: sPrecios(initStd?.precios), plazoRige: initStd?.plazoRige ?? 0, desde: initStd?.desde || hoyISO() }))
@@ -1353,15 +1379,15 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
 
   async function cerrarYAbrir(fincaIds, pz, rows, dfecha) {
     if (!fincaIds.length) return
-    await supabase.schema('produccion').from('precio_insumo').delete().eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
-    await supabase.schema('produccion').from('precio_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) }).eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
-    if (rows.length) { const { error } = await supabase.schema('produccion').from('precio_insumo').insert(rows); if (error) throw error }
+    await supabase.schema('produccion').from(tablaPrecio).delete().eq(colId, insumo.id).eq('plazo', pz).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
+    await supabase.schema('produccion').from(tablaPrecio).update({ vigente_hasta: sumarDias(dfecha, -1) }).eq(colId, insumo.id).eq('plazo', pz).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
+    if (rows.length) { const { error } = await supabase.schema('produccion').from(tablaPrecio).insert(rows); if (error) throw error }
   }
   async function setRige(fincaIds, pz, dfecha) {
     if (!fincaIds.length) return
-    await supabase.schema('produccion').from('plazo_insumo').delete().eq('insumo_id', insumo.id).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
-    await supabase.schema('produccion').from('plazo_insumo').update({ vigente_hasta: sumarDias(dfecha, -1) }).eq('insumo_id', insumo.id).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
-    const { error } = await supabase.schema('produccion').from('plazo_insumo').insert(fincaIds.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfecha })))
+    await supabase.schema('produccion').from(tablaPlazo).delete().eq(colId, insumo.id).in('finca_id', fincaIds).gte('vigente_desde', dfecha)
+    await supabase.schema('produccion').from(tablaPlazo).update({ vigente_hasta: sumarDias(dfecha, -1) }).eq(colId, insumo.id).in('finca_id', fincaIds).lt('vigente_desde', dfecha).or('vigente_hasta.is.null,vigente_hasta.gte.' + dfecha)
+    const { error } = await supabase.schema('produccion').from(tablaPlazo).insert(fincaIds.map(fid => ({ [colId]: insumo.id, finca_id: fid, plazo: pz, vigente_desde: dfecha })))
     if (error) throw error
   }
 
@@ -1385,8 +1411,8 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
             return !eq(raw, iniV) || (raw > 0 && dfe !== (iniPF[fid]?.desde || ''))
           })
           if (!chg.length) continue
-          if (raw > 0) await cerrarYAbrir(chg, pz, chg.map(fid => ({ insumo_id: insumo.id, finca_id: fid, plazo: pz, precio_unitario: raw / facDe(fid), vigente_desde: dfe })), dfe)
-          else await supabase.schema('produccion').from('precio_insumo').delete().eq('insumo_id', insumo.id).eq('plazo', pz).in('finca_id', chg).is('vigente_hasta', null)
+          if (raw > 0) await cerrarYAbrir(chg, pz, chg.map(fid => ({ [colId]: insumo.id, finca_id: fid, plazo: pz, [colPrecio]: raw / facDe(fid), vigente_desde: dfe })), dfe)
+          else await supabase.schema('produccion').from(tablaPrecio).delete().eq(colId, insumo.id).eq('plazo', pz).in('finca_id', chg).is('vigente_hasta', null)
           chg.forEach(fid => touched.add(fid))
         }
         // Plazo que rige: solo las fincas cuyo "rige" cambió.
@@ -1431,11 +1457,15 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
 
   return (
     <div style={{ padding: '14px 2px 4px' }}>
+      {conversion ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', fontSize: '12.5px', color: C.gris, marginBottom: '14px' }}>
         <span>Precios <b style={{ color: C.navy }}>por {cap1(presLabel)}</b></span><span style={{ color: '#aab8c6' }}>·</span>
         <span>1 {cap1(presLabel)} = <b style={{ color: C.navy }}>{Math.round((factorStd || 1) * 10000) / 10000} {uAppLabel}</b></span><span style={{ color: '#aab8c6' }}>·</span>
         <button onClick={onCambiarPresentacion} style={{ background: 'none', border: 'none', color: C.azul, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, padding: 0, fontSize: '12px' }}>Cambiar</button>
       </div>
+      ) : (
+      <div style={{ fontSize: '12.5px', color: C.gris, marginBottom: '14px' }}>Precios <b style={{ color: C.navy }}>por {cap1(presLabel)}</b></div>
+      )}
 
       {/* Estándar */}
       <div style={{ border: '1px solid #d5e3f2', borderRadius: '14px', marginBottom: '14px', overflow: 'hidden' }}>
@@ -1511,7 +1541,7 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
 // ── Editor de MÍNIMOS (rediseño) ────────────────────────────────────────────
 // Estándar (todas) + bloques "Mínimo distinto" con selector de fincas.
 // Guarda SOLO stock_minimo / stock_objetivo (no toca unidad ni precio).
-function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError, onCancelar }) {
+function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError, onCancelar, tabla = 'insumo_finca', colId = 'insumo_id', upsertKey }) {
   const activas = fincas || []
   const [std, setStd] = useState(() => ({ min: initStd?.min != null ? String(initStd.min) : '', obj: initStd?.obj != null ? String(initStd.obj) : '' }))
   const [grupos, setGrupos] = useState(() => (initGrupos || []).map((g, i) => ({ id: 'g' + i, fincaIds: [...(g.fincaIds || [])], min: g.min != null ? String(g.min) : '', obj: g.obj != null ? String(g.obj) : '' })))
@@ -1538,10 +1568,16 @@ function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError
       for (const b of bloques) {
         const chg = b.fincaIds.filter(fid => !eqN(b.min, iniPF[fid]?.min) || !eqN(b.obj, iniPF[fid]?.obj))
         if (!chg.length) continue
-        const { error } = await supabase.schema('produccion').from('insumo_finca')
-          .update({ stock_minimo: nn(b.min), stock_objetivo: nn(b.obj) })
-          .eq('insumo_id', insumo.id).in('finca_id', chg)
-        if (error) throw error
+        if (upsertKey) {
+          const { error } = await supabase.schema('produccion').from(tabla)
+            .upsert(chg.map(fid => ({ [colId]: insumo.id, finca_id: fid, stock_minimo: nn(b.min), stock_objetivo: nn(b.obj) })), { onConflict: upsertKey })
+          if (error) throw error
+        } else {
+          const { error } = await supabase.schema('produccion').from(tabla)
+            .update({ stock_minimo: nn(b.min), stock_objetivo: nn(b.obj) })
+            .eq(colId, insumo.id).in('finca_id', chg)
+          if (error) throw error
+        }
         chg.forEach(fid => touched.add(fid))
       }
       iniRef.current = JSON.parse(JSON.stringify({ std, grupos }))
@@ -1622,6 +1658,35 @@ function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError
 }
 
 // Contenedor con pestañas: Precios (nuevo) + Unidad (editor actual sin precio) + Mínimos.
+// Contenedor con pestañas para BALANCEADOS: Precios + Mínimos (sin Unidad,
+// porque el balanceado siempre se compra y consume por saco).
+function ConfigBalTabs(p) {
+  const [tab, setTab] = useState('precios')
+  const tb = (id, txt) => (
+    <button onClick={() => setTab(id)} style={{ border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '14px',
+      fontWeight: tab === id ? 650 : 500, padding: '10px 18px 12px', background: 'none', color: tab === id ? NAVY : GRIS,
+      borderBottom: '2px solid ' + (tab === id ? AZUL : 'transparent'), marginBottom: '-1px' }}>{txt}</button>
+  )
+  return (
+    <div style={{ background: '#fff', borderBottom: '0.5px solid #e6edf3' }}>
+      <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, padding: '12px 18px 0' }}>
+        {tb('precios', 'Precios')}{tb('minimos', 'Mínimos')}
+      </div>
+      <div style={{ padding: '2px 18px 14px' }}>
+        {tab === 'precios'
+          ? <EditorPrecios insumo={p.producto} fincas={p.fincas} presLabel="saco" conversion={false}
+              factorStd={1} initStd={p.initStd} initGrupos={p.initGrupos}
+              tablaPrecio="precio_producto" tablaPlazo="plazo_producto" colId="producto_id" colPrecio="precio_saco"
+              onHecho={p.onHechoPrecios} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar} />
+          : <EditorMinimos insumo={p.producto} fincas={p.fincas} unitLabel="sacos"
+              initStd={p.minStd} initGrupos={p.minGrupos}
+              tabla="producto_finca" colId="producto_id" upsertKey="producto_id,finca_id"
+              onError={p.onError} onCancelar={p.onCancelar} />}
+      </div>
+    </div>
+  )
+}
+
 function ConfigInsumoTabs(p) {
   const [tab, setTab] = useState('precios')
   const tb = (id, txt) => (
