@@ -412,17 +412,53 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
     }
   }
 
-  async function registrarEvento(datos) {
+  // Editar una transferencia = deshacer la anterior y volver a registrarla con
+  // los datos nuevos (abre el diálogo prellenado). Así todo se recalcula solo.
+  async function editarTransferencia(fila, ev) {
     try {
+      if (sucio) { const ok = await guardar(false); if (!ok) return }
+      const cid = ev.ciclo_id || fila.cicloId
+      const [{ data: e }, { data: dst }] = await Promise.all([
+        supabase.schema('produccion').from('evento')
+          .select('gramaje, libras, observacion').eq('id', ev.id).maybeSingle(),
+        supabase.schema('produccion').from('evento_destino')
+          .select('piscina_id, porcentaje, cantidad').eq('evento_id', ev.id),
+      ])
+      const destinos = (dst || []).map(d => ({
+        piscinaId: d.piscina_id,
+        porcentaje: d.porcentaje != null ? String(d.porcentaje) : '',
+        cantidad: d.cantidad != null ? String(d.cantidad) : '',
+      }))
+      const montoEditado = (dst || []).reduce((t, d) => t + (Number(d.cantidad) || 0), 0)
+      setDialogo({
+        tipo: 'transferencia', fila, editandoEvento: { ...ev, ciclo_id: cid },
+        inicial: {
+          fecha: ev.fecha, gramaje: e?.gramaje != null ? String(e.gramaje) : '',
+          libras: e?.libras != null ? String(e.libras) : '', obs: e?.observacion || '',
+          destinos, montoEditado,
+        },
+      })
+    } catch (err) {
+      setAviso({ tipo: 'error', texto: 'No se pudo abrir para editar. ' + (err.message || '') })
+    }
+  }
+
+  async function registrarEvento(datos) {
+    const editando = !!dialogo.editandoEvento
+    try {
+      // Editar = deshacer el anterior (valida consumo posterior) y rehacer.
+      if (editando) {
+        await eliminarEvento({ evento: dialogo.editandoEvento, cicloId: dialogo.editandoEvento.ciclo_id || dialogo.fila.cicloId })
+      }
       await guardarEvento({
         tipo: dialogo.tipo, fincaId: finca.id,
         ciclo: dialogo.fila, piscina: dialogo.fila, datos,
       })
       setDialogo(null)
-      setAviso({ tipo: 'ok', texto: TIPOS[dialogo.tipo].nombre + ' registrada' })
+      setAviso({ tipo: 'ok', texto: TIPOS[dialogo.tipo].nombre + (editando ? ' actualizada' : ' registrada') })
       await cargar(true)
     } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + mensajeError(err) })
+      setAviso({ tipo: 'error', texto: (editando ? 'No se pudo editar. ' : 'No se pudo guardar. ') + mensajeError(err) })
     }
   }
 
@@ -1122,6 +1158,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         onElegir={tipo => abrirEvento(tipo, p)}
                         onDeshacer={ev => borrarEvento(p, ev)}
                         onEditar={() => { setAbierta(p.piscinaId); setEditSiembra(p.piscinaId) }}
+                        onEditarTransf={ev => editarTransferencia(p, ev)}
                       />
                     </Td>
                     {fechas.map((f, j) => {
@@ -1193,14 +1230,15 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                         </div>
                         {p.cicloId && (() => {
                           const salida = Number(salidaPorCiclo[p.cicloId]) || 0
-                          const queda = p.larva != null ? Math.max(0, Number(p.larva) - salida) : null
+                          const base = p.larva != null ? Number(p.larva) : null
+                          const pobl = base != null ? Math.max(0, base - salida) : null
                           return (
                             <div>
-                              <div style={etq}>Larva</div>
-                              <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</div>
-                              {salida > 0 && queda != null && (
-                                <div style={{ fontSize: '12px', color: GRIS, marginTop: '3px', fontVariantNumeric: 'tabular-nums' }}>
-                                  Se transfirió {miles(salida)} · queda <b style={{ color: NAVY, fontWeight: 600 }}>{miles(queda)}</b>
+                              <div style={etq}>Población</div>
+                              <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{pobl != null ? miles(pobl) : '—'}</div>
+                              {salida > 0 && base != null && (
+                                <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '2px', fontVariantNumeric: 'tabular-nums' }}>
+                                  tenía {miles(base)} · transfirió {miles(salida)}
                                 </div>
                               )}
                             </div>
@@ -1235,7 +1273,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             onElegir={id => cambiarLaboratorio(p, id)} onNuevo={() => nuevoLaboratorio(p)} />
                         </div>
                       </div>
-                      {p.cicloId && <TransferenciaInfo cicloId={p.cicloId} />}
+                      {p.cicloId && <TransferenciaInfo cicloId={p.cicloId} esPrecria={p.tipo === 'precria'} />}
                       {editSiembra === p.piscinaId && (
                         <div style={{ marginTop: '10px' }}>
                           <EditorSiembra p={p} onGuardar={guardarSiembra} onCancelar={() => setEditSiembra(null)} />
@@ -1371,6 +1409,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
               tipo={dialogo.tipo}
               ciclo={dialogo.fila}
               piscina={dialogo.fila}
+              inicial={dialogo.inicial}
               laboratorios={laboratorios}
               destinosPosibles={piscinas
                 .filter(x => x.piscinaId !== dialogo.fila.piscinaId && !x.siembraPosterior)
@@ -1412,7 +1451,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 // Detalle de transferencia (se carga al abrir la flechita): a dónde se
 // fue el camarón de este ciclo y con qué reparto, y de dónde vino.
 // ---------------------------------------------------------------------
-function TransferenciaInfo({ cicloId }) {
+function TransferenciaInfo({ cicloId, esPrecria }) {
   const [envio, setEnvio] = useState([])   // destinos a los que se transfirió
   const [recibio, setRecibio] = useState([])  // de dónde vino
   useEffect(() => {
@@ -1462,7 +1501,7 @@ function TransferenciaInfo({ cicloId }) {
               {r.fecha ? `el ${cortita(r.fecha)} · ` : ''}
               {r.cant != null ? `${miles(r.cant)} animales` : `${Math.round(r.porc)}%`}
             </span>
-            {surv != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
+            {surv != null && r.plsG != null && <span style={{ ...chip, background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(surv * 10) / 10}%</span>}
             {r.gramaje != null && <span style={{ ...chip, background: '#E6F1FB', color: AZUL }}>Gramaje {r.gramaje} g</span>}
           </div>
         )
@@ -1480,7 +1519,7 @@ function TransferenciaInfo({ cicloId }) {
               <span key={i}>{i > 0 ? ', ' : ''}{e.nombre} ({e.cant != null ? `${miles(e.cant)}` : `${Math.round(e.porc)}%`})</span>
             ))}
           </span>
-          {survEnv != null && <span style={{ fontSize: '11px', borderRadius: '11px', padding: '1px 8px', display: 'inline-block', background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(survEnv * 10) / 10}%</span>}
+          {survEnv != null && esPrecria && <span style={{ fontSize: '11px', borderRadius: '11px', padding: '1px 8px', display: 'inline-block', background: '#E1F5EE', color: '#0F6E56' }}>Sobrevivencia {Math.round(survEnv * 10) / 10}%</span>}
         </div>
         )
       })()}
@@ -1667,7 +1706,7 @@ function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
 // Columna de estado: es la columna ESTADO PISCINA del Excel.
 // Si la piscina no tiene ciclo, lo unico posible es sembrarla.
 // ---------------------------------------------------------------------
-function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
+function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar, onEditarTransf }) {
   // Tras cosechar o transferir, la piscina queda vacia y puede volver a
   // sembrarse esta misma semana.
   const vacia = !fila.cicloId || fila.cosechadaEstaSemana
@@ -1686,6 +1725,13 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar }) {
               {cortita(ev.fecha)}{ev.libras ? ` · ${miles(ev.libras)} lb` : ''}
               {puede && onEditar && ev.tipo === 'siembra' && (
                 <button onClick={onEditar} title="Corregir fecha, larva o gramaje de la siembra"
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                           fontSize: '11px', color: AZUL, padding: '0 0 0 7px' }}>
+                  Editar
+                </button>
+              )}
+              {puede && onEditarTransf && ev.tipo === 'transferencia' && (
+                <button onClick={() => onEditarTransf(ev)} title="Corregir la transferencia (deshace y vuelve a registrar con los datos nuevos)"
                   style={{ border: 'none', background: 'none', cursor: 'pointer', fontFamily: 'inherit',
                            fontSize: '11px', color: AZUL, padding: '0 0 0 7px' }}>
                   Editar
