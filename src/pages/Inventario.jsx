@@ -775,6 +775,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
+  // Editar un inventario inicial: se muestra como la carga inicial (solo las
+  // cantidades, sin Sistema ni Diferencia), porque el inicial ES el punto de partida.
+  const editaInicial = !!(editToma && editToma.es_inicial)
+  const modoIni = primeraVez || editaInicial
 
   // Reporte de bodega: junta "Cuánto hay" y "Qué se movió" en un solo documento.
   // Cruza saldos (al día) con movimientos (del rango), lotes, precio·vigencia y
@@ -1480,7 +1484,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </div>
           )}
 
-          {!primeraVez && Object.values(consumoDia).some(v => v > 0.0001) && (
+          {!modoIni && Object.values(consumoDia).some(v => v > 0.0001) && (
             <div style={{ padding: '13px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#FDF3DF',
                           display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '13px', color: '#6b4e12', fontWeight: 600, flex: 1, minWidth: '240px' }}>
@@ -1493,11 +1497,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           )}
 
           <Tabla
-            columnas={primeraVez
+            columnas={modoIni
               ? ['Insumo', 'Llega / se aplica', '', 'Inventario inicial', '']
               : ['Insumo', 'Llega / se aplica', editToma ? 'Había antes' : 'Sistema', 'Contó', 'Consumo del día', 'Diferencia', 'Queda']}
-            anchos={primeraVez ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_EDIT}
-            alinear={primeraVez ? undefined : ['left', 'left', 'center', 'center', 'center', 'center', 'center']}
+            anchos={modoIni ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_EDIT}
+            alinear={modoIni ? undefined : ['left', 'left', 'center', 'center', 'center', 'center', 'center']}
           >
             {(() => {
               const esRecuento = !(primeraVez || editToma)
@@ -1519,7 +1523,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {esRecuento && primeraSin > 0 && idx === primeraSin && (
                 <div style={{ padding: '9px 16px', background: '#fbfcfe', borderTop: '1px solid ' + BORDE, borderBottom: '0.5px solid ' + BORDE, fontSize: '11px', fontWeight: 600, color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em' }}>Sin inventario</div>
               )}
-              <Fila anchos={primeraVez ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_EDIT}>
+              <Fila anchos={modoIni ? ANCHOS_CONTEO_INI : ANCHOS_CONTEO_EDIT}>
                 <Celda>{f.insumo}</Celda>
                 <Celda gris>
                   <span style={{ color: NAVY, fontWeight: 500 }}>{cap1(UNIDAD[f.unidad] || f.unidad)}</span>
@@ -1529,7 +1533,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </>}
                   {conPesoF && <div style={{ fontSize: '10px', color: GRIS }}>1 {cap1(UNIDAD[f.unidad] || f.unidad)} = {limpio(facF.contenido)} {cap1(UNIDAD[facF.uCont] || facF.uCont)}</div>}
                 </Celda>
-                {primeraVez ? (<>
+                {modoIni ? (<>
                   <Celda derecha gris></Celda>
                   <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
                     {convF ? (<>
@@ -1600,7 +1604,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </Celda>
                 </>)}
                 {/* Motivo del descuadre: solo cuando no cuadra (recuento). */}
-                {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.0001 && (
+                {!modoIni && f.contado !== null && Math.abs(f.diferencia || 0) > 0.0001 && (
                   <div style={{ gridColumn: '1 / -1', padding: '0 12px 11px 12px',
                                 display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap',
                                 borderBottom: '0.5px solid #f1f6f9', marginTop: '-2px' }}>
