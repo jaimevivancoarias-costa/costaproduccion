@@ -87,6 +87,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [movDet, setMovDet] = useState(null)       // insumoId con el detalle por lote abierto en "Qué se movió"
   const [lotesMov, setLotesMov] = useState({})     // insumoId -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
+  const [movAbierto, setMovAbierto] = useState({}) // 'insumoId|entro'|'insumoId|aplico' -> true (flechita de Entró/Se aplicó)
+  const [entroDet, setEntroDet] = useState({})     // insumoId -> [{fecha, cant}] ingresos del rango (unidad de compra)
+  const [aplicoDet, setAplicoDet] = useState({})   // insumoId -> [{fecha, cant}] consumos del rango (unidad de compra)
   const [corrige, setCorrige] = useState(null)     // { insumoId, fecha, plazo, actual } lote en corrección de precio
   const [corrPrecio, setCorrPrecio] = useState('') // nuevo precio (por unidad de compra)
   const [corrAdelante, setCorrAdelante] = useState(false)  // false = solo este período · true = de ahí en adelante
@@ -124,6 +127,40 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // El detalle por lote depende de la fecha "hasta" y la finca; si cambian,
   // se limpia la caché para no mostrar lotes de otro corte.
   useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
+
+  // Detalle de Entró (ingresos) y Se aplicó (consumos) por fecha, para las
+  // flechitas de esas columnas en "Qué se movió". En unidad de COMPRA (como
+  // las columnas): ingresos ya vienen en compra; consumo se ÷ por el factor.
+  useEffect(() => {
+    if (vista !== 'movimientos') return
+    let vivo = true
+    setMovAbierto({})
+    ;(async () => {
+      const [{ data: ings }, { data: cons }] = await Promise.all([
+        supabase.schema('produccion').from('ingreso_insumo_linea')
+          .select('insumo_id, cantidad, ingreso_insumo!inner(fecha, finca_id)')
+          .eq('ingreso_insumo.finca_id', finca.id)
+          .gte('ingreso_insumo.fecha', desde).lte('ingreso_insumo.fecha', hasta),
+        supabase.schema('produccion').from('consumo_insumo')
+          .select('insumo_id, cantidad, fecha, piscina!inner(finca_id)')
+          .eq('piscina.finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta),
+      ])
+      if (!vivo) return
+      const eAgg = {}
+      ;(ings || []).forEach(r => { const f = r.ingreso_insumo?.fecha; if (!r.insumo_id || !f) return; const k = r.insumo_id + '|' + f; eAgg[k] = (eAgg[k] || 0) + Number(r.cantidad || 0) })
+      const em = {}
+      Object.entries(eAgg).forEach(([k, v]) => { const i = k.indexOf('|'); const id = k.slice(0, i), f = k.slice(i + 1); (em[id] = em[id] || []).push({ fecha: f, cant: v }) })
+      Object.values(em).forEach(arr => arr.sort((a, b) => (a.fecha < b.fecha ? -1 : 1)))
+      setEntroDet(em)
+      const aAgg = {}
+      ;(cons || []).forEach(r => { if (!r.insumo_id || !r.fecha) return; const k = r.insumo_id + '|' + r.fecha; aAgg[k] = (aAgg[k] || 0) + Number(r.cantidad || 0) })
+      const am = {}
+      Object.entries(aAgg).forEach(([k, v]) => { const i = k.indexOf('|'); const id = k.slice(0, i), f = k.slice(i + 1); const fa = factores[id]?.factor || 1; (am[id] = am[id] || []).push({ fecha: f, cant: v / fa }) })
+      Object.values(am).forEach(arr => arr.sort((a, b) => (a.fecha < b.fecha ? -1 : 1)))
+      setAplicoDet(am)
+    })()
+    return () => { vivo = false }
+  }, [vista, desde, hasta, finca.id, factores])
   // Carga por adelantado los conteos del rango y el saldo la víspera de cada
   // uno (Diseño A, Por fechas), para que el ▸ y "Antes del conteo" salgan ya.
   useEffect(() => {
@@ -1568,6 +1605,28 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>}
                 </>
               )
+              // Flechitas de Entró / Se aplicó: lista vertical por fecha bajo su columna.
+              const keyE = m.insumo_id + '|entro', keyA = m.insumo_id + '|aplico'
+              const entroList = entroDet[m.insumo_id] || [], aplicoList = aplicoDet[m.insumo_id] || []
+              const openE = !!movAbierto[keyE] && entroList.length > 0
+              const openA = !!movAbierto[keyA] && aplicoList.length > 0
+              const listaMov = (list, signo, color) => {
+                const suma = list.reduce((t, x) => t + Number(x.cant || 0), 0)
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontVariantNumeric: 'tabular-nums' }}>
+                    {list.map((it, i) => (
+                      <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', fontSize: '11.5px' }}>
+                        <span style={{ color: '#aab8c6' }}>{ddmm(it.fecha)}</span>
+                        <span style={{ color, minWidth: '40px' }}>{signo}{val(it.cant)}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', fontSize: '11.5px', fontWeight: 700, color: NAVY, borderTop: '1px solid ' + BORDE, marginTop: '2px', paddingTop: '2px' }}>
+                      <span style={{ fontWeight: 600, color: GRIS }}>Total</span>
+                      <span style={{ minWidth: '40px' }}>{signo}{val(suma)}</span>
+                    </div>
+                  </div>
+                )
+              }
               return (
               <div key={m.insumo_id}>
               <Fila anchos={anchosMov}>
@@ -1589,10 +1648,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </>}
                 </Celda>
                 <Celda derecha color={Number(m.ingresos) ? VERDE : '#c3d0db'}>
-                  {Number(m.ingresos) ? '+' + val(m.ingresos) : '—'}
+                  {Number(m.ingresos) ? (entroList.length > 0
+                    ? <button onClick={() => setMovAbierto(x => ({ ...x, [keyE]: !x[keyE] }))} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: VERDE, fontVariantNumeric: 'tabular-nums' }}>+{val(m.ingresos)} <span style={{ color: AZUL, fontSize: '9px' }}>{openE ? '▾' : '▸'}</span></button>
+                    : '+' + val(m.ingresos)) : '—'}
                 </Celda>
                 <Celda derecha color={Number(m.consumo) ? ROJO : '#c3d0db'}>
-                  {Number(m.consumo) ? '−' + val(m.consumo) : '—'}
+                  {Number(m.consumo) ? (aplicoList.length > 0
+                    ? <button onClick={() => setMovAbierto(x => ({ ...x, [keyA]: !x[keyA] }))} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: ROJO, fontVariantNumeric: 'tabular-nums' }}>−{val(m.consumo)} <span style={{ color: AZUL, fontSize: '9px' }}>{openA ? '▾' : '▸'}</span></button>
+                    : '−' + val(m.consumo)) : '—'}
                 </Celda>
                 {modoMov === 'fechas' ? (() => {
                   const antes = saldoAntes[m.insumo_id]
@@ -1634,6 +1697,17 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </>
                 )}
               </Fila>
+              {(openE || openA) && (
+                <div style={{ display: 'grid', gridTemplateColumns: anchosMov, background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9' }}>
+                  {colsMov.map((_, ci) => (
+                    <div key={ci} style={{ padding: '6px 18px 12px' }}>
+                      {ci === 3 && openE ? listaMov(entroList, '+', VERDE)
+                        : ci === 4 && openA ? listaMov(aplicoList, '−', ROJO)
+                        : null}
+                    </div>
+                  ))}
+                </div>
+              )}
               {movDet === m.insumo_id && (
                 <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
                   <div style={{ flex: 1, minWidth: '340px' }}>
