@@ -103,6 +103,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [nombresU, setNombresU] = useState({})        // id usuario -> nombre
   const [lineasToma, setLineasToma] = useState({})    // toma_id -> [líneas completas] (resumen Conteos anteriores)
   const [consumoToma, setConsumoToma] = useState({})  // toma_id -> { porProd, sis, total } del corte
+  const [consumoDiaToma, setConsumoDiaToma] = useState({})  // toma_id -> { insumo_id -> consumo del día (unidad compra) } calculado en vivo
   const [motivoEdit, setMotivoEdit] = useState(null)  // { tomaId, insumoId } línea editando motivo
   const [motivoSel, setMotivoSel] = useState('')      // opción del dropdown
   const [motivoVal, setMotivoVal] = useState('')      // texto libre cuando es "Otro"
@@ -191,7 +192,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Resumen de "Conteos anteriores": todas las líneas de cada conteo + el
   // consumo $ y el sistema (saldo_inicial) del corte. Se carga una vez.
   useEffect(() => {
-    if (!conteos.length) { setLineasToma({}); setConsumoToma({}); return }
+    if (!conteos.length) { setLineasToma({}); setConsumoToma({}); setConsumoDiaToma({}); return }
     let vivo = true
     ;(async () => {
       const ids = conteos.map(c => c.id)
@@ -200,6 +201,26 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (!vivo) return
       const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
       setLineasToma(byToma)
+
+      // Consumo del día de CADA conteo (en vivo), para mostrarlo también en los
+      // conteos viejos (que no lo guardaron). Se pasa a unidad de compra (÷factor).
+      const fechas = [...new Set(conteos.map(c => c.fecha))]
+      const { data: cons } = await supabase.schema('produccion').from('consumo_insumo')
+        .select('insumo_id, cantidad, fecha, piscina!inner(finca_id)')
+        .eq('piscina.finca_id', finca.id).in('fecha', fechas)
+      if (!vivo) return
+      const porFecha = {}
+      ;(cons || []).forEach(r => { if (!r.insumo_id) return; const k = r.fecha + '|' + r.insumo_id; porFecha[k] = (porFecha[k] || 0) + Number(r.cantidad || 0) })
+      const cdm = {}
+      conteos.forEach(c => {
+        const mm = {}
+        ;(byToma[c.id] || []).forEach(l => {
+          const raw = porFecha[c.fecha + '|' + l.insumo_id]
+          if (raw != null) { const fa = factores[l.insumo_id]?.factor || 1; mm[l.insumo_id] = raw / fa }
+        })
+        cdm[c.id] = mm
+      })
+      setConsumoDiaToma(cdm)
       if (!esJefe) return
       const res = await Promise.all(conteos.map((c, i) => {
         const h = i === 0 ? hoyISO() : sumarDias(conteos[i - 1].fecha, -1)
@@ -216,7 +237,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       setConsumoToma(cmap)
     })()
     return () => { vivo = false }
-  }, [conteos, finca.id, esJefe])
+  }, [conteos, finca.id, esJefe, factores])
 
   // Sistema "en vivo" del corte = saldo del sistema la mañana del conteo
   // (saldo_inicial recalculado). Si no hay dato, usa lo guardado en la línea.
@@ -245,10 +266,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const autor = nombresU[c.creado_por]
     const nFalt = lins.filter(l => !c.es_inicial && difCorte(l, cons) < -0.001).length
     const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(conteos[idx - 1].fecha, -1))
-    const hayConsDia = lins.some(l => l.consumo_dia != null && Number(l.consumo_dia) > 0.0001)
+    // Consumo del día: el congelado si existe; si no (conteos viejos), el calculado en vivo.
+    const cdDe = l => l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? null)
+    const hayConsDia = lins.some(l => { const v = cdDe(l); return v != null && v > 0.0001 })
     const filas = [...lins].sort((a, b) => nombreInsumo(a.insumo_id).localeCompare(nombreInsumo(b.insumo_id))).map(l => {
       const dif = difCorte(l, cons)
-      const cd = l.consumo_dia != null ? Number(l.consumo_dia) : null
+      const cd = cdDe(l)
       return {
         insumo: nombreInsumo(l.insumo_id),
         unidad: cap1(unidadIns(l.insumo_id)),
@@ -352,7 +375,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {c.es_inicial ? <span style={vacia}>—</span> : <>{limpio(sisCorte(l, cons))}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
                           </span>
-                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
+                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {limpio(l.cantidad_contada)}
+                            {(() => { const cd = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? null); return (cd != null && cd > 0.0001)
+                              ? <span style={{ display: 'block', fontSize: '10px', color: '#b08a2e' }}>+{limpio(cd)} consumo del día{l.consumo_dia == null ? ' (estimado)' : ''}</span>
+                              : null })()}
+                          </span>
                           <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
                           </span>
