@@ -773,7 +773,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const precio = precios[id] || 0
       const pdesde = precioInfo[id]?.desde
       const valor = Number(valorFifo[id] || 0)
-      const conteo = m && m.conteo != null ? Number(m.conteo) : null
+      // Si el período arranca en el inventario inicial (o en un conteo), ese
+      // valor contado ES el Saldo Ini. — igual que en pantalla (anclaInicio).
+      const iniEsConteo = anclaInicio(m)
+      const conteoRaw = m && m.conteo != null ? Number(m.conteo) : null
+      const conteo = iniEsConteo ? null : conteoRaw
+      const iniVal = iniEsConteo ? conteoRaw : nd(m?.saldo_inicial)
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
@@ -791,21 +796,21 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           lotesLinea = 'Lotes: ' + lts.map(L => `${limpio(L.cantidad)} a ${L.costo == null ? 's/p' : dineroExacto(L.costo)}`).join(' · ')
         }
       }
-      const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
+      const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       // Consumo del día congelado del conteo: valor + desglose "contó F + C = H había".
       const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
       const uLow = uPres.toLowerCase()
       const consDia = cd != null ? `${limpio(cd)} ${uLow} · congelado` : ''
       const consDiaCalc = (cd != null && cq.habia != null) ? `contó ${limpio(cq.habia - cd)} + ${limpio(cd)} = ${limpio(cq.habia)} había` : ''
 
-      totIni += nd(m?.saldo_inicial); totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
+      totIni += iniVal; totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
       totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoAlDia; totValor += valor
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       filasRep.push({
         nombre, lotesLinea,
         viaTop: convR ? `${uPres} → ${uApp}` : uPres, viaSub: convR ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
-        inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
+        inicial: limpio(iniVal || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
         saldoHoy: `${limpio(saldoAlDia)} ${uPres.toLowerCase()}`,
         saldoEquiv: convR ? `= ${limpio(saldoAlDia * factorN)} ${uApp.toLowerCase()}` : '',
