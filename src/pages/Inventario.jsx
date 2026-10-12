@@ -1538,14 +1538,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>
                   {/* Consumo del día */}
                   <Celda centro>
-                    {editToma
-                      ? (f.cons > 0.0001 ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>del {ddmm(fecha)}</span></span> : <span style={{ color: '#c3d0db' }}>—</span>)
-                      : ((f.cons > 0.0001 || f.consRef > 0.0001)
-                        ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '6px 8px' }}>
-                            <CampoNumero maxDec={2} value={consumoDia[f.insumo_id] ?? ''} placeholder="0" onChange={v => setConsumoDia(cd => ({ ...cd, [f.insumo_id]: v }))} style={{ ...entrada, width: '58px', textAlign: 'right', borderColor: '#e3c17e' }} />
-                            <span style={{ display: 'block', fontSize: '8.5px', color: '#BA7517', marginTop: '2px' }}>se congela</span>
-                          </span>
-                        : <span style={{ color: '#c3d0db' }}>—</span>)}
+                    {f.cons > 0.0001
+                      ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>{editToma ? 'del ' + ddmm(fecha) : 'hoy'}</span></span>
+                      : <span style={{ color: '#c3d0db' }}>—</span>}
                   </Celda>
                   {/* Diferencia */}
                   {editToma ? (() => {
@@ -1557,9 +1552,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       {f.diferencia === null ? (noContados === 'cero' ? 'Queda en 0' : 'Se mantiene') : f.diferencia === 0 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
                     </Celda>
                   )}
-                  {/* Queda (Contó − Consumo del día) */}
+                  {/* Queda (Contó − Consumo del día; si no has contado, el esperado = Sistema − Consumo) */}
                   <Celda centro fuerte color={NAVY}>
-                    {f.contado !== null ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>{uPresF}</div></> : <span style={{ color: '#c3d0db' }}>—</span>}
+                    {f.contado !== null
+                      ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>{uPresF}</div></>
+                      : <><span style={{ fontWeight: 600, color: GRIS }}>{limpio(Number(f.saldo))}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</div></>}
                   </Celda>
                 </>)}
                 {/* Motivo del descuadre: solo cuando no cuadra (recuento). */}
