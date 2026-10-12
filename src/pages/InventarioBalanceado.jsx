@@ -983,14 +983,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 </div>
                 {/* Consumo del día */}
                 <Cel centro>
-                  {editToma
-                    ? (f.cons > 0.0001 ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>del {ddmm(fecha)}</span></span> : <span style={{ color: '#c3d0db' }}>—</span>)
-                    : ((f.cons > 0.0001 || f.consRef > 0.0001)
-                      ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '6px 8px' }}>
-                          <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0" onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))} style={{ ...inp, width: '58px', textAlign: 'right', borderColor: '#e3c17e' }} />
-                          <span style={{ display: 'block', fontSize: '8.5px', color: '#BA7517', marginTop: '2px' }}>se congela</span>
-                        </span>
-                      : <span style={{ color: '#c3d0db' }}>—</span>)}
+                  {f.cons > 0.0001
+                    ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>{editToma ? 'del ' + ddmm(fecha) : 'hoy'}</span></span>
+                    : <span style={{ color: '#c3d0db' }}>—</span>}
                 </Cel>
                 {/* Diferencia */}
                 {editToma ? (() => {
@@ -1002,9 +997,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
                   </Cel>
                 )}
-                {/* Queda */}
+                {/* Queda (si no has contado, el esperado = Sistema − Consumo) */}
                 <Cel centro fuerte color={NAVY}>
-                  {f.contado !== null ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>Sacos</div></> : <span style={{ color: '#c3d0db' }}>—</span>}
+                  {f.contado !== null
+                    ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>Sacos</div></>
+                    : <><span style={{ fontWeight: 600, color: GRIS }}>{limpio(Number(f.saldo))}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>}
                 </Cel>
               </>)}
               {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.001 && (
