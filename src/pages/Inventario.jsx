@@ -562,9 +562,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const sac = {}
       Object.entries(m).forEach(([id, v]) => { const fa = factores[id]?.factor || 1; sac[id] = String(Math.round((v / fa) * 1e6) / 1e6) })
       setConsDiaRef(sac)   // referencia: lo registrado hasta ahora
-      // Conteo nuevo: el consumo editable arranca del registrado. Al EDITAR un
-      // conteo existente se carga el consumo CONGELADO (en editarConteo), no se pisa.
+      // Conteo nuevo: el consumo editable arranca del registrado.
+      // Al EDITAR: se usa el CONGELADO donde exista (ya cargado en editarConteo);
+      // donde NO haya congelado (conteos viejos con consumo_dia NULL) cae al
+      // valor en vivo, para que el conteo viejo se vea igual que siempre.
       if (!editToma) setConsumoDia(sac)
+      else setConsumoDia(prev => ({ ...sac, ...prev }))
     })()
     return () => { vivo = false }
   }, [contando, fecha, finca.id, primeraVez, factores, editToma])
