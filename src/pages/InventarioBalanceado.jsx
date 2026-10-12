@@ -385,9 +385,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     return () => { vivo = false }
   }, [tomas, finca.id, esJefe, lps])
 
-  // Sistema "en vivo" del corte = saldo del sistema la mañana del conteo
-  // (saldo_inicial recalculado). Si no hay dato, usa lo guardado en la línea.
-  const sisCorte = (l, cons) => (cons && cons.sis[l.producto_id] != null) ? cons.sis[l.producto_id] : Number(l.cantidad_sistema)
+  // El Sistema del conteo es el GUARDADO (congelado), no un recálculo en vivo:
+  // un conteo cerrado no se mueve solo, y el mismo número se ve en todas las
+  // pantallas (editar, desglose, descuadres). cons se ignora a propósito.
+  const sisCorte = (l) => Number(l.cantidad_sistema)
   const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
 
   function abrirMotivo(tomaId, productoId, actual) {
