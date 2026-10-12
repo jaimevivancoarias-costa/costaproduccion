@@ -24,6 +24,9 @@ const UNIDAD = {
 
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
+// Cantidad con hasta 2 decimales (ej. 4,5 kg), sin redondear a entero.
+const cant2 = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
+
 const primeroDelMes = iso => iso.slice(0, 8) + '01'
 
 // Lunes y domingo de la semana pasada, para el reporte de los lunes.
@@ -348,8 +351,6 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const grid = esJefe ? '1.5fr 1.1fr 0.95fr 1.05fr 1.7fr' : '1.6fr 1fr 1fr'
   // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo → cantidad/factor
   // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
-  // Cantidad con hasta 2 decimales (ej. 4,5 kg), para no redondear a entero.
-  const cant2 = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
   const equivale = g => {
     if (g.mixto || !g.cantidad) return '—'
     if (g.tipo === 'balanceado') return miles(g.cantidad / (todasFincas ? LIBRAS_POR_SACO : lps)) + ' sacos'
@@ -371,7 +372,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       const ps = (agrupar === 'item' && porPrecio[g.clave]?.length > 1) ? porPrecio[g.clave] : null
       return {
         nombre: g.etiqueta + (agrupar === 'item' && g.tipo !== 'mixto' ? `  (${g.tipo})` : ''),
-        detalle: ps ? 'Por precio: ' + ps.map(x => `${miles(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
+        detalle: ps ? 'Por precio: ' + ps.map(x => `${cant2(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
         cantidad: g.mixto ? '—' : `${cant2(g.cantidad)} ${unidadCel(g)}`,
         equivale: equivale(g),
         costo: dinero(g.costo),
@@ -617,7 +618,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               <div key={t.nombre} style={{ display: 'grid', gridTemplateColumns: esJefe ? '1.4fr 1fr 1fr' : '1.6fr 1fr', gap: '12px',
                       padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
                 <span>{t.nombre} <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '6px' }}>diesel</span></span>
-                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(t.galones)} gal</span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{cant2(t.galones)} gal</span>
                 {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(t.gasto)}</span>}
               </div>
             ))}
@@ -683,7 +684,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               return (
                 <div style={{ padding: '0 16px 11px 42px', fontSize: '12px', color: GRIS }}>
                   <b style={{ color: NAVY }}>{ps.length} precios:</b>{' '}
-                  {ps.map((x, i) => `${miles(x.sacos)} a ${dinero(x.precio)}`).join(' · ')}
+                  {ps.map((x, i) => `${cant2(x.sacos)} a ${dinero(x.precio)}`).join(' · ')}
                   {tS > 0 && <span style={{ color: '#a7b4c1' }}> · promedio {dinero(tC / tS)} /saco</span>}
                 </div>
               )
@@ -1211,10 +1212,10 @@ function ReporteEstado({ estado, fincas, fincaSel, onFinca, tipo, onTipo }) {
               {conv && <div style={{ fontSize: '10.5px', color: '#a7b4c1' }}>{miles(e.saldo_app)} {uApp}</div>}
             </span>
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-              {e.minimo != null ? `${miles(e.minimo)} ${uApp}` : '—'}
+              {e.minimo != null ? `${cant2(e.minimo)} ${uApp}` : '—'}
             </span>
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
-              {e.objetivo != null ? `${miles(e.objetivo)} ${uApp}` : '—'}
+              {e.objetivo != null ? `${cant2(e.objetivo)} ${uApp}` : '—'}
             </span>
             <span style={{ textAlign: 'right' }}><Badge estado={e.estado} /></span>
           </div>
@@ -1382,10 +1383,10 @@ function ReporteDescuadres({ descs, tipo, onTipo, todasFincas }) {
             {todasFincas && <span style={{ color: GRIS }}>{d.finca}</span>}
             <span style={{ color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{corta(d.fecha)}</span>
             <span>{d.insumo}</span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(d.sistema)} {cap1(d.unidad)}</span>
-            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{miles(d.contado)} {cap1(d.unidad)}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{cant2(d.sistema)} {cap1(d.unidad)}</span>
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cant2(d.contado)} {cap1(d.unidad)}</span>
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500, color: dif < 0 ? '#c0504d' : '#9a6a12' }}>
-              {(dif < 0 ? 'Faltó ' : 'Sobró ') + miles(Math.abs(dif))}
+              {(dif < 0 ? 'Faltó ' : 'Sobró ') + cant2(Math.abs(dif))}
             </span>
             <span style={{ color: d.motivo ? NAVY : '#c3d0db' }}>{d.motivo || 'Sin motivo'}</span>
             <span style={{ color: GRIS, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.autor || '—'}</span>
