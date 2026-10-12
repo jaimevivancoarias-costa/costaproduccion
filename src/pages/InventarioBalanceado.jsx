@@ -478,6 +478,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
   }), [saldos, precios, contado, sueltas, lps, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma])
   const llenadas = filas.filter(f => f.contado !== null).length
+  // Editar un inventario inicial: se muestra como la carga inicial (solo las
+  // cantidades, sin Sistema ni Diferencia), porque el inicial ES el punto de partida.
+  const editaInicial = !!(editToma && editToma.es_inicial)
+  const modoIni = primeraVez || editaInicial
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
   const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
@@ -957,7 +961,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {/* Si ese día ya hay consumos, preguntar si contó antes o después de
               alimentar (el default "Antes" = como funciona hoy). */}
-          {!primeraVez && Object.values(consumoDia).some(v => v > 0.0001) && (
+          {!modoIni && Object.values(consumoDia).some(v => v > 0.0001) && (
             <div style={{ padding: '13px 16px', borderBottom: '0.5px solid ' + BORDE, background: '#FDF3DF',
                           display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '13px', color: '#6b4e12', fontWeight: 600, flex: 1, minWidth: '240px' }}>
@@ -971,7 +975,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {(() => {
           const esRecuento = !(primeraVez || editToma)
-          const gtcC = primeraVez ? G_CONTEO : G_CONTEO_EDIT
+          const gtcC = modoIni ? G_CONTEO : G_CONTEO_EDIT
           const base = esRecuento ? filas.filter(f => coincide(f.producto)) : filas
           const lista = esRecuento
             ? [...base].sort((a, b) => {
@@ -981,7 +985,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             : base
           const primeraSin = esRecuento ? lista.findIndex(f => !(Number(f.esperado) > 0.0001)) : -1
           return (<>
-          <Encabezado gtc={gtcC} centrar cols={primeraVez
+          <Encabezado gtc={gtcC} centrar cols={modoIni
             ? ['Balanceado', 'Llega / se aplica', '', 'Inventario inicial', '']
             : ['Balanceado', 'Llega / se aplica', editToma ? 'Había antes' : 'Sistema', 'Contó', 'Consumo del día', 'Diferencia', 'Queda']} />
           {lista.map((f, idx) => (
@@ -992,7 +996,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             <Fila gtc={gtcC}>
               <Cel>{f.producto}</Cel>
               <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
-              {primeraVez ? (<>
+              {modoIni ? (<>
                 <Cel centro gris></Cel>
                 <div style={{ padding: '5px 10px' }}>
                   <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="Sacos" onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))} style={{ ...inp, width: '100%', textAlign: 'right' }} />
@@ -1043,7 +1047,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     : <><span style={{ fontWeight: 600, color: GRIS }}>{limpio(Number(f.saldo))}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>}
                 </Cel>
               </>)}
-              {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.001 && (
+              {!modoIni && f.contado !== null && Math.abs(f.diferencia || 0) > 0.001 && (
                 <div style={{ gridColumn: '1 / -1', padding: '0 12px 11px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', borderBottom: '0.5px solid #f1f6f9', marginTop: '-2px' }}>
                   <span style={{ fontSize: '11px', color: GRIS }}>{f.diferencia < 0 ? '¿Por qué faltan?' : '¿Por qué sobran?'}</span>
                   <select value={motivoDesc[f.producto_id] || ''} onChange={e => setMotivoDesc(m => ({ ...m, [f.producto_id]: e.target.value }))} style={{ ...inp, width: '180px', padding: '5px 8px' }}>
