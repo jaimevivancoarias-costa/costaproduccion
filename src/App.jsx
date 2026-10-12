@@ -309,7 +309,8 @@ export default function App() {
         esJefe={esJefe}
         onCerrar={(fid, z, amb, dia) => {
           setFincaId(fid); if (z) setZona(z)
-          setModulo('registro'); setPanelReg(amb); setLunes(lunesDe(dia))
+          if (amb === 'diesel') { setModulo('diesel') }
+          else { setModulo('registro'); setPanelReg(amb); setLunes(lunesDe(dia)) }
         }}
       />
 
@@ -460,16 +461,20 @@ export default function App() {
   )
 }
 
-// Aviso de dias de registro sin cerrar (balanceado / insumos), desde el 1 sep
-// hasta ayer. Franja gris, colapsable, con el signo en ambar para no recargar
-// de color. "Cerrar" lleva a la finca, pestaña y semana del primer dia pendiente.
-const INICIO_CIERRES = '2026-09-01'
+// Aviso de pendientes: días sin cerrar (balanceado/insumos) desde el inventario
+// inicial de cada finca hasta ayer, y semanas TERMINADAS sin consumo de diesel.
+// Franja gris, colapsable, signo en ámbar. "Cerrar" lleva al registro; "Registrar"
+// (diesel) lleva al módulo de diesel.
 const AZULBG = '#E6F1FB'
 const AMBITOS_CIERRE = [
   { id: 'balanceado', txt: 'Balanceado', bg: '#efe7fb', col: '#6b43c7' },
   { id: 'insumos',    txt: 'Insumos',    bg: AZULBG,    col: AZUL },
 ]
 const AMBAR = '#BA7517'
+const CHIP_DIESEL = { id: 'diesel', txt: 'Diesel', bg: '#fdecd6', col: '#b5651d' }
+// Cota inferior para acotar las consultas (todos los inventarios iniciales del
+// ciclo actual son de finales de agosto 2026 en adelante).
+const PISO_AVISO = '2026-08-01'
 
 function AvisoCierres({ fincas, esJefe, onCerrar }) {
   const [abierto, setAbierto] = useState(false)
@@ -483,30 +488,65 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       // La finca "Prueba" no cuenta para este aviso.
       const reales = fincas.filter(f => !String(f.nombre || '').toLowerCase().includes('prueba'))
       if (!reales.length) { if (vivo) { setFincasPend([]); setListo(true) } return }
-      const ayer = sumarDias(hoyISO(), -1)
-      if (ayer < INICIO_CIERRES) { if (vivo) { setFincasPend([]); setListo(true) } return }
-      // Todos los dias esperados (1 sep -> ayer). ISO compara bien como texto.
-      const dias = []
-      for (let d = INICIO_CIERRES; d <= ayer; d = sumarDias(d, 1)) dias.push(d)
+      const hoy = hoyISO()
+      const ayer = sumarDias(hoy, -1)
       const ids = reales.map(f => f.id)
-      const { data, error } = await supabase.schema('produccion').from('dia_registro')
-        .select('finca_id, fecha, ambito').eq('estado', 'cerrado')
-        .gte('fecha', INICIO_CIERRES).lte('fecha', ayer).in('finca_id', ids)
+      const [{ data: cerrD }, { data: tiIni }, { data: tbIni }, { data: dcIni }, { data: dCons }] = await Promise.all([
+        supabase.schema('produccion').from('dia_registro')
+          .select('finca_id, fecha, ambito').eq('estado', 'cerrado')
+          .gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids),
+        supabase.schema('produccion').from('toma_inventario')
+          .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
+        supabase.schema('produccion').from('toma_balanceado')
+          .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
+        supabase.schema('produccion').from('diesel_conteo')
+          .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
+        supabase.schema('produccion').from('diesel_consumo')
+          .select('finca_id, fecha').gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids),
+      ])
       if (!vivo) return
-      if (error) { setFincasPend([]); setListo(true); return }
-      const cerr = new Set((data || []).map(r => `${r.finca_id}|${r.ambito}|${r.fecha}`))
+      // Inventario inicial (el más antiguo) por finca y ámbito = desde dónde contar.
+      const minPorFinca = rows => { const m = {}; (rows || []).forEach(r => { if (!m[r.finca_id] || r.fecha < m[r.finca_id]) m[r.finca_id] = r.fecha }); return m }
+      const iniIns = minPorFinca(tiIni), iniBal = minPorFinca(tbIni), iniDie = minPorFinca(dcIni)
+      const cerr = new Set((cerrD || []).map(r => `${r.finca_id}|${r.ambito}|${r.fecha}`))
+      // Semanas (lunes) con consumo de diesel por finca.
+      const dieselSem = {}
+      ;(dCons || []).forEach(r => { const lun = lunesDe(r.fecha); (dieselSem[r.finca_id] = dieselSem[r.finca_id] || new Set()).add(lun) })
+
+      // Días sin cerrar (insumos/balanceado): desde el inicial de la finca hasta ayer.
+      const diasPend = (iniF, amb, fid) => {
+        if (!iniF || iniF > ayer) return []
+        const out = []
+        for (let d = iniF; d <= ayer; d = sumarDias(d, 1)) if (!cerr.has(`${fid}|${amb}|${d}`)) out.push(d)
+        return out
+      }
+      // Semanas TERMINADAS sin consumo de diesel: desde el inicial de diesel.
+      const semDieselPend = (iniF, fid) => {
+        if (!iniF) return []
+        const out = []
+        for (let lun = lunesDe(iniF); ; lun = sumarDias(lun, 7)) {
+          const dom = sumarDias(lun, 6)
+          if (dom >= hoy) break               // semana no terminada → parar
+          if (!(dieselSem[fid] && dieselSem[fid].has(lun))) out.push({ lun, dom })
+        }
+        return out
+      }
+
       const out = []
       reales.forEach(f => {
         const ambitos = []
-        const todos = new Set()
-        AMBITOS_CIERRE.forEach(a => {
-          const faltan = dias.filter(dd => !cerr.has(`${f.id}|${a.id}|${dd}`))
-          if (faltan.length) { ambitos.push({ ...a, dias: faltan }); faltan.forEach(d => todos.add(d)) }
-        })
-        if (ambitos.length) out.push({ fincaId: f.id, nombre: f.nombre, zona: f.zona, ambitos, total: todos.size })
+        const diasBal = diasPend(iniBal[f.id], 'balanceado', f.id)
+        if (diasBal.length) ambitos.push({ ...AMBITOS_CIERRE[0], tipo: 'dias', dias: diasBal })
+        const diasIns = diasPend(iniIns[f.id], 'insumos', f.id)
+        if (diasIns.length) ambitos.push({ ...AMBITOS_CIERRE[1], tipo: 'dias', dias: diasIns })
+        const semDie = semDieselPend(iniDie[f.id], f.id)
+        if (semDie.length) ambitos.push({ ...CHIP_DIESEL, tipo: 'semanas', semanas: semDie })
+        if (!ambitos.length) return
+        const diasTot = new Set([...diasBal, ...diasIns]).size
+        const semTot = semDie.length
+        out.push({ fincaId: f.id, nombre: f.nombre, zona: f.zona, ambitos, diasTot, semTot, peso: diasTot + semTot })
       })
-      // Mas atrasadas primero; dentro de zona, por nombre.
-      out.sort((a, b) => (a.zona || '').localeCompare(b.zona || '') || b.total - a.total)
+      out.sort((a, b) => (a.zona || '').localeCompare(b.zona || '') || b.peso - a.peso)
       setFincasPend(out); setListo(true)
     }
     cargar()
@@ -517,8 +557,8 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
 
   const n = fincasPend.length
   const titulo = esJefe
-    ? `${n} ${n === 1 ? 'finca' : 'fincas'} con días pendientes de cerrar`
-    : 'Tienes días pendientes de cerrar'
+    ? `${n} ${n === 1 ? 'finca' : 'fincas'} con pendientes`
+    : 'Tienes registros pendientes'
 
   const Signo = () => (
     <span style={{ width: '22px', height: '22px', borderRadius: '50%', background: AMBAR, color: 'white',
@@ -530,29 +570,42 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
     const top = ds.slice(0, 6).map(cortita).join(', ')
     return ds.length > 6 ? `${top} +${ds.length - 6} más` : top
   }
+  const semanasTexto = ss => {
+    const top = ss.slice(0, 4).map(s => `${cortita(s.lun)}–${cortita(s.dom)}`).join(', ')
+    return ss.length > 4 ? `${top} +${ss.length - 4} más` : top
+  }
 
   // Agrupar por zona solo para el jefe (ve varias zonas).
   const zonas = esJefe ? [...new Set(fincasPend.map(f => f.zona).filter(Boolean))] : []
   const etZona = z => (z === 'puna' ? 'Puná' : z === 'jambeli' ? 'Jambelí' : z)
+
+  const resumenFinca = f => {
+    const partes = []
+    if (f.diasTot) partes.push(`${f.diasTot} ${f.diasTot === 1 ? 'día' : 'días'} sin cerrar`)
+    if (f.semTot) partes.push(`${f.semTot} ${f.semTot === 1 ? 'semana' : 'semanas'} de diesel`)
+    return partes.join(' · ')
+  }
 
   const Tarjeta = f => (
     <div key={f.fincaId} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px',
                                   padding: '9px 12px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
         <span style={{ fontWeight: 600, fontSize: '13.5px' }}>{String(f.nombre).toUpperCase()}</span>
-        <span style={{ fontSize: '11px', color: '#c0453f', fontWeight: 700 }}>
-          {f.total} {f.total === 1 ? 'día' : 'días'} sin cerrar
-        </span>
+        <span style={{ fontSize: '11px', color: '#c0453f', fontWeight: 700 }}>{resumenFinca(f)}</span>
       </div>
       {f.ambitos.map(a => (
         <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', marginTop: '7px' }}>
           <span style={{ fontSize: '9.5px', fontWeight: 700, borderRadius: '20px', padding: '2px 8px',
                          background: a.bg, color: a.col, whiteSpace: 'nowrap' }}>{a.txt}</span>
-          <span style={{ fontSize: '11.5px', color: GRIS, flex: 1, minWidth: 0 }}>{fechasTexto(a.dias)}</span>
-          <button onClick={() => onCerrar(f.fincaId, f.zona, a.id, a.dias[0])}
+          <span style={{ fontSize: '11.5px', color: GRIS, flex: 1, minWidth: 0 }}>
+            {a.tipo === 'semanas' ? semanasTexto(a.semanas) : fechasTexto(a.dias)}
+          </span>
+          <button onClick={() => a.tipo === 'semanas'
+                    ? onCerrar(f.fincaId, f.zona, 'diesel', a.semanas[0].lun)
+                    : onCerrar(f.fincaId, f.zona, a.id, a.dias[0])}
             style={{ background: AZUL, color: 'white', border: 'none', borderRadius: '8px', fontSize: '11.5px',
                      fontWeight: 700, padding: '6px 13px', cursor: 'pointer', whiteSpace: 'nowrap',
-                     fontFamily: 'inherit' }}>Cerrar ›</button>
+                     fontFamily: 'inherit' }}>{a.tipo === 'semanas' ? 'Registrar ›' : 'Cerrar ›'}</button>
         </div>
       ))}
     </div>
