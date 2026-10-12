@@ -253,7 +253,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (!contando || primeraVez || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
     let vivo = true
     ;(async () => {
-      const { data } = await supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: fecha })
+      const hastaSF = editToma ? sumarDias(fecha, -1) : fecha
+      const { data } = await supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: hastaSF })
       if (!vivo) return
       const m = {}; (data || []).forEach(r => { m[r.producto_id] = Number(r.saldo) })
       setSaldoFecha(m)
@@ -465,7 +466,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const sis = (saldoFecha[s.producto_id] != null) ? Number(saldoFecha[s.producto_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.producto_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.producto_id] ?? ''))
-    const habiaSistema = cons > 0.0001 ? sis + cons : sis        // lo que había al inicio del día (para guardar)
+    const habiaSistema = editToma ? sis : (cons > 0.0001 ? sis + cons : sis)   // había al inicio del día (al editar, sis ya es la víspera)
     // "El sistema dice" = lo que deberías encontrar EN EL MOMENTO que cuentas:
     //   antes de alimentar  -> el había (todavía no sale lo de hoy)
     //   después de alimentar -> lo de ahora (ya salió lo de hoy) = sis
