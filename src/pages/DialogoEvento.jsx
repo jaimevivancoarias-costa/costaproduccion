@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, num, numDec, miles } from '../lib/fechas'
 
@@ -36,7 +36,7 @@ export function mensajeError(err) {
 }
 
 export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
-  const { fecha, laboratorioId, larva, gramaje, libras, destinos, observacion } = datos
+  const { fecha, laboratorioId, larva, gramaje, libras, destinos, observacion, cerrarOrigen } = datos
 
   if (tipo === 'siembra') {
     const pid = idPiscina(piscina)
@@ -89,6 +89,8 @@ export async function guardarEvento({ tipo, fincaId, ciclo, piscina, datos }) {
     p_ciclo: cid, p_fecha: fecha, p_libras: lb,
     p_observacion: observacion || null, p_destinos: dest,
     p_gramaje: gramaje > 0 ? gramaje : null,
+    // Si queda remanente, el origen NO se cierra (sigue vivo con lo que quedó).
+    p_cerrar_origen: cerrarOrigen !== false,
   })
   if (error) throw error
 }
@@ -257,46 +259,73 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   const [enviando, setEnviando] = useState(false)
   const [errorLab, setErrorLab] = useState(null)
   const [dropAbierto, setDropAbierto] = useState(false)   // lista de piscinas destino
+  const [repartirPor, setRepartirPor] = useState('pct')   // 'pct' | 'animales' (piscina→piscina)
+  const [yaTransferido, setYaTransferido] = useState(0)   // animales ya transferidos antes (este ciclo)
 
   // Las libras nunca bloquean el registro. El bodeguero no las sabe el
   // dia de la cosecha, llegan despues de la empacadora. Exigirlas hace
   // que invente un numero, y un numero inventado es peor que un vacio.
   const pideLibras = tipo === 'raleo' || tipo === 'cosecha'
 
-  // Origen precria: se pasa el NUMERO real de animales (millones) a cada
-  // piscina, no un %. De ahi sale la sobrevivencia. Piscina->piscina va en %.
+  // Origen precria: se pasa el NUMERO real de animales a cada piscina y se
+  // transfiere TODO (queda limpia). Piscina->piscina: por % o por animales,
+  // puede quedar remanente en el origen (ya no obliga al 100%).
   const esPrecria = objetivo?.tipo === 'precria'
   const larvasSembradas = num(objetivo?.larva) || 0
+  // Población disponible del origen = lo que tiene menos lo ya transferido antes.
+  const poblacion = Math.max(0, larvasSembradas - (Number(yaTransferido) || 0))
 
-  // Para transferencia %, destinos = [{ piscinaId, porcentaje }]. Para
-  // precria, destinos = [{ piscinaId, cantidad }].
-  const sumaPct = destinos.reduce((t, d) => t + (Number(d.porcentaje) || 0), 0)
-  const pctOk = destinos.length > 0 && Math.abs(sumaPct - 100) < 0.01
+  // Al abrir una transferencia piscina->piscina, cuánto ya se transfirió de
+  // este ciclo (para no repartir más de lo que queda).
+  useEffect(() => {
+    if (tipo !== 'transferencia' || esPrecria) return
+    const cid = idCiclo(ciclo)
+    if (!cid) return
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('evento_destino')
+        .select('cantidad, evento:evento_id!inner(ciclo_id, tipo)')
+        .eq('evento.ciclo_id', cid).eq('evento.tipo', 'transferencia')
+      if (!vivo) return
+      setYaTransferido((data || []).reduce((t, x) => t + (Number(x.cantidad) || 0), 0))
+    })()
+    return () => { vivo = false }
+  }, [tipo, esPrecria, ciclo])
+
+  // Totales (ambos campos se mantienen en sync en setPct/setCant).
+  const sumaPct = destinos.reduce((t, d) => t + (num(d.porcentaje) || 0), 0)
   const totalCant = destinos.reduce((t, d) => t + (num(d.cantidad) || 0), 0)
+  const remanente = Math.max(0, poblacion - totalCant)
+  const remanentePct = Math.max(0, Math.round((100 - sumaPct) * 10) / 10)
+  const seExcede = !esPrecria && ((poblacion > 0 && totalCant > poblacion + 0.5) || sumaPct > 100.01)
   const cantOk = destinos.length > 0 && destinos.every(d => num(d.cantidad) > 0)
+  // Piscina->piscina válido: al menos un destino con valor, sin excederse.
+  const transfOk = esPrecria
+    ? cantOk
+    : (destinos.length > 0 && !seExcede &&
+       destinos.every(d => (repartirPor === 'pct' ? num(d.porcentaje) : num(d.cantidad)) > 0))
   const sobrevivencia = esPrecria && larvasSembradas > 0 ? (totalCant / larvasSembradas) * 100 : null
 
   function toggleDestino(pid) {
     setDestinos(ds => {
       const existe = ds.some(d => d.piscinaId === pid)
-      if (esPrecria) {
-        // Sin reparto automatico: se escribe el numero real de cada una.
-        return existe ? ds.filter(d => d.piscinaId !== pid) : [...ds, { piscinaId: pid, cantidad: '' }]
-      }
-      const base = existe ? ds.filter(d => d.piscinaId !== pid) : [...ds, { piscinaId: pid, porcentaje: 0 }]
-      const n = base.length
-      if (!n) return base
-      const cada = Math.floor((100 / n) * 100) / 100
-      return base.map((d, i) => ({
-        ...d, porcentaje: i === n - 1 ? Number((100 - cada * (n - 1)).toFixed(2)) : cada,
-      }))
+      if (existe) return ds.filter(d => d.piscinaId !== pid)
+      // Sin reparto automático: se escribe lo de cada una (ya no obliga al 100%).
+      return [...ds, { piscinaId: pid, porcentaje: '', cantidad: '' }]
     })
   }
+  // Al escribir un %, se prellena los animales (y al revés), usando la población.
   function setPct(pid, valor) {
-    setDestinos(ds => ds.map(d => d.piscinaId === pid ? { ...d, porcentaje: valor } : d))
+    setDestinos(ds => ds.map(d => d.piscinaId === pid
+      ? { ...d, porcentaje: valor,
+          cantidad: poblacion > 0 ? String(Math.round(poblacion * (num(valor) || 0) / 100)) : d.cantidad }
+      : d))
   }
   function setCant(pid, valor) {
-    setDestinos(ds => ds.map(d => d.piscinaId === pid ? { ...d, cantidad: valor } : d))
+    setDestinos(ds => ds.map(d => d.piscinaId === pid
+      ? { ...d, cantidad: valor,
+          porcentaje: (!esPrecria && poblacion > 0) ? String(Math.round((num(valor) || 0) / poblacion * 1000) / 10) : d.porcentaje }
+      : d))
   }
 
   // Gramaje obligatorio: al sembrar una precría (PLs/gramos) y en toda
@@ -304,7 +333,7 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   const gramajeOk = numDec(gramaje) > 0
   const listo = fecha && (
     tipo === 'transferencia'
-      ? ((esPrecria ? cantOk : pctOk) && gramajeOk)
+      ? (transfOk && gramajeOk)
       : tipo === 'siembra' && esPrecria ? gramajeOk
       : true
   )
@@ -331,14 +360,18 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
   async function enviar() {
     setEnviando(true)
-    // Precria: el % de costo sale del numero real de cada destino.
+    // Precria: el % de costo sale del numero real de cada destino, y se cierra
+    // (queda limpia). Piscina->piscina: se manda % y animales; el origen se
+    // cierra solo si no quedó remanente.
     const dest = esPrecria
       ? destinos.map(d => ({ piscinaId: d.piscinaId, cantidad: num(d.cantidad),
                              porcentaje: totalCant > 0 ? (num(d.cantidad) / totalCant) * 100 : 0 }))
-      : destinos.map(d => ({ piscinaId: d.piscinaId, porcentaje: Number(d.porcentaje) || 0 }))
+      : destinos.map(d => ({ piscinaId: d.piscinaId, porcentaje: num(d.porcentaje) || 0,
+                             cantidad: num(d.cantidad) || null }))
+    const cerrarOrigen = esPrecria || remanentePct <= 0.01
     await onGuardar({
       fecha, laboratorioId: lab || null, larva: num(larva), gramaje: numDec(gramaje),
-      libras: num(libras), destinos: dest, observacion: obs,
+      libras: num(libras), destinos: dest, observacion: obs, cerrarOrigen,
     })
     setEnviando(false)
   }
@@ -501,24 +534,73 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
 
             {destinos.length > 0 && !esPrecria && (
               <Campo label="Cuánto va a cada una">
+                {/* Repartir por % o por animales (el otro se prellena). */}
+                <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+                  {[['pct', '%'], ['animales', 'Animales']].map(([id, txt]) => {
+                    const on = repartirPor === id
+                    const dis = id === 'animales' && poblacion <= 0
+                    return (
+                      <button key={id} type="button" disabled={dis}
+                        onClick={() => setRepartirPor(id)}
+                        style={{ border: 'none', cursor: dis ? 'default' : 'pointer', fontFamily: 'inherit',
+                                 fontSize: '13px', fontWeight: 600, padding: '6px 14px', borderRadius: '8px',
+                                 background: on ? '#E6F1FB' : '#f2f5f8', color: on ? AZUL : GRIS, opacity: dis ? 0.45 : 1 }}>
+                        {txt}
+                      </button>
+                    )
+                  })}
+                </div>
+                {poblacion > 0
+                  ? <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>
+                      Población actual: <b style={{ color: NAVY, fontWeight: 500 }}>{miles(poblacion)}</b> animales
+                      {yaTransferido > 0 && <span> (ya transferido antes: {miles(yaTransferido)})</span>}
+                    </div>
+                  : <div style={{ fontSize: '12px', color: '#BA7517', marginBottom: '8px' }}>
+                      Esta piscina no tiene población registrada; reparte por %.
+                    </div>}
                 {destinos.map(d => {
                   const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
                   return (
-                    <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px',
-                          marginBottom: '7px' }}>
+                    <div key={d.piscinaId} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '7px' }}>
                       <span style={{ flex: 1, fontSize: '14px' }}>{nombre}</span>
-                      <input inputMode="decimal" value={d.porcentaje}
-                        onChange={e => setPct(d.piscinaId, e.target.value)}
-                        style={{ ...entrada, width: '90px', textAlign: 'right' }} />
-                      <span style={{ fontSize: '13px', color: GRIS, width: '14px' }}>%</span>
+                      {repartirPor === 'pct' ? (
+                        <>
+                          <input inputMode="decimal" value={d.porcentaje}
+                            onChange={e => setPct(d.piscinaId, e.target.value)}
+                            style={{ ...entrada, width: '80px', textAlign: 'right' }} />
+                          <span style={{ fontSize: '13px', color: GRIS, width: '12px' }}>%</span>
+                          <span style={{ fontSize: '12px', color: '#aab8c6', width: '96px', textAlign: 'right' }}>
+                            {d.cantidad ? miles(num(d.cantidad)) + ' anim.' : ''}</span>
+                        </>
+                      ) : (
+                        <>
+                          <input inputMode="decimal" value={d.cantidad}
+                            onChange={e => setCant(d.piscinaId, e.target.value)}
+                            style={{ ...entrada, width: '120px', textAlign: 'right' }} />
+                          <span style={{ fontSize: '12px', color: '#aab8c6', width: '48px', textAlign: 'right' }}>
+                            {d.porcentaje ? num(d.porcentaje) + '%' : ''}</span>
+                        </>
+                      )}
                     </div>
                   )
                 })}
-                <div style={{ fontSize: '12px', marginTop: '4px',
-                              color: pctOk ? '#0F6E56' : '#A32D2D' }}>
-                  {pctOk ? 'Suma 100%.'
-                    : `Suman ${sumaPct}%. Tienen que sumar exactamente 100%.`}
+                {/* Lo que se queda en el origen (ya no obliga al 100%). */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px',
+                              padding: '8px 11px', borderRadius: '9px',
+                              background: seExcede ? '#FDECEA' : '#E1F5EE' }}>
+                  <span style={{ flex: 1, fontSize: '13px', fontWeight: 600, color: seExcede ? '#A32D2D' : '#0F6E56' }}>
+                    Se queda en {objetivo?.nombre}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: seExcede ? '#A32D2D' : '#0F6E56' }}>
+                    {seExcede ? 'Te pasaste'
+                      : `${remanentePct}%${poblacion > 0 ? ` · ${miles(remanente)} anim.` : ''}`}</span>
                 </div>
+                {seExcede && (
+                  <div style={{ fontSize: '12px', color: '#A32D2D', marginTop: '6px' }}>
+                    {poblacion > 0
+                      ? `Repartiste ${miles(totalCant)} y solo hay ${miles(poblacion)}. Ajusta.`
+                      : `Sumaste ${sumaPct}%. No puede pasar de 100%.`}
+                  </div>
+                )}
               </Campo>
             )}
 
@@ -536,6 +618,23 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
               <input inputMode="numeric" value={libras} placeholder="Opcional"
                      onChange={e => setLibras(e.target.value)} style={entrada} />
             </Campo>
+
+            {!esPrecria && destinos.length > 0 && transfOk && (
+              <div style={{ background: '#E1F5EE', border: '1px solid #bfe6d2', borderRadius: '10px',
+                            padding: '9px 12px', marginBottom: '12px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '.05em', textTransform: 'uppercase',
+                              color: '#0F6E56', marginBottom: '5px' }}>Al registrar</div>
+                {destinos.map(d => {
+                  const nombre = destinosPosibles.find(p => p.id === d.piscinaId)?.nombre || ''
+                  return (
+                    <div key={d.piscinaId} style={{ fontSize: '12.5px', color: '#20604f', lineHeight: 1.7 }}>
+                      Se transfiere el <b style={{ color: '#0F6E56' }}>{num(d.porcentaje)}%</b> de {objetivo?.nombre} a <b style={{ color: '#0F6E56' }}>{nombre}</b>
+                      {d.cantidad ? ` · ${miles(num(d.cantidad))}` : ''}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </>
         )}
 
