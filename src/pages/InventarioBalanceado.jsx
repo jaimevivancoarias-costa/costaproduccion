@@ -932,7 +932,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {(() => {
           const esRecuento = !(primeraVez || editToma)
-          const gtcC = editToma ? G_CONTEO_EDIT : esRecuento ? G_CONTEO_REC : G_CONTEO
+          const gtcC = primeraVez ? G_CONTEO : G_CONTEO_EDIT
           const base = esRecuento ? filas.filter(f => coincide(f.producto)) : filas
           const lista = esRecuento
             ? [...base].sort((a, b) => {
@@ -942,11 +942,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             : base
           const primeraSin = esRecuento ? lista.findIndex(f => !(Number(f.esperado) > 0.0001)) : -1
           return (<>
-          <Encabezado gtc={gtcC} centrar cols={editToma
-            ? ['Balanceado', 'Llega / se aplica', 'Había antes', 'Contó', 'Consumo del día', 'Diferencia', 'Queda']
-            : esRecuento
-            ? ['Balanceado', 'Llega / se aplica', 'Sistema', 'Equivalente', 'Conteo', 'Diferencia']
-            : ['Balanceado', 'Llega / se aplica', '', 'Inventario inicial', '']} />
+          <Encabezado gtc={gtcC} centrar cols={primeraVez
+            ? ['Balanceado', 'Llega / se aplica', '', 'Inventario inicial', '']
+            : ['Balanceado', 'Llega / se aplica', editToma ? 'Había antes' : 'Sistema', 'Contó', 'Consumo del día', 'Diferencia', 'Queda']} />
           {lista.map((f, idx) => (
             <Fragment key={f.producto_id}>
             {esRecuento && primeraSin > 0 && idx === primeraSin && (
@@ -955,12 +953,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             <Fila gtc={gtcC}>
               <Cel>{f.producto}</Cel>
               <Cel centro gris><span style={{ color: NAVY, fontWeight: 500 }}>Saco</span> → Libras<div style={{ fontSize: '10px', color: GRIS }}>1 saco = {lps} lb</div></Cel>
-              {editToma ? (<>
+              {primeraVez ? (<>
+                <Cel centro gris></Cel>
+                <div style={{ padding: '5px 10px' }}>
+                  <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="Sacos" onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))} style={{ ...inp, width: '100%', textAlign: 'right' }} />
+                </div>
+                <Cel></Cel>
+              </>) : (<>
+                {/* Sistema / Había antes */}
                 <Cel centro gris>
-                  {sistemaEdit[f.producto_id] != null
-                    ? <><span style={{ fontWeight: 700, color: NAVY }}>{limpio(sistemaEdit[f.producto_id])}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>
-                    : <span style={{ color: '#c3d0db' }}>—</span>}
+                  {editToma
+                    ? (sistemaEdit[f.producto_id] != null ? <><span style={{ fontWeight: 700, color: NAVY }}>{limpio(sistemaEdit[f.producto_id])}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></> : <span style={{ color: '#c3d0db' }}>—</span>)
+                    : <><span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>}
                 </Cel>
+                {/* Contó */}
                 <div style={{ padding: '5px 10px' }}>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end', justifyContent: 'center' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -975,87 +981,31 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   </div>
                   {f.contado !== null && <div style={{ fontSize: '9.5px', color: GRIS, marginTop: '4px', textAlign: 'center' }}>= {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb</div>}
                 </div>
+                {/* Consumo del día */}
                 <Cel centro>
-                  {f.cons > 0.0001
-                    ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>del {ddmm(fecha)}</span></span>
-                    : <span style={{ color: '#c3d0db' }}>—</span>}
+                  {editToma
+                    ? (f.cons > 0.0001 ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>del {ddmm(fecha)}</span></span> : <span style={{ color: '#c3d0db' }}>—</span>)
+                    : ((f.cons > 0.0001 || f.consRef > 0.0001)
+                      ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '6px 8px' }}>
+                          <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0" onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))} style={{ ...inp, width: '58px', textAlign: 'right', borderColor: '#e3c17e' }} />
+                          <span style={{ display: 'block', fontSize: '8.5px', color: '#BA7517', marginTop: '2px' }}>se congela</span>
+                        </span>
+                      : <span style={{ color: '#c3d0db' }}>—</span>)}
                 </Cel>
-                {(() => {
+                {/* Diferencia */}
+                {editToma ? (() => {
                   const sisV = sistemaEdit[f.producto_id] != null ? Number(sistemaEdit[f.producto_id]) : null
                   const d = (sisV != null && f.contado !== null) ? Number(f.habiaContado) - sisV : null
-                  return <Cel centro color={d === null ? '#c3d0db' : Math.abs(d) < 0.001 ? VERDE : d < 0 ? ROJO : AMBAR}>
-                    {d === null ? '—' : Math.abs(d) < 0.001 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(d))}
+                  return <Cel centro color={d === null ? '#c3d0db' : Math.abs(d) < 0.001 ? VERDE : d < 0 ? ROJO : AMBAR}>{d === null ? '—' : Math.abs(d) < 0.001 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(d))}</Cel>
+                })() : (
+                  <Cel centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
+                    {f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
                   </Cel>
-                })()}
-                <Cel centro fuerte color={NAVY}>
-                  {f.contado !== null
-                    ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>Sacos</div></>
-                    : <span style={{ color: '#c3d0db' }}>—</span>}
-                </Cel>
-              </>) : (<>
-              <Cel centro gris>{primeraVez ? '' : (<>
-                <span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span>
-                <div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div>
-                {f.cons > 0.0001 && <div style={{ fontSize: '9.5px', color: '#b08a2e' }}>{contoDespues ? `ahora (comió ${limpio(f.cons)})` : `había (−${limpio(f.cons)} de hoy)`}</div>}
-              </>)}</Cel>
-              {esRecuento && (
-                <Cel centro><span style={{ color: AZUL, fontWeight: 600 }}>{limpio(Number(f.esperado) * lps)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Lb</div></Cel>
-              )}
-              <div style={{ padding: '5px 10px' }}>
-                {primeraVez ? (
-                  <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="Sacos"
-                    onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))}
-                    style={{ ...inp, width: '100%', textAlign: 'right' }} />
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                        <span style={{ fontSize: '10px', color: GRIS }}>Sacos</span>
-                        <CampoNumero maxDec={2} value={contado[f.producto_id] ?? ''} placeholder="0"
-                          onChange={v => setContado(c => ({ ...c, [f.producto_id]: v }))}
-                          style={{ ...inp, width: '100%', textAlign: 'right' }} />
-                      </div>
-                      <span style={{ color: '#c3d0db', paddingBottom: '8px' }}>+</span>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1 }}>
-                        <span style={{ fontSize: '10px', color: GRIS }}>Libras</span>
-                        <CampoNumero maxDec={2} value={sueltas[f.producto_id] ?? ''} placeholder="0"
-                          onChange={v => setSueltas(c => ({ ...c, [f.producto_id]: v }))}
-                          style={{ ...inp, width: '100%', textAlign: 'right' }} />
-                      </div>
-                    </div>
-                    {f.contado !== null && (
-                      <div style={{ fontSize: '10.5px', color: VERDE, marginTop: '4px', textAlign: 'right' }}>
-                        = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
-                      </div>
-                    )}
-                    {(f.cons > 0.0001 || f.consRef > 0.0001) && (
-                      <div style={{ marginTop: '7px', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 9px' }}>
-                        <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#BA7517', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          Consumo del día
-                          <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>se congela</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
-                          <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0"
-                            onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))}
-                            style={{ ...inp, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
-                          <span style={{ fontSize: '10px', color: '#BA7517' }}>sacos · registrado hoy: {limpio(f.consRef)}</span>
-                        </div>
-                      </div>
-                    )}
-                    {f.contado !== null && f.cons > 0.0001 && (
-                      <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px', textAlign: 'right' }}>
-                        {contoDespues
-                          ? <>Contaste {limpio(f.contado)} (lo que queda ahora) + {limpio(f.cons)} de hoy = <b style={{ color: NAVY }}>{limpio(f.habiaContado)}</b> había · saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>
-                          : <>Contaste {limpio(f.habiaContado)} (había) − {limpio(f.cons)} que comió hoy → saldo <b style={{ color: NAVY }}>{limpio(f.saldoFinal)}</b> sacos</>}
-                      </div>
-                    )}
-                  </>
                 )}
-              </div>
-              <Cel centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
-                {primeraVez ? '' : f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra'
-                  : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
-              </Cel>
+                {/* Queda */}
+                <Cel centro fuerte color={NAVY}>
+                  {f.contado !== null ? <><span style={{ fontWeight: 700 }}>{limpio(f.saldoFinal)}</span><div style={{ fontSize: '10px', color: GRIS }}>Sacos</div></> : <span style={{ color: '#c3d0db' }}>—</span>}
+                </Cel>
               </>)}
               {!primeraVez && f.contado !== null && Math.abs(f.diferencia || 0) > 0.001 && (
                 <div style={{ gridColumn: '1 / -1', padding: '0 12px 11px', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', borderBottom: '0.5px solid #f1f6f9', marginTop: '-2px' }}>
