@@ -426,27 +426,20 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const dif = difCorte(l, cons)
                       const falto = dif < -0.001, sobro = dif > 0.001
                       const uni = unidadIns(l.insumo_id)
+                      const cdLine = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? 0)
+                      const skey = c.id + '|' + l.insumo_id
                       const editando = motivoEdit && motivoEdit.tomaId === c.id && motivoEdit.insumoId === l.insumo_id
                       return (
-                        <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
+                        <Fragment key={i}>
+                        <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: sisDet === skey ? 'none' : '0.5px solid #f6f9fb', fontSize: '13px' }}>
                           <span>{nombreInsumo(l.insumo_id)}{uni && <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>{cap1(uni)}</span>}</span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {c.es_inicial ? <span style={vacia}>—</span> : (() => {
-                              const cdLine = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? 0)
-                              const skey = c.id + '|' + l.insumo_id
-                              return <>
-                                {cdLine > 0.0001
-                                  ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
-                                  : limpio(sisCorte(l, cons))}
-                                <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
-                                {sisDet === skey && (
-                                  <span style={{ display: 'block', fontSize: '11px', color: GRIS, marginTop: '7px', lineHeight: 1.7, textAlign: 'right' }}>
-                                    Esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))}</b> · contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>
-                                    <span style={{ display: 'block', marginTop: '3px' }}>Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)}</b> {c.conto_despues ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.</span>
-                                  </span>
-                                )}
-                              </>
-                            })()}
+                            {c.es_inicial ? <span style={vacia}>—</span> : <>
+                              {cdLine > 0.0001
+                                ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
+                                : limpio(sisCorte(l, cons))}
+                              <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
+                            </>}
                           </span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {limpio(l.cantidad_contada)}
@@ -478,6 +471,23 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           </span>
                           {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{cons ? dinero(cons.porProd[l.insumo_id] || 0) : '—'}</span>}
                         </div>
+                        {sisDet === skey && (() => {
+                          const otra = c.conto_despues ? 'antes' : 'después'
+                          const uCap = cap1(uni)
+                          const altDif = dif + (c.conto_despues ? -cdLine : cdLine)
+                          const altTxt = Math.abs(altDif) < 0.001 ? <b style={{ color: VERDE }}>cuadraría</b> : (altDif < 0 ? <>faltaría <b>{limpio(Math.abs(altDif))} {uCap}</b></> : <>sobraría <b>{limpio(altDif)} {uCap}</b></>)
+                          return (
+                            <div style={{ padding: '2px 16px 14px 44px', background: '#f8fbfd', borderBottom: '0.5px solid #f6f9fb' }}>
+                              <div style={{ fontSize: '12px', color: GRIS, lineHeight: 1.8, maxWidth: '640px' }}>
+                                El sistema esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))} {uCap}</b> y contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>. Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)} {uCap}</b> {c.conto_despues ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.
+                              </div>
+                              <div style={{ fontSize: '11.5px', color: '#8a6a1e', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 11px', marginTop: '8px', maxWidth: '640px', lineHeight: 1.6 }}>
+                                <b style={{ color: AMBAR }}>Consejo:</b> si se contó <b>{otra}</b> de alimentar, {altTxt}. Usa <b>Corregir</b> (arriba) si fue así.
+                              </div>
+                            </div>
+                          )
+                        })()}
+                        </Fragment>
                       )
                     })}
                     {esJefe && cons && (
