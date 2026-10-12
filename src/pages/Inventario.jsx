@@ -520,6 +520,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de aplicar ese día
   const [consumoDia, setConsumoDia] = useState({})   // insumoId -> consumo del día (editable), en unidad de compra
   const [consDiaRef, setConsDiaRef] = useState({})   // insumoId -> consumo del día REGISTRADO HOY (referencia), unidad de compra
+  const [sistemaEdit, setSistemaEdit] = useState({}) // insumoId -> cantidad_sistema GUARDADA (al editar un conteo)
   const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
   const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
@@ -1074,22 +1075,24 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   async function editarConteo(c) {
     const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
-      .select('insumo_id, cantidad_contada, consumo_dia, motivo_descuadre').eq('toma_id', c.id)
-    const mapa = {}, md = {}, mo = {}, cd = {}
+      .select('insumo_id, cantidad_contada, cantidad_sistema, consumo_dia, motivo_descuadre').eq('toma_id', c.id)
+    const mapa = {}, md = {}, mo = {}, cd = {}, sis = {}
     ;(data || []).forEach(l => {
       mapa[l.insumo_id] = String(l.cantidad_contada)
       if (l.consumo_dia != null) cd[l.insumo_id] = String(l.consumo_dia)
+      if (l.cantidad_sistema != null) sis[l.insumo_id] = Number(l.cantidad_sistema)
       if (l.motivo_descuadre) {
         if (MOTIVOS_DESCUADRE.includes(l.motivo_descuadre)) md[l.insumo_id] = l.motivo_descuadre
         else { md[l.insumo_id] = 'Otro'; mo[l.insumo_id] = l.motivo_descuadre }
       }
     })
-    // Consumo del día CONGELADO del conteo (lo que se usó al guardarlo). El
-    // efecto de carga NO lo pisa porque editToma está puesto.
-    setConsumoDia(cd)
+    // El campo "Contó" guarda el HABÍA (inicio del día). Al editar se interpreta
+    // tal cual (no se le vuelve a sumar el consumo) → contoDespues = false aquí.
+    // La decisión antes/después se mantiene aparte (toggle de Conteos anteriores).
+    setConsumoDia(cd); setSistemaEdit(sis)
     setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
-    setContoDespues(!!c.conto_despues); setEditToma(c); setContando(true); setAviso(null)
+    setContoDespues(false); setEditToma(c); setContando(true); setAviso(null)
   }
 
   // Corregir la decisión "antes/después" de un conteo ya guardado, sin reabrir el
@@ -1210,7 +1213,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (editToma) {
         // Editar un conteo existente: actualiza cabecera y reemplaza líneas.
         const { error: eU } = await supabase.schema('produccion').from('toma_inventario')
-          .update({ fecha, observacion: obs || null, conto_despues: contoDespues }).eq('id', editToma.id)
+          .update({ fecha, observacion: obs || null, conto_despues: !!editToma.conto_despues }).eq('id', editToma.id)
         if (eU) throw eU
         await supabase.schema('produccion').from('toma_inventario_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
@@ -1231,8 +1234,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         : []
       const lineas = [...contadas, ...enCero].map(f => {
         const contadoVal = f.contado !== null ? f.habiaContado : 0
-        const sistemaVal = f.contado !== null ? f.habiaSistema : Number(f.saldo)
-        const difVal = f.contado !== null ? f.diferencia : (0 - Number(f.saldo))
+        // Al editar se conserva el Sistema (había esperado) GUARDADO del conteo,
+        // no se recalcula con el saldo de hoy (que ya es otro).
+        const sisGuardado = editToma && sistemaEdit[f.insumo_id] != null ? Number(sistemaEdit[f.insumo_id]) : null
+        const sistemaVal = f.contado !== null ? (sisGuardado != null ? sisGuardado : f.habiaSistema) : Number(f.saldo)
+        const difVal = f.contado !== null ? (contadoVal - Number(sistemaVal)) : (0 - Number(f.saldo))
         // En un recuento normal, hay descuadre si la diferencia no es cero.
         // Al editar, conservamos el motivo que ya se había cargado.
         const hayDesc = !primeraVez && (editToma || Math.abs(difVal || 0) > 0.0001)
@@ -1520,23 +1526,33 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       onChange={v => setContado(c => ({ ...c, [f.insumo_id]: v }))}
                       style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                   )}
+                  {editToma && sistemaEdit[f.insumo_id] != null && f.contado !== null && (() => {
+                    const sisV = Number(sistemaEdit[f.insumo_id])
+                    const d = Number(f.habiaContado) - sisV
+                    const u = cap1(UNIDAD[f.unidad] || f.unidad)
+                    const desc = Math.abs(d) < 0.001 ? <b style={{ color: VERDE }}>cuadra</b> : (d < 0 ? <>faltan <b>{limpio(Math.abs(d))}</b></> : <>sobran <b>{limpio(d)}</b></>)
+                    return <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '5px', textAlign: 'right' }}>El sistema tenía <b style={{ color: NAVY }}>{limpio(sisV)} {u}</b> · {desc}</div>
+                  })()}
                   {(f.cons > 0.0001 || f.consRef > 0.0001) && (
                     <div style={{ marginTop: '7px', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 9px' }}>
                       <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#BA7517', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         Consumo del día
                         <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>{editToma ? 'congelado' : 'se congela'}</span>
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
-                        <CampoNumero maxDec={2} value={consumoDia[f.insumo_id] ?? ''} placeholder="0"
-                          onChange={v => setConsumoDia(cd => ({ ...cd, [f.insumo_id]: v }))}
-                          style={{ ...entrada, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
-                        <span style={{ fontSize: '10px', color: '#BA7517' }}>
-                          {cap1(UNIDAD[f.unidad] || f.unidad)}
-                          {editToma && Math.abs(f.consRef - f.cons) > 0.001
-                            ? <> · registrado hasta hoy: {limpio(f.consRef)} ⚠️</>
-                            : <> · registrado hoy: {limpio(f.consRef)}</>}
-                        </span>
-                      </div>
+                      {editToma ? (
+                        <div style={{ fontSize: '11px', textAlign: 'right' }}>
+                          <b style={{ color: '#7a5410' }}>{limpio(f.cons)} {cap1(UNIDAD[f.unidad] || f.unidad)}</b> <span style={{ color: '#BA7517' }}>· del {ddmm(fecha)}</span>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
+                          <CampoNumero maxDec={2} value={consumoDia[f.insumo_id] ?? ''} placeholder="0"
+                            onChange={v => setConsumoDia(cd => ({ ...cd, [f.insumo_id]: v }))}
+                            style={{ ...entrada, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
+                          <span style={{ fontSize: '10px', color: '#BA7517' }}>
+                            {cap1(UNIDAD[f.unidad] || f.unidad)} · registrado hoy: {limpio(f.consRef)}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                   {f.contado !== null && f.cons > 0.0001 && (() => {
