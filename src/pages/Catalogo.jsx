@@ -491,12 +491,6 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   <span style={{ fontSize: '15px', fontWeight: 600 }}>
                     <span style={{ display: 'inline-block', width: '14px', color: GRIS, fontSize: '12px' }}>{ab ? '▾' : '▸'}</span>
                     {p.nombre}
-                    <span style={{ fontSize: '12px', color: GRIS, fontWeight: 400 }}>
-                      {tab === 'insumos' ? ` · Se aplica en ${UNIDAD[p.unidad] || p.unidad}` : (p.marca ? ` · ${p.marca}` : '')}
-                      {p.proveedor ? ` · Proveedor ${p.proveedor}` : ''}
-                    </span>
-                    {tab === 'insumos' && !tienePrecio && <Insignia color="#A23A38" bg="#FBEAEA">Sin precio</Insignia>}
-                    {tab === 'insumos' && tienePrecio && !tieneMin && <Insignia color="#9a6a12" bg="#FAEEDA">Sin mínimo</Insignia>}
                   </span>
                   {esJefeGlobal && (
                     <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
@@ -671,7 +665,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   <div style={{ background: 'white', padding: '0 20px 8px' }}>
                     {esJefe && (
                       <div style={{ fontSize: '11.5px', color: GRIS, padding: '8px 0 2px' }}>
-                        Vista de solo lectura. Para cambiar {tab === 'insumos' ? 'unidades, precios' : 'precios'}, mínimo o cantidad deseable, usa <b style={{ color: VERDE }}>Configurar</b> (arriba). El reloj muestra el historial de precios.
+                        Para cambiar {tab === 'insumos' ? 'unidades, precios' : 'precios'}, mínimo o cantidad deseable, usa <b style={{ color: VERDE }}>Configurar</b> (arriba). El reloj muestra el historial de precios.
                       </div>
                     )}
                     <div style={{ display: 'grid', gridTemplateColumns: tab === 'insumos' ? '1fr 1.4fr 0.8fr 0.8fr 0.8fr 0.8fr 150px' : '1.3fr 0.7fr 0.8fr 0.8fr 0.9fr 150px',
