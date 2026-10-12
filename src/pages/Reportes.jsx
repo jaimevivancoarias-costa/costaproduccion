@@ -348,6 +348,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const grid = esJefe ? '1.5fr 1.1fr 0.95fr 1.05fr 1.7fr' : '1.6fr 1fr 1fr'
   // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo → cantidad/factor
   // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
+  // Cantidad con hasta 2 decimales (ej. 4,5 kg), para no redondear a entero.
+  const cant2 = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
   const equivale = g => {
     if (g.mixto || !g.cantidad) return '—'
     if (g.tipo === 'balanceado') return miles(g.cantidad / (todasFincas ? LIBRAS_POR_SACO : lps)) + ' sacos'
@@ -370,7 +372,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       return {
         nombre: g.etiqueta + (agrupar === 'item' && g.tipo !== 'mixto' ? `  (${g.tipo})` : ''),
         detalle: ps ? 'Por precio: ' + ps.map(x => `${miles(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
-        cantidad: g.mixto ? '—' : `${miles(g.cantidad)} ${unidadCel(g)}`,
+        cantidad: g.mixto ? '—' : `${cant2(g.cantidad)} ${unidadCel(g)}`,
         equivale: equivale(g),
         costo: dinero(g.costo),
         costoUnit: (!g.mixto && g.cantidad) ? `${dinero(g.costo / g.cantidad)} /${unidadCel(g)}` : '',
@@ -655,7 +657,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 )}
               </span>
               <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{miles(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{unidadCel(g)}</span></>}
+                {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{cant2(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{unidadCel(g)}</span></>}
               </span>
               <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12.5px' }}>
                 {equivale(g)}
