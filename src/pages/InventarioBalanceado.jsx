@@ -481,7 +481,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const precio = precios[id] || 0
       const desde = precioInfo[id]?.aplicado?.desde
       const valor = Number(valorFifo[id] || 0)
-      const conteo = m && m.conteo != null ? Number(m.conteo) : null
+      // Si el período arranca en el inventario inicial (o en un conteo), ese
+      // valor contado ES el Saldo Ini. — igual que en pantalla (anclaInicio).
+      const iniEsConteo = anclaInicio(m)
+      const conteoRaw = m && m.conteo != null ? Number(m.conteo) : null
+      const conteo = iniEsConteo ? null : conteoRaw
+      const iniVal = iniEsConteo ? conteoRaw : numDec(m?.saldo_inicial)
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
@@ -499,17 +504,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         }
       }
 
-      totIni += numDec(m?.saldo_inicial); totIng += numDec(m?.ingresos); totDev += numDec(m?.devuelto)
+      totIni += iniVal; totIng += numDec(m?.ingresos); totDev += numDec(m?.devuelto)
       totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoAlDia; totValor += valor
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
-      const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
+      const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
       const consDia = cd != null ? `${limpio(cd)} sacos · congelado` : ''
       const consDiaCalc = (cd != null && cq.habia != null) ? `contó ${limpio(cq.habia - cd)} + ${limpio(cd)} = ${limpio(cq.habia)} había` : ''
       filasRep.push({
         nombre, lotesLinea, viaTop: 'Saco → lb', viaSub: `1 Saco = ${lps || LIBRAS_POR_SACO} lb`,
-        inicial: limpio(m?.saldo_inicial || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
+        inicial: limpio(iniVal || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
         saldoHoy: `${limpio(saldoAlDia)} sacos`, saldoEquiv: `= ${limpio(saldoAlDia * (lps || LIBRAS_POR_SACO))} lb`,
         precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
