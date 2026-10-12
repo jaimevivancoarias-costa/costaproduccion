@@ -439,18 +439,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                   ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
                                   : limpio(sisCorte(l, cons))}
                                 <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
-                                {sisDet === skey && (() => {
-                                  const sisV = sisCorte(l, cons), contoV = Number(l.cantidad_contada), difV = difCorte(l, cons)
-                                  const uCap = cap1(uni)
-                                  const res = Math.abs(difV) < 0.001 ? 'cuadró' : (difV < 0 ? `faltó ${limpio(Math.abs(difV))} ${uCap}` : `sobró ${limpio(difV)} ${uCap}`)
-                                  const resColor = Math.abs(difV) < 0.001 ? VERDE : (difV < 0 ? ROJO : AMBAR)
-                                  return (
-                                    <span style={{ display: 'block', fontSize: '11px', color: GRIS, marginTop: '7px', lineHeight: 1.7, textAlign: 'right' }}>
-                                      El sistema esperaba <b style={{ color: NAVY }}>{limpio(sisV)} {uCap}</b> y contaste <b style={{ color: NAVY }}>{limpio(contoV)}</b>: <b style={{ color: resColor }}>{res}</b>.
-                                      <span style={{ display: 'block', marginTop: '3px' }}>Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)} {uCap}</b>{l.consumo_dia == null ? ' (estimado)' : ''}.</span>
-                                    </span>
-                                  )
-                                })()}
+                                {sisDet === skey && (
+                                  <span style={{ display: 'block', fontSize: '11px', color: GRIS, marginTop: '7px', lineHeight: 1.7, textAlign: 'right' }}>
+                                    Esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))}</b> · contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>
+                                    <span style={{ display: 'block', marginTop: '3px' }}>Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)}</b> {c.conto_despues ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.</span>
+                                  </span>
+                                )}
                               </>
                             })()}
                           </span>
