@@ -265,7 +265,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const ok = reporteBodegaPDF({
       titulo: 'Acta de conteo de bodega', finca: String(finca.nombre).toUpperCase(), categoria: 'Insumos',
       subtitulo: `Conteo del ${corta(c.fecha)}${c.es_inicial ? ' (inventario inicial)' : ''}`,
-      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. Contó = lo que había al inicio del día. Consumo del día = lo aplicado ese día (congelado). Diferencia = Contó − Sistema. Consumo $ = lo consumido del corte.',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. Contó = lo que había al inicio del día. ' + (hayConsDia ? 'Consumo del día = lo aplicado ese día (congelado). ' : '') + 'Diferencia = Contó − Sistema. Consumo $ = lo consumido del corte.',
       meta: [
         { k: 'Período', v: idx === 0 ? `${corta(c.fecha)} – hoy` : `${corta(c.fecha)} – ${hastaTxt}` },
         { k: 'Contó', v: autor || '—' },
