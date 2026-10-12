@@ -1646,8 +1646,10 @@ function ConfigInsumoTabs(p) {
             <EditorMinimos insumo={p.insumo} fincas={p.fincas} unitLabel={p.minUnitLabel}
               initStd={p.minStd} initGrupos={p.minGrupos} onError={p.onError} onCancelar={p.onCancelar} />
           </div>
-        : <EditorConfigTodo insumo={p.insumo} fincas={p.fincas} presentaciones={p.presentaciones} actual={p.actual}
-            excIni={p.excIni} sinPrecio onHecho={p.onHecho} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar} />}
+        : <div style={{ padding: '2px 18px 14px' }}>
+            <EditorConfigTodo insumo={p.insumo} fincas={p.fincas} presentaciones={p.presentaciones} actual={p.actual}
+              excIni={p.excIni} sinPrecio onHecho={p.onHecho} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar} />
+          </div>}
     </div>
   )
 }
