@@ -2059,8 +2059,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
   const kU = { fontSize: '13px', fontWeight: 600 }
   const dU = { fontSize: '11px', color: GRIS, marginTop: '2px' }
   const ctrlU = { flex: 1, display: 'flex', alignItems: 'center', gap: '10px' }
-  // Recuadros grandes que llenan el ancho (como en Precios/Mínimos)
-  const selBig = { ...inp, flex: 1, padding: '11px 12px', fontSize: '14px' }
+  // Mismo padding/estilo que Precios y Mínimos (no estirado: deja aire a los lados)
+  const selBig = { ...inp, width: '230px', padding: '9px 11px', fontSize: '14px' }
   const resumenU = { background: '#f3f8fe', border: '1px solid #d5e3f2', borderRadius: '11px', padding: '12px 15px', fontSize: '13px', color: NAVY, marginTop: '16px' }
   return (
     <div style={{ padding: '14px 2px 4px' }}>
@@ -2085,7 +2085,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
           <div style={filaU}>
             <div style={etqU}><div style={kU}>{esComp ? '2 · Peso de referencia' : '2 · Cuánto trae'}</div><div style={dU}>{esComp ? 'peso de un envase' : 'contenido de un envase'}</div></div>
             <div style={ctrlU}>
-              <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 45" style={{ ...inp, width: '110px', padding: '11px 12px', fontSize: '14px', textAlign: 'right' }} />
+              <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 45" style={{ ...inp, width: '110px', padding: '9px 11px', fontSize: '14px', textAlign: 'right' }} />
               <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={selBig}>
                 {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
               </select>
@@ -2157,7 +2157,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
             {/* Cómo se usa */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
               <div style={{ width: '210px', flexShrink: 0 }}><div style={{ fontSize: '13px', fontWeight: 600 }}>Cómo se usa</div><div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>unidad en que se aplica</div></div>
-              <select value={g.unidad} onChange={ev => setUnidadGrupo(g.grp, ev.target.value)} style={{ ...inp, flex: 1, padding: '11px 12px', fontSize: '14px' }}>
+              <select value={g.unidad} onChange={ev => setUnidadGrupo(g.grp, ev.target.value)} style={{ ...inp, width: '230px', padding: '9px 11px', fontSize: '14px' }}>
                 <option value="">(igual al estándar)</option>
                 <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
                 {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
