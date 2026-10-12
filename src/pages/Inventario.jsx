@@ -529,7 +529,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       // columna Conteo / Inicial de "Qué se movió".
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_inventario')
-          .select('fecha, creado_por, es_inicial, toma_inventario_linea(insumo_id, motivo_descuadre, diferencia)')
+          .select('fecha, creado_por, es_inicial, toma_inventario_linea(insumo_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
           .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
@@ -537,7 +537,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}, dm = {}
       ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
-        cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial }
+        cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
+          consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
         if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.insumo_id] = l.motivo_descuadre
       }))
       setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU)
@@ -676,6 +677,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         }
       }
       const contadoInfo = cq?.fecha ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
+      // Consumo del día congelado del conteo: valor + desglose "contó F + C = H había".
+      const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
+      const uLow = uPres.toLowerCase()
+      const consDia = cd != null ? `${limpio(cd)} ${uLow} · congelado` : ''
+      const consDiaCalc = (cd != null && cq.habia != null) ? `contó ${limpio(cq.habia - cd)} + ${limpio(cd)} = ${limpio(cq.habia)} había` : ''
 
       totIni += nd(m?.saldo_inicial); totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
       totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoAlDia; totValor += valor
@@ -691,12 +697,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
+        consDia, consDiaCalc,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
         motivo: descMotivo[id] || '',
       })
     })
     filasRep.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'))
     const hayConteo = filasRep.some(f => f.contado !== '')
+    const hayConsDiaRep = filasRep.some(f => f.consDia !== '')
 
     const columnas = [
       { titulo: 'Insumo', campo: 'nombre', sub: 'lotesLinea' },
@@ -711,6 +719,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       { titulo: 'Valor', der: true, campo: 'valor' },
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
+        ...(hayConsDiaRep ? [{ titulo: 'Consumo del día', der: true, campo: 'consDia', sub: 'consDiaCalc' }] : []),
         { titulo: 'Dif.', der: true, campo: 'dif' },
         { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
         { titulo: 'Motivo', campo: 'motivo' },
@@ -720,7 +729,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       nombre: 'Total', lotesLinea: '', viaTop: '', viaSub: '', inicial: limpio(totIni), ingresos: '+' + limpio(totIng),
       devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
       saldoHoy: '', saldoEquiv: '', consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
-      valor: dinero(totValor), contado: '', contadoInfo: '',
+      valor: dinero(totValor), contado: '', contadoInfo: '', consDia: '', consDiaCalc: '',
       dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
       descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
     }
