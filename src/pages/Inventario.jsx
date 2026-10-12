@@ -196,7 +196,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     ;(async () => {
       const ids = conteos.map(c => c.id)
       const { data: lins } = await supabase.schema('produccion').from('toma_inventario_linea')
-        .select('toma_id, insumo_id, cantidad_sistema, cantidad_contada, diferencia, motivo_descuadre').in('toma_id', ids)
+        .select('toma_id, insumo_id, cantidad_sistema, cantidad_contada, consumo_dia, diferencia, motivo_descuadre').in('toma_id', ids)
       if (!vivo) return
       const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
       setLineasToma(byToma)
@@ -245,23 +245,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const autor = nombresU[c.creado_por]
     const nFalt = lins.filter(l => !c.es_inicial && difCorte(l, cons) < -0.001).length
     const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(conteos[idx - 1].fecha, -1))
+    const hayConsDia = lins.some(l => l.consumo_dia != null && Number(l.consumo_dia) > 0.0001)
     const filas = [...lins].sort((a, b) => nombreInsumo(a.insumo_id).localeCompare(nombreInsumo(b.insumo_id))).map(l => {
       const dif = difCorte(l, cons)
+      const cd = l.consumo_dia != null ? Number(l.consumo_dia) : null
       return {
         insumo: nombreInsumo(l.insumo_id),
         unidad: cap1(unidadIns(l.insumo_id)),
         sistema: c.es_inicial ? '—' : limpio(sisCorte(l, cons)),
         contado: limpio(l.cantidad_contada),
+        // "Contó" = lo que había al inicio del día (incluye lo de ese día).
+        consDia: cd != null && cd > 0.0001 ? `${limpio(cd)}` : '—',
         diferencia: c.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(dif)),
         motivo: l.motivo_descuadre || (c.es_inicial || Math.abs(dif) < 0.001 ? '' : 'sin motivo'),
         consumo: cons ? dinero(cons.porProd[l.insumo_id] || 0) : '',
       }
     })
-    const total = esJefe && cons ? { insumo: 'Total del corte', unidad: '', sistema: '', contado: '', diferencia: '', motivo: '', consumo: dinero(cons.total) } : null
+    const total = esJefe && cons ? { insumo: 'Total del corte', unidad: '', sistema: '', contado: '', consDia: '', diferencia: '', motivo: '', consumo: dinero(cons.total) } : null
     const ok = reporteBodegaPDF({
       titulo: 'Acta de conteo de bodega', finca: String(finca.nombre).toUpperCase(), categoria: 'Insumos',
       subtitulo: `Conteo del ${corta(c.fecha)}${c.es_inicial ? ' (inventario inicial)' : ''}`,
-      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. Contó = lo físico. Diferencia = Contó − Sistema. Consumo $ = lo consumido del corte.',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. Contó = lo que había al inicio del día. Consumo del día = lo aplicado ese día (congelado). Diferencia = Contó − Sistema. Consumo $ = lo consumido del corte.',
       meta: [
         { k: 'Período', v: idx === 0 ? `${corta(c.fecha)} – hoy` : `${corta(c.fecha)} – ${hastaTxt}` },
         { k: 'Contó', v: autor || '—' },
@@ -273,6 +277,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         { titulo: 'Unidad', campo: 'unidad' },
         { titulo: 'Sistema', campo: 'sistema', der: true },
         { titulo: 'Contó', campo: 'contado', der: true },
+        ...(hayConsDia ? [{ titulo: 'Consumo del día', campo: 'consDia', der: true }] : []),
         { titulo: 'Diferencia', campo: 'diferencia', der: true },
         { titulo: 'Motivo', campo: 'motivo' },
         ...(esJefe ? [{ titulo: 'Consumo $', campo: 'consumo', der: true }] : []),
