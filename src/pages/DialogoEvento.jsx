@@ -245,17 +245,18 @@ export async function eliminarEvento({ evento, cicloId }) {
   await supabase.schema('produccion').from('evento').delete().eq('id', id)
 }
 
-export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, destinosPosibles,
+export default function DialogoEvento({ tipo, ciclo, piscina, inicial, laboratorios, destinosPosibles,
                                         minima, onCancelar, onGuardar, onLaboratorioAgregado }) {
   const t = TIPOS[tipo]
   const objetivo = piscina || ciclo
-  const [fecha, setFecha] = useState(hoyISO())
-  const [libras, setLibras] = useState('')
+  // `inicial` prellena el diálogo al EDITAR una transferencia.
+  const [fecha, setFecha] = useState(inicial?.fecha || hoyISO())
+  const [libras, setLibras] = useState(inicial?.libras || '')
   const [larva, setLarva] = useState('')
-  const [gramaje, setGramaje] = useState('')
+  const [gramaje, setGramaje] = useState(inicial?.gramaje || '')
   const [lab, setLab] = useState('')
-  const [destinos, setDestinos] = useState([])
-  const [obs, setObs] = useState('')
+  const [destinos, setDestinos] = useState(inicial?.destinos || [])
+  const [obs, setObs] = useState(inicial?.obs || '')
   const [enviando, setEnviando] = useState(false)
   const [errorLab, setErrorLab] = useState(null)
   const [dropAbierto, setDropAbierto] = useState(false)   // lista de piscinas destino
@@ -273,7 +274,9 @@ export default function DialogoEvento({ tipo, ciclo, piscina, laboratorios, dest
   const esPrecria = objetivo?.tipo === 'precria'
   const larvasSembradas = num(objetivo?.larva) || 0
   // Población disponible del origen = lo que tiene menos lo ya transferido antes.
-  const poblacion = Math.max(0, larvasSembradas - (Number(yaTransferido) || 0))
+  // Al EDITAR, se suma de vuelta el monto de la transferencia editada (se va a
+  // reemplazar), para que esté disponible para repartir de nuevo.
+  const poblacion = Math.max(0, larvasSembradas - (Number(yaTransferido) || 0) + (Number(inicial?.montoEditado) || 0))
 
   // Al abrir una transferencia piscina->piscina, cuánto ya se transfirió de
   // este ciclo (para no repartir más de lo que queda).
