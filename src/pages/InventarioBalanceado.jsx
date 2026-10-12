@@ -64,6 +64,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [sueltas, setSueltas] = useState({})         // libras sueltas
   const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de alimentar ese día
   const [consumoDia, setConsumoDia] = useState({})   // producto_id -> sacos consumidos el día del conteo (editable)
+  const [sistemaEdit, setSistemaEdit] = useState({}) // producto_id -> cantidad_sistema GUARDADA (al editar)
   const [consDiaRef, setConsDiaRef] = useState({})   // producto_id -> sacos consumidos REGISTRADOS HOY (referencia)
   const [motivoDesc, setMotivoDesc] = useState({})   // motivo del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})
@@ -603,19 +604,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
   async function editarToma(t) {
     const { data } = await supabase.schema('produccion').from('toma_balanceado_linea')
-      .select('producto_id, cantidad_contada, consumo_dia, motivo_descuadre').eq('toma_id', t.id)
-    const mapa = {}, md = {}, mo = {}, cd = {}
+      .select('producto_id, cantidad_contada, cantidad_sistema, consumo_dia, motivo_descuadre').eq('toma_id', t.id)
+    const mapa = {}, md = {}, mo = {}, cd = {}, sis = {}
     ;(data || []).forEach(l => {
       mapa[l.producto_id] = String(l.cantidad_contada)
       if (l.consumo_dia != null) cd[l.producto_id] = String(l.consumo_dia)
+      if (l.cantidad_sistema != null) sis[l.producto_id] = Number(l.cantidad_sistema)
       if (l.motivo_descuadre) {
         if (MOTIVOS_DESCUADRE.includes(l.motivo_descuadre)) md[l.producto_id] = l.motivo_descuadre
         else { md[l.producto_id] = 'Otro'; mo[l.producto_id] = l.motivo_descuadre }
       }
     })
-    setConsumoDia(cd)   // consumo del día CONGELADO del conteo (el efecto no lo pisa)
+    // El campo "Contó" guarda el HABÍA → se interpreta tal cual (contoDespues
+    // false). La decisión antes/después se conserva aparte.
+    setConsumoDia(cd); setSistemaEdit(sis)
     setContado(mapa); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
-    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(!!t.conto_despues_ui)
+    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(false)
     setEditToma(t); setContando(true); setAviso(null)
   }
 
@@ -657,7 +661,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       let tomaId
       if (editToma) {
         const { error: eU } = await supabase.schema('produccion').from('toma_balanceado')
-          .update({ fecha, observacion: obs || null, conto_despues_ui: contoDespues }).eq('id', editToma.id)
+          .update({ fecha, observacion: obs || null, conto_despues_ui: !!editToma.conto_despues_ui }).eq('id', editToma.id)
         if (eU) throw eU
         await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
@@ -683,9 +687,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         const hayDesc = !primeraVez && (editToma || Math.abs(f.diferencia || 0) > 0.001)
         const cat = motivoDesc[f.producto_id]
         const motivoD = hayDesc && cat ? (cat === 'Otro' ? (motivoOtro[f.producto_id]?.trim() || 'Otro') : cat) : null
+        // Al editar se conserva el Sistema (había esperado) GUARDADO, no se recalcula.
+        const sisGuardado = editToma && sistemaEdit[f.producto_id] != null ? Number(sistemaEdit[f.producto_id]) : Number(f.habiaSistema)
         return {
           toma_id: tomaId, producto_id: f.producto_id, cantidad_contada: f.habiaContado,
-          cantidad_sistema: Number(f.habiaSistema), diferencia: f.diferencia, motivo_descuadre: motivoD,
+          cantidad_sistema: sisGuardado, diferencia: Number(f.habiaContado) - sisGuardado, motivo_descuadre: motivoD,
           // Consumo del día CONGELADO (queda fijo aunque luego registren comida de ese día).
           consumo_dia: f.cons > 0.0001 ? f.cons : null,
         }
@@ -981,23 +987,30 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         = {limpio(f.contado)} sacos · {limpio(f.contado * lps)} lb
                       </div>
                     )}
+                    {editToma && sistemaEdit[f.producto_id] != null && f.contado !== null && (() => {
+                      const sisV = Number(sistemaEdit[f.producto_id])
+                      const d = Number(f.habiaContado) - sisV
+                      const desc = Math.abs(d) < 0.001 ? <b style={{ color: VERDE }}>cuadra</b> : (d < 0 ? <>faltan <b>{limpio(Math.abs(d))}</b></> : <>sobran <b>{limpio(d)}</b></>)
+                      return <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '5px', textAlign: 'right' }}>El sistema tenía <b style={{ color: NAVY }}>{limpio(sisV)} sacos</b> · {desc}</div>
+                    })()}
                     {(f.cons > 0.0001 || f.consRef > 0.0001) && (
                       <div style={{ marginTop: '7px', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 9px' }}>
                         <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#BA7517', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           Consumo del día
                           <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>{editToma ? 'congelado' : 'se congela'}</span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
-                          <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0"
-                            onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))}
-                            style={{ ...inp, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
-                          <span style={{ fontSize: '10px', color: '#BA7517' }}>
-                            sacos
-                            {editToma && Math.abs(f.consRef - f.cons) > 0.001
-                              ? <> · registrado hasta hoy: {limpio(f.consRef)} ⚠️</>
-                              : <> · registrado hoy: {limpio(f.consRef)}</>}
-                          </span>
-                        </div>
+                        {editToma ? (
+                          <div style={{ fontSize: '11px', textAlign: 'right' }}>
+                            <b style={{ color: '#7a5410' }}>{limpio(f.cons)} sacos</b> <span style={{ color: '#BA7517' }}>· del {ddmm(fecha)}</span>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
+                            <CampoNumero maxDec={2} value={consumoDia[f.producto_id] ?? ''} placeholder="0"
+                              onChange={v => setConsumoDia(cd => ({ ...cd, [f.producto_id]: v }))}
+                              style={{ ...inp, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
+                            <span style={{ fontSize: '10px', color: '#BA7517' }}>sacos · registrado hoy: {limpio(f.consRef)}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                     {f.contado !== null && f.cons > 0.0001 && (
