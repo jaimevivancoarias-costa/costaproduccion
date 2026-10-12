@@ -721,7 +721,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     if (!contando || primeraVez || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
     let vivo = true
     ;(async () => {
-      const { data } = await supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: fecha })
+      // Al EDITAR, el conteo ya está guardado en `fecha` y ancla el saldo a lo
+      // contado, así que se pide la VÍSPERA (el "había" antes del conteo). En un
+      // conteo nuevo aún no hay toma en `fecha`, así que se pide a la fecha.
+      const hasta = editToma ? sumarDias(fecha, -1) : fecha
+      const { data } = await supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: hasta })
       if (!vivo) return
       const m = {}; (data || []).forEach(r => { m[r.insumo_id] = Number(r.saldo) })
       setSaldoFecha(m)
@@ -761,11 +765,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     // de compra). s.saldo ya tiene restado el consumo de hoy, así que había =
     // s.saldo + lo de hoy. Si contó DESPUÉS, escribió lo que quedó → se le suma
     // lo de hoy. "El sistema dice" muestra el había (antes) o lo de ahora (después).
-    // El sistema es el saldo recalculado A LA FECHA del conteo (nuevo o al editar).
+    // El sistema es el saldo recalculado: en conteo nuevo = saldo a la fecha (fin
+    // de día); al EDITAR = saldo de la víspera (= el "había" antes del conteo).
     const sis = (saldoFecha[s.insumo_id] != null) ? Number(saldoFecha[s.insumo_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.insumo_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.insumo_id] ?? ''))
-    const habiaSistema = cons > 0.0001 ? sis + cons : sis
+    // Al editar, sis YA es la víspera (el había); no se le suma el consumo.
+    const habiaSistema = editToma ? sis : (cons > 0.0001 ? sis + cons : sis)
     const esperado = (contoDespues && cons > 0.0001) ? sis : habiaSistema
     const habiaContado = c === null ? null : ((contoDespues && cons > 0.0001) ? c + cons : c)
     const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
