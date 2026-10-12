@@ -400,7 +400,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
   const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
   const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de aplicar ese día
-  const [consumoDia, setConsumoDia] = useState({})   // insumoId -> consumo del día del conteo, en unidad de compra
+  const [consumoDia, setConsumoDia] = useState({})   // insumoId -> consumo del día (editable), en unidad de compra
+  const [consDiaRef, setConsDiaRef] = useState({})   // insumoId -> consumo del día REGISTRADO HOY (referencia), unidad de compra
   const [motivoDesc, setMotivoDesc] = useState({})   // insumoId -> categoría del descuadre
   const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
   const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
@@ -549,7 +550,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Consumo (aplicación) registrado EL DÍA del conteo, por insumo, pasado a la
   // unidad de COMPRA (÷ factor) para poder reconstruir el "había".
   useEffect(() => {
-    if (!contando || primeraVez) { setConsumoDia({}); return }
+    if (!contando || primeraVez) { setConsumoDia({}); setConsDiaRef({}); return }
     let vivo = true
     ;(async () => {
       const { data } = await supabase.schema('produccion').from('consumo_insumo')
@@ -559,11 +560,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const m = {}
       ;(data || []).forEach(r => { if (r.insumo_id) m[r.insumo_id] = (m[r.insumo_id] || 0) + Number(r.cantidad || 0) })
       const sac = {}
-      Object.entries(m).forEach(([id, v]) => { const fa = factores[id]?.factor || 1; sac[id] = v / fa })
-      setConsumoDia(sac)
+      Object.entries(m).forEach(([id, v]) => { const fa = factores[id]?.factor || 1; sac[id] = String(Math.round((v / fa) * 1e6) / 1e6) })
+      setConsDiaRef(sac)   // referencia: lo registrado hasta ahora
+      // Conteo nuevo: el consumo editable arranca del registrado. Al EDITAR un
+      // conteo existente se carga el consumo CONGELADO (en editarConteo), no se pisa.
+      if (!editToma) setConsumoDia(sac)
     })()
     return () => { vivo = false }
-  }, [contando, fecha, finca.id, primeraVez, factores])
+  }, [contando, fecha, finca.id, primeraVez, factores, editToma])
   const ultimo = conteos[0]
 
   // El valor se calcula a PRECIO ACTUAL: saldo × precio vigente. Así, al
@@ -598,17 +602,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     // s.saldo + lo de hoy. Si contó DESPUÉS, escribió lo que quedó → se le suma
     // lo de hoy. "El sistema dice" muestra el había (antes) o lo de ahora (después).
     const sis = Number(s.saldo)
-    const cons = Number(consumoDia[s.insumo_id] || 0)
+    const cons = numDec(String(consumoDia[s.insumo_id] ?? ''))
+    const consRef = numDec(String(consDiaRef[s.insumo_id] ?? ''))
     const habiaSistema = cons > 0.0001 ? sis + cons : sis
     const esperado = (contoDespues && cons > 0.0001) ? sis : habiaSistema
     const habiaContado = c === null ? null : ((contoDespues && cons > 0.0001) ? c + cons : c)
     const saldoFinal = habiaContado === null ? null : habiaContado - (cons > 0.0001 ? cons : 0)
     return { ...s, precio: precios[s.insumo_id] || 0,
-             contado: c, cons, esperado, habiaSistema, habiaContado, saldoFinal,
+             contado: c, cons, consRef, esperado, habiaSistema, habiaContado, saldoFinal,
              // Redondeada a 2 decimales para que una diferencia minúscula por la
              // conversión cuente como "cuadra", no "sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sobrante, factores, consumoDia, contoDespues])
+  }), [saldos, precios, contado, sobrante, factores, consumoDia, consDiaRef, contoDespues])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
@@ -940,15 +945,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   async function editarConteo(c) {
     const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
-      .select('insumo_id, cantidad_contada, motivo_descuadre').eq('toma_id', c.id)
-    const mapa = {}, md = {}, mo = {}
+      .select('insumo_id, cantidad_contada, consumo_dia, motivo_descuadre').eq('toma_id', c.id)
+    const mapa = {}, md = {}, mo = {}, cd = {}
     ;(data || []).forEach(l => {
       mapa[l.insumo_id] = String(l.cantidad_contada)
+      if (l.consumo_dia != null) cd[l.insumo_id] = String(l.consumo_dia)
       if (l.motivo_descuadre) {
         if (MOTIVOS_DESCUADRE.includes(l.motivo_descuadre)) md[l.insumo_id] = l.motivo_descuadre
         else { md[l.insumo_id] = 'Otro'; mo[l.insumo_id] = l.motivo_descuadre }
       }
     })
+    // Consumo del día CONGELADO del conteo (lo que se usó al guardarlo). El
+    // efecto de carga NO lo pisa porque editToma está puesto.
+    setConsumoDia(cd)
     setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
     setContoDespues(false); setEditToma(c); setContando(true); setAviso(null)
@@ -1078,6 +1087,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           cantidad_sistema: Number(sistemaVal),
           diferencia: difVal,
           motivo_descuadre: motivoD,
+          // Consumo del día CONGELADO (lo que se aplicó antes de contar). Queda
+          // fijo aunque luego registren alimentación de ese día.
+          consumo_dia: f.cons > 0.0001 ? f.cons : null,
         }
       })
       const { error: e2 } = await supabase.schema('produccion')
@@ -1348,6 +1360,25 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     <CampoNumero maxDec={2} value={contado[f.insumo_id] ?? ''} placeholder="—"
                       onChange={v => setContado(c => ({ ...c, [f.insumo_id]: v }))}
                       style={{ ...entrada, width: '100%', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
+                  )}
+                  {(f.cons > 0.0001 || f.consRef > 0.0001) && (
+                    <div style={{ marginTop: '7px', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 9px' }}>
+                      <div style={{ fontSize: '9.5px', fontWeight: 700, color: '#BA7517', textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        Consumo del día
+                        <span style={{ fontSize: '8.5px', fontWeight: 700, color: '#5f6b76', background: '#eef2f6', borderRadius: '20px', padding: '1px 6px' }}>{editToma ? 'congelado' : 'se congela'}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', justifyContent: 'flex-end' }}>
+                        <CampoNumero maxDec={2} value={consumoDia[f.insumo_id] ?? ''} placeholder="0"
+                          onChange={v => setConsumoDia(cd => ({ ...cd, [f.insumo_id]: v }))}
+                          style={{ ...entrada, width: '70px', textAlign: 'right', borderColor: '#e3c17e' }} />
+                        <span style={{ fontSize: '10px', color: '#BA7517' }}>
+                          {cap1(UNIDAD[f.unidad] || f.unidad)}
+                          {editToma && Math.abs(f.consRef - f.cons) > 0.001
+                            ? <> · registrado hasta hoy: {limpio(f.consRef)} ⚠️</>
+                            : <> · registrado hoy: {limpio(f.consRef)}</>}
+                        </span>
+                      </div>
+                    </div>
                   )}
                   {f.contado !== null && f.cons > 0.0001 && (() => {
                     const u = cap1(UNIDAD[f.unidad] || f.unidad)
