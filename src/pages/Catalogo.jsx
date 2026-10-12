@@ -104,6 +104,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
   const [editConfig, setEditConfig] = useState(null)  // id de insumo en "Configurar todo de una"
   const [presentaciones, setPresentaciones] = useState([])
   const [busqCat, setBusqCat] = useState('')   // filtro por nombre en el catálogo
+  const [busqFoco, setBusqFoco] = useState(false)  // muestra la lista desplegable al escribir
   const [recostModal, setRecostModal] = useState(null)  // { prodId, nombre, esIns, fincas:[{id,nombre,consumos}] }
   const [recostChoice, setRecostChoice] = useState({})  // fincaId -> 'recostear' | 'mantener'
   const [aplicandoRecost, setAplicandoRecost] = useState(false)
@@ -362,18 +363,35 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
             border: '0.5px solid ' + (tab === id ? '#9cc4e8' : BORDE), background: tab === id ? '#E6F1FB' : 'white',
             color: tab === id ? AZUL : NAVY, fontWeight: tab === id ? 500 : 400 }}>{txt}</button>
         ))}
-        {tab !== 'diesel' && (
+        {tab !== 'diesel' && (() => {
+          const todos = (tab === 'insumos' ? insumos : productos)
+          const sugeridos = todos.filter(p => !busqCat.trim() || p.nombre.toLowerCase().includes(busqCat.trim().toLowerCase()))
+          return (
           <div style={{ position: 'relative', marginLeft: esJefeGlobal ? '0' : 'auto' }}>
             <input type="text" value={busqCat} onChange={e => setBusqCat(e.target.value)}
+                   onFocus={() => setBusqFoco(true)} onBlur={() => setTimeout(() => setBusqFoco(false), 150)}
                    placeholder={`Buscar ${tab === 'insumos' ? 'insumo' : 'balanceado'}…`}
                    style={{ padding: '8px 30px 8px 12px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
                             borderRadius: '9px', background: 'white', minWidth: '220px', color: NAVY }} />
             {busqCat && (
-              <button onClick={() => setBusqCat('')} title="Limpiar"
+              <button onMouseDown={e => e.preventDefault()} onClick={() => setBusqCat('')} title="Limpiar"
                       style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', cursor: 'pointer', color: '#c3d0db', fontSize: '15px', padding: 0, lineHeight: 1 }}>✕</button>
             )}
+            {busqFoco && sugeridos.length > 0 && (
+              <div style={{ position: 'absolute', top: '40px', left: 0, zIndex: 30, background: '#fff', border: '0.5px solid ' + BORDE,
+                            borderRadius: '10px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '5px', minWidth: '220px', width: '100%', maxHeight: '280px', overflow: 'auto' }}>
+                {sugeridos.map(p => (
+                  <button key={p.id} onMouseDown={e => e.preventDefault()} onClick={() => { setBusqCat(p.nombre); setBusqFoco(false) }}
+                          style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: p.nombre === busqCat ? '#E6F1FB' : 'none',
+                                   cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, padding: '8px 10px', borderRadius: '7px' }}>
+                    {p.nombre}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+          )
+        })()}
         {esJefeGlobal && tab !== 'diesel' && (
           <button onClick={() => { setNuevo(true); setAviso(null) }} style={{ ...btn, marginLeft: 'auto' }}>
             + Agregar {tab === 'insumos' ? 'Insumo' : 'Balanceado'}
