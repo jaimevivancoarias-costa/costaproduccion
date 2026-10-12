@@ -380,8 +380,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                             {idx === 0 ? 'Corte actual' : c.es_inicial ? 'Inventario inicial' : 'Corte anterior'}</span>
                         </div>
                         <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
-                          {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(c.fecha)} → ${hastaTxt}`}
-                          {autor ? ` · contó ${autor}` : ''} · {lins.length} {lins.length === 1 ? 'insumo' : 'insumos'} · {nFalt > 0
+                          {autor ? `Contó ${autor} · ` : ''}{lins.length} {lins.length === 1 ? 'insumo' : 'insumos'} · {nFalt > 0
                             ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
                             : <span style={{ color: VERDE }}>todo cuadró</span>}
                         </div>
@@ -396,6 +395,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       </div>
                     </div>
                     {abierto && <>
+                    {(() => {
+                      const hayCons = (lineasToma[c.id] || []).some(l => (l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? 0)) > 0.0001)
+                      if (!c.es_inicial && esJefe && hayCons) return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', padding: '10px 16px', background: '#f8fbfd', borderTop: '0.5px solid ' + BORDE, fontSize: '12.5px' }}>
+                          <span style={{ color: NAVY, fontWeight: 600 }}>Se contó {c.conto_despues ? 'después' : 'antes'} de alimentar.</span>
+                          {corrOpen !== c.id
+                            ? <button onClick={() => setCorrOpen(c.id)} style={{ border: 'none', background: 'none', color: AZUL, fontWeight: 600, fontFamily: 'inherit', fontSize: '12.5px', cursor: 'pointer', padding: 0 }}>Corregir</button>
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 8px' }}>
+                                <span style={{ color: GRIS, fontSize: '12px' }}>¿Se contó…?</span>
+                                {[['Antes', false], ['Después', true]].map(([txt, val]) => {
+                                  const on = !!c.conto_despues === val
+                                  return <button key={txt} disabled={corrigiendoDec === c.id} onClick={() => { if (!on) corregirDecision(c, val); setCorrOpen(null) }}
+                                    style={{ border: '0.5px solid ' + (on ? AZUL : '#bcd3ec'), background: on ? AZUL : '#fff', color: on ? '#fff' : AZUL, fontWeight: 600, fontFamily: 'inherit', fontSize: '12px', padding: '4px 11px', borderRadius: '7px', cursor: 'pointer' }}>{txt}</button>
+                                })}
+                                <button onClick={() => setCorrOpen(null)} style={{ border: 'none', background: 'none', color: GRIS, fontSize: '12px', fontFamily: 'inherit', cursor: 'pointer' }}>✕</button>
+                              </span>}
+                          {corrigiendoDec === c.id && <span style={{ color: AZUL, fontSize: '11.5px' }}>Corrigiendo…</span>}
+                        </div>
+                      )
+                      return null
+                    })()}
                     <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '8px 16px', background: '#fbfcfe', borderTop: '0.5px solid ' + BORDE, borderBottom: '1px solid ' + BORDE }}>
                       {['Insumo', 'Sistema', 'Contó', 'Diferencia', 'Motivo / qué pasó', ...(esJefe ? ['Consumo $'] : [])].map((t, i) =>
                         <span key={i} style={{ ...cabCel, textAlign: i === 0 ? 'left' : 'right' }}>{t}</span>)}
@@ -409,15 +429,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       const editando = motivoEdit && motivoEdit.tomaId === c.id && motivoEdit.insumoId === l.insumo_id
                       return (
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
-                          <span>{nombreInsumo(l.insumo_id)}{uni && <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>{uni}</span>}</span>
+                          <span>{nombreInsumo(l.insumo_id)}{uni && <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>{cap1(uni)}</span>}</span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {c.es_inicial ? <span style={vacia}>—</span> : <>{limpio(sisCorte(l, cons))}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
+                            {c.es_inicial ? <span style={vacia}>—</span> : (() => {
+                              const cdLine = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? 0)
+                              const skey = c.id + '|' + l.insumo_id
+                              return <>
+                                {cdLine > 0.0001
+                                  ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
+                                  : limpio(sisCorte(l, cons))}
+                                <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
+                                {sisDet === skey && (
+                                  <span style={{ display: 'block', fontSize: '11px', color: GRIS, marginTop: '7px', lineHeight: 1.7, textAlign: 'right' }}>
+                                    Esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))}</b> · contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>
+                                    <span style={{ display: 'block', marginTop: '3px' }}>Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)}</b> {c.conto_despues ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.</span>
+                                  </span>
+                                )}
+                              </>
+                            })()}
                           </span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {limpio(l.cantidad_contada)}
-                            {(() => { const cd = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? null); return (cd != null && cd > 0.0001)
-                              ? <span style={{ display: 'block', fontSize: '10px', color: '#b08a2e' }}>+{limpio(cd)} consumo del día{l.consumo_dia == null ? ' (estimado)' : ''}</span>
-                              : null })()}
                           </span>
                           <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
@@ -506,7 +538,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .is('vigente_hasta', null)
           .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
         supabase.schema('produccion').from('toma_inventario')
-          .select('id, fecha, observacion, es_inicial, creado_por')
+          .select('id, fecha, observacion, es_inicial, creado_por, conto_despues')
           .eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').from('insumo').select('id, factor, unidad').eq('activo', true),
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo',
@@ -1042,7 +1074,37 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setConsumoDia(cd)
     setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
-    setContoDespues(false); setEditToma(c); setContando(true); setAviso(null)
+    setContoDespues(!!c.conto_despues); setEditToma(c); setContando(true); setAviso(null)
+  }
+
+  // Corregir la decisión "antes/después" de un conteo ya guardado, sin reabrir el
+  // editor. El "había" guardado cambia en ± el consumo del día de cada producto.
+  const [corrigiendoDec, setCorrigiendoDec] = useState(null)   // toma_id en proceso
+  const [sisDet, setSisDet] = useState(null)                   // 'toma|insumo' con el detalle de Sistema abierto
+  const [corrOpen, setCorrOpen] = useState(null)               // toma_id con la opción "Corregir" (antes/después) visible
+  async function corregirDecision(c, nuevoDespues) {
+    if (!!c.conto_despues === nuevoDespues || corrigiendoDec) return
+    setCorrigiendoDec(c.id); setAviso(null)
+    try {
+      const lins = lineasToma[c.id] || []
+      const signo = nuevoDespues ? 1 : -1   // antes→después suma el consumo; después→antes lo resta
+      for (const l of lins) {
+        const cons = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[c.id]?.[l.insumo_id] ?? 0)
+        if (!(cons > 0.0001)) continue
+        const nuevaContada = Number(l.cantidad_contada) + signo * cons
+        const upd = { cantidad_contada: nuevaContada, diferencia: nuevaContada - Number(l.cantidad_sistema) }
+        if (l.consumo_dia == null) upd.consumo_dia = cons   // congela el consumo usado
+        const { error } = await supabase.schema('produccion').from('toma_inventario_linea')
+          .update(upd).eq('toma_id', c.id).eq('insumo_id', l.insumo_id)
+        if (error) throw error
+      }
+      const { error: eT } = await supabase.schema('produccion').from('toma_inventario')
+        .update({ conto_despues: nuevoDespues }).eq('id', c.id)
+      if (eT) throw eT
+      setAviso({ tipo: 'ok', texto: `Conteo corregido: se contó ${nuevoDespues ? 'después' : 'antes'} de aplicar.` })
+      await cargar()
+    } catch (err) { setAviso({ tipo: 'error', texto: err.message || 'No se pudo corregir.' }) }
+    finally { setCorrigiendoDec(null) }
   }
 
   async function verDescuadres(c) {
@@ -1133,14 +1195,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (editToma) {
         // Editar un conteo existente: actualiza cabecera y reemplaza líneas.
         const { error: eU } = await supabase.schema('produccion').from('toma_inventario')
-          .update({ fecha, observacion: obs || null }).eq('id', editToma.id)
+          .update({ fecha, observacion: obs || null, conto_despues: contoDespues }).eq('id', editToma.id)
         if (eU) throw eU
         await supabase.schema('produccion').from('toma_inventario_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
       } else {
         const { data: toma, error } = await supabase.schema('produccion')
           .from('toma_inventario')
-          .insert({ finca_id: finca.id, fecha, observacion: obs || null, es_inicial: conteos.length === 0 })
+          .insert({ finca_id: finca.id, fecha, observacion: obs || null, es_inicial: conteos.length === 0, conto_despues: contoDespues })
           .select('id').single()
         if (error) throw error
         tomaId = toma.id
