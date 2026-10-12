@@ -681,7 +681,8 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                       <span>Plazo Activo</span>
                       <span style={{ textAlign: 'right' }}>Precio</span>
                     </div>
-                    {(fincas || []).map(f => {
+                    {(() => {
+                    const filaDetalle = f => {
                       const o = tab === 'insumos' ? over[k(p.id, f.id)] : null
                       const uCons = tab === 'insumos' ? (o?.unidad || p.unidad) : 'sacos'
                       const uCompra = tab === 'insumos' ? (o?.unidad_compra || p.unidad_compra) : 'sacos'
@@ -805,7 +806,23 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                           )}
                         </Fragment>
                       )
-                    })}
+                    }
+                    const fs = fincas || []
+                    const banda = (label, color, bg) => (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 0 9px' }}>
+                        <span style={{ fontSize: '10.5px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color, background: bg, borderRadius: '20px', padding: '4px 12px' }}>{label}</span>
+                        <span style={{ flex: 1, height: '1px', background: BORDE }} />
+                      </div>
+                    )
+                    const jam = fs.filter(f => f.zona === 'jambeli')
+                    const pun = fs.filter(f => f.zona === 'puna')
+                    const otras = fs.filter(f => f.zona !== 'jambeli' && f.zona !== 'puna')
+                    return (<>
+                      {jam.length > 0 && <Fragment key="z-jambeli">{banda('Jambelí', AZUL, '#e8f1fb')}{jam.map(filaDetalle)}</Fragment>}
+                      {pun.length > 0 && <Fragment key="z-puna">{banda('Puná', '#0a7f6b', '#e3f6f0')}{pun.map(filaDetalle)}</Fragment>}
+                      {otras.map(filaDetalle)}
+                    </>)
+                    })()}
                     {tab === 'insumos' && (
                       <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
                         Presentación y unidad las define el jefe. El precio lo editan jefe y contadora (sus fincas).
