@@ -348,7 +348,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     return {
       titulo: 'Acta de conteo — Balanceado', finca: finca.nombre, categoria: 'Balanceado',
       subtitulo: `Conteo del ${corta(t.fecha)}${t.es_inicial ? ' (inventario inicial)' : ''}`,
-      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. &nbsp; Contó = lo que había al inicio del día. &nbsp; Consumo del día = lo comido ese día (congelado). &nbsp; Diferencia = Contó − Sistema. &nbsp; Consumo $ = lo consumido del corte.',
+      pie: '<b>Cómo se lee:</b> Sistema = lo que debía haber la mañana del conteo. &nbsp; Contó = lo que había al inicio del día. &nbsp; ' + (hayConsDia ? 'Consumo del día = lo comido ese día (congelado). &nbsp; ' : '') + 'Diferencia = Contó − Sistema. &nbsp; Consumo $ = lo consumido del corte.',
       meta: [
         { k: 'Período', v: idx === 0 ? `${corta(t.fecha)} – hoy` : `${corta(t.fecha)} – ${hastaTxt}` },
         { k: 'Contó', v: autor || '—' },
