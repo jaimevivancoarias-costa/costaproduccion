@@ -2054,11 +2054,14 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
   const tit = { fontSize: '11px', letterSpacing: '.05em', textTransform: 'uppercase', color: GRIS, margin: '0 0 13px', fontWeight: 600 }
   const usados = [...new Set([presentacion, ...presLista])].filter(Boolean)
 
-  const filaU = { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }
-  const etqU = { width: '210px' }
+  const filaU = { display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '16px' }
+  const etqU = { width: '210px', flexShrink: 0 }
   const kU = { fontSize: '13px', fontWeight: 600 }
   const dU = { fontSize: '11px', color: GRIS, marginTop: '2px' }
-  const resumenU = { background: '#f3f8fe', border: '1px solid #d5e3f2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: NAVY, marginTop: '14px' }
+  const ctrlU = { flex: 1, display: 'flex', alignItems: 'center', gap: '10px' }
+  // Recuadros grandes que llenan el ancho (como en Precios/Mínimos)
+  const selBig = { ...inp, flex: 1, padding: '11px 12px', fontSize: '14px' }
+  const resumenU = { background: '#f3f8fe', border: '1px solid #d5e3f2', borderRadius: '11px', padding: '12px 15px', fontSize: '13px', color: NAVY, marginTop: '16px' }
   return (
     <div style={{ padding: '14px 2px 4px' }}>
       <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '14px' }}>Cómo se compra el producto, cuánto trae y cómo se usa en la piscina.</div>
@@ -2072,25 +2075,31 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
         <div style={{ padding: '16px' }}>
           <div style={filaU}>
             <div style={etqU}><div style={kU}>1 · Cómo se compra</div><div style={dU}>el envase / presentación</div></div>
-            <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={{ ...inp, width: '170px' }}>
-              {usados.map(pn => <option key={pn} value={pn}>{pn}</option>)}
-              <option value="__nueva">＋ Agregar presentación…</option>
-            </select>
+            <div style={ctrlU}>
+              <select value={presentacion} onChange={e => e.target.value === '__nueva' ? crearPresentacion() : setPresentacion(e.target.value)} style={selBig}>
+                {usados.map(pn => <option key={pn} value={pn}>{pn}</option>)}
+                <option value="__nueva">＋ Agregar presentación…</option>
+              </select>
+            </div>
           </div>
           <div style={filaU}>
             <div style={etqU}><div style={kU}>{esComp ? '2 · Peso de referencia' : '2 · Cuánto trae'}</div><div style={dU}>{esComp ? 'peso de un envase' : 'contenido de un envase'}</div></div>
-            <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 45" style={{ ...inp, width: '90px', textAlign: 'right' }} />
-            <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={{ ...inp, width: '160px' }}>
-              {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-            </select>
+            <div style={ctrlU}>
+              <CampoNumero maxDec={6} value={contenido} onChange={v => setContenido(v)} placeholder="ej. 45" style={{ ...inp, width: '110px', padding: '11px 12px', fontSize: '14px', textAlign: 'right' }} />
+              <select value={uCont} onChange={e => { setUCont(e.target.value); if (!esComp && U_FAMILIA(e.target.value) !== U_FAMILIA(unidad)) setUnidad(e.target.value) }} style={selBig}>
+                {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+              </select>
+            </div>
           </div>
           <div style={{ ...filaU, marginBottom: 0 }}>
             <div style={etqU}><div style={kU}>3 · Cómo se usa</div><div style={dU}>unidad en que se aplica en piscina</div></div>
-            <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v && v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...inp, width: '200px', borderColor: unidad ? BORDE : '#e0b64a' }}>
-              <option value="">Elige la unidad…</option>
-              <optgroup label="Por envase entero"><option value="__completo">Envase completo ({cap1(presentacion)})</option></optgroup>
-              {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
-            </select>
+            <div style={ctrlU}>
+              <select value={unidad} onChange={e => { const v = e.target.value; setUnidad(v); if (v && v !== '__completo' && U_FAMILIA(uCont) !== U_FAMILIA(v)) setUCont(v) }} style={{ ...selBig, borderColor: unidad ? BORDE : '#e0b64a' }}>
+                <option value="">Elige la unidad…</option>
+                <optgroup label="Por envase entero"><option value="__completo">Envase completo ({cap1(presentacion)})</option></optgroup>
+                {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
+              </select>
+            </div>
           </div>
           {esComp ? (
             <div style={resumenU}>Se compra por <b>{cap1(presentacion)}</b> · se usa por <b>envase entero</b>{numDec(contenido) > 0 ? <> · 1 {cap1(presentacion)} = {contenido} {UNIDAD[uCont] || uCont}</> : null}</div>
@@ -2146,9 +2155,9 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
             <div style={{ fontSize: '11px', color: GRIS, margin: '4px 0 16px' }}>Elige <b>una o varias</b> · todas se aplican en esta unidad.</div>
 
             {/* Cómo se usa */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-              <div style={{ width: '210px' }}><div style={{ fontSize: '13px', fontWeight: 600 }}>Cómo se usa</div><div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>unidad en que se aplica</div></div>
-              <select value={g.unidad} onChange={ev => setUnidadGrupo(g.grp, ev.target.value)} style={{ ...inp, width: '240px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{ width: '210px', flexShrink: 0 }}><div style={{ fontSize: '13px', fontWeight: 600 }}>Cómo se usa</div><div style={{ fontSize: '11px', color: GRIS, marginTop: '2px' }}>unidad en que se aplica</div></div>
+              <select value={g.unidad} onChange={ev => setUnidadGrupo(g.grp, ev.target.value)} style={{ ...inp, flex: 1, padding: '11px 12px', fontSize: '14px' }}>
                 <option value="">(igual al estándar)</option>
                 <optgroup label="Por envase entero"><option value="__completo">Envase entero ({cap1(presentacion)})</option></optgroup>
                 {APP_UNIDADES.map(fam => <optgroup key={fam} label={famLbl(fam)}>{UNIDADES_APP.filter(u => U_FAMILIA(u) === fam).map(u => <option key={u} value={u}>{U_LABEL[u]}</option>)}</optgroup>)}
