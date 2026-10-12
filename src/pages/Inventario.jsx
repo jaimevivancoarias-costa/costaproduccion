@@ -292,7 +292,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Sistema "en vivo" del corte = saldo del sistema la mañana del conteo
   // (saldo_inicial recalculado). Si no hay dato, usa lo guardado en la línea.
-  const sisCorte = (l, cons) => (cons && cons.sis[l.insumo_id] != null) ? cons.sis[l.insumo_id] : Number(l.cantidad_sistema)
+  // El Sistema del conteo es el GUARDADO (congelado), no un recálculo en vivo:
+  // un conteo cerrado no se mueve solo, y el mismo número se ve en todas las
+  // pantallas (editar, desglose, descuadres). cons se ignora a propósito.
+  const sisCorte = (l) => Number(l.cantidad_sistema)
   const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
   const unidadIns = id => { const u = (saldos.find(s => s.insumo_id === id)?.unidad) || ''; return (UNIDAD[u] || u || '').toLowerCase() }
 
