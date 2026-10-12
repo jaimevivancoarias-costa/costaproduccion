@@ -78,6 +78,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [nombresU, setNombresU] = useState({})         // id usuario -> nombre
   const [lineasToma, setLineasToma] = useState({})     // toma_id -> [líneas completas] (resumen Conteos anteriores)
   const [consumoToma, setConsumoToma] = useState({})   // toma_id -> { porProd: {pid: $}, total } consumo del corte
+  const [consumoDiaToma, setConsumoDiaToma] = useState({})  // toma_id -> { producto_id -> consumo del día (sacos) } en vivo
+  const [corrigiendoDec, setCorrigiendoDec] = useState(null)
+  const [sisDet, setSisDet] = useState(null)
+  const [corrOpen, setCorrOpen] = useState(null)
   const [motivoEdit, setMotivoEdit] = useState(null)   // { tomaId, productoId } línea editando motivo
   const [motivoSel, setMotivoSel] = useState('')       // opción del dropdown
   const [motivoVal, setMotivoVal] = useState('')       // texto libre cuando es "Otro"
@@ -144,7 +148,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         supabase.schema('produccion').from('precio_producto')
           .select('producto_id, plazo, precio_saco, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
         supabase.schema('produccion').from('toma_balanceado')
-          .select('id, fecha, observacion, es_inicial, creado_por, conto_despues').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
+          .select('id, fecha, observacion, es_inicial, creado_por, conto_despues_ui').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(12),
         supabase.schema('produccion').rpc('fn_saldo_balanceado_plazo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').from('finca').select('libras_por_saco').eq('id', finca.id).maybeSingle(),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
@@ -308,7 +312,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // Resumen de "Conteos anteriores": todas las líneas de cada conteo + el
   // consumo $ del corte (del conteo al siguiente, o a hoy). Se carga una vez.
   useEffect(() => {
-    if (!tomas.length) { setLineasToma({}); setConsumoToma({}); return }
+    if (!tomas.length) { setLineasToma({}); setConsumoToma({}); setConsumoDiaToma({}); return }
     let vivo = true
     ;(async () => {
       const ids = tomas.map(t => t.id)
@@ -317,6 +321,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       if (!vivo) return
       const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
       setLineasToma(byToma)
+
+      // Consumo del día (en vivo) de cada conteo, para mostrarlo también en los viejos.
+      const fL = lps || LIBRAS_POR_SACO
+      const fechas = [...new Set(tomas.map(t => t.fecha))]
+      const { data: ali } = await supabase.schema('produccion').from('alimentacion')
+        .select('producto_id, libras, fecha, piscina!inner(finca_id)')
+        .eq('piscina.finca_id', finca.id).in('fecha', fechas).eq('sin_alimentacion', false)
+      if (!vivo) return
+      const porFecha = {}
+      ;(ali || []).forEach(r => { if (!r.producto_id) return; const k = r.fecha + '|' + r.producto_id; porFecha[k] = (porFecha[k] || 0) + Number(r.libras || 0) })
+      const cdm = {}
+      tomas.forEach(t => { const mm = {}; (byToma[t.id] || []).forEach(l => { const raw = porFecha[t.fecha + '|' + l.producto_id]; if (raw != null) mm[l.producto_id] = raw / fL }); cdm[t.id] = mm })
+      setConsumoDiaToma(cdm)
       if (!esJefe) return
       const res = await Promise.all(tomas.map((t, i) => {
         const h = i === 0 ? hoyISO() : sumarDias(tomas[i - 1].fecha, -1)
@@ -333,7 +350,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       setConsumoToma(cmap)
     })()
     return () => { vivo = false }
-  }, [tomas, finca.id, esJefe])
+  }, [tomas, finca.id, esJefe, lps])
 
   // Sistema "en vivo" del corte = saldo del sistema la mañana del conteo
   // (saldo_inicial recalculado). Si no hay dato, usa lo guardado en la línea.
@@ -598,8 +615,31 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     })
     setConsumoDia(cd)   // consumo del día CONGELADO del conteo (el efecto no lo pisa)
     setContado(mapa); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
-    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(false)
+    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(!!t.conto_despues_ui)
     setEditToma(t); setContando(true); setAviso(null)
+  }
+
+  async function corregirDecision(t, nuevoDespues) {
+    if (!!t.conto_despues_ui === nuevoDespues || corrigiendoDec) return
+    setCorrigiendoDec(t.id); setAviso(null)
+    try {
+      const lins = lineasToma[t.id] || []
+      const signo = nuevoDespues ? 1 : -1
+      for (const l of lins) {
+        const cons = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[t.id]?.[l.producto_id] ?? 0)
+        if (!(cons > 0.0001)) continue
+        const nuevaContada = Number(l.cantidad_contada) + signo * cons
+        const upd = { cantidad_contada: nuevaContada, diferencia: nuevaContada - Number(l.cantidad_sistema) }
+        if (l.consumo_dia == null) upd.consumo_dia = cons
+        const { error } = await supabase.schema('produccion').from('toma_balanceado_linea').update(upd).eq('toma_id', t.id).eq('producto_id', l.producto_id)
+        if (error) throw error
+      }
+      const { error: eT } = await supabase.schema('produccion').from('toma_balanceado').update({ conto_despues_ui: nuevoDespues }).eq('id', t.id)
+      if (eT) throw eT
+      setAviso({ tipo: 'ok', texto: `Conteo corregido: se contó ${nuevoDespues ? 'después' : 'antes'} de alimentar.` })
+      await cargar()
+    } catch (err) { setAviso({ tipo: 'error', texto: err.message || 'No se pudo corregir.' }) }
+    finally { setCorrigiendoDec(null) }
   }
 
   async function guardarToma() {
@@ -617,7 +657,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       let tomaId
       if (editToma) {
         const { error: eU } = await supabase.schema('produccion').from('toma_balanceado')
-          .update({ fecha, observacion: obs || null, conto_despues: false }).eq('id', editToma.id)
+          .update({ fecha, observacion: obs || null, conto_despues_ui: contoDespues }).eq('id', editToma.id)
         if (eU) throw eU
         await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
@@ -628,13 +668,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           .select('id').eq('finca_id', finca.id).eq('fecha', fecha).maybeSingle()
         if (ex) {
           const { error: eU } = await supabase.schema('produccion').from('toma_balanceado')
-            .update({ observacion: obs || null, conto_despues: false }).eq('id', ex.id)
+            .update({ observacion: obs || null, conto_despues_ui: contoDespues }).eq('id', ex.id)
           if (eU) throw eU
           await supabase.schema('produccion').from('toma_balanceado_linea').delete().eq('toma_id', ex.id)
           tomaId = ex.id
         } else {
           const { data: toma, error } = await supabase.schema('produccion').from('toma_balanceado')
-            .insert({ finca_id: finca.id, fecha, observacion: obs || null, conto_despues: false }).select('id').single()
+            .insert({ finca_id: finca.id, fecha, observacion: obs || null, conto_despues_ui: contoDespues }).select('id').single()
           if (error) throw error
           tomaId = toma.id
         }
@@ -1511,8 +1551,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             {idx === 0 ? 'Corte actual' : t.es_inicial ? 'Inventario inicial' : 'Corte anterior'}</span>
                         </div>
                         <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
-                          {idx === 0 ? 'Desde este conteo hasta hoy' : `${ddmm(t.fecha)} → ${hastaTxt}`}
-                          {autor ? ` · contó ${autor}` : ''} · {lins.length} {lins.length === 1 ? 'balanceado' : 'balanceados'} · {nFalt > 0
+                          {autor ? `Contó ${autor} · ` : ''}{lins.length} {lins.length === 1 ? 'balanceado' : 'balanceados'} · {nFalt > 0
                             ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
                             : <span style={{ color: VERDE }}>todo cuadró</span>}
                         </div>
@@ -1527,6 +1566,27 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       </div>
                     </div>
                     {abierto && <>
+                    {(() => {
+                      const hayCons = (lineasToma[t.id] || []).some(l => (l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[t.id]?.[l.producto_id] ?? 0)) > 0.0001)
+                      if (!t.es_inicial && esJefe && hayCons) return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', padding: '10px 16px', background: '#f8fbfd', borderTop: '0.5px solid ' + BORDE, fontSize: '12.5px' }}>
+                          <span style={{ color: NAVY, fontWeight: 600 }}>Se contó {t.conto_despues_ui ? 'después' : 'antes'} de alimentar.</span>
+                          {corrOpen !== t.id
+                            ? <button onClick={() => setCorrOpen(t.id)} style={{ border: 'none', background: 'none', color: AZUL, fontWeight: 600, fontFamily: 'inherit', fontSize: '12.5px', cursor: 'pointer', padding: 0 }}>Corregir</button>
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 8px' }}>
+                                <span style={{ color: GRIS, fontSize: '12px' }}>¿Se contó…?</span>
+                                {[['Antes', false], ['Después', true]].map(([txt, val]) => {
+                                  const on = !!t.conto_despues_ui === val
+                                  return <button key={txt} disabled={corrigiendoDec === t.id} onClick={() => { if (!on) corregirDecision(t, val); setCorrOpen(null) }}
+                                    style={{ border: '0.5px solid ' + (on ? AZUL : '#bcd3ec'), background: on ? AZUL : '#fff', color: on ? '#fff' : AZUL, fontWeight: 600, fontFamily: 'inherit', fontSize: '12px', padding: '4px 11px', borderRadius: '7px', cursor: 'pointer' }}>{txt}</button>
+                                })}
+                                <button onClick={() => setCorrOpen(null)} style={{ border: 'none', background: 'none', color: GRIS, fontSize: '12px', fontFamily: 'inherit', cursor: 'pointer' }}>✕</button>
+                              </span>}
+                          {corrigiendoDec === t.id && <span style={{ color: AZUL, fontSize: '11.5px' }}>Corrigiendo…</span>}
+                        </div>
+                      )
+                      return null
+                    })()}
                     <div style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', padding: '8px 16px', background: '#fbfcfe', borderTop: '0.5px solid ' + BORDE, borderBottom: '1px solid ' + BORDE }}>
                       {['Balanceado', 'Sistema', 'Contó', 'Diferencia', 'Motivo / qué pasó', ...(esJefe ? ['Consumo $'] : [])].map((c, i) =>
                         <span key={i} style={{ ...cabCel, textAlign: i === 0 ? 'left' : 'right' }}>{c}</span>)}
@@ -1541,7 +1601,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <div key={i} style={{ display: 'grid', gridTemplateColumns: grc, gap: '10px', alignItems: 'baseline', padding: '9px 16px', borderBottom: '0.5px solid #f6f9fb', fontSize: '13px' }}>
                           <span>{nombreProducto(l.producto_id)}</span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {t.es_inicial ? <span style={vacia}>—</span> : <>{limpio(sisCorte(l, cons))}<span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span></>}
+                            {t.es_inicial ? <span style={vacia}>—</span> : (() => {
+                              const cdLine = l.consumo_dia != null ? Number(l.consumo_dia) : (consumoDiaToma[t.id]?.[l.producto_id] ?? 0)
+                              const skey = t.id + '|' + l.producto_id
+                              return <>
+                                {cdLine > 0.0001
+                                  ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
+                                  : limpio(sisCorte(l, cons))}
+                                <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
+                                {sisDet === skey && (
+                                  <span style={{ display: 'block', fontSize: '11px', color: GRIS, marginTop: '7px', lineHeight: 1.7, textAlign: 'right' }}>
+                                    Esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))}</b> · contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>
+                                    <span style={{ display: 'block', marginTop: '3px' }}>Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)}</b> {t.conto_despues_ui ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.</span>
+                                  </span>
+                                )}
+                              </>
+                            })()}
                           </span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
                           <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
