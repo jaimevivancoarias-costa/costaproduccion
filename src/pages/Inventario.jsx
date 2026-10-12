@@ -104,6 +104,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [lineasToma, setLineasToma] = useState({})    // toma_id -> [líneas completas] (resumen Conteos anteriores)
   const [consumoToma, setConsumoToma] = useState({})  // toma_id -> { porProd, sis, total } del corte
   const [consumoDiaToma, setConsumoDiaToma] = useState({})  // toma_id -> { insumo_id -> consumo del día (unidad compra) } calculado en vivo
+  const [factores, setFactores] = useState({})       // insumoId -> { factor, uApp } (se usa en el efecto de consumo del día)
   const [motivoEdit, setMotivoEdit] = useState(null)  // { tomaId, insumoId } línea editando motivo
   const [motivoSel, setMotivoSel] = useState('')      // opción del dropdown
   const [motivoVal, setMotivoVal] = useState('')      // texto libre cuando es "Otro"
@@ -439,7 +440,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [motivoOtro, setMotivoOtro] = useState({})   // insumoId -> texto libre si es "Otro"
   const [detToma, setDetToma] = useState(null)       // conteo expandido (ver descuadres)
   const [detLineas, setDetLineas] = useState({})     // toma_id -> líneas con descuadre
-  const [factores, setFactores] = useState({})       // insumoId -> { factor, uApp }
   const [guardando, setGuardando] = useState(false)
 
   // Agregar insumos que faltan, varios a la vez, sin salir del conteo.
