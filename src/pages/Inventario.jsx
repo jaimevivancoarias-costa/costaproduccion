@@ -475,15 +475,17 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           const otra = c.conto_despues ? 'antes' : 'después'
                           const uCap = cap1(uni)
                           const altDif = dif + (c.conto_despues ? -cdLine : cdLine)
-                          const altTxt = Math.abs(altDif) < 0.001 ? <b style={{ color: VERDE }}>cuadraría</b> : (altDif < 0 ? <>faltaría <b>{limpio(Math.abs(altDif))} {uCap}</b></> : <>sobraría <b>{limpio(altDif)} {uCap}</b></>)
+                          const cuadraOtra = Math.abs(dif) > 0.001 && Math.abs(altDif) < 0.001
                           return (
                             <div style={{ padding: '2px 16px 14px 44px', background: '#f8fbfd', borderBottom: '0.5px solid #f6f9fb' }}>
                               <div style={{ fontSize: '12px', color: GRIS, lineHeight: 1.8, maxWidth: '640px' }}>
                                 El sistema esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))} {uCap}</b> y contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>. Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)} {uCap}</b> {c.conto_despues ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.
                               </div>
-                              <div style={{ fontSize: '11.5px', color: '#8a6a1e', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '7px 11px', marginTop: '8px', maxWidth: '640px', lineHeight: 1.6 }}>
-                                <b style={{ color: AMBAR }}>Consejo:</b> si se contó <b>{otra}</b> de alimentar, {altTxt}. Usa <b>Corregir</b> (arriba) si fue así.
-                              </div>
+                              {cuadraOtra && (
+                                <div style={{ fontSize: '12px', color: '#8a6a1e', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '8px 12px', marginTop: '8px', maxWidth: '640px', lineHeight: 1.6 }}>
+                                  Si en realidad se contó <b>{otra}</b> de alimentar, este conteo <b style={{ color: VERDE }}>cuadraría</b>. Toca <b>Corregir</b> (arriba) para arreglarlo.
+                                </div>
+                              )}
                             </div>
                           )
                         })()}
