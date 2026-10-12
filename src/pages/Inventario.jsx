@@ -292,10 +292,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // Sistema "en vivo" del corte = saldo del sistema la mañana del conteo
   // (saldo_inicial recalculado). Si no hay dato, usa lo guardado en la línea.
-  // El Sistema del conteo es el GUARDADO (congelado), no un recálculo en vivo:
-  // un conteo cerrado no se mueve solo, y el mismo número se ve en todas las
-  // pantallas (editar, desglose, descuadres). cons se ignora a propósito.
-  const sisCorte = (l) => Number(l.cantidad_sistema)
+  // El Sistema del conteo se RECALCULA con los datos de hoy (cons.sis = saldo la
+  // mañana del conteo, de fn_movimiento por corte). Así siempre refleja la
+  // realidad actual, no un número viejo guardado con datos incompletos. Si no hay
+  // recálculo disponible, usa lo guardado como respaldo.
+  const sisCorte = (l, cons) => (cons && cons.sis[l.insumo_id] != null) ? cons.sis[l.insumo_id] : Number(l.cantidad_sistema)
   const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
   const unidadIns = id => { const u = (saldos.find(s => s.insumo_id === id)?.unidad) || ''; return (UNIDAD[u] || u || '').toLowerCase() }
 
@@ -715,7 +716,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Saldo del sistema A LA FECHA del conteo (para conteos con fecha pasada: el
   // sistema debe mostrar lo de ESE día, no el de hoy). Al editar se usa el guardado.
   useEffect(() => {
-    if (!contando || primeraVez || editToma) { setSaldoFecha({}); return }
+    // Se recalcula también al EDITAR (para que el Sistema sea el real de hoy, no
+    // el viejo guardado). Solo se omite el inventario inicial (no tiene Sistema).
+    if (!contando || primeraVez || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
     let vivo = true
     ;(async () => {
       const { data } = await supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: fecha })
@@ -758,8 +761,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     // de compra). s.saldo ya tiene restado el consumo de hoy, así que había =
     // s.saldo + lo de hoy. Si contó DESPUÉS, escribió lo que quedó → se le suma
     // lo de hoy. "El sistema dice" muestra el había (antes) o lo de ahora (después).
-    // Para un conteo nuevo con fecha pasada, el sistema es el saldo A ESA FECHA.
-    const sis = (!editToma && saldoFecha[s.insumo_id] != null) ? Number(saldoFecha[s.insumo_id]) : Number(s.saldo)
+    // El sistema es el saldo recalculado A LA FECHA del conteo (nuevo o al editar).
+    const sis = (saldoFecha[s.insumo_id] != null) ? Number(saldoFecha[s.insumo_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.insumo_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.insumo_id] ?? ''))
     const habiaSistema = cons > 0.0001 ? sis + cons : sis
@@ -1280,10 +1283,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         : []
       const lineas = [...contadas, ...enCero].map(f => {
         const contadoVal = f.contado !== null ? f.habiaContado : 0
-        // Al editar se conserva el Sistema (había esperado) GUARDADO del conteo,
-        // no se recalcula con el saldo de hoy (que ya es otro).
-        const sisGuardado = editToma && sistemaEdit[f.insumo_id] != null ? Number(sistemaEdit[f.insumo_id]) : null
-        const sistemaVal = f.contado !== null ? (sisGuardado != null ? sisGuardado : f.habiaSistema) : Number(f.saldo)
+        // Se graba el Sistema RECALCULADO a la fecha del conteo (f.habiaSistema),
+        // tanto al crear como al editar, para que quede el valor real de hoy.
+        const sistemaVal = f.contado !== null ? Number(f.habiaSistema) : Number(f.saldo)
         const difVal = f.contado !== null ? (contadoVal - Number(sistemaVal)) : (0 - Number(f.saldo))
         // En un recuento normal, hay descuadre si la diferencia no es cero.
         // Al editar, conservamos el motivo que ya se había cargado.
@@ -1555,11 +1557,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>
                   <Celda></Celda>
                 </>) : (<>
-                  {/* Sistema / Había antes */}
+                  {/* Sistema / Había antes (recalculado a la fecha del conteo) */}
                   <Celda centro gris>
-                    {editToma
-                      ? (sistemaEdit[f.insumo_id] != null ? <><span style={{ fontWeight: 700, color: NAVY }}>{limpio(sistemaEdit[f.insumo_id])}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</div></> : <span style={{ color: '#c3d0db' }}>—</span>)
-                      : <><span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</div></>}
+                    <><span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>{uPresF}</div></>
                   </Celda>
                   {/* Contó (input + equivalencia chiquita) */}
                   <div style={{ padding: '5px 10px', borderLeft: '0.5px solid #f1f6f9' }}>
@@ -1586,16 +1586,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>{editToma ? 'del ' + ddmm(fecha) : 'hoy'}</span></span>
                       : <span style={{ color: '#c3d0db' }}>—</span>}
                   </Celda>
-                  {/* Diferencia */}
-                  {editToma ? (() => {
-                    const sisV = sistemaEdit[f.insumo_id] != null ? Number(sistemaEdit[f.insumo_id]) : null
-                    const d = (sisV != null && f.contado !== null) ? Number(f.habiaContado) - sisV : null
-                    return <Celda centro color={d === null ? '#c3d0db' : Math.abs(d) < 0.001 ? VERDE : d < 0 ? ROJO : AMBAR}>{d === null ? '—' : Math.abs(d) < 0.001 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(d))}</Celda>
-                  })() : (
-                    <Celda centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
-                      {f.diferencia === null ? (noContados === 'cero' ? 'Queda en 0' : 'Se mantiene') : f.diferencia === 0 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
-                    </Celda>
-                  )}
+                  {/* Diferencia (Contó − Sistema recalculado) */}
+                  <Celda centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
+                    {f.diferencia === null ? (noContados === 'cero' ? 'Queda en 0' : 'Se mantiene') : f.diferencia === 0 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
+                  </Celda>
                   {/* Queda (Contó − Consumo del día; si no has contado, el esperado = Sistema − Consumo) */}
                   <Celda centro fuerte color={NAVY}>
                     {f.contado !== null
