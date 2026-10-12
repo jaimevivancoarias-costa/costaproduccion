@@ -67,6 +67,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
   const [editSiembra, setEditSiembra] = useState(null)  // piscinaId en edicion de larva/gramaje
   const [abierta, setAbierta] = useState(null)          // piscinaId con detalle del ciclo abierto
+  const [salidaPorCiclo, setSalidaPorCiclo] = useState({})  // ciclo_id -> animales ya transferidos a otras piscinas
   const refs = useRef({})
   // Celdas que el usuario tocó (para guardar solo esas, no toda la semana).
   const tocadas = useRef(new Set())
@@ -84,6 +85,25 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
 
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
+
+  // Cuánto se transfirió a OTRAS piscinas por cada ciclo (para mostrar, en la
+  // flechita, la larva sembrada vs lo que queda tras transferencias parciales).
+  const idsSalida = piscinas.map(p => p.cicloId).filter(Boolean).join(',')
+  useEffect(() => {
+    const ids = idsSalida ? idsSalida.split(',') : []
+    if (!ids.length) { setSalidaPorCiclo({}); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('evento_destino')
+        .select('cantidad, evento:evento_id!inner(ciclo_id, tipo)')
+        .in('evento.ciclo_id', ids).eq('evento.tipo', 'transferencia')
+      if (!vivo) return
+      const m = {}
+      ;(data || []).forEach(x => { const cid = x.evento?.ciclo_id; if (cid) m[cid] = (m[cid] || 0) + Number(x.cantidad || 0) })
+      setSalidaPorCiclo(m)
+    })()
+    return () => { vivo = false }
+  }, [idsSalida])
   const semanaDeHoy = lunesDe(hoy) === lunes
   // Los dias de cultivo se cuentan hasta el final de la semana que se
   // esta mirando, pero nunca mas alla de hoy: una piscina sembrada
@@ -1171,12 +1191,21 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                             )}
                           </div>
                         </div>
-                        {p.cicloId && (
-                          <div>
-                            <div style={etq}>Larva</div>
-                            <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</div>
-                          </div>
-                        )}
+                        {p.cicloId && (() => {
+                          const salida = Number(salidaPorCiclo[p.cicloId]) || 0
+                          const queda = p.larva != null ? Math.max(0, Number(p.larva) - salida) : null
+                          return (
+                            <div>
+                              <div style={etq}>Larva</div>
+                              <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{p.larva ? miles(p.larva) : '—'}</div>
+                              {salida > 0 && queda != null && (
+                                <div style={{ fontSize: '12px', color: GRIS, marginTop: '3px', fontVariantNumeric: 'tabular-nums' }}>
+                                  Se transfirió {miles(salida)} · queda <b style={{ color: NAVY, fontWeight: 600 }}>{miles(queda)}</b>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })()}
                         {p.cicloId && (
                           <div>
                             <div style={etq}>Gramaje</div>
