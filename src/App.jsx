@@ -480,13 +480,15 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
     let vivo = true
     async function cargar() {
       setListo(false)
-      if (!fincas.length) { if (vivo) { setFincasPend([]); setListo(true) } return }
+      // La finca "Prueba" no cuenta para este aviso.
+      const reales = fincas.filter(f => !String(f.nombre || '').toLowerCase().includes('prueba'))
+      if (!reales.length) { if (vivo) { setFincasPend([]); setListo(true) } return }
       const ayer = sumarDias(hoyISO(), -1)
       if (ayer < INICIO_CIERRES) { if (vivo) { setFincasPend([]); setListo(true) } return }
       // Todos los dias esperados (1 sep -> ayer). ISO compara bien como texto.
       const dias = []
       for (let d = INICIO_CIERRES; d <= ayer; d = sumarDias(d, 1)) dias.push(d)
-      const ids = fincas.map(f => f.id)
+      const ids = reales.map(f => f.id)
       const { data, error } = await supabase.schema('produccion').from('dia_registro')
         .select('finca_id, fecha, ambito').eq('estado', 'cerrado')
         .gte('fecha', INICIO_CIERRES).lte('fecha', ayer).in('finca_id', ids)
@@ -494,7 +496,7 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       if (error) { setFincasPend([]); setListo(true); return }
       const cerr = new Set((data || []).map(r => `${r.finca_id}|${r.ambito}|${r.fecha}`))
       const out = []
-      fincas.forEach(f => {
+      reales.forEach(f => {
         const ambitos = []
         const todos = new Set()
         AMBITOS_CIERRE.forEach(a => {
