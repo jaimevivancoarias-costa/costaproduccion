@@ -250,7 +250,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // sistema debe mostrar lo que había ESE día, no el saldo de hoy). Al editar un
   // conteo se usa el sistema GUARDADO, así que aquí no se recalcula.
   useEffect(() => {
-    if (!contando || primeraVez || editToma) { setSaldoFecha({}); return }
+    if (!contando || primeraVez || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
     let vivo = true
     ;(async () => {
       const { data } = await supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: fecha })
@@ -385,10 +385,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     return () => { vivo = false }
   }, [tomas, finca.id, esJefe, lps])
 
-  // El Sistema del conteo es el GUARDADO (congelado), no un recálculo en vivo:
-  // un conteo cerrado no se mueve solo, y el mismo número se ve en todas las
-  // pantallas (editar, desglose, descuadres). cons se ignora a propósito.
-  const sisCorte = (l) => Number(l.cantidad_sistema)
+  // El Sistema del conteo se RECALCULA con los datos de hoy (cons.sis = saldo la
+  // mañana del conteo). Así siempre refleja la realidad actual, no un número
+  // viejo guardado con datos incompletos. Respaldo: lo guardado en la línea.
+  const sisCorte = (l, cons) => (cons && cons.sis[l.producto_id] != null) ? cons.sis[l.producto_id] : Number(l.cantidad_sistema)
   const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
 
   function abrirMotivo(tomaId, productoId, actual) {
@@ -462,7 +462,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     // Si contó DESPUÉS, escribió lo que quedó → se le suma lo de hoy para
     // reconstruir el "había". Si contó ANTES, ya escribió el "había".
     // Para un conteo nuevo con fecha pasada, el sistema es el saldo A ESA FECHA.
-    const sis = (!editToma && saldoFecha[s.producto_id] != null) ? Number(saldoFecha[s.producto_id]) : Number(s.saldo)
+    const sis = (saldoFecha[s.producto_id] != null) ? Number(saldoFecha[s.producto_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.producto_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.producto_id] ?? ''))
     const habiaSistema = cons > 0.0001 ? sis + cons : sis        // lo que había al inicio del día (para guardar)
@@ -732,7 +732,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         const cat = motivoDesc[f.producto_id]
         const motivoD = hayDesc && cat ? (cat === 'Otro' ? (motivoOtro[f.producto_id]?.trim() || 'Otro') : cat) : null
         // Al editar se conserva el Sistema (había esperado) GUARDADO, no se recalcula.
-        const sisGuardado = editToma && sistemaEdit[f.producto_id] != null ? Number(sistemaEdit[f.producto_id]) : Number(f.habiaSistema)
+        const sisGuardado = Number(f.habiaSistema)
         return {
           toma_id: tomaId, producto_id: f.producto_id, cantidad_contada: f.habiaContado,
           cantidad_sistema: sisGuardado, diferencia: Number(f.habiaContado) - sisGuardado, motivo_descuadre: motivoD,
@@ -1003,11 +1003,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 </div>
                 <Cel></Cel>
               </>) : (<>
-                {/* Sistema / Había antes */}
+                {/* Sistema / Había antes (recalculado a la fecha del conteo) */}
                 <Cel centro gris>
-                  {editToma
-                    ? (sistemaEdit[f.producto_id] != null ? <><span style={{ fontWeight: 700, color: NAVY }}>{limpio(sistemaEdit[f.producto_id])}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></> : <span style={{ color: '#c3d0db' }}>—</span>)
-                    : <><span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>}
+                  <><span style={{ fontWeight: 600 }}>{limpio(f.esperado)}</span><div style={{ fontSize: '10px', color: '#aab8c6' }}>Sacos</div></>
                 </Cel>
                 {/* Contó */}
                 <div style={{ padding: '5px 10px' }}>
@@ -1030,16 +1028,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     ? <span style={{ display: 'inline-block', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '5px 9px' }}><b style={{ color: '#7a5410', fontSize: '13px' }}>{limpio(f.cons)}</b><span style={{ display: 'block', fontSize: '9px', color: '#BA7517' }}>{editToma ? 'del ' + ddmm(fecha) : 'hoy'}</span></span>
                     : <span style={{ color: '#c3d0db' }}>—</span>}
                 </Cel>
-                {/* Diferencia */}
-                {editToma ? (() => {
-                  const sisV = sistemaEdit[f.producto_id] != null ? Number(sistemaEdit[f.producto_id]) : null
-                  const d = (sisV != null && f.contado !== null) ? Number(f.habiaContado) - sisV : null
-                  return <Cel centro color={d === null ? '#c3d0db' : Math.abs(d) < 0.001 ? VERDE : d < 0 ? ROJO : AMBAR}>{d === null ? '—' : Math.abs(d) < 0.001 ? 'Cuadra' : (d < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(d))}</Cel>
-                })() : (
-                  <Cel centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
-                    {f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
-                  </Cel>
-                )}
+                {/* Diferencia (Contó − Sistema recalculado) */}
+                <Cel centro color={f.diferencia === null ? '#c3d0db' : f.diferencia < 0 ? ROJO : f.diferencia > 0 ? AMBAR : VERDE}>
+                  {f.diferencia === null ? '—' : Math.abs(f.diferencia) < 0.001 ? 'Cuadra' : (f.diferencia < 0 ? 'Faltan ' : 'Sobran ') + limpio(Math.abs(f.diferencia))}
+                </Cel>
                 {/* Queda (si no has contado, el esperado = Sistema − Consumo) */}
                 <Cel centro fuerte color={NAVY}>
                   {f.contado !== null
@@ -1729,6 +1721,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   const [usuarios, setUsuarios] = useState({})
   const [nuevo, setNuevo] = useState(null)       // 'ingreso' | 'pedido' | 'devolucion' | null
   const [fecha, setFecha] = useState(hoyISO())
+  const [ultConteoBal, setUltConteoBal] = useState(null)  // último conteo, para avisar si se registra con fecha anterior
   const [guia, setGuia] = useState(''); const [prov, setProv] = useState('')
   const [esperada, setEsperada] = useState(''); const [obs, setObs] = useState('')
   const [lineas, setLineas] = useState([{ productoId: '', cantidad: '' }])
@@ -1750,6 +1743,18 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     return m[pz] != null ? m[pz] : (m[0] != null ? m[0] : null)
   }
   const fmtPre = n => (n != null ? String(n) : '')
+  // Último conteo de la bodega: para avisar si se registra con fecha anterior.
+  useEffect(() => {
+    if (!finca?.id) { setUltConteoBal(null); return }
+    let vivoC = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('toma_balanceado')
+        .select('fecha').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(1).maybeSingle()
+      if (vivoC) setUltConteoBal(data?.fecha || null)
+    })()
+    return () => { vivoC = false }
+  }, [finca?.id])
+  const antesDeConteoBal = !!(ultConteoBal && fecha && fecha < ultConteoBal)
   useEffect(() => {
     let vivo = true
     ;(async () => {
@@ -2039,6 +2044,16 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 14px' }}>
             {nuevo === 'ingreso' ? 'Registrar ingreso a bodega' : nuevo === 'pedido' ? 'Registrar pedido' : 'Registrar devolución a CostaMarket'}
           </h3>
+          {nuevo !== 'pedido' && antesDeConteoBal && (
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '11px 13px', marginBottom: '14px',
+                          background: '#FDF3DF', border: '1px solid #eedcb0', borderRadius: '10px' }}>
+              <span style={{ width: '22px', height: '22px', borderRadius: '50%', background: '#BA7517', color: '#fff',
+                             display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '13px', flex: '0 0 auto' }}>!</span>
+              <div style={{ fontSize: '13px', color: '#6b4e12' }}>
+                Esta fecha (<b>{corta(fecha)}</b>) es <b>anterior al último conteo</b> ({corta(ultConteoBal)}). Si registras aquí, cambia lo que ese conteo debía tener. Revisa que la fecha sea la correcta.
+              </div>
+            </div>
+          )}
           <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
             <Campo label="Fecha"><input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={inp} /></Campo>
             {nuevo === 'ingreso' && <Campo label="Número de guía"><input value={guia} placeholder="Opcional" onChange={e => setGuia(e.target.value)} style={inp} /></Campo>}

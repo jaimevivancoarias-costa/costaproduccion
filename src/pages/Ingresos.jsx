@@ -520,6 +520,21 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
   const [rev, setRev] = useState([])                 // [{insumoId, qCompra, plazo, precio, scope}]
   const verPrecio = esJefe && esIngreso
   const setRevLinea = (i, campo) => setRev(rs => rs.map((r, j) => j === i ? { ...r, ...campo } : r))
+
+  // Último conteo de la bodega: para avisar si se registra con fecha anterior
+  // (eso "ensucia" un período ya contado). Solo informa, no bloquea.
+  const [ultConteo, setUltConteo] = useState(null)
+  useEffect(() => {
+    if (!finca?.id || esPedido) { setUltConteo(null); return }
+    let vivo = true
+    ;(async () => {
+      const { data } = await supabase.schema('produccion').from('toma_inventario')
+        .select('fecha').eq('finca_id', finca.id).order('fecha', { ascending: false }).limit(1).maybeSingle()
+      if (vivo) setUltConteo(data?.fecha || null)
+    })()
+    return () => { vivo = false }
+  }, [finca?.id, esPedido])
+  const antesDeConteo = !!(ultConteo && fecha && fecha < ultConteo)
   // Al pulsar "Revisar y guardar": arma la revisión con el plazo que rige y el
   // precio del catálogo de cada insumo.
   function abrirRevision() {
@@ -652,6 +667,17 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
           : esDevolucion ? 'Registrar devolución a CostaMarket'
           : 'Registrar pedido'}
       </h3>
+
+      {antesDeConteo && (
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '11px 13px', marginBottom: '14px',
+                      background: '#FDF3DF', border: '1px solid #eedcb0', borderRadius: '10px' }}>
+          <span style={{ width: '22px', height: '22px', borderRadius: '50%', background: '#BA7517', color: '#fff',
+                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '13px', flex: '0 0 auto' }}>!</span>
+          <div style={{ fontSize: '13px', color: '#6b4e12' }}>
+            Esta fecha (<b>{corta(fecha)}</b>) es <b>anterior al último conteo</b> ({corta(ultConteo)}). Si registras aquí, ese conteo queda incompleto y el descuadre aparecerá en el siguiente. Revisa que la fecha sea la correcta.
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <Campo label="Fecha">
