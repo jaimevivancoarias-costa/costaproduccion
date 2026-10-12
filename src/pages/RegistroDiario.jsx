@@ -67,7 +67,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [pesos, setPesos] = useState({})           // piscinaId -> { mie, dom }
   const [editSiembra, setEditSiembra] = useState(null)  // piscinaId en edicion de larva/gramaje
   const [abierta, setAbierta] = useState(null)          // piscinaId con detalle del ciclo abierto
-  const [salidaPorCiclo, setSalidaPorCiclo] = useState({})  // ciclo_id -> animales ya transferidos a otras piscinas
+  const [salidaPorCiclo, setSalidaPorCiclo] = useState({})  // ciclo_id -> { total, nombres[] } transferido a otras
+  const [entradaPorCiclo, setEntradaPorCiclo] = useState({})  // ciclo_id -> nombre de la piscina de la que vino
   const refs = useRef({})
   // Celdas que el usuario tocó (para guardar solo esas, no toda la semana).
   const tocadas = useRef(new Set())
@@ -86,21 +87,35 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const fechas = useMemo(() => semanaDe(lunes), [lunes])
   const hoy = hoyISO()
 
-  // Cuánto se transfirió a OTRAS piscinas por cada ciclo (para mostrar, en la
-  // flechita, la larva sembrada vs lo que queda tras transferencias parciales).
+  // Para la flechita: cuánto SALIÓ de cada ciclo (y a qué piscinas) y de qué
+  // piscina VINO (su origen), para mostrar siempre "cuánto tengo y de dónde viene".
   const idsSalida = piscinas.map(p => p.cicloId).filter(Boolean).join(',')
   useEffect(() => {
     const ids = idsSalida ? idsSalida.split(',') : []
-    if (!ids.length) { setSalidaPorCiclo({}); return }
+    if (!ids.length) { setSalidaPorCiclo({}); setEntradaPorCiclo({}); return }
     let vivo = true
     ;(async () => {
-      const { data } = await supabase.schema('produccion').from('evento_destino')
-        .select('cantidad, evento:evento_id!inner(ciclo_id, tipo)')
-        .in('evento.ciclo_id', ids).eq('evento.tipo', 'transferencia')
+      const [{ data: sal }, { data: ent }] = await Promise.all([
+        // Salidas: lo que este ciclo transfirió a otras piscinas.
+        supabase.schema('produccion').from('evento_destino')
+          .select('cantidad, piscina:piscina_id ( nombre ), evento:evento_id!inner(ciclo_id, tipo)')
+          .in('evento.ciclo_id', ids).eq('evento.tipo', 'transferencia'),
+        // Entradas: de qué piscina vino este ciclo (el origen de la transferencia).
+        supabase.schema('produccion').from('evento_destino')
+          .select('ciclo_destino_id, evento:evento_id!inner(tipo, ciclo:ciclo_id ( piscina:piscina_origen_id ( nombre ) ))')
+          .in('ciclo_destino_id', ids).eq('evento.tipo', 'transferencia'),
+      ])
       if (!vivo) return
-      const m = {}
-      ;(data || []).forEach(x => { const cid = x.evento?.ciclo_id; if (cid) m[cid] = (m[cid] || 0) + Number(x.cantidad || 0) })
-      setSalidaPorCiclo(m)
+      const ms = {}
+      ;(sal || []).forEach(x => {
+        const cid = x.evento?.ciclo_id; if (!cid) return
+        const o = ms[cid] || (ms[cid] = { total: 0, nombres: [] })
+        o.total += Number(x.cantidad || 0)
+        const n = x.piscina?.nombre; if (n && !o.nombres.includes(n)) o.nombres.push(n)
+      })
+      const me = {}
+      ;(ent || []).forEach(x => { const cid = x.ciclo_destino_id; const n = x.evento?.ciclo?.piscina?.nombre; if (cid && n && !me[cid]) me[cid] = n })
+      setSalidaPorCiclo(ms); setEntradaPorCiclo(me)
     })()
     return () => { vivo = false }
   }, [idsSalida])
@@ -1229,17 +1244,27 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                           </div>
                         </div>
                         {p.cicloId && (() => {
-                          const salida = Number(salidaPorCiclo[p.cicloId]) || 0
+                          const sal = salidaPorCiclo[p.cicloId]
+                          const salida = Number(sal?.total) || 0
+                          const origen = entradaPorCiclo[p.cicloId]
                           const base = p.larva != null ? Number(p.larva) : null
                           const pobl = base != null ? Math.max(0, base - salida) : null
+                          // De dónde viene mi población, en una línea.
+                          let viene = ''
+                          if (salida > 0 && base != null) {
+                            const aQuien = sal?.nombres?.length ? ' a ' + sal.nombres.join(', ') : ''
+                            viene = `tenía ${miles(base)} · pasó ${miles(salida)}${aQuien}`
+                          } else if (origen) {
+                            viene = `viene de ${origen}`
+                          } else if (p.fechaSiembra) {
+                            viene = `sembrada el ${cortita(p.fechaSiembra)}`
+                          }
                           return (
                             <div>
                               <div style={etq}>Población</div>
                               <div style={{ fontSize: '14px', fontVariantNumeric: 'tabular-nums' }}>{pobl != null ? miles(pobl) : '—'}</div>
-                              {salida > 0 && base != null && (
-                                <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '2px', fontVariantNumeric: 'tabular-nums' }}>
-                                  tenía {miles(base)} · transfirió {miles(salida)}
-                                </div>
+                              {viene && (
+                                <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '2px' }}>{viene}</div>
                               )}
                             </div>
                           )
