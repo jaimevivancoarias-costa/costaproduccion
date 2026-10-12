@@ -492,11 +492,11 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                     <span style={{ display: 'inline-block', width: '14px', color: GRIS, fontSize: '12px' }}>{ab ? '▾' : '▸'}</span>
                     {p.nombre}
                   </span>
-                  {esJefeGlobal && (
+                  {esJefe && (
                     <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
                       <button onClick={() => { setAbierto(p.id); setEditConfig(editConfig === p.id ? null : p.id) }} style={linkAccion(VERDE)}>{editConfig === p.id ? 'Cerrar' : 'Configurar'}</button>
-                      <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={linkAccion(AZUL)}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>
-                      <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={linkAccion(ROJO)}>Quitar</button>
+                      {esJefeGlobal && <button onClick={() => setEditProd(editProd === p.id ? null : p.id)} style={linkAccion(AZUL)}>{editProd === p.id ? 'Cancelar' : 'Editar'}</button>}
+                      {esJefeGlobal && <button onClick={() => quitar(tab === 'insumos' ? 'insumo' : 'producto', p.id, p.nombre)} style={linkAccion(ROJO)}>Quitar</button>}
                     </span>
                   )}
                 </div>
@@ -583,7 +583,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   })
                   const minGrupos = Object.values(mgrp)
                   return (
-                    <ConfigInsumoTabs insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni}
+                    <ConfigInsumoTabs insumo={p} fincas={fincas} presentaciones={presentaciones} excIni={excIni} soloPrecios={!esJefeGlobal}
                       actual={{ ...(o || {}), precios: preciosAct, plazoActivo: pzAct, desde: desdeAct }}
                       facFinca={facFinca} factorStd={factorStd} presLabel={presLabel} uAppLabel={uAppLabel}
                       minUnitLabel={minUnitLabel} minStd={minStd} minGrupos={minGrupos}
@@ -652,7 +652,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   })
                   const minGrupos = Object.values(mgrp)
                   return (
-                    <ConfigBalTabs producto={p} fincas={fincas}
+                    <ConfigBalTabs producto={p} fincas={fincas} soloPrecios={!esJefeGlobal}
                       initStd={initStd} initGrupos={initGrupos} minStd={minStd} minGrupos={minGrupos}
                       onHechoPrecios={() => {}}
                       onError={t => setAviso({ tipo: 'error', texto: t })}
@@ -1494,8 +1494,9 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
       {conversion ? (
       <div style={{ display: 'flex', alignItems: 'center', gap: '9px', flexWrap: 'wrap', fontSize: '12.5px', color: C.gris, marginBottom: '14px' }}>
         <span>Precios <b style={{ color: C.navy }}>por {cap1(presLabel)}</b></span><span style={{ color: '#aab8c6' }}>·</span>
-        <span>1 {cap1(presLabel)} = <b style={{ color: C.navy }}>{Math.round((factorStd || 1) * 10000) / 10000} {uAppLabel}</b></span><span style={{ color: '#aab8c6' }}>·</span>
-        <button onClick={onCambiarPresentacion} style={{ background: 'none', border: 'none', color: C.azul, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, padding: 0, fontSize: '12px' }}>Cambiar</button>
+        <span>1 {cap1(presLabel)} = <b style={{ color: C.navy }}>{Math.round((factorStd || 1) * 10000) / 10000} {uAppLabel}</b></span>
+        {onCambiarPresentacion && <><span style={{ color: '#aab8c6' }}>·</span>
+        <button onClick={onCambiarPresentacion} style={{ background: 'none', border: 'none', color: C.azul, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, padding: 0, fontSize: '12px' }}>Cambiar</button></>}
       </div>
       ) : (
       <div style={{ fontSize: '12.5px', color: C.gris, marginBottom: '14px' }}>Precios <b style={{ color: C.navy }}>por {cap1(presLabel)}</b></div>
@@ -1704,10 +1705,10 @@ function ConfigBalTabs(p) {
   return (
     <div style={{ background: '#fff', borderBottom: '0.5px solid #e6edf3' }}>
       <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, padding: '12px 18px 0' }}>
-        {tb('precios', 'Precios')}{tb('minimos', 'Mínimos')}
+        {tb('precios', 'Precios')}{!p.soloPrecios && tb('minimos', 'Mínimos')}
       </div>
       <div style={{ padding: '2px 18px 14px' }}>
-        {tab === 'precios'
+        {tab === 'precios' || p.soloPrecios
           ? <EditorPrecios insumo={p.producto} fincas={p.fincas} presLabel="saco" conversion={false}
               factorStd={1} initStd={p.initStd} initGrupos={p.initGrupos}
               tablaPrecio="precio_producto" tablaPlazo="plazo_producto" colId="producto_id" colPrecio="precio_saco"
@@ -1731,14 +1732,14 @@ function ConfigInsumoTabs(p) {
   return (
     <div style={{ background: '#fff', borderBottom: '0.5px solid #e6edf3' }}>
       <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid ' + BORDE, padding: '12px 18px 0' }}>
-        {tb('precios', 'Precios')}{tb('config', 'Unidad')}{tb('minimos', 'Mínimos')}
+        {tb('precios', 'Precios')}{!p.soloPrecios && tb('config', 'Unidad')}{!p.soloPrecios && tb('minimos', 'Mínimos')}
       </div>
-      {tab === 'precios'
+      {tab === 'precios' || p.soloPrecios
         ? <div style={{ padding: '2px 18px 14px' }}>
             <EditorPrecios insumo={p.insumo} fincas={p.fincas} facFinca={p.facFinca} presLabel={p.presLabel} uAppLabel={p.uAppLabel}
               factorStd={p.factorStd} initStd={p.initStd} initGrupos={p.initGrupos}
               onHecho={p.onHechoPrecios} onError={p.onError} onRecosteo={p.onRecosteo} onCancelar={p.onCancelar}
-              onCambiarPresentacion={() => setTab('config')} />
+              onCambiarPresentacion={p.soloPrecios ? undefined : () => setTab('config')} />
           </div>
         : tab === 'minimos'
         ? <div style={{ padding: '2px 18px 14px' }}>
