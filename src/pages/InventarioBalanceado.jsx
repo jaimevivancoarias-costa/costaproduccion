@@ -1642,17 +1642,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         {sisDet === skey && (() => {
                           const otra = t.conto_despues_ui ? 'antes' : 'después'
                           const altDif = dif + (t.conto_despues_ui ? -cdLine : cdLine)
-                          const cuadraOtra = Math.abs(dif) > 0.001 && Math.abs(altDif) < 0.001
+                          const hayDesc = Math.abs(dif) > 0.001
+                          const cuadra = Math.abs(altDif) < 0.001
+                          const baja = Math.abs(altDif) < Math.abs(dif) - 0.001
+                          const amber = { fontSize: '12px', color: '#8a6a1e', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '8px 12px', marginTop: '8px', maxWidth: '640px', lineHeight: 1.6 }
                           return (
                             <div style={{ padding: '2px 16px 14px 44px', background: '#f8fbfd', borderBottom: '0.5px solid #f6f9fb' }}>
                               <div style={{ fontSize: '12px', color: GRIS, lineHeight: 1.8, maxWidth: '640px' }}>
                                 El sistema esperaba <b style={{ color: NAVY }}>{limpio(sisCorte(l, cons))} Sacos</b> y contaste <b style={{ color: NAVY }}>{limpio(Number(l.cantidad_contada))}</b>. Ese día se consumió <b style={{ color: NAVY }}>{limpio(cdLine)} Sacos</b> {t.conto_despues_ui ? 'antes' : 'después'} de contar{l.consumo_dia == null ? ' (estimado)' : ''}.
                               </div>
-                              {cuadraOtra && (
-                                <div style={{ fontSize: '12px', color: '#8a6a1e', background: '#FDF3DF', border: '0.5px solid #eedcb0', borderRadius: '8px', padding: '8px 12px', marginTop: '8px', maxWidth: '640px', lineHeight: 1.6 }}>
-                                  Si en realidad se contó <b>{otra}</b> de alimentar, este conteo <b style={{ color: VERDE }}>cuadraría</b>. Toca <b>Corregir</b> (arriba) para arreglarlo.
-                                </div>
-                              )}
+                              {hayDesc && (cuadra
+                                ? <div style={amber}>Si en realidad se contó <b>{otra}</b> de alimentar, este conteo <b style={{ color: VERDE }}>cuadraría</b>. Toca <b>Corregir</b> (arriba) para arreglarlo.</div>
+                                : baja
+                                  ? <div style={amber}>Si se contó <b>{otra}</b> de alimentar, el descuadre <b>baja de {limpio(Math.abs(dif))} a {limpio(Math.abs(altDif))} Sacos</b>. Revisa con <b>Corregir</b> (arriba).</div>
+                                  : <div style={{ fontSize: '12px', color: GRIS, background: '#f1f5f9', borderRadius: '8px', padding: '8px 12px', marginTop: '8px', maxWidth: '640px', lineHeight: 1.6 }}>Este descuadre <b style={{ color: NAVY }}>no viene de la hora del conteo</b> (el consumo del día ya está contado). Revisa el consumo o el registro.</div>)}
                             </div>
                           )
                         })()}
