@@ -78,6 +78,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [cortes, setCortes] = useState([])              // conteos anteriores con su diferencia
   const [lotes, setLotes] = useState({})                // tipo_id -> [{fecha, galones, queda, precio, rowId, inicial}]
   const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
+  const [movAbierto, setMovAbierto] = useState({})      // `${tipo_id}|e` / `|c` -> desglose fecha por fecha abierto
   const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
   const [cortesAbiertos, setCortesAbiertos] = useState({})  // conteo_id -> abierto
   const [nombresU, setNombresU] = useState({})          // id usuario -> nombre
@@ -193,6 +194,45 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
   const movDe = id => movs.find(m => m.tipo_id === id)
   const solDe = (tabla, id) => solis.find(x => x.tabla === tabla && x.registro_id === id)
+
+  // Desglose fecha por fecha de Ingresos (pedidos aprobados) y Consumo del
+  // período, por tipo de diesel, para las flechitas de "Qué se movió".
+  const ddmm = iso => corta(iso).slice(0, 5)
+  const aggFechaTipo = (rows, soloAprobados) => {
+    const porTipo = {}
+    rows.forEach(r => {
+      if (soloAprobados && r.estado !== 'aprobado') return
+      const g = Number(r.galones) || 0
+      if (!g) return
+      const byF = (porTipo[r.tipo_id] = porTipo[r.tipo_id] || {})
+      byF[r.fecha] = (byF[r.fecha] || 0) + g
+    })
+    const out = {}
+    Object.entries(porTipo).forEach(([tid, byF]) => {
+      out[tid] = Object.entries(byF).map(([fecha, cant]) => ({ fecha, cant }))
+        .sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    })
+    return out
+  }
+  const entroDet = aggFechaTipo(pedidos, true)
+  const aplicoDet = aggFechaTipo(consumos, false)
+  const listaMov = (list, signo, color) => {
+    const suma = list.reduce((t, x) => t + Number(x.cant || 0), 0)
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontVariantNumeric: 'tabular-nums' }}>
+        {list.map((it, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', fontSize: '11.5px' }}>
+            <span style={{ color: '#aab8c6' }}>{ddmm(it.fecha)}</span>
+            <span style={{ color, minWidth: '46px' }}>{signo}{miles(it.cant)}</span>
+          </div>
+        ))}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', fontSize: '11.5px', fontWeight: 700, color: NAVY, borderTop: '1px solid ' + BORDE, marginTop: '2px', paddingTop: '2px' }}>
+          <span style={{ fontWeight: 600, color: GRIS }}>Total</span>
+          <span style={{ minWidth: '46px' }}>{signo}{miles(suma)}</span>
+        </div>
+      </div>
+    )
+  }
 
   async function refrescar() { await cargar(); onCambio && onCambio() }
 
@@ -887,15 +927,32 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     <b style={{ fontWeight: 500 }}>{t.nombre}</b>
                   </span>
                 ) : <b style={{ fontWeight: 500 }}>{t.nombre}</b>
+                // Flechitas de desglose fecha por fecha en Ingresos / Consumo.
+                const eList = entroDet[t.id] || [], cList = aplicoDet[t.id] || []
+                const openE = !!movAbierto[t.id + '|e'] && eList.length > 0
+                const openC = !!movAbierto[t.id + '|c'] && cList.length > 0
+                const flecha = color => ({ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color, fontVariantNumeric: 'tabular-nums' })
                 return (
                   <div key={t.id}>
                     <Fila gtc={G_MOV} cebra={i % 2 === 1} der={[false, true, true, true, true]} cols={[
                       nombreCol,
                       <span style={{ color: GRIS }}>{miles(ini)}</span>,
-                      <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
-                      <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
+                      ing ? (eList.length > 0
+                        ? <button onClick={() => setMovAbierto(x => ({ ...x, [t.id + '|e']: !x[t.id + '|e'] }))} style={flecha(VERDE)}>+{miles(ing)} <span style={{ color: AZUL, fontSize: '9px' }}>{openE ? '▾' : '▸'}</span></button>
+                        : <span style={{ color: VERDE }}>+{miles(ing)}</span>) : <span style={{ color: '#c3d0db' }}>—</span>,
+                      con ? (cList.length > 0
+                        ? <button onClick={() => setMovAbierto(x => ({ ...x, [t.id + '|c']: !x[t.id + '|c'] }))} style={flecha(ROJO)}>−{miles(con)} <span style={{ color: AZUL, fontSize: '9px' }}>{openC ? '▾' : '▸'}</span></button>
+                        : <span style={{ color: ROJO }}>−{miles(con)}</span>) : <span style={{ color: '#c3d0db' }}>—</span>,
                       <span style={{ fontWeight: 500, color: fin < 0 ? ROJO : NAVY }}>{miles(fin)}</span>,
                     ]} />
+                    {(openE || openC) && (
+                      <Fila gtc={G_MOV} der={[false, true, true, true, true]} cols={[
+                        <span />, <span />,
+                        openE ? listaMov(eList, '+', VERDE) : <span />,
+                        openC ? listaMov(cList, '−', ROJO) : <span />,
+                        <span />,
+                      ]} />
+                    )}
                     {esJefe && abierto && DetalleLote({ tipoId: t.id })}
                   </div>
                 )
