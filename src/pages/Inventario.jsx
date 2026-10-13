@@ -654,9 +654,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ;(dpz || []).forEach(x => { (dgm[x.insumo_id] = dgm[x.insumo_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       setDesglose(dgm)
 
-      // Nota: setMovs se hace más abajo, JUNTO con setIniRango, para que el
-      // Saldo Ini. no se dibuje un instante con la apertura a medio cargar.
-      setSaldos(s || []); setPrecios(pr); setConteos(t || [])
+      // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
+      // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
+      // iniRango se limpia aquí y se llena abajo (la apertura se dibuja con el
+      // saldo_inicial mientras tanto, no con un valor viejo).
+      setSaldos(s || []); setPrecios(pr); setConteos(t || []); setMovs(m || []); setIniRango({})
 
       // Autoría del conteo por insumo (quién y cuándo), para mostrarlo en la
       // columna Conteo / Inicial de "Qué se movió".
@@ -676,7 +678,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         // El inventario inicial del rango (el más antiguo; tomasP viene ascendente) = la apertura.
         if (tt.es_inicial && !iniR[l.insumo_id]) iniR[l.insumo_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
-      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR); setMovs(m || [])
+      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {

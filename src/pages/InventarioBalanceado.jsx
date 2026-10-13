@@ -190,9 +190,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
-      // Nota: setMovs se hace más abajo, JUNTO con setIniRango, para que el
-      // Saldo Ini. no se dibuje un instante con la apertura a medio cargar.
-      setSaldos(s || []); setValorFifo(vfm); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo)
+      // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
+      // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
+      setSaldos(s || []); setValorFifo(vfm); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(m || []); setIniRango({})
       setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
@@ -213,7 +213,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         // El inventario inicial del rango (el más antiguo) = la apertura.
         if (tt.es_inicial && !iniR[l.producto_id]) iniR[l.producto_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
-      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR); setMovs(m || [])
+      setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
