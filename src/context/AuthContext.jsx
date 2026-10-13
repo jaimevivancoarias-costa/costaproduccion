@@ -16,7 +16,20 @@ export function AuthProvider({ children }) {
   const [esJefeGlobal, setEsJefeGlobal] = useState(false)
   const [cargando, setCargando] = useState(true)
 
-  useEffect(() => { iniciar() }, [])
+  useEffect(() => {
+    iniciar()
+    // Si la sesión se pierde en uso (token vencido y el refresh falla, o cierre
+    // de sesión), limpiar el usuario para que la app mande a iniciar sesión de
+    // nuevo en vez de quedar con todo dando 403.
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || !session) {
+        setUser(null); setNombre(null); setFincas([]); setEsJefe(false); setEsJefeGlobal(false); setCargando(false)
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        setUser(session.user)
+      }
+    })
+    return () => { sub?.subscription?.unsubscribe?.() }
+  }, [])
 
   async function iniciar() {
     try {
@@ -33,8 +46,14 @@ export function AuthProvider({ children }) {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) { setCargando(false); return }
 
-      setUser(session.user)
-      await Promise.all([cargarNombre(session.user.id), cargarPermisos()])
+      // Validar que el token siga siendo válido. Si venció y no se puede
+      // refrescar (refresh token inválido), getUser da 403 → cerrar sesión y
+      // mandar a login, en vez de dejar todo dando 403 con la pantalla cargada.
+      const { data: { user: u }, error: eU } = await supabase.auth.getUser()
+      if (eU || !u) { try { await supabase.auth.signOut() } catch { /* sin sesión */ } setUser(null); setCargando(false); return }
+
+      setUser(u)
+      await Promise.all([cargarNombre(u.id), cargarPermisos()])
     } catch {
       setCargando(false)
     }
