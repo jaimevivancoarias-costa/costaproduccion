@@ -661,7 +661,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       setSaldos(s || []); setPrecios(pr); setConteos(t || []); setMovs(m || []); setIniRango({})
 
       // Autoría del conteo por insumo (quién y cuándo), para mostrarlo en la
-      // columna Conteo / Inicial de "Qué se movió".
+      // columna Conteo / Inicial de "Qué se movió". Va en su propio try: si falla
+      // (ej. vw_usuario), la tabla ya se mostró arriba y solo se pierde la autoría.
+      try {
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_inventario')
           .select('fecha, creado_por, es_inicial, toma_inventario_linea(insumo_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
@@ -679,6 +681,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         if (tt.es_inicial && !iniR[l.insumo_id]) iniR[l.insumo_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
       setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
+      } catch { /* la autoría es opcional: si falla, la tabla igual se muestra */ }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
