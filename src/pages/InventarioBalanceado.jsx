@@ -196,6 +196,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
+      // En su propio try: si falla (ej. vw_usuario), la tabla ya se mostró arriba.
+      try {
       const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
         supabase.schema('produccion').from('toma_balanceado')
           .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
@@ -214,6 +216,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         if (tt.es_inicial && !iniR[l.producto_id]) iniR[l.producto_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
       setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
+      } catch { /* la autoría es opcional: si falla, la tabla igual se muestra */ }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally { setCargando(false) }
