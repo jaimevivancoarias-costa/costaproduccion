@@ -749,7 +749,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
                 ...(esJefe ? [ing ? (
                   <span>{dinero(valIng)}
-                    {p && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(p.precio)}/gal{p.desde ? ` · rige desde ${corta(p.desde)}` : ''}</span>}
+                    {p && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(p.precio)}/gal{p.desde ? ` · ${corta(p.desde).slice(0, 5)}` : ''}</span>}
                   </span>
                 ) : <span>—</span>] : []),
               ]} />
