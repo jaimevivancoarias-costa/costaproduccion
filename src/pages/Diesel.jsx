@@ -80,6 +80,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
   const [movAbierto, setMovAbierto] = useState({})      // `${tipo_id}|e` / `|c` -> desglose fecha por fecha abierto
   const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
+  const [editRow, setEditRow] = useState(null)          // jefe edita un ingreso/consumo (fecha, tipo, galones, guía…)
   const [cortesAbiertos, setCortesAbiertos] = useState({})  // conteo_id -> abierto
   const [nombresU, setNombresU] = useState({})          // id usuario -> nombre
   const [pedExp, setPedExp] = useState(null)            // ingreso expandido (quién registró)
@@ -297,15 +298,30 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   }
 
   // --- Jefe edita/borra directo; bodeguero pide permiso ---
-  async function jefeEditar(tabla, row) {
-    const txt = window.prompt('Nuevos galones:', String(row.galones))
-    if (txt == null) return
-    const gal = numDec(txt)
-    if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Galones no válidos.' }); return }
-    const { data, error } = await supabase.schema('produccion').from(tabla).update({ galones: gal }).eq('id', row.id).select('id')
+  // El jefe edita TODO (tipo, fecha, galones, y en ingresos guía/proveedor) en un diálogo.
+  function jefeEditar(tabla, row) {
+    setEditRow({
+      tabla, id: row.id,
+      tipoId: row.tipo_id,
+      fecha: row.fecha,
+      galones: String(Number(row.galones)),
+      guia: row.numero_guia || '',
+      proveedor: row.proveedor || '',
+    })
+  }
+  async function guardarEdit() {
+    const r = editRow
+    const gal = numDec(r.galones)
+    if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Pon los galones.' }); return }
+    if (!r.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
+    if (!r.fecha) { setAviso({ tipo: 'error', texto: 'Pon la fecha.' }); return }
+    const campos = r.tabla === 'diesel_pedido'
+      ? { tipo_id: r.tipoId, fecha: r.fecha, galones: gal, numero_guia: (r.guia || '').trim() || null, proveedor: (r.proveedor || '').trim() || null }
+      : { tipo_id: r.tipoId, fecha: r.fecha, galones: gal }
+    const { data, error } = await supabase.schema('produccion').from(r.tabla).update(campos).eq('id', r.id).select('id')
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     if (!data || data.length === 0) { setAviso({ tipo: 'error', texto: 'No se corrigió: sin permiso (revisar RLS de diesel).' }); return }
-    setAviso({ tipo: 'ok', texto: 'Corregido.' }); await refrescar()
+    setEditRow(null); setAviso({ tipo: 'ok', texto: 'Corregido.' }); await refrescar()
   }
   async function jefeBorrar(tabla, row) {
     if (!window.confirm(`¿Borrar este registro de ${miles(Number(row.galones))} gal?`)) return
@@ -568,6 +584,54 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         </div>
       )}
 
+      {editRow && (() => {
+        const esIng = editRow.tabla === 'diesel_pedido'
+        return (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
+            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>Editar {esIng ? 'ingreso' : 'consumo'}</div>
+            <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '16px', lineHeight: 1.5 }}>
+              Corrige los datos de este registro de diesel.
+            </div>
+            <div style={{ display: 'grid', gap: '12px' }}>
+              <div>
+                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Tipo de diesel</div>
+                <select value={editRow.tipoId} onChange={e => setEditRow(x => ({ ...x, tipoId: e.target.value }))} style={{ ...inp, width: '100%' }}>
+                  {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Fecha</div>
+                  <input type="date" value={editRow.fecha} max={hoyISO()} onChange={e => setEditRow(x => ({ ...x, fecha: e.target.value }))} style={inp} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Galones</div>
+                  <CampoNumero value={editRow.galones} onChange={v => setEditRow(x => ({ ...x, galones: v }))} style={{ ...inp, width: '120px', textAlign: 'right' }} />
+                </div>
+              </div>
+              {esIng && (
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: 1, minWidth: '120px' }}>
+                    <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Guía (opcional)</div>
+                    <input value={editRow.guia} onChange={e => setEditRow(x => ({ ...x, guia: e.target.value }))} style={{ ...inp, width: '100%' }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: '120px' }}>
+                    <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Proveedor (opcional)</div>
+                    <input value={editRow.proveedor} onChange={e => setEditRow(x => ({ ...x, proveedor: e.target.value }))} style={{ ...inp, width: '100%' }} />
+                  </div>
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '9px', marginTop: '18px' }}>
+              <Btn primario onClick={guardarEdit}>Guardar</Btn>
+              <Btn onClick={() => setEditRow(null)}>Cancelar</Btn>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
+
       {/* Encabezado: título + filtro de fechas (estilo insumos/balanceado) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: 0 }}>Diesel</h2>
@@ -683,7 +747,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 <b style={{ fontWeight: 600 }}>{t.nombre}</b>,
                 <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
                 <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
-                ...(esJefe ? [<span>{ing ? dinero(valIng) : '—'}</span>] : []),
+                ...(esJefe ? [ing ? (
+                  <span>{dinero(valIng)}
+                    {p && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(p.precio)}/gal{p.desde ? ` · rige desde ${corta(p.desde)}` : ''}</span>}
+                  </span>
+                ) : <span>—</span>] : []),
               ]} />
             )
           })}
