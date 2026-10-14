@@ -159,7 +159,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const porTipo = {}
     ;(tp || []).forEach(t => {
       const arr = []
-      if (iniFecha && iniGal[t.id] > 0) arr.push({ fecha: iniFecha, galones: iniGal[t.id], precio: null, rowId: null, inicial: true })
+      if (iniFecha && iniGal[t.id] > 0) { const peI = precioEnFecha(t.id, iniFecha); arr.push({ fecha: iniFecha, galones: iniGal[t.id], precio: peI.precio, rowId: null, inicial: true }) }
       ;(peAll || []).filter(p => p.tipo_id === t.id).forEach(p => arr.push({ fecha: p.fecha, galones: Number(p.galones), ...precioEnFecha(t.id, p.fecha) }))
       arr.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)
       const entrado = arr.reduce((s, l) => s + l.galones, 0)
@@ -194,6 +194,13 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
   const movDe = id => movs.find(m => m.tipo_id === id)
   const solDe = (tabla, id) => solis.find(x => x.tabla === tabla && x.registro_id === id)
+  // Valor por FIFO: cada lote (ingreso/inicial) al precio que regía en SU fecha,
+  // no al precio de hoy. Así cambiar el precio no revaloriza lo viejo.
+  const valorFifoDe = id => (lotes[id] || []).reduce((s, l) => s + Number(l.queda || 0) * Number(l.precio || 0), 0)
+  // Valor de los ingresos del período: cada ingreso × el precio de su fecha.
+  const valIngFifoDe = id => (lotes[id] || [])
+    .filter(l => !l.inicial && l.fecha >= desde && l.fecha <= hasta)
+    .reduce((s, l) => s + Number(l.entro || 0) * Number(l.precio || 0), 0)
 
   // Desglose fecha por fecha de Ingresos (pedidos aprobados) y Consumo del
   // período, por tipo de diesel, para las flechitas de "Qué se movió".
@@ -438,7 +445,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       const s = sById[id]; const m = movById[id]
       const nombre = (s && s.tipo) || (m && m.tipo) || ''
       const saldoHoy = s ? Number(s.saldo) : (m ? Number(m.saldo_final) : 0)
-      const p = precios[id]; const valor = p ? saldoHoy * p.precio : 0
+      const p = precios[id]; const valor = valorFifoDe(id)   // FIFO: stock × precio de su lote
       const ct = contById[id]; const contado = ct ? ct.contado : null; const dif = ct ? ct.dif : null
       totIng += Number(m?.ingresos) || 0; totCon += Number(m?.consumo) || 0; totSaldo += saldoHoy; totValor += valor
       if (dif != null) { totDif += dif; if (Math.abs(dif) > 0.001) nDesc++ }
@@ -670,7 +677,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             cols={esJefe ? ['Diesel', 'Ingresos (gal)', 'Consumo (gal)', 'Valor ingresos'] : ['Diesel', 'Ingresos (gal)', 'Consumo (gal)']} />
           {tipos.map((t, i) => {
             const m = movDe(t.id); const ing = Number(m?.ingresos) || 0; const con = Number(m?.consumo) || 0
-            const p = precios[t.id]; const valIng = p ? ing * p.precio : 0
+            const p = precios[t.id]; const valIng = valIngFifoDe(t.id)   // cada ingreso al precio de su fecha
             return (
               <Fila key={t.id} cebra={i % 2 === 1} gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true] : [false, true, true]} cols={[
                 <b style={{ fontWeight: 600 }}>{t.nombre}</b>,
@@ -979,7 +986,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                           </span>,
                           <span style={{ fontWeight: 600, color: Number(s.saldo) < 0 ? ROJO : NAVY }}>{miles(Number(s.saldo))}</span>,
                           p ? <span>{precio6(p.precio)}{p.desde && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>desde {corta(p.desde)}</span>}</span> : <span style={{ color: GRIS }}>Sin precio</span>,
-                          <span style={{ fontWeight: 600 }}>{dinero(Number(s.saldo) * (p ? p.precio : 0))}</span>,
+                          <span style={{ fontWeight: 600 }}>{dinero(valorFifoDe(s.tipo_id))}</span>,
                         ]} />
                         {abierto && DetalleQueda({ tipoId: s.tipo_id })}
                       </div>
