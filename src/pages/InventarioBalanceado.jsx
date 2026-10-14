@@ -487,6 +487,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const editaInicial = !!(editToma && editToma.es_inicial)
   const modoIni = primeraVez || editaInicial
   const negativos = saldos.filter(s => Number(s.saldo) < -0.001).length
+  // Productos cuya valorización sale $0: tienen un lote SIN costo (sin precio que
+  // cubra la fecha del lote — p. ej. el inventario inicial sin precio cargado).
+  const sinPrecioList = esJefe ? saldos.filter(s => {
+    const lts = lotes[s.producto_id] || []
+    if (lts.length) return lts.some(L => L.costo == null && Number(L.cantidad) > 0.0001)
+    return Math.abs(Number(s.saldo)) > 0.0001 && !precios[s.producto_id]
+  }) : []
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
   const esSinInvFila = f => Math.abs(Number(f.saldo)) < 0.001 && !((lotes[f.producto_id] || []).length)
   const nSinInv = filas.filter(f => coincide(f.producto) && esSinInvFila(f)).length
@@ -1555,6 +1562,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               Hay {negativos} {negativos === 1 ? 'producto' : 'productos'} con saldo negativo: {' '}
               <b>{saldos.filter(s => Number(s.saldo) < -0.001).map(s => `${s.producto} (${limpio(s.saldo)})`).join(', ')}</b>.
               {' '}Se aplicó más de lo que entró. Falta cargar un ingreso o contar la bodega.
+            </Nota>
+          )}
+
+          {sinPrecioList.length > 0 && (
+            <Nota color={AMBAR} bg="#FBF5E9">
+              Hay {sinPrecioList.length} {sinPrecioList.length === 1 ? 'producto' : 'productos'} sin precio que cubra su lote: {' '}
+              <b>{sinPrecioList.map(s => s.producto).join(', ')}</b>.
+              {' '}Su saldo y su consumo valen $0 (si es el <b>inventario inicial</b>, carga el precio en <b>Catálogo</b> con vigencia desde la fecha del inicial, o antes).
             </Nota>
           )}
 

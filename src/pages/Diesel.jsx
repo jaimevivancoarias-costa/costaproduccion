@@ -384,6 +384,23 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   async function guardarCorrLote() {
     const r = corrLote; const nuevo = numDec(r.precio)
     if (!(nuevo > 0)) { setAviso({ tipo: 'error', texto: 'Pon el precio del galón.' }); return }
+    if (r.inicial) {
+      // El lote inicial llena el HUECO antes del primer precio existente. No
+      // borra ni mueve los precios posteriores (p. ej. la primera compra): su
+      // vigencia termina el día antes de que empiece el siguiente precio.
+      const { data: post } = await supabase.schema('produccion').from('diesel_precio')
+        .select('vigente_desde').eq('tipo_id', r.tipoId)
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
+        .gt('vigente_desde', r.fecha).order('vigente_desde', { ascending: true }).limit(1)
+      // Si ya se había puesto un precio inicial en esa misma fecha, lo reemplazamos.
+      await supabase.schema('produccion').from('diesel_precio')
+        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).eq('vigente_desde', r.fecha)
+      const hasta = (post && post.length) ? sumarDias(post[0].vigente_desde, -1) : null
+      const { error } = await supabase.schema('produccion').from('diesel_precio')
+        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: r.fecha, vigente_hasta: hasta })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+      setAviso({ tipo: 'ok', texto: 'Precio del inventario inicial guardado.' }); setCorrLote(null); await refrescar(); return
+    }
     if (r.rowId) {
       const { error } = await supabase.schema('produccion').from('diesel_precio').update({ precio_galon: nuevo }).eq('id', r.rowId)
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
@@ -584,9 +601,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       {corrLote && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
           <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '420px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
-            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>Corregir precio del lote</div>
+            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>{corrLote.inicial ? 'Precio del inventario inicial' : 'Corregir precio del lote'}</div>
             <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '16px', lineHeight: 1.5 }}>
-              {nombreTipo(corrLote.tipoId)} · compra {corta(corrLote.fecha)}. Corrige el precio del galón si se tecleó mal; se ajusta en el catálogo para esa fecha.
+              {corrLote.inicial
+                ? <>{nombreTipo(corrLote.tipoId)} · inventario inicial del {corta(corrLote.fecha)}. Pon el precio del galón con que entró ese inventario; así el consumo de ese lote deja de valer $0. No afecta los precios de las compras posteriores.</>
+                : <>{nombreTipo(corrLote.tipoId)} · compra {corta(corrLote.fecha)}. Corrige el precio del galón si se tecleó mal; se ajusta en el catálogo para esa fecha.</>}
             </div>
             <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div>
@@ -893,10 +912,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del conteo físico' : 'compra ' + corta(L.fecha)}
                   </span>
                   {li === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
-                  {esJefe && !L.inicial && (
-                    <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
+                  {esJefe && (
+                    <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, inicial: !!L.inicial, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
                       style={{ marginLeft: 'auto', fontSize: '12px', padding: '3px 10px', background: '#eef4fb', color: AZUL, border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
-                      Corregir precio
+                      {L.inicial ? 'Poner precio' : 'Corregir precio'}
                     </button>
                   )}
                 </div>
