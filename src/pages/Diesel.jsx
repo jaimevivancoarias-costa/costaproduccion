@@ -915,7 +915,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                   {esJefe && (
                     <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, inicial: !!L.inicial, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
                       style={{ marginLeft: 'auto', fontSize: '12px', padding: '3px 10px', background: '#eef4fb', color: AZUL, border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
-                      {L.inicial ? 'Poner precio' : 'Corregir precio'}
+                      {L.inicial && L.precio == null ? 'Poner precio' : 'Corregir precio'}
                     </button>
                   )}
                 </div>
@@ -958,10 +958,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                   <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
                   <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
                   {li === primerQueda && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                  {esJefe && !L.inicial && (
-                    <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
+                  {esJefe && (
+                    <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, inicial: !!L.inicial, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
                       style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
-                      Corregir precio
+                      {L.inicial && L.precio == null ? 'Poner precio' : 'Corregir precio'}
                     </button>
                   )}
                 </div>
