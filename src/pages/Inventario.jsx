@@ -754,7 +754,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // En "Qué se movió": sin inventario = quedó en 0 y sin lotes, y tampoco se movió nada en el rango.
   const esSinInvMov = m => Math.abs(Number(m.saldo_final)) < 0.001 && !((lotes[m.insumo_id] || []).length) &&
     !Number(m.ingresos) && !Number(m.consumo) && !Number(m.devuelto) && !Number(m.ajustes) && (m.conteo === null || m.conteo === undefined)
-  const sinPrecio = saldos.filter(s => !precios[s.insumo_id]).length
+  // Insumos cuya valorización sale $0: tienen un lote SIN costo (sin precio que
+  // cubra la fecha del lote — p. ej. el inventario inicial sin precio cargado).
+  // Si aún no cargaron lotes (no jefe), caemos al chequeo de precio vigente.
+  const sinPrecioList = saldos.filter(s => {
+    const lts = lotes[s.insumo_id] || []
+    if (lts.length) return lts.some(L => L.costo == null && Number(L.cantidad) > 0.0001)
+    return Math.abs(Number(s.saldo)) > 0.0001 && !precios[s.insumo_id]
+  })
+  const sinPrecio = sinPrecioList.length
   const nombreInsumo = id => saldos.find(s => s.insumo_id === id)?.insumo || ''
 
   const filas = useMemo(() => saldos.map(s => {
@@ -1452,8 +1460,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
           {esJefe && sinPrecio > 0 && (
             <Nota color={AMBAR} fondo="#FBF5E9">
-              Hay {sinPrecio} {sinPrecio === 1 ? 'insumo' : 'insumos'} sin precio: su saldo y su consumo
-              valen $0. Cárgales el precio en <b>Catálogo</b> para que la valorización cuadre.
+              Hay {sinPrecio} {sinPrecio === 1 ? 'insumo' : 'insumos'} sin precio que cubra su lote: {' '}
+              <b>{sinPrecioList.map(s => s.insumo).join(', ')}</b>.
+              {' '}Su saldo y su consumo valen $0 (si es el <b>inventario inicial</b>, carga el precio en <b>Catálogo</b> con vigencia desde la fecha del inicial, o antes).
             </Nota>
           )}
         </>
