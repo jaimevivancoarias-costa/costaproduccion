@@ -298,17 +298,22 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   }
 
   // --- Jefe edita/borra directo; bodeguero pide permiso ---
-  // El jefe edita TODO (tipo, fecha, galones, y en ingresos guía/proveedor) en un diálogo.
-  function jefeEditar(tabla, row) {
+  // Mismo diálogo para los dos: el jefe guarda directo, el bodeguero manda una
+  // solicitud (pedir:true) que el jefe aprueba. Se edita TODO (tipo, fecha,
+  // galones, y en ingresos guía/proveedor).
+  function abrirEditar(tabla, row, pedir) {
     setEditRow({
-      tabla, id: row.id,
+      tabla, id: row.id, pedir,
       tipoId: row.tipo_id,
       fecha: row.fecha,
       galones: String(Number(row.galones)),
       guia: row.numero_guia || '',
       proveedor: row.proveedor || '',
+      orig: { tipo_id: row.tipo_id, fecha: row.fecha, galones: Number(row.galones), numero_guia: row.numero_guia || null, proveedor: row.proveedor || null },
     })
   }
+  function jefeEditar(tabla, row) { abrirEditar(tabla, row, false) }
+  function pedirEditar(tabla, row) { abrirEditar(tabla, row, true) }
   async function guardarEdit() {
     const r = editRow
     const gal = numDec(r.galones)
@@ -318,6 +323,15 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const campos = r.tabla === 'diesel_pedido'
       ? { tipo_id: r.tipoId, fecha: r.fecha, galones: gal, numero_guia: (r.guia || '').trim() || null, proveedor: (r.proveedor || '').trim() || null }
       : { tipo_id: r.tipoId, fecha: r.fecha, galones: gal }
+    if (r.pedir) {
+      // Bodeguero: no edita directo, manda la solicitud al jefe.
+      const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
+        finca_id: finca.id, tabla: r.tabla, registro_id: r.id,
+        valor_anterior: r.orig, valor_propuesto: campos,
+        motivo: 'Corrección de diesel', solicitado_por: userId })
+      if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
+      setEditRow(null); setAviso({ tipo: 'ok', texto: 'Pedido de cambio enviado. El jefe lo revisará.' }); await refrescar(); return
+    }
     const { data, error } = await supabase.schema('produccion').from(r.tabla).update(campos).eq('id', r.id).select('id')
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
     if (!data || data.length === 0) { setAviso({ tipo: 'error', texto: 'No se corrigió: sin permiso (revisar RLS de diesel).' }); return }
@@ -330,18 +344,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     if (!data || data.length === 0) { setAviso({ tipo: 'error', texto: 'No se borró: sin permiso (revisar RLS de diesel).' }); return }
     setAviso({ tipo: 'ok', texto: 'Borrado.' }); await refrescar()
   }
-  async function pedirCorregir(tabla, row) {
-    const txt = window.prompt('¿A cuántos galones debería corregirse?', String(row.galones))
-    if (txt == null) return
-    const gal = numDec(txt)
-    if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Galones no válidos.' }); return }
-    const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
-      finca_id: finca.id, tabla, registro_id: row.id,
-      valor_anterior: { galones: Number(row.galones) }, valor_propuesto: { galones: gal },
-      motivo: 'Corrección de diesel', solicitado_por: userId })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo enviar. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: 'Pedido de cambio enviado. El jefe lo revisará.' }); await refrescar()
-  }
   async function pedirBorrar(tabla, row) {
     if (!window.confirm('¿Pedir al jefe que borre este registro?')) return
     const { error } = await supabase.schema('produccion').from('solicitud_correccion').insert({
@@ -352,8 +354,27 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     setAviso({ tipo: 'ok', texto: 'Pedido de borrado enviado. El jefe lo revisará.' }); await refrescar()
   }
   async function resolver(sol, aprobar) {
+    // fn_resolver_correccion marca el estado de la solicitud y aplica los galones.
+    // Lo llamamos PRIMERO (por si valida el valor anterior de la fila). Luego, si
+    // se aprobó una corrección (no un borrado), escribimos en el front los campos
+    // extra propuestos (tipo, fecha, guía, proveedor) para no depender de SQL nueva.
     const { error } = await supabase.schema('produccion').rpc('fn_resolver_correccion', { p_id: sol.id, p_aprobar: aprobar })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo resolver. ' + error.message }); return }
+    if (aprobar && !sol.valor_propuesto?.borrar) {
+      const vp = sol.valor_propuesto || {}
+      const campos = {}
+      if (vp.tipo_id != null) campos.tipo_id = vp.tipo_id
+      if (vp.fecha != null) campos.fecha = vp.fecha
+      if (vp.galones != null) campos.galones = Number(vp.galones)
+      if (sol.tabla === 'diesel_pedido') {
+        if ('numero_guia' in vp) campos.numero_guia = vp.numero_guia
+        if ('proveedor' in vp) campos.proveedor = vp.proveedor
+      }
+      if (Object.keys(campos).length) {
+        const { error: eU } = await supabase.schema('produccion').from(sol.tabla).update(campos).eq('id', sol.registro_id)
+        if (eU) { setAviso({ tipo: 'error', texto: 'Se aprobó, pero no se pudo aplicar todo. ' + eU.message }); return }
+      }
+    }
     setAviso({ tipo: 'ok', texto: aprobar ? 'Corrección aplicada.' : 'Corrección rechazada.' }); await refrescar()
   }
 
@@ -511,7 +532,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     )
     return (
       <span style={{ display: 'flex', gap: '10px' }}>
-        <button onClick={() => pedirCorregir(tabla, row)} style={btnLink}>Pedir corregir</button>
+        <button onClick={() => pedirEditar(tabla, row)} style={btnLink}>Pedir corregir</button>
         <button onClick={() => pedirBorrar(tabla, row)} style={btnLink}>Pedir borrar</button>
       </span>
     )
@@ -589,9 +610,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         return (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
           <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
-            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>Editar {esIng ? 'ingreso' : 'consumo'}</div>
+            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>{editRow.pedir ? 'Pedir corrección' : 'Editar'} {esIng ? 'ingreso' : 'consumo'}</div>
             <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '16px', lineHeight: 1.5 }}>
-              Corrige los datos de este registro de diesel.
+              {editRow.pedir ? 'Corrige los datos y manda el pedido; el jefe lo revisará.' : 'Corrige los datos de este registro de diesel.'}
             </div>
             <div style={{ display: 'grid', gap: '12px' }}>
               <div>
@@ -624,7 +645,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               )}
             </div>
             <div style={{ display: 'flex', gap: '9px', marginTop: '18px' }}>
-              <Btn primario onClick={guardarEdit}>Guardar</Btn>
+              <Btn primario onClick={guardarEdit}>{editRow.pedir ? 'Enviar pedido' : 'Guardar'}</Btn>
               <Btn onClick={() => setEditRow(null)}>Cancelar</Btn>
             </div>
           </div>
@@ -763,12 +784,18 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 10px' }}>Correcciones por aprobar</h3>
             <Caja>
               {solis.map(sc => {
-                const borrar = !!sc.valor_propuesto?.borrar
+                const vp = sc.valor_propuesto || {}
+                const borrar = !!vp.borrar
+                const resumen = borrar ? 'Borrar' : ('Corregir a ' + [
+                  vp.tipo_id != null ? nombreTipo(vp.tipo_id) : null,
+                  vp.fecha != null ? corta(vp.fecha).slice(0, 5) : null,
+                  vp.galones != null ? miles(Number(vp.galones)) + ' gal' : null,
+                ].filter(Boolean).join(' · '))
                 return (
                   <div key={sc.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', fontSize: '14px' }}>
                     <span>
                       <span style={{ fontWeight: 500 }}>{sc.tabla === 'diesel_pedido' ? 'Ingreso' : 'Consumo'}</span>
-                      <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{borrar ? 'Borrar' : `Corregir a ${miles(Number(sc.valor_propuesto?.galones))} gal`}</span>
+                      <span style={{ color: GRIS, marginLeft: '8px', fontSize: '13px' }}>{resumen}</span>
                     </span>
                     <span style={{ display: 'flex', gap: '6px' }}>
                       <button onClick={() => resolver(sc, true)} style={btnOk}>Aprobar</button>
@@ -866,7 +893,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del conteo físico' : 'compra ' + corta(L.fecha)}
                   </span>
                   {li === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
-                  {esJefeGlobal && !L.inicial && (
+                  {esJefe && !L.inicial && (
                     <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
                       style={{ marginLeft: 'auto', fontSize: '12px', padding: '3px 10px', background: '#eef4fb', color: AZUL, border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600 }}>
                       Corregir precio
@@ -912,7 +939,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                   <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
                   <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
                   {li === primerQueda && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                  {esJefeGlobal && !L.inicial && (
+                  {esJefe && !L.inicial && (
                     <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
                       style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                       Corregir precio
