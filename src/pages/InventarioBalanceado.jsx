@@ -1354,6 +1354,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const entroList = entroDet[m.producto_id] || [], aplicoList = aplicoDet[m.producto_id] || []
                 const openE = !!movAbierto[keyE] && entroList.length > 0
                 const openA = !!movAbierto[keyA] && aplicoList.length > 0
+                // Desglose del saldo: cómo se arma (inicial + ingresos − consumo,
+                // más/menos el ajuste del conteo físico). Solo en "Por fechas".
+                const keyS = m.producto_id + '|saldo'
+                const openS = modoMov === 'fechas' && !!movAbierto[keyS]
+                const sIni = Number(iniMostrar) || 0, sIng = Number(m.ingresos) || 0, sCon = Number(m.consumo) || 0
+                const sResta = sIni + sIng - sCon
+                const sFin = Number(m.saldo_final) || 0
+                const sAjuste = sFin - sResta
                 const listaMov = (list, signo, color) => {
                   const suma = list.reduce((t, x) => t + Number(x.cant || 0), 0)
                   return (
@@ -1413,7 +1421,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             )}
                           </>}
                         </Cel>
-                        <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>{limpio(m.saldo_final)}</Cel>
+                        <Cel der fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
+                          <button onClick={() => setMovAbierto(x => ({ ...x, [keyS]: !x[keyS] }))}
+                            style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', fontWeight: 'inherit', color: 'inherit', fontVariantNumeric: 'tabular-nums' }}>
+                            {limpio(m.saldo_final)} <span style={{ color: AZUL, fontSize: '9px' }}>{openS ? '▾' : '▸'}</span>
+                          </button>
+                        </Cel>
                         {esJefe && <Cel der>{dinero(Number(m.consumo_dolares))}</Cel>}
                       </>
                     )
@@ -1440,6 +1453,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           : null}
                       </div>
                     ))}
+                  </div>
+                )}
+                {openS && (
+                  <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '9px 20px 12px 42px', fontSize: '12.5px', color: NAVY, lineHeight: 1.7, fontVariantNumeric: 'tabular-nums' }}>
+                    Cómo se arma el saldo:{' '}
+                    <b style={{ fontWeight: 600 }}>{limpio(sIni)}</b> inicial
+                    {sIng > 0.001 && <> · <span style={{ color: VERDE }}>+{limpio(sIng)}</span> ingresos</>}
+                    {sCon > 0.001 && <> · <span style={{ color: ROJO }}>−{limpio(sCon)}</span> consumo</>}
+                    {' = '}<b style={{ fontWeight: 600 }}>{limpio(sResta)}</b>
+                    {Math.abs(sAjuste) > 0.001
+                      ? <> · el conteo <span style={{ color: sAjuste > 0 ? AMBAR : ROJO }}>{sAjuste > 0 ? 'sobró ' : 'faltó '}{limpio(Math.abs(sAjuste))}</span> · = <b style={{ fontWeight: 700 }}>{limpio(sFin)}</b>
+                          <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px', lineHeight: 1.5 }}>El saldo sigue el conteo físico (lo que de verdad había), por eso no da la pura resta.</div></>
+                      : <span style={{ color: GRIS }}> (sin ajuste de conteo)</span>}
                   </div>
                 )}
                 {movDet === m.producto_id && (
