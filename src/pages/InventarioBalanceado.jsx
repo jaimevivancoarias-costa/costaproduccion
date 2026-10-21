@@ -308,8 +308,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const gMov = modoMov === 'fechas'
     ? (esJefe ? '1.6fr repeat(6, 1fr) 1.1fr' : '1.6fr repeat(6, 1fr)')
     : (esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B))
+  const colFinal = hasta === hoyISO() ? 'Saldo hoy' : 'Saldo al ' + corta(hasta).slice(0, 5)
   const colsMov = modoMov === 'fechas'
-    ? ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Antes del conteo', 'Último conteo', 'Saldo hoy', ...(esJefe ? ['Consumo $'] : [])]
+    ? ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Antes del conteo', 'Último conteo', colFinal, ...(esJefe ? ['Consumo $'] : [])]
     : ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]
 
   // Detalle de Ingresos (Entró) y Consumo (Se aplicó) por fecha, para las
@@ -1559,7 +1560,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
           {!contando && modoMov === 'fechas' && movs.length > 0 && (
             <div style={{ fontSize: '12px', color: GRIS, marginTop: '10px', lineHeight: 1.55 }}>
-              <b style={{ fontWeight: 600, color: NAVY }}>Saldo hoy</b> es el saldo actual, anclado a los <b style={{ fontWeight: 600 }}>conteos físicos</b>. Si en el período hubo un conteo con descuadre (por ejemplo un robo), no va a cuadrar con <i>Saldo ini + Ingresos − Consumo</i>: esa diferencia son los conteos.
+              <b style={{ fontWeight: 600, color: NAVY }}>{colFinal}</b> es el saldo al <b style={{ fontWeight: 600 }}>final del rango</b> que elegiste (no el de hoy): cambia según las fechas. Cuadra con <i>Saldo ini + Ingresos − Consumo</i>; si dentro del rango hubo un conteo con descuadre (por ejemplo un robo), el saldo refleja ese conteo físico.
             </div>
           )}
 
