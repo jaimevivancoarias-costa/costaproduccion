@@ -1557,6 +1557,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </Caja>
           )}
 
+          {!contando && modoMov === 'fechas' && movs.length > 0 && (
+            <div style={{ fontSize: '12px', color: GRIS, marginTop: '10px', lineHeight: 1.55 }}>
+              <b style={{ fontWeight: 600, color: NAVY }}>Saldo hoy</b> es el saldo actual, anclado a los <b style={{ fontWeight: 600 }}>conteos físicos</b>. Si en el período hubo un conteo con descuadre (por ejemplo un robo), no va a cuadrar con <i>Saldo ini + Ingresos − Consumo</i>: esa diferencia son los conteos.
+            </div>
+          )}
+
           {negativos > 0 && (
             <Nota color={ROJO} bg="#FBEAEA">
               Hay {negativos} {negativos === 1 ? 'producto' : 'productos'} con saldo negativo: {' '}

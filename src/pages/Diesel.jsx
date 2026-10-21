@@ -89,7 +89,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }, { data: usuarios }, { data: salIni }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }, { data: usuarios }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hastaSaldo }),
@@ -115,9 +115,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         .select('id, tipo_id, finca_id, precio_galon, vigente_desde, vigente_hasta')
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`).order('vigente_desde', { ascending: true }),
       supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
-      // Saldo al inicio del período (desde−1): para el desglose por lote DEL
-      // PERÍODO en "Qué se movió", que debe cuadrar con la fila de arriba.
-      supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: sumarDias(desde, -1) }),
     ])
     const nu = {}; (usuarios || []).forEach(x => { nu[x.id] = x.nombre }); setNombresU(nu)
     setUserId(u?.user?.id || null)
@@ -160,8 +157,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       return { precio: Number(fincaRow.precio_galon), rowId: fincaRow.id }
     }
     const saldoDe = {}; (sal || []).forEach(r => { saldoDe[r.tipo_id] = Number(r.saldo) })
-    const saldoIniDe = {}; (salIni || []).forEach(r => { saldoIniDe[r.tipo_id] = Number(r.saldo) })
-    const corte = sumarDias(desde, -1)   // víspera del período
     const porTipo = {}
     ;(tp || []).forEach(t => {
       const arr = []
@@ -169,22 +164,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       ;(peAll || []).filter(p => p.tipo_id === t.id).forEach(p => arr.push({ fecha: p.fecha, galones: Number(p.galones), ...precioEnFecha(t.id, p.fecha) }))
       arr.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)
       const entrado = arr.reduce((s, l) => s + l.galones, 0)
-      let consumo = entrado - (saldoDe[t.id] ?? entrado)      // = inicial + ingresos − saldo (acumulado hasta hoy)
+      let consumo = entrado - (saldoDe[t.id] ?? entrado)      // = inicial + ingresos − saldo (acumulado desde el inicio)
       if (consumo < 0) consumo = 0
       arr.forEach(l => { const take = Math.min(l.galones, consumo); l.entro = l.galones; l.consumio = take; l.queda = l.galones - take; consumo -= take })
-      // Movimiento DEL PERÍODO por lote: cuánto quedaba de cada lote al inicio
-      // del período (FIFO del consumo previo a 'desde') y cuánto se consumió
-      // dentro del período. Así el detalle cuadra con la fila de arriba.
-      const entradoAntes = arr.filter(l => l.fecha <= corte).reduce((s, l) => s + l.galones, 0)
-      let consAntes = entradoAntes - (saldoIniDe[t.id] ?? entradoAntes); if (consAntes < 0) consAntes = 0
-      arr.forEach(l => {
-        let cons0 = 0
-        if (l.fecha <= corte) { cons0 = Math.min(l.galones, consAntes); l.saldoIniP = l.galones - cons0; consAntes -= cons0 }
-        else { l.saldoIniP = 0 }
-        l.entroP = (l.fecha >= desde && l.fecha <= hasta) ? l.galones : 0   // entró dentro del período
-        l.consumioP = Math.max(0, l.consumio - cons0)                        // consumido dentro del período
-      })
-      porTipo[t.id] = arr      // lotes con totales (entró/consumió/queda) y movimiento del período (saldoIniP/entroP/consumioP)
+      porTipo[t.id] = arr      // acumulado por lote: entró / consumió / queda desde el inicio
     })
     setLotes(porTipo)
 
