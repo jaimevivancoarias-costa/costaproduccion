@@ -983,8 +983,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const tQueda = antQueda + periodo.reduce((a, l) => a + l.queda, 0)
     const tCosto = antCosto + periodo.reduce((a, l) => a + (l.consumioP || 0) * (l.precio || 0), 0)
     const primerQuedaPer = periodo.findIndex(l => l.queda > 0.0001)
-    // Lote del "Saldo anterior" sin precio (su costo sale $0): se le puede poner precio desde aquí.
-    const antSinPrecio = anteriores.find(l => l.precio == null && ((l.saldoIniP || 0) > 0.0001 || (l.consumioP || 0) > 0.0001 || l.queda > 0.0001))
+    // Lote representativo del "Saldo anterior" para mostrar su precio y poder
+    // corregirlo (o ponerlo si está sin precio). Prioriza el inventario inicial.
+    const antCon = anteriores.filter(l => (l.saldoIniP || 0) > 0.0001 || (l.consumioP || 0) > 0.0001 || l.queda > 0.0001)
+    const antLote = antCon.find(l => l.inicial) || antCon[0]
+    const antPreciosDistintos = new Set(antCon.map(l => l.precio == null ? 's/p' : Number(l.precio).toFixed(6))).size
     return (
       <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
@@ -1003,12 +1006,17 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               <Fragment>
                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                   <div style={{ fontWeight: 600 }}>Saldo anterior</div>
-                  <div style={{ color: GRIS, fontSize: '11.5px' }}>{antSinPrecio ? 'sin precio · su costo es $0' : 'lo que había al empezar'}</div>
+                  <div style={{ color: GRIS, fontSize: '11.5px' }}>{
+                    !antLote ? 'lo que había al empezar'
+                      : antLote.precio == null ? 'sin precio · su costo es $0'
+                      : antPreciosDistintos > 1 ? 'varios precios'
+                      : precio6(antLote.precio) + ' /gal'
+                  }</div>
                   {antQueda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                  {esJefe && antSinPrecio && (
-                    <button onClick={() => setCorrLote({ tipoId, fecha: antSinPrecio.fecha, rowId: antSinPrecio.rowId, inicial: !!antSinPrecio.inicial, precioActual: antSinPrecio.precio, precio: '' })}
+                  {esJefe && antLote && antPreciosDistintos <= 1 && (
+                    <button onClick={() => setCorrLote({ tipoId, fecha: antLote.fecha, rowId: antLote.rowId, inicial: !!antLote.inicial, precioActual: antLote.precio, precio: antLote.precio != null ? String(antLote.precio) : '' })}
                       style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
-                      Poner precio
+                      {antLote.precio == null ? 'Poner precio' : 'Corregir precio'}
                     </button>
                   )}
                 </div>
