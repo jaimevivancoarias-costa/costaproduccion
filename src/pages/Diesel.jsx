@@ -400,6 +400,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   async function guardarCorrLote() {
     const r = corrLote; const nuevo = numDec(r.precio)
     if (!(nuevo > 0)) { setAviso({ tipo: 'error', texto: 'Pon el precio del galón.' }); return }
+    const fechaVig = r.desde || r.fecha   // "rige desde" editable (default = fecha del lote)
+    if (!fechaVig) { setAviso({ tipo: 'error', texto: 'Pon la fecha desde cuándo rige.' }); return }
     if (r.inicial) {
       // El lote inicial llena el HUECO antes del primer precio existente. No
       // borra ni mueve los precios posteriores (p. ej. la primera compra): su
@@ -407,27 +409,29 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       const { data: post } = await supabase.schema('produccion').from('diesel_precio')
         .select('vigente_desde').eq('tipo_id', r.tipoId)
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
-        .gt('vigente_desde', r.fecha).order('vigente_desde', { ascending: true }).limit(1)
+        .gt('vigente_desde', fechaVig).order('vigente_desde', { ascending: true }).limit(1)
       // Si ya se había puesto un precio inicial en esa misma fecha, lo reemplazamos.
       await supabase.schema('produccion').from('diesel_precio')
-        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).eq('vigente_desde', r.fecha)
+        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).eq('vigente_desde', fechaVig)
       const hasta = (post && post.length) ? sumarDias(post[0].vigente_desde, -1) : null
       const { error } = await supabase.schema('produccion').from('diesel_precio')
-        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: r.fecha, vigente_hasta: hasta })
+        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: fechaVig, vigente_hasta: hasta })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
       setAviso({ tipo: 'ok', texto: 'Precio del inventario inicial guardado.' }); setCorrLote(null); await refrescar(); return
     }
-    if (r.rowId) {
+    if (r.rowId && fechaVig === r.fecha) {
+      // Misma fecha: solo corrige el precio de ese tramo, sin mover vigencias.
       const { error } = await supabase.schema('produccion').from('diesel_precio').update({ precio_galon: nuevo }).eq('id', r.rowId)
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
     } else {
+      // Rige desde fechaVig: cierra el precio anterior el día antes e inserta el nuevo.
       await supabase.schema('produccion').from('diesel_precio')
-        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).gte('vigente_desde', r.fecha)
+        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).gte('vigente_desde', fechaVig)
       await supabase.schema('produccion').from('diesel_precio')
-        .update({ vigente_hasta: sumarDias(r.fecha, -1) })
-        .eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', r.fecha)
+        .update({ vigente_hasta: sumarDias(fechaVig, -1) })
+        .eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', fechaVig)
       const { error } = await supabase.schema('produccion').from('diesel_precio')
-        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: r.fecha })
+        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: fechaVig })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
     }
     setAviso({ tipo: 'ok', texto: 'Precio corregido.' }); setCorrLote(null); await refrescar()
@@ -626,11 +630,18 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Precio por galón</div>
-                <CampoNumero maxDec={6} autoFocus value={corrLote.precio} onChange={v => setCorrLote(x => ({ ...x, precio: v }))} style={{ ...inp, width: '150px', textAlign: 'right' }} />
+                <CampoNumero maxDec={6} autoFocus value={corrLote.precio} onChange={v => setCorrLote(x => ({ ...x, precio: v }))} style={{ ...inp, width: '140px', textAlign: 'right' }} />
+              </div>
+              <div>
+                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Rige desde</div>
+                <input type="date" value={corrLote.desde || corrLote.fecha} max={hoyISO()} onChange={e => setCorrLote(x => ({ ...x, desde: e.target.value }))} style={inp} />
               </div>
               <div style={{ fontSize: '12px', color: GRIS, paddingBottom: '9px' }}>
                 {corrLote.precioActual != null ? <>antes {precio6(corrLote.precioActual)}</> : 'sin precio'}
               </div>
+            </div>
+            <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '10px', lineHeight: 1.5 }}>
+              El precio rige <b style={{ fontWeight: 600 }}>desde esa fecha en adelante</b>; lo anterior mantiene su precio.
             </div>
             <div style={{ display: 'flex', gap: '9px', marginTop: '16px' }}>
               <Btn primario onClick={guardarCorrLote}>Guardar</Btn>
