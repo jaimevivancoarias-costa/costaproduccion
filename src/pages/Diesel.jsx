@@ -406,14 +406,21 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       // El lote inicial llena el HUECO antes del primer precio existente. No
       // borra ni mueve los precios posteriores (p. ej. la primera compra): su
       // vigencia termina el día antes de que empiece el siguiente precio.
-      const { data: post } = await supabase.schema('produccion').from('diesel_precio')
-        .select('vigente_desde').eq('tipo_id', r.tipoId)
-        .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
-        .gt('vigente_desde', fechaVig).order('vigente_desde', { ascending: true }).limit(1)
+      const [{ data: post }, { data: nextIng }] = await Promise.all([
+        supabase.schema('produccion').from('diesel_precio')
+          .select('vigente_desde').eq('tipo_id', r.tipoId)
+          .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
+          .gt('vigente_desde', fechaVig).order('vigente_desde', { ascending: true }).limit(1),
+        // Siguiente compra de ESTA finca+tipo: el precio inicial no debe pasar de ahí.
+        supabase.schema('produccion').from('diesel_pedido')
+          .select('fecha').eq('tipo_id', r.tipoId).eq('finca_id', finca.id).eq('estado', 'aprobado')
+          .gt('fecha', fechaVig).order('fecha', { ascending: true }).limit(1),
+      ])
       // Si ya se había puesto un precio inicial en esa misma fecha, lo reemplazamos.
       await supabase.schema('produccion').from('diesel_precio')
         .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).eq('vigente_desde', fechaVig)
-      const hasta = (post && post.length) ? sumarDias(post[0].vigente_desde, -1) : null
+      let hasta = (post && post.length) ? sumarDias(post[0].vigente_desde, -1) : null
+      if (nextIng && nextIng.length) { const h2 = sumarDias(nextIng[0].fecha, -1); if (!hasta || h2 < hasta) hasta = h2 }
       const { error } = await supabase.schema('produccion').from('diesel_precio')
         .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: fechaVig, vigente_hasta: hasta })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
