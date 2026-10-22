@@ -950,18 +950,27 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
     const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
     const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '8px' }
-    const tSaldoIni = ls.reduce((a, l) => a + (l.saldoIniP || 0), 0)
-    const tEntro = ls.reduce((a, l) => a + (l.entroP || 0), 0)
-    const tCons = ls.reduce((a, l) => a + (l.consumioP || 0), 0)
-    const tQueda = ls.reduce((a, l) => a + l.queda, 0)
-    const tCosto = ls.reduce((a, l) => a + (l.consumioP || 0) * (l.precio || 0), 0)
-    const primerQueda = ls.findIndex(l => l.queda > 0.0001)
+    // Lo que había al empezar el rango (lotes previos) se junta en una sola línea
+    // "Saldo anterior"; los lotes que entraron DENTRO del rango se muestran uno
+    // por uno. Así se ve "solo el ciclo del filtro" + su saldo de arranque.
+    const periodo = ls.filter(l => (l.entroP || 0) > 0.0001)
+    const anteriores = ls.filter(l => !((l.entroP || 0) > 0.0001))
+    const antSaldoIni = anteriores.reduce((a, l) => a + (l.saldoIniP || 0), 0)
+    const antCons = anteriores.reduce((a, l) => a + (l.consumioP || 0), 0)
+    const antQueda = anteriores.reduce((a, l) => a + l.queda, 0)
+    const antCosto = anteriores.reduce((a, l) => a + (l.consumioP || 0) * (l.precio || 0), 0)
+    const hayAnterior = antSaldoIni > 0.0001 || antQueda > 0.0001 || antCons > 0.0001
+    const tEntro = periodo.reduce((a, l) => a + (l.entroP || 0), 0)
+    const tCons = antCons + periodo.reduce((a, l) => a + (l.consumioP || 0), 0)
+    const tQueda = antQueda + periodo.reduce((a, l) => a + l.queda, 0)
+    const tCosto = antCosto + periodo.reduce((a, l) => a + (l.consumioP || 0) * (l.precio || 0), 0)
+    const primerQuedaPer = periodo.findIndex(l => l.queda > 0.0001)
     return (
       <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
         <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Movimiento del período · se consume del más viejo primero · en galones</div>
-        {ls.length === 0 ? (
-          <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes.</div>
+        {!hayAnterior && periodo.length === 0 ? (
+          <div style={{ fontSize: '13px', color: GRIS }}>Sin movimiento en el período.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
             <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
@@ -970,12 +979,26 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             <div style={cab}>Consumió</div>
             <div style={cab}>Queda</div>
             <div style={cab}>Costo consumido</div>
-            {ls.map((L, li) => (
+            {hayAnterior && (
+              <Fragment>
+                <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                  <div style={{ fontWeight: 600 }}>Saldo anterior</div>
+                  <div style={{ color: GRIS, fontSize: '11.5px' }}>lo que había al empezar</div>
+                  {antQueda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                </div>
+                <div style={cel}>{miles(antSaldoIni)}</div>
+                <div style={{ ...cel, color: '#c3d0db' }}>—</div>
+                <div style={{ ...cel, color: antCons ? ROJO : '#c3d0db' }}>{antCons ? '−' + miles(antCons) : '—'}</div>
+                <div style={{ ...cel, fontWeight: 600 }}>{miles(antQueda)}</div>
+                <div style={cel}>{dinero(antCosto)}</div>
+              </Fragment>
+            )}
+            {periodo.map((L, li) => (
               <Fragment key={li}>
                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                   <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
                   <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
-                  {li === primerQueda && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                  {!hayAnterior && li === primerQuedaPer && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
                   {esJefe && (
                     <button onClick={() => setCorrLote({ tipoId, fecha: L.fecha, rowId: L.rowId, inicial: !!L.inicial, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : '' })}
                       style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
@@ -983,7 +1006,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     </button>
                   )}
                 </div>
-                <div style={cel}>{miles(L.saldoIniP || 0)}</div>
+                <div style={{ ...cel, color: '#c3d0db' }}>—</div>
                 <div style={{ ...cel, color: L.entroP ? VERDE : '#c3d0db' }}>{L.entroP ? '+' + miles(L.entroP) : '—'}</div>
                 <div style={{ ...cel, color: L.consumioP ? ROJO : '#c3d0db' }}>{L.consumioP ? '−' + miles(L.consumioP) : '—'}</div>
                 <div style={{ ...cel, fontWeight: 600 }}>{miles(L.queda)}</div>
@@ -991,7 +1014,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               </Fragment>
             ))}
             <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-            <div style={tot}>{miles(tSaldoIni)}</div>
+            <div style={tot}>{miles(antSaldoIni)}</div>
             <div style={tot}>{tEntro ? '+' + miles(tEntro) : '—'}</div>
             <div style={tot}>{tCons ? '−' + miles(tCons) : '—'}</div>
             <div style={tot}>{miles(tQueda)}</div>
