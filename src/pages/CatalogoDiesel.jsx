@@ -32,6 +32,40 @@ export default function CatalogoDiesel({ fincas }) {
   const [hist, setHist] = useState(null)        // fincaId con historial abierto
   const [histRows, setHistRows] = useState([])
   const [guardando, setGuardando] = useState(false)
+  const [recostear, setRecostear] = useState(null)   // { desde, items:[{fincaId,fincaNombre,tipoId,tipoNombre,precio,ids,n}] }
+
+  const nombreFinca = id => activas.find(f => f.id === id)?.nombre || '—'
+
+  // Al cambiar un precio a una fecha PASADA, detecta las compras ya registradas
+  // de ese rango cuyo precio difiere del nuevo (candidatas a recostear).
+  async function detectarRecosteo(fincaIds, valores, desde) {
+    if (!desde || desde >= hoyISO()) return []
+    const items = []
+    for (const fid of fincaIds) {
+      for (const t of tipos) {
+        const raw = numDec(valores[t.id] || '')
+        if (!(raw > 0)) continue
+        const { data } = await supabase.schema('produccion').from('diesel_pedido')
+          .select('id, precio_galon').eq('finca_id', fid).eq('tipo_id', t.id).eq('estado', 'aprobado')
+          .gte('fecha', desde).lte('fecha', hoyISO())
+        const afectadas = (data || []).filter(dp => dp.precio_galon == null || Math.abs(Number(dp.precio_galon) - raw) > 1e-9)
+        if (afectadas.length) items.push({ fincaId: fid, fincaNombre: nombreFinca(fid), tipoId: t.id, tipoNombre: t.nombre, precio: raw, ids: afectadas.map(a => a.id), n: afectadas.length })
+      }
+    }
+    return items
+  }
+
+  async function aplicarRecosteo() {
+    setGuardando(true)
+    try {
+      for (const it of recostear.items) {
+        const { error } = await supabase.schema('produccion').from('diesel_pedido')
+          .update({ precio_galon: it.precio }).in('id', it.ids)
+        if (error) throw error
+      }
+    } catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo recostear. ' + e.message }); return }
+    setGuardando(false); setRecostear(null); setAviso({ tipo: 'ok', texto: 'Compras recosteadas al precio nuevo.' }); await cargar()
+  }
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -79,10 +113,13 @@ export default function CatalogoDiesel({ fincas }) {
 
   async function guardar() {
     if (guardando) return
+    const desde = edit.desde || hoyISO()
     setGuardando(true)
-    try { await aplicar(edit.fincaId, edit.valores, edit.desde || hoyISO()) }
+    try { await aplicar(edit.fincaId, edit.valores, desde) }
     catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e.message }); return }
+    const items = await detectarRecosteo([edit.fincaId], edit.valores, desde)
     setGuardando(false); setEdit(null); setAviso({ tipo: 'ok', texto: 'Precios guardados.' }); await cargar()
+    if (items.length) setRecostear({ desde, items })
   }
 
   async function guardarBulk() {
@@ -94,7 +131,9 @@ export default function CatalogoDiesel({ fincas }) {
     setGuardando(true)
     try { for (const f of activas) await aplicar(f.id, bulk.valores, desde) }
     catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + e.message }); return }
+    const items = await detectarRecosteo(activas.map(f => f.id), bulk.valores, desde)
     setGuardando(false); setBulk(null); setAviso({ tipo: 'ok', texto: `Precios aplicados a ${activas.length} fincas.` }); await cargar()
+    if (items.length) setRecostear({ desde, items })
   }
 
   async function abrirHist(fincaId) {
@@ -117,6 +156,35 @@ export default function CatalogoDiesel({ fincas }) {
                       background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
                       color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
       )}
+
+      {recostear && (() => {
+        const total = recostear.items.reduce((s, it) => s + it.n, 0)
+        return (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
+          <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '460px', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
+            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>¿Recostear las compras?</div>
+            <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '14px', lineHeight: 1.5 }}>
+              Pusiste un precio con fecha <b style={{ fontWeight: 600 }}>{corta(recostear.desde)}</b>. Hay <b style={{ fontWeight: 600 }}>{total}</b> {total === 1 ? 'compra ya registrada' : 'compras ya registradas'} de ese rango con otro precio. ¿Les aplico el precio nuevo?
+            </div>
+            <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '10px', overflow: 'hidden', marginBottom: '14px' }}>
+              {recostear.items.map((it, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', padding: '9px 12px', fontSize: '13px', borderBottom: i < recostear.items.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
+                  <span>{it.fincaNombre} · {it.tipoNombre}</span>
+                  <span style={{ color: GRIS }}>{it.n} {it.n === 1 ? 'compra' : 'compras'} → {precio6(it.precio)}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '9px' }}>
+              <button onClick={aplicarRecosteo} disabled={guardando}
+                style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>
+                {guardando ? 'Aplicando…' : 'Sí, recostear'}
+              </button>
+              <button onClick={() => setRecostear(null)} style={boton}>No, dejar cada una con su precio</button>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
 
       {!cargando && !bulk && (
         <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end' }}>
