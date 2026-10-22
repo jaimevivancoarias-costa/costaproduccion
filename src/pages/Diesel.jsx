@@ -934,22 +934,20 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
     const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
     const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '8px' }
-    const tSaldoIni = ls.reduce((a, l) => a + (l.saldoIniP || 0), 0)
-    const tEntro = ls.reduce((a, l) => a + (l.entroP || 0), 0)
-    const tCons = ls.reduce((a, l) => a + (l.consumioP || 0), 0)
+    const tEntro = ls.reduce((a, l) => a + l.entro, 0)
+    const tCons = ls.reduce((a, l) => a + l.consumio, 0)
     const tQueda = ls.reduce((a, l) => a + l.queda, 0)
-    const tCosto = ls.reduce((a, l) => a + (l.consumioP || 0) * (l.precio || 0), 0)
+    const tCosto = ls.reduce((a, l) => a + l.consumio * (l.precio || 0), 0)
     const primerQueda = ls.findIndex(l => l.queda > 0.0001)
     return (
       <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
-        <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Movimiento del período · se consume del más viejo primero · en galones</div>
+        <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Acumulado desde el inicio · se consume del más viejo primero · en galones</div>
         {ls.length === 0 ? (
           <div style={{ fontSize: '13px', color: GRIS }}>Sin lotes.</div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
             <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
-            <div style={cab}>Saldo inicio</div>
             <div style={cab}>Entró</div>
             <div style={cab}>Consumió</div>
             <div style={cab}>Queda</div>
@@ -967,17 +965,15 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     </button>
                   )}
                 </div>
-                <div style={cel}>{miles(L.saldoIniP || 0)}</div>
-                <div style={{ ...cel, color: L.entroP ? VERDE : '#c3d0db' }}>{L.entroP ? '+' + miles(L.entroP) : '—'}</div>
-                <div style={{ ...cel, color: L.consumioP ? ROJO : '#c3d0db' }}>{L.consumioP ? '−' + miles(L.consumioP) : '—'}</div>
+                <div style={cel}>{miles(L.entro)}</div>
+                <div style={{ ...cel, color: L.consumio ? ROJO : '#c3d0db' }}>{L.consumio ? miles(L.consumio) : '—'}</div>
                 <div style={{ ...cel, fontWeight: 600 }}>{miles(L.queda)}</div>
-                <div style={cel}>{dinero((L.consumioP || 0) * (L.precio || 0))}</div>
+                <div style={cel}>{dinero(L.consumio * (L.precio || 0))}</div>
               </Fragment>
             ))}
             <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-            <div style={tot}>{miles(tSaldoIni)}</div>
-            <div style={tot}>{tEntro ? '+' + miles(tEntro) : '—'}</div>
-            <div style={tot}>{tCons ? '−' + miles(tCons) : '—'}</div>
+            <div style={tot}>{miles(tEntro)}</div>
+            <div style={tot}>{miles(tCons)}</div>
             <div style={tot}>{miles(tQueda)}</div>
             <div style={tot}>{dinero(tCosto)}</div>
           </div>
@@ -1194,7 +1190,7 @@ const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 const G_CORTE2 = '2fr 1fr 1fr 1.2fr'
 const G_MOV = '1.6fr 1fr 1fr 1fr 1fr'
-const G_LOTE = '1.8fr 1fr 1fr 1fr 1fr 1.3fr'
+const G_LOTE = '1.8fr 1fr 1fr 1fr 1.3fr'
 
 const inp = { padding: '9px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY }
 const btnOk = { fontSize: '12px', padding: '6px 12px', borderRadius: '8px', border: '0.5px solid #3B6D11', background: '#EAF3DE', color: '#27500A', fontFamily: 'inherit', cursor: 'pointer' }
