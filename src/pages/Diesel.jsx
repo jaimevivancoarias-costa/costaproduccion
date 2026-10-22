@@ -976,6 +976,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const tQueda = antQueda + periodo.reduce((a, l) => a + l.queda, 0)
     const tCosto = antCosto + periodo.reduce((a, l) => a + (l.consumioP || 0) * (l.precio || 0), 0)
     const primerQuedaPer = periodo.findIndex(l => l.queda > 0.0001)
+    // Lote del "Saldo anterior" sin precio (su costo sale $0): se le puede poner precio desde aquí.
+    const antSinPrecio = anteriores.find(l => l.precio == null && ((l.saldoIniP || 0) > 0.0001 || (l.consumioP || 0) > 0.0001 || l.queda > 0.0001))
     return (
       <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
@@ -994,8 +996,14 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               <Fragment>
                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                   <div style={{ fontWeight: 600 }}>Saldo anterior</div>
-                  <div style={{ color: GRIS, fontSize: '11.5px' }}>lo que había al empezar</div>
+                  <div style={{ color: GRIS, fontSize: '11.5px' }}>{antSinPrecio ? 'sin precio · su costo es $0' : 'lo que había al empezar'}</div>
                   {antQueda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                  {esJefe && antSinPrecio && (
+                    <button onClick={() => setCorrLote({ tipoId, fecha: antSinPrecio.fecha, rowId: antSinPrecio.rowId, inicial: !!antSinPrecio.inicial, precioActual: antSinPrecio.precio, precio: '' })}
+                      style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                      Poner precio
+                    </button>
+                  )}
                 </div>
                 <div style={cel}>{miles(antSaldoIni)}</div>
                 <div style={{ ...cel, color: '#c3d0db' }}>—</div>
