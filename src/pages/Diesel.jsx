@@ -1156,6 +1156,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
         {/* Conteos anteriores · se mantiene en ambas vistas (Cuánto hay / Qué se movió) */}
         <div style={{ fontSize: '15px', fontWeight: 500, margin: '22px 0 12px' }}>Conteos anteriores</div>
+        {cortes.length > 0 && !cortes.every(c => c.esInicial) && (
+          <div style={{ fontSize: '11.5px', color: GRIS, margin: '-6px 0 10px', lineHeight: 1.5 }}>
+            El saldo se lleva por <b style={{ fontWeight: 600, color: NAVY }}>ingresos − consumo</b> (el cálculo). El conteo es una <b style={{ fontWeight: 600 }}>verificación</b>: NO ajusta el saldo. Si dice "faltó" o "sobró", revisa — suele faltar registrar un consumo (o hubo una pérdida real).
+          </div>
+        )}
             {cortes.length === 0 ? (
               <Caja><div style={{ padding: '18px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay conteos.</div></Caja>
             ) : cortes.map((c, idx) => {
