@@ -169,16 +169,20 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       let consumo = entrado - (saldoDe[t.id] ?? entrado)      // = inicial + ingresos − saldo (acumulado hasta hoy)
       if (consumo < 0) consumo = 0
       arr.forEach(l => { const take = Math.min(l.galones, consumo); l.entro = l.galones; l.consumio = take; l.queda = l.galones - take; consumo -= take })
-      // Movimiento DEL PERÍODO por lote (para "Qué se movió", cuadra con la fila
-      // de arriba): el saldo inicial del período se reparte del lote más viejo al
-      // más nuevo (así el inicial queda como apertura, no como ingreso); lo que
-      // llegó dentro del rango es "entró"; consumió = saldo ini + entró − queda.
+      // Movimiento DEL PERÍODO por lote (cuadra con la fila de arriba). El saldo
+      // inicial del período (lo que había al empezar el rango) se reparte entre
+      // los lotes que YA existían: por FIFO lo que queda es lo más NUEVO, así que
+      // se asigna del más nuevo al más viejo. El inventario inicial, solo si el
+      // rango arranca en él (o antes), es la apertura base. Lo que llega dentro
+      // del rango es "entró". consumió = saldo ini + entró − queda.
+      const iniAp = arr.find(l => l.inicial && l.fecha >= desde && l.fecha <= hasta)
+      arr.forEach(l => { l.saldoIniP = 0; l.entroP = (l !== iniAp && l.fecha >= desde && l.fecha <= hasta) ? l.galones : 0 })
       let sIni = Number(movIniDe[t.id] || 0)
-      arr.forEach(l => {
-        const take = Math.min(l.galones, Math.max(0, sIni)); l.saldoIniP = take; sIni -= take
-        l.entroP = (l.fecha >= desde && l.fecha <= hasta) ? (l.galones - take) : 0
-        l.consumioP = Math.max(0, l.saldoIniP + l.entroP - l.queda)
-      })
+      for (let i = arr.length - 1; i >= 0 && sIni > 0.0001; i--) {
+        const l = arr[i]
+        if (l === iniAp || l.fecha < desde) { const take = Math.min(l.galones, sIni); l.saldoIniP = take; sIni -= take }
+      }
+      arr.forEach(l => { l.consumioP = Math.max(0, l.saldoIniP + l.entroP - l.queda) })
       porTipo[t.id] = arr      // totales (entro/consumio/queda) + movimiento del período (saldoIniP/entroP/consumioP)
     })
     setLotes(porTipo)
