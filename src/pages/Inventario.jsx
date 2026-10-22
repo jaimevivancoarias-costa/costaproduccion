@@ -1745,6 +1745,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               const entroList = entroDet[m.insumo_id] || [], aplicoList = aplicoDet[m.insumo_id] || []
               const openE = !!movAbierto[keyE] && entroList.length > 0
               const openA = !!movAbierto[keyA] && aplicoList.length > 0
+              // Desglose del saldo (Queda): cómo se arma. Solo en "Por fechas".
+              const keyS = m.insumo_id + '|saldo'
+              const openS = modoMov === 'fechas' && !!movAbierto[keyS]
+              const sIni = Number(iniMostrar) || 0, sIng = Number(m.ingresos) || 0, sCon = Number(m.consumo) || 0
+              const sResta = sIni + sIng - sCon
+              const sFin = Number(m.saldo_final) || 0
+              const sAjuste = sFin - sResta
               const listaMov = (list, signo, color) => {
                 const suma = list.reduce((t, x) => t + Number(x.cant || 0), 0)
                 return (
@@ -1811,7 +1818,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         </>}
                       </Celda>
                       <Celda derecha fuerte color={Number(m.saldo_final) < 0 ? ROJO : NAVY}>
-                        {val(m.saldo_final)} <span style={{ fontSize: '11px', fontWeight: 400, color: GRIS }}>{uLabel}</span>
+                        <button onClick={() => setMovAbierto(x => ({ ...x, [keyS]: !x[keyS] }))}
+                          style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', fontWeight: 'inherit', color: 'inherit', fontVariantNumeric: 'tabular-nums' }}>
+                          {val(m.saldo_final)} <span style={{ color: AZUL, fontSize: '9px' }}>{openS ? '▾' : '▸'}</span>
+                        </button> <span style={{ fontSize: '11px', fontWeight: 400, color: GRIS }}>{uLabel}</span>
                       </Celda>
                     </>
                   )
@@ -1843,6 +1853,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         : null}
                     </div>
                   ))}
+                </div>
+              )}
+              {openS && (
+                <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '9px 20px 12px 42px', fontSize: '12.5px', color: NAVY, lineHeight: 1.7, fontVariantNumeric: 'tabular-nums' }}>
+                  Cómo se arma el saldo:{' '}
+                  <b style={{ fontWeight: 600 }}>{val(sIni)}</b> inicial
+                  {sIng > 0.001 && <> · <span style={{ color: VERDE }}>+{val(sIng)}</span> entró</>}
+                  {sCon > 0.001 && <> · <span style={{ color: ROJO }}>−{val(sCon)}</span> se aplicó</>}
+                  {' = '}<b style={{ fontWeight: 600 }}>{val(sResta)}</b>
+                  {Math.abs(sAjuste) > 0.001
+                    ? <> · el conteo <span style={{ color: sAjuste > 0 ? AMBAR : ROJO }}>{sAjuste > 0 ? 'sobró ' : 'faltó '}{val(Math.abs(sAjuste))}</span> · = <b style={{ fontWeight: 700 }}>{val(sFin)}</b>
+                        <div style={{ fontSize: '11px', color: GRIS, marginTop: '3px', lineHeight: 1.5 }}>El saldo sigue el conteo físico (lo que de verdad había), por eso no da la pura resta.</div></>
+                    : <span style={{ color: GRIS }}> (sin ajuste de conteo)</span>}
                 </div>
               )}
               {movDet === m.insumo_id && (
