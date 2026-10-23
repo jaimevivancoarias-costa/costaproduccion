@@ -114,6 +114,9 @@ export function AuthProvider({ children }) {
   async function login(email, password) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) return { error }
+    // Mientras cargan nombre y permisos, mostrar "Cargando" en vez de parpadear
+    // la pantalla de "sin fincas" (cargando ya venía en false desde el arranque).
+    setCargando(true)
     const { data: { session } } = await supabase.auth.getSession()
     setUser(session?.user ?? null)
     if (session?.user) await cargarNombre(session.user.id)
