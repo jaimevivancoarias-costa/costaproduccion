@@ -261,34 +261,37 @@ export default function CatalogoDiesel({ fincas }) {
                 </div>
 
                 {enEdit && (
-                  <div style={{ padding: '12px 16px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
-                    <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>
+                  <div style={{ padding: '14px 16px 16px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
+                    <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '12px' }}>
                       Cada tipo tiene su propia fecha. Cambia solo el que necesites.
                     </div>
-                    <div style={{ display: 'flex', gap: '18px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '110px 100px 120px 160px', gap: '9px 18px', alignItems: 'center', maxWidth: '560px' }}>
+                      <span style={headCell}>Tipo</span>
+                      <span style={headCell}>Precio actual</span>
+                      <span style={headCell}>Precio nuevo</span>
+                      <span style={headCell}>Rige desde</span>
                       {tipos.map(t => {
                         const act = precios[f.id + '|' + t.id]
                         return (
-                          <div key={t.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-                            <Campo label={`${t.nombre} · $/gal`}>
-                              <CampoNumero maxDec={6} value={edit.valores[t.id] || ''} placeholder="ej. 1.80"
-                                onChange={v => setEdit(x => ({ ...x, valores: { ...x.valores, [t.id]: v } }))}
-                                style={{ ...inp, width: '100px', textAlign: 'right' }} />
-                              {act && <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px' }}>antes {precio6(act.precio)}</div>}
-                            </Campo>
-                            <Campo label="Rige desde">
-                              <input type="date" value={edit.desdes[t.id] || hoyISO()} max={hoyISO()}
-                                onChange={e => setEdit(x => ({ ...x, desdes: { ...x.desdes, [t.id]: e.target.value } }))} style={inp} />
-                            </Campo>
-                          </div>
+                          <Fragment key={t.id}>
+                            <span style={{ fontSize: '14px', fontWeight: 500, color: NAVY }}>{t.nombre}</span>
+                            <span style={{ fontSize: '13px', color: GRIS }}>{act ? precio6(act.precio) : '—'}</span>
+                            <CampoNumero maxDec={6} value={edit.valores[t.id] || ''} placeholder="ej. 1.80"
+                              onChange={v => setEdit(x => ({ ...x, valores: { ...x.valores, [t.id]: v } }))}
+                              style={{ ...inp, width: '110px', textAlign: 'right' }} />
+                            <input type="date" value={edit.desdes[t.id] || hoyISO()} max={hoyISO()}
+                              onChange={e => setEdit(x => ({ ...x, desdes: { ...x.desdes, [t.id]: e.target.value } }))} style={{ ...inp, width: '150px' }} />
+                          </Fragment>
                         )
                       })}
+                    </div>
+                    <div style={{ display: 'flex', gap: '9px', marginTop: '16px' }}>
                       <button onClick={guardar} disabled={guardando}
                         style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando...' : 'Guardar'}</button>
                       <button onClick={() => setEdit(null)} style={boton}>Cancelar</button>
                     </div>
-                    <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
-                      Al guardar, cada precio cierra el anterior de ese tipo y rige desde su fecha. Si la fecha es pasada, te preguntará si recosteas las compras de ese rango.
+                    <div style={{ fontSize: '11px', color: GRIS, marginTop: '10px' }}>
+                      Fecha pasada → te preguntamos si recostear las compras de ese rango.
                     </div>
                   </div>
                 )}
@@ -351,6 +354,7 @@ export default function CatalogoDiesel({ fincas }) {
 
 const inp = { padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
               borderRadius: '8px', background: 'white', color: NAVY }
+const headCell = { fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em' }
 const boton = { padding: '9px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                 border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 const btnLink = { fontSize: '12px', border: 'none', background: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }
