@@ -31,6 +31,7 @@ export default function CatalogoDiesel({ fincas }) {
   const [bulk, setBulk] = useState(null)        // { valores, desde }
   const [hist, setHist] = useState(null)        // fincaId con historial abierto
   const [histRows, setHistRows] = useState([])
+  const [histNombres, setHistNombres] = useState({})
   const [guardando, setGuardando] = useState(false)
   const [recostear, setRecostear] = useState(null)   // { desde, items:[{fincaId,fincaNombre,tipoId,tipoNombre,precio,ids,n}] }
 
@@ -38,18 +39,20 @@ export default function CatalogoDiesel({ fincas }) {
 
   // Al cambiar un precio a una fecha PASADA, detecta las compras ya registradas
   // de ese rango cuyo precio difiere del nuevo (candidatas a recostear).
-  async function detectarRecosteo(fincaIds, valores, desde) {
-    if (!desde || desde >= hoyISO()) return []
+  // desdes = mapa tipo_id -> fecha (cada tipo con la suya).
+  async function detectarRecosteo(fincaIds, valores, desdes) {
     const items = []
     for (const fid of fincaIds) {
       for (const t of tipos) {
         const raw = numDec(valores[t.id] || '')
         if (!(raw > 0)) continue
+        const desde = (desdes && desdes[t.id]) || hoyISO()
+        if (!desde || desde >= hoyISO()) continue   // solo fecha pasada
         const { data } = await supabase.schema('produccion').from('diesel_pedido')
           .select('id, precio_galon').eq('finca_id', fid).eq('tipo_id', t.id).eq('estado', 'aprobado')
           .gte('fecha', desde).lte('fecha', hoyISO())
         const afectadas = (data || []).filter(dp => dp.precio_galon == null || Math.abs(Number(dp.precio_galon) - raw) > 1e-9)
-        if (afectadas.length) items.push({ fincaId: fid, fincaNombre: nombreFinca(fid), tipoId: t.id, tipoNombre: t.nombre, precio: raw, ids: afectadas.map(a => a.id), n: afectadas.length })
+        if (afectadas.length) items.push({ fincaId: fid, fincaNombre: nombreFinca(fid), tipoId: t.id, tipoNombre: t.nombre, precio: raw, desde, ids: afectadas.map(a => a.id), n: afectadas.length })
       }
     }
     return items
@@ -88,12 +91,14 @@ export default function CatalogoDiesel({ fincas }) {
   // 2) borra cualquier vigente del mismo día o posterior (reemplazo);
   // 3) cierra el anterior (fecha < desde) para guardar historial;
   // 4) inserta el nuevo.
-  async function aplicar(fincaId, valores, desde) {
+  // desdes = mapa tipo_id -> fecha "rige desde" (cada tipo puede tener la suya).
+  async function aplicar(fincaId, valores, desdes) {
     for (const t of tipos) {
       const raw = numDec(valores[t.id] || '')
       if (!(raw > 0)) continue
       const actual = precios[fincaId + '|' + t.id]
       if (actual && Math.abs(actual.precio - raw) < 1e-9) continue
+      const desde = (desdes && desdes[t.id]) || hoyISO()
       await supabase.schema('produccion').from('diesel_precio')
         .delete().eq('tipo_id', t.id).eq('finca_id', fincaId).is('vigente_hasta', null).gte('vigente_desde', desde)
       await supabase.schema('produccion').from('diesel_precio')
@@ -108,18 +113,17 @@ export default function CatalogoDiesel({ fincas }) {
   function abrirEdit(fincaId) {
     const valores = {}
     tipos.forEach(t => { const p = precios[fincaId + '|' + t.id]; valores[t.id] = p ? String(p.precio) : '' })
-    setBulk(null); setHist(null); setEdit({ fincaId, valores, desde: hoyISO() })
+    setBulk(null); setHist(null); setEdit({ fincaId, valores, desdes: Object.fromEntries(tipos.map(t => [t.id, hoyISO()])) })
   }
 
   async function guardar() {
     if (guardando) return
-    const desde = edit.desde || hoyISO()
     setGuardando(true)
-    try { await aplicar(edit.fincaId, edit.valores, desde) }
+    try { await aplicar(edit.fincaId, edit.valores, edit.desdes) }
     catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e.message }); return }
-    const items = await detectarRecosteo([edit.fincaId], edit.valores, desde)
+    const items = await detectarRecosteo([edit.fincaId], edit.valores, edit.desdes)
     setGuardando(false); setEdit(null); setAviso({ tipo: 'ok', texto: 'Precios guardados.' }); await cargar()
-    if (items.length) setRecostear({ desde, items })
+    if (items.length) setRecostear({ items })
   }
 
   async function guardarBulk() {
@@ -128,20 +132,27 @@ export default function CatalogoDiesel({ fincas }) {
     if (!tipos.some(t => numDec(bulk.valores[t.id] || '') > 0)) {
       setAviso({ tipo: 'error', texto: 'Pon al menos un precio.' }); return
     }
+    const desdes = Object.fromEntries(tipos.map(t => [t.id, desde]))
     setGuardando(true)
-    try { for (const f of activas) await aplicar(f.id, bulk.valores, desde) }
+    try { for (const f of activas) await aplicar(f.id, bulk.valores, desdes) }
     catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + e.message }); return }
-    const items = await detectarRecosteo(activas.map(f => f.id), bulk.valores, desde)
+    const items = await detectarRecosteo(activas.map(f => f.id), bulk.valores, desdes)
     setGuardando(false); setBulk(null); setAviso({ tipo: 'ok', texto: `Precios aplicados a ${activas.length} fincas.` }); await cargar()
-    if (items.length) setRecostear({ desde, items })
+    if (items.length) setRecostear({ items })
   }
 
   async function abrirHist(fincaId) {
     if (hist === fincaId) { setHist(null); return }
     const { data } = await supabase.schema('produccion').from('diesel_precio')
-      .select('tipo_id, precio_galon, vigente_desde, vigente_hasta').eq('finca_id', fincaId)
+      .select('tipo_id, precio_galon, vigente_desde, vigente_hasta, creado_por, creado_en').eq('finca_id', fincaId)
       .order('vigente_desde', { ascending: false })
-    setHistRows(data || []); setHist(fincaId); setEdit(null)
+    const ids = [...new Set((data || []).map(r => r.creado_por).filter(Boolean))]
+    const nombres = {}
+    if (ids.length) {
+      const { data: us } = await supabase.schema('produccion').from('vw_usuario').select('id, nombre').in('id', ids)
+      ;(us || []).forEach(u => { nombres[u.id] = u.nombre })
+    }
+    setHistRows(data || []); setHistNombres(nombres); setHist(fincaId); setEdit(null)
   }
 
   // Última columna FIJA (no 'auto'): así el header y las filas comparten el
@@ -164,12 +175,12 @@ export default function CatalogoDiesel({ fincas }) {
           <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '460px', maxHeight: '80vh', overflow: 'auto', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
             <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>¿Recostear las compras?</div>
             <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '14px', lineHeight: 1.5 }}>
-              Pusiste un precio con fecha <b style={{ fontWeight: 600 }}>{corta(recostear.desde)}</b>. Hay <b style={{ fontWeight: 600 }}>{total}</b> {total === 1 ? 'compra ya registrada' : 'compras ya registradas'} de ese rango con otro precio. ¿Les aplico el precio nuevo?
+              Pusiste precios con fecha pasada. Hay <b style={{ fontWeight: 600 }}>{total}</b> {total === 1 ? 'compra ya registrada' : 'compras ya registradas'} con otro precio. ¿Les aplico el precio nuevo?
             </div>
             <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '10px', overflow: 'hidden', marginBottom: '14px' }}>
               {recostear.items.map((it, i) => (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', padding: '9px 12px', fontSize: '13px', borderBottom: i < recostear.items.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
-                  <span>{it.fincaNombre} · {it.tipoNombre}</span>
+                  <span>{it.fincaNombre} · {it.tipoNombre} <span style={{ color: GRIS }}>· desde {corta(it.desde)}</span></span>
                   <span style={{ color: GRIS }}>{it.n} {it.n === 1 ? 'compra' : 'compras'} → {precio6(it.precio)}</span>
                 </div>
               ))}
@@ -251,42 +262,70 @@ export default function CatalogoDiesel({ fincas }) {
 
                 {enEdit && (
                   <div style={{ padding: '12px 16px', background: '#f6f9fb', borderBottom: '0.5px solid #f1f6f9' }}>
-                    <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                      {tipos.map(t => (
-                        <Campo key={t.id} label={`${t.nombre} · $/gal`}>
-                          <CampoNumero maxDec={6} value={edit.valores[t.id] || ''} placeholder="ej. 1.80"
-                            onChange={v => setEdit(x => ({ ...x, valores: { ...x.valores, [t.id]: v } }))}
-                            style={{ ...inp, width: '100px', textAlign: 'right' }} />
-                        </Campo>
-                      ))}
-                      <Campo label="Rige desde">
-                        <input type="date" value={edit.desde} max={hoyISO()}
-                          onChange={e => setEdit(x => ({ ...x, desde: e.target.value }))} style={inp} />
-                      </Campo>
+                    <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>
+                      Cada tipo tiene su propia fecha. Cambia solo el que necesites.
+                    </div>
+                    <div style={{ display: 'flex', gap: '18px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      {tipos.map(t => {
+                        const act = precios[f.id + '|' + t.id]
+                        return (
+                          <div key={t.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+                            <Campo label={`${t.nombre} · $/gal`}>
+                              <CampoNumero maxDec={6} value={edit.valores[t.id] || ''} placeholder="ej. 1.80"
+                                onChange={v => setEdit(x => ({ ...x, valores: { ...x.valores, [t.id]: v } }))}
+                                style={{ ...inp, width: '100px', textAlign: 'right' }} />
+                              {act && <div style={{ fontSize: '10.5px', color: GRIS, marginTop: '3px' }}>antes {precio6(act.precio)}</div>}
+                            </Campo>
+                            <Campo label="Rige desde">
+                              <input type="date" value={edit.desdes[t.id] || hoyISO()} max={hoyISO()}
+                                onChange={e => setEdit(x => ({ ...x, desdes: { ...x.desdes, [t.id]: e.target.value } }))} style={inp} />
+                            </Campo>
+                          </div>
+                        )
+                      })}
                       <button onClick={guardar} disabled={guardando}
                         style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando...' : 'Guardar'}</button>
                       <button onClick={() => setEdit(null)} style={boton}>Cancelar</button>
                     </div>
                     <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>
-                      Al guardar se cierra el precio anterior y rige el nuevo desde la fecha elegida.
+                      Al guardar, cada precio cierra el anterior de ese tipo y rige desde su fecha. Si la fecha es pasada, te preguntará si recosteas las compras de ese rango.
                     </div>
                   </div>
                 )}
 
                 {enHist && (
                   <div style={{ padding: '12px 16px', background: '#fafcfd', borderBottom: '0.5px solid #f1f6f9' }}>
-                    <div style={{ fontSize: '12px', color: GRIS, marginBottom: '8px' }}>Historial de precios</div>
+                    <div style={{ fontSize: '12px', color: GRIS, marginBottom: '10px' }}>Historial de precios</div>
                     {histRows.length === 0 ? (
                       <div style={{ fontSize: '13px', color: GRIS }}>Sin precios registrados.</div>
-                    ) : histRows.map((r, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', padding: '5px 0', borderBottom: '0.5px solid #f1f6f9' }}>
-                        <span>{nombreTipo(r.tipo_id)}</span>
-                        <span style={{ color: GRIS }}>
-                          {precio6(Number(r.precio_galon))} / gal · desde {corta(r.vigente_desde)}
-                          {r.vigente_hasta ? ` hasta ${corta(r.vigente_hasta)}` : ' · vigente'}
-                        </span>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tipos.length}, 1fr)`, gap: '20px' }}>
+                        {tipos.map(t => {
+                          const rows = histRows.filter(r => r.tipo_id === t.id)
+                          return (
+                            <div key={t.id}>
+                              <div style={{ fontSize: '13px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>{t.nombre}</div>
+                              {rows.length === 0 ? <div style={{ fontSize: '12px', color: GRIS }}>—</div> : rows.map((r, i) => (
+                                <div key={i} style={{ padding: '7px 0', borderBottom: i < rows.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
+                                  <div style={{ fontSize: '14px', fontWeight: i === 0 ? 600 : 400 }}>
+                                    {precio6(Number(r.precio_galon))}
+                                    {i === 0 && !r.vigente_hasta && <span style={{ fontSize: '11px', color: AZUL, fontWeight: 400, marginLeft: '6px' }}>vigente</span>}
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: GRIS }}>
+                                    desde {corta(r.vigente_desde)}{r.vigente_hasta ? ` – ${corta(r.vigente_hasta)}` : ''}
+                                  </div>
+                                  {(histNombres[r.creado_por] || r.creado_en) && (
+                                    <div style={{ fontSize: '11px', color: GRIS }}>
+                                      {histNombres[r.creado_por] || ''}{r.creado_en ? `${histNombres[r.creado_por] ? ' · ' : ''}${corta(r.creado_en.slice(0, 10))}` : ''}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })}
                       </div>
-                    ))}
+                    )}
                   </div>
                 )}
               </div>
