@@ -494,7 +494,7 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       const [{ data: cerrD }, { data: tiIni }, { data: tbIni }, { data: dcIni }, { data: dCons }, { data: semC }] = await Promise.all([
         supabase.schema('produccion').from('dia_registro')
           .select('finca_id, fecha, ambito, estado')
-          .gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids),
+          .gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids).limit(100000),
         supabase.schema('produccion').from('toma_inventario')
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
         supabase.schema('produccion').from('toma_balanceado')
@@ -502,9 +502,10 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
         supabase.schema('produccion').from('diesel_conteo')
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
         supabase.schema('produccion').from('diesel_consumo')
-          .select('finca_id, fecha').gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids),
+          .select('finca_id, fecha').gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids).limit(100000),
         supabase.schema('produccion').from('semana_cerrada')
-          .select('finca_id, anio, semana, ambito').in('finca_id', ids),
+          .select('finca_id, anio, semana, ambito')
+          .gte('anio', Number(PISO_AVISO.slice(0, 4))).in('finca_id', ids).limit(100000),
       ])
       if (!vivo) return
       // Inventario inicial (el más antiguo) por finca y ámbito = desde dónde contar.
