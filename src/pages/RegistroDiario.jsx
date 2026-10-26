@@ -80,6 +80,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [saldoBal, setSaldoBal] = useState({})
   // Filtro: ver solo piscinas/días donde se aplicó este producto.
   const [filtros, setFiltros] = useState([])   // ids de balanceados a filtrar (varios)
+  const [filtroTipo, setFiltroTipo] = useState('todas')  // todas | piscina | precria
   const [vistaDesg, setVistaDesg] = useState('bal')   // desglose: 'bal' | 'ins'
   const [consIns, setConsIns] = useState([])          // consumo_insumo de la semana [{piscina_id, insumo_id, cantidad}]
   const [insMap, setInsMap] = useState({})            // insumo_id -> { nombre, unidad }
@@ -960,7 +961,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const visiblesBase = soloPendientes
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
-  const visibles = hayFiltro ? visiblesBase.filter(piscTieneAlguno) : visiblesBase
+  const catPisc = p => p.esReservorio ? 'reservorio' : (p.tipo === 'precria' ? 'precria' : 'piscina')
+  const catsPisc = [...new Set(piscinas.map(catPisc))]
+  const visibles = (hayFiltro ? visiblesBase.filter(piscTieneAlguno) : visiblesBase)
+    .filter(p => filtroTipo === 'todas' || catPisc(p) === filtroTipo)
 
   const COLS_BASE = '230px 150px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
@@ -1063,6 +1067,15 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           color: verSacos ? AZUL : GRIS,
           fontWeight: verSacos ? 500 : 400,
         }}>Sacos</button>
+        {catsPisc.length > 1 && [['todas', 'Todas'], ['piscina', 'Piscinas'], ['precria', 'Precrías'], ['reservorio', 'Reservorios']]
+          .filter(([v]) => v === 'todas' || catsPisc.includes(v))
+          .map(([v, txt]) => {
+            const on = filtroTipo === v
+            return <button key={v} onClick={() => setFiltroTipo(v)} style={{
+              ...chip, cursor: 'pointer', fontFamily: 'inherit',
+              background: on ? '#E6F1FB' : 'white', borderColor: on ? '#9cc4e8' : BORDE,
+              color: on ? AZUL : GRIS, fontWeight: on ? 500 : 400 }}>{txt}</button>
+          })}
         <div style={{ marginLeft: 'auto' }}>
           <FiltroBalanceados opciones={productos} valor={filtros} onCambio={setFiltros} nPisc={visibles.length} />
         </div>
