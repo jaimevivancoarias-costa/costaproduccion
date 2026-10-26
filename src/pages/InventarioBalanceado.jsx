@@ -458,6 +458,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
   const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifo[s.producto_id] || 0), 0), [saldos, valorFifo])
+  // Precio FIFO real por producto (valor del saldo ÷ saldo) para costear faltantes.
+  const precioFifoDe = id => { const sld = Number(saldos.find(s => s.producto_id === id)?.saldo); return sld > 0.0001 ? Number(valorFifo[id] || 0) / sld : (precios[id] || 0) }
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
@@ -1704,6 +1706,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
                           <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {t.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
+                            {esJefe && !t.es_inicial && (falto || sobro) && (
+                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: falto ? ROJO : AMBAR }}>
+                                {falto ? '−' : '+'}{dinero(Math.abs(dif) * precioFifoDe(l.producto_id))}
+                              </span>
+                            )}
                           </span>
                           <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
                             {t.es_inicial ? <span style={vacia}>—</span>

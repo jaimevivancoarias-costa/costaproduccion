@@ -468,6 +468,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           </span>
                           <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
+                            {esJefe && !c.es_inicial && (falto || sobro) && (
+                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: falto ? ROJO : AMBAR }}>
+                                {falto ? '−' : '+'}{dinero(Math.abs(dif) * precioFifoDe(l.insumo_id))}
+                              </span>
+                            )}
                           </span>
                           <span style={{ textAlign: 'right', fontSize: '11.5px' }}>
                             {c.es_inicial ? <span style={vacia}>—</span>
@@ -752,6 +757,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const valorBodega = useMemo(
     () => saldos.reduce((t, s) => t + Number(valorFifo[s.insumo_id] || 0), 0),
     [saldos, valorFifo])
+  // Precio FIFO real por insumo (valor del saldo ÷ saldo) para costear faltantes.
+  const precioFifoDe = id => { const sld = Number(saldos.find(s => s.insumo_id === id)?.saldo); return sld > 0.0001 ? Number(valorFifo[id] || 0) / sld : (precios[id] || 0) }
   const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
   const negativos = saldos.filter(s => Number(s.saldo) < 0).length
   // Sin inventario: saldo ~0 y sin lotes. Se ocultan por defecto en la bodega.
@@ -847,7 +854,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const iniVal = apertura != null ? apertura : (iniEsConteo ? conteoRaw : nd(m?.saldo_inicial))
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
-      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
+      // Faltante/sobrante al precio FIFO real del saldo (no catálogo).
+      const precioFifo = saldoAlDia > 0.0001 ? valor / saldoAlDia : precio
+      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precioFifo : null
       const cq = conteoQuien[id]
       // Lotes en una sola línea, solo si hay más de uno (agrupa el caso "todos al mismo precio").
       const lts = lotes[id] || []
