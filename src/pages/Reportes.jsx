@@ -80,7 +80,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // Si se entra desde la barra de presupuesto, arranca en insumos.
   const [tipo, setTipo] = useState(enfoqueInsumos ? 'insumo' : 'todo')
   const [agrupar, setAgrupar] = useState('item') // 'item' | 'piscina' | 'finca'
-  const [porPrecio, setPorPrecio] = useState({})  // producto_id -> [{precio, sacos, costo}] (desglose por precio)
+  const [porPrecio, setPorPrecio] = useState({})  // producto_id -> [{fecha, precio, sacos, costo}] (balanceado)
+  const [porLoteIns, setPorLoteIns] = useState({}) // insumo_id  -> [{fecha, precio, cantidad, costo}] (insumos, unidad de compra)
+  const [porLoteDsl, setPorLoteDsl] = useState({}) // tipo_id    -> [{fecha, precio, galones, costo}] (diesel)
   const [cicloSel, setCicloSel] = useState('')
 
   const cargar = useCallback(async () => {
@@ -178,21 +180,53 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     return () => { vivo = false }
   }, [finca.id, desde, hasta])
 
+  // Desglose del consumo de INSUMOS por lote REAL (FIFO): fecha de compra,
+  // cantidad (en unidad de compra) y precio de cada lote. Solo por finca.
+  useEffect(() => {
+    let vivo = true
+    if (todasFincas) { setPorLoteIns({}); return () => { vivo = false } }
+    supabase.schema('produccion').rpc('fn_reporte_consumo_insumo_lotes_todos',
+      { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
+      .then(({ data, error }) => {
+        if (!vivo) return
+        if (error) { setPorLoteIns({}); return }
+        const m = {}
+        ;(data || []).forEach(r => {
+          const precio = Number(r.precio), cantidad = Number(r.cantidad), fecha = r.fecha || null
+          ;(m[r.insumo_id] = m[r.insumo_id] || []).push({ fecha, precio, cantidad, costo: precio * cantidad })
+        })
+        Object.values(m).forEach(arr => arr.sort((a, b) =>
+          String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
+        setPorLoteIns(m)
+      })
+      .catch(() => { if (vivo) setPorLoteIns({}) })
+    return () => { vivo = false }
+  }, [finca.id, desde, hasta, todasFincas])
+
   // Diesel del rango (finca individual). En modo Todas se omite.
   useEffect(() => {
     let vivo = true
     ;(async () => {
-      if (todasFincas) { setDslR({ total: 0, tipos: [] }); return }
-      const [{ data: tp }, { data: co }, { data: tot }] = await Promise.all([
+      if (todasFincas) { setDslR({ total: 0, tipos: [] }); setPorLoteDsl({}); return }
+      const [{ data: tp }, { data: co }, { data: lot }] = await Promise.all([
         supabase.schema('produccion').from('diesel_tipo').select('id, nombre').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('diesel_consumo').select('tipo_id, galones').eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta),
-        supabase.schema('produccion').rpc('fn_gasto_diesel_periodo', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').rpc('fn_reporte_diesel_lotes_todos', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       ])
-      const gal = {}; (co || []).forEach(r => { gal[r.tipo_id] = (gal[r.tipo_id] || 0) + Number(r.galones) })
-      const per = await Promise.all((tp || []).map(t =>
-        supabase.schema('produccion').rpc('fn_gasto_diesel_periodo', { p_finca: finca.id, p_desde: desde, p_hasta: hasta, p_tipo: t.id })))
       if (!vivo) return
-      setDslR({ total: Number(tot) || 0, tipos: (tp || []).map((t, i) => ({ nombre: t.nombre, galones: gal[t.id] || 0, gasto: Number(per[i].data) || 0 })) })
+      const gal = {}; (co || []).forEach(r => { gal[r.tipo_id] = (gal[r.tipo_id] || 0) + Number(r.galones) })
+      // Costo FIFO por lote: cada galón al precio del lote del que salió (no catálogo).
+      const m = {}; const gastoDe = {}
+      ;(lot || []).forEach(r => {
+        const precio = Number(r.precio), galones = Number(r.galones), fecha = r.fecha || null
+        ;(m[r.tipo_id] = m[r.tipo_id] || []).push({ fecha, precio, galones, costo: precio * galones })
+        gastoDe[r.tipo_id] = (gastoDe[r.tipo_id] || 0) + precio * galones
+      })
+      Object.values(m).forEach(arr => arr.sort((a, b) =>
+        String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
+      setPorLoteDsl(m)
+      const tipos = (tp || []).map(t => ({ tipo_id: t.id, nombre: t.nombre, galones: gal[t.id] || 0, gasto: gastoDe[t.id] || 0 }))
+      setDslR({ total: tipos.reduce((s, t) => s + t.gasto, 0), tipos })
     })()
     return () => { vivo = false }
   }, [finca.id, todasFincas, desde, hasta])
@@ -354,6 +388,23 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // libras como equivalente, y el costo unitario en /saco.
   const balView = tipo === 'balanceado'
   const lpsEff = todasFincas ? LIBRAS_POR_SACO : (lps || LIBRAS_POR_SACO)
+  // Desglose por lote de una fila agrupada por producto/insumo: devuelve las
+  // líneas {fecha, cant, precio, costo} y las unidades para mostrar. null = sin desglose.
+  const loteDatos = g => {
+    if (agrupar !== 'item') return null
+    if (g.tipo === 'balanceado') {
+      const ps = porPrecio[g.clave]; if (!ps || ps.length <= 1) return null
+      return { rows: ps.map(x => ({ fecha: x.fecha, cant: x.sacos, precio: x.precio, costo: x.costo })), countUnit: 'sacos', priceUnit: 'saco' }
+    }
+    if (g.tipo === 'insumo') {
+      if (todasFincas) return null
+      const ps = porLoteIns[g.clave]; if (!ps || ps.length <= 1) return null
+      const fi = factoresIns[g.clave]
+      const uc = (fi && fi.unidad_compra) ? (UNIDAD[fi.unidad_compra] || fi.unidad_compra) : 'u'
+      return { rows: ps.map(x => ({ fecha: x.fecha, cant: x.cantidad, precio: x.precio, costo: x.costo })), countUnit: uc, priceUnit: uc }
+    }
+    return null
+  }
   // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo → cantidad/factor
   // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
   const equivale = g => {
@@ -619,14 +670,50 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               <span style={{ textAlign: 'right' }}>Galones</span>
               {esJefe && <span style={{ textAlign: 'right' }}>Costo</span>}
             </div>
-            {dslR.tipos.map(t => (
-              <div key={t.nombre} style={{ display: 'grid', gridTemplateColumns: esJefe ? '1.4fr 1fr 1fr' : '1.6fr 1fr', gap: '12px',
-                      padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
-                <span>{t.nombre} <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '6px' }}>diesel</span></span>
+            {dslR.tipos.map(t => {
+              const lot = (esJefe && porLoteDsl[t.tipo_id]?.length) ? porLoteDsl[t.tipo_id] : null
+              return (
+              <div key={t.tipo_id} style={{ borderBottom: '0.5px solid #f1f6f9' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '1.4fr 1fr 1fr' : '1.6fr 1fr', gap: '12px',
+                      padding: '10px 16px', alignItems: 'center', fontSize: '13px' }}>
+                <span>
+                  {lot && (
+                    <button onClick={() => setAbiertoP(a => ({ ...a, [t.tipo_id]: !a[t.tipo_id] }))}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, marginRight: '6px' }}>
+                      {abiertoP[t.tipo_id] ? '▾' : '▸'}</button>
+                  )}
+                  {t.nombre} <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '6px' }}>diesel</span>
+                </span>
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{cant2(t.galones)} gal</span>
                 {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(t.gasto)}</span>}
               </div>
-            ))}
+              {lot && abiertoP[t.tipo_id] && (() => {
+                const tG = lot.reduce((s, x) => s + Number(x.galones), 0)
+                const tC = lot.reduce((s, x) => s + Number(x.costo), 0)
+                return (
+                  <div style={{ margin: '2px 16px 11px 42px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '11px', color: '#9fb0bf', marginBottom: '7px' }}>{lot.length} lotes · FIFO (lo más viejo sale primero)</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center' }}>
+                      {lot.flatMap((x, i) => [
+                        <span key={i + 'f'} style={{ color: GRIS }}>{x.fecha ? corta(x.fecha) : 'Inicial'}</span>,
+                        <span key={i + 'g'} style={{ color: GRIS }}>{cant2(x.galones)} gal</span>,
+                        <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dinero(x.precio)} /gal</span>,
+                        <span key={i + 'c'} style={{ textAlign: 'right', fontWeight: 600 }}>{dinero(x.costo)}</span>,
+                      ])}
+                    </div>
+                    {tG > 0 && (
+                      <div style={{ marginTop: '7px', paddingTop: '7px', borderTop: '0.5px solid ' + BORDE,
+                                    fontSize: '11.5px', color: '#9fb0bf', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Promedio {dinero(tC / tG)} /gal</span>
+                        <span style={{ fontWeight: 600, color: GRIS }}>{dinero(tC)}</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              </div>
+              )
+            })}
           </Caja>
         )
       ) : cargando ? (
@@ -650,7 +737,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
                     padding: '11px 16px', alignItems: 'center', fontSize: '13px' }}>
               <span>
-                {esJefe && agrupar === 'item' && (porPrecio[g.clave]?.length > 1) && (
+                {esJefe && loteDatos(g) && (
                   <button onClick={() => setAbiertoP(a => ({ ...a, [g.clave]: !a[g.clave] }))}
                     style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, marginRight: '6px' }}>
                     {abiertoP[g.clave] ? '▾' : '▸'}</button>
@@ -686,25 +773,25 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 </span>
               )}
             </div>
-            {esJefe && agrupar === 'item' && abiertoP[g.clave] && (porPrecio[g.clave]?.length > 1) && (() => {
-              const ps = porPrecio[g.clave]
-              const tS = ps.reduce((t, x) => t + Number(x.sacos), 0)
-              const tC = ps.reduce((t, x) => t + Number(x.costo), 0)
+            {esJefe && abiertoP[g.clave] && loteDatos(g) && (() => {
+              const ld = loteDatos(g)
+              const tU = ld.rows.reduce((t, x) => t + Number(x.cant), 0)
+              const tC = ld.rows.reduce((t, x) => t + Number(x.costo), 0)
               return (
                 <div style={{ margin: '2px 16px 11px 42px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
-                  <div style={{ fontSize: '11px', color: '#9fb0bf', marginBottom: '7px' }}>{ps.length} lotes · FIFO (lo más viejo sale primero)</div>
+                  <div style={{ fontSize: '11px', color: '#9fb0bf', marginBottom: '7px' }}>{ld.rows.length} lotes · FIFO (lo más viejo sale primero)</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center' }}>
-                    {ps.flatMap((x, i) => [
+                    {ld.rows.flatMap((x, i) => [
                       <span key={i + 'f'} style={{ color: GRIS }}>{x.fecha ? corta(x.fecha) : 'Inicial'}</span>,
-                      <span key={i + 's'} style={{ color: GRIS }}>{cant2(x.sacos)} sacos</span>,
-                      <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dinero(x.precio)} /saco</span>,
+                      <span key={i + 's'} style={{ color: GRIS }}>{cant2(x.cant)} {ld.countUnit}</span>,
+                      <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dinero(x.precio)} /{ld.priceUnit}</span>,
                       <span key={i + 'c'} style={{ textAlign: 'right', fontWeight: 600 }}>{dinero(x.costo)}</span>,
                     ])}
                   </div>
-                  {tS > 0 && (
+                  {tU > 0 && (
                     <div style={{ marginTop: '7px', paddingTop: '7px', borderTop: '0.5px solid ' + BORDE,
                                   fontSize: '11.5px', color: '#9fb0bf', display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Promedio {dinero(tC / tS)} /saco</span>
+                      <span>Promedio {dinero(tC / tU)} /{ld.priceUnit}</span>
                       <span style={{ fontWeight: 600, color: GRIS }}>{dinero(tC)}</span>
                     </div>
                   )}
