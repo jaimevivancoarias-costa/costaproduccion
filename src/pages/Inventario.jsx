@@ -100,6 +100,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [conteos, setConteos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
+  const [bajaOpen, setBajaOpen] = useState(false)      // modal "Dar de baja" (robo/merma)
 
   // Dos formas de mirar: cuanto hay a una fecha, o que paso entre dos.
   const [vista, setVista] = useState('saldo')     // 'saldo' | 'movimientos'
@@ -1367,6 +1368,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         {seccion === 'bodega' && !contando && !cargando && (
           <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
             {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            {esJefe && <button onClick={() => setBajaOpen(true)} style={{ padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid #e7cccb', borderRadius: '9px', background: 'white', color: ROJO, cursor: 'pointer' }}>Dar de baja</button>}
             <Btn primario onClick={() => { setContoDespues(false); setContando(true); }}>
               {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
             </Btn>
@@ -1391,6 +1393,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       color: aviso.tipo === 'error' ? ROJO : VERDE }}>
           {aviso.texto}
         </div>
+      )}
+
+      {esJefe && bajaOpen && (
+        <ModalBajaIns finca={finca} insumos={filas.filter(f => Number(f.saldo) > 0.001)}
+          precioFifoDe={precioFifoDe}
+          onCerrar={() => setBajaOpen(false)}
+          onHecho={async m => { setBajaOpen(false); setAviso({ tipo: 'ok', texto: m }); await cargar() }} />
       )}
 
       {!contando && (
@@ -2390,3 +2399,84 @@ const entrada = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit',
                   boxSizing: 'border-box', background: 'white' }
 const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0,
                   fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
+
+// Modal "Dar de baja" de insumos: pérdida (robo/merma/daño) de uno o varios
+// insumos como ajuste NEGATIVO en ajuste_insumo (baja el saldo) + $ FIFO.
+function ModalBajaIns({ finca, insumos, precioFifoDe, onCerrar, onHecho }) {
+  const [filas, setFilas] = useState([{ item: '', cant: '' }])
+  const [motivo, setMotivo] = useState('Robo')
+  const [fecha, setFecha] = useState(hoyISO())
+  const [guardando, setGuardando] = useState(false)
+  const [err, setErr] = useState('')
+  const fmt = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
+  const itemDe = id => insumos.find(x => x.insumo_id === id)
+  const uDe = id => { const p = itemDe(id); return p ? String(UNIDAD[p.unidad] || p.unidad || 'u').toLowerCase() : '' }
+  const setFila = (i, patch) => setFilas(fs => fs.map((f, k) => k === i ? { ...f, ...patch } : f))
+  const addFila = () => setFilas(fs => [...fs, { item: '', cant: '' }])
+  const rmFila = i => setFilas(fs => fs.length > 1 ? fs.filter((_, k) => k !== i) : fs)
+  const perdidaDe = f => { const n = numDec(f.cant); return (f.item && n > 0) ? n * precioFifoDe(f.item) : 0 }
+  const total = filas.reduce((t, f) => t + perdidaDe(f), 0)
+  async function guardar() {
+    setErr('')
+    const validas = filas.filter(f => f.item && numDec(f.cant) > 0)
+    if (!validas.length) { setErr('Agrega al menos un insumo con cantidad.'); return }
+    for (const f of validas) { const p = itemDe(f.item), n = numDec(f.cant); if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.insumo}: solo hay ${fmt(p.saldo)} ${uDe(f.item)}.`); return } }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
+    setGuardando(true)
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, insumo_id: f.item, cantidad: -numDec(f.cant), motivo }))
+    const { error } = await supabase.schema('produccion').from('ajuste_insumo').insert(rows)
+    setGuardando(false)
+    if (error) { setErr(error.message); return }
+    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'insumo' : 'insumos'} · ${motivo} · ${dinero(total)}`)
+  }
+  const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid #dce6ef', borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
+  const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid #dce6ef', borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
+  const lnk = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 500 }
+  const lbl = { fontSize: '12px', color: GRIS, marginBottom: '4px', display: 'block' }
+  return (
+    <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '580px', maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 50px rgba(2,40,71,.28)' }}>
+        <div style={{ fontSize: '16px', fontWeight: 600, color: NAVY }}>Dar de baja</div>
+        <div style={{ fontSize: '12px', color: GRIS, margin: '3px 0 16px' }}>Registra una pérdida (robo, merma, daño) de uno o varios insumos. Baja el saldo y se costea FIFO.</div>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '14px' }}>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Motivo</label>
+            <select value={motivo} onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%' }}>
+              {MOTIVOS_DESCUADRE.filter(m => m !== 'Error de registro').map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Fecha</label>
+            <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={{ ...inp, width: '100%' }} />
+          </div>
+        </div>
+        <label style={lbl}>Insumos</label>
+        {filas.map((f, i) => {
+          const usados = new Set(filas.map((x, k) => k !== i ? x.item : null).filter(Boolean))
+          const per = perdidaDe(f)
+          return (
+            <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+              <select value={f.item} onChange={e => setFila(i, { item: e.target.value })} style={{ ...inp, flex: 2, minWidth: 0 }}>
+                <option value="">Elegir insumo…</option>
+                {insumos.filter(x => !usados.has(x.insumo_id)).map(x => <option key={x.insumo_id} value={x.insumo_id}>{x.insumo} ({fmt(x.saldo)})</option>)}
+              </select>
+              <CampoNumero maxDec={2} value={f.cant} onChange={v => setFila(i, { cant: v })} placeholder="cant." style={{ ...inp, width: '80px', textAlign: 'right' }} />
+              <span style={{ width: '58px', fontSize: '11.5px', color: GRIS }}>{uDe(f.item)}</span>
+              <span style={{ width: '90px', textAlign: 'right', fontSize: '12.5px', color: per > 0 ? ROJO : '#c3d0db', fontVariantNumeric: 'tabular-nums' }}>{per > 0 ? dinero(per) : '—'}</span>
+              <button onClick={() => rmFila(i)} disabled={filas.length === 1} style={{ ...lnk, color: filas.length === 1 ? '#c3d0db' : ROJO, fontSize: '16px', width: '20px' }}>✕</button>
+            </div>
+          )
+        })}
+        <button onClick={addFila} style={{ ...lnk, marginTop: '2px' }}>+ Agregar otro insumo</button>
+        <div style={{ background: '#FBEAEA', border: '1px solid #e7cccb', borderRadius: '10px', padding: '11px 14px', fontSize: '14px', color: ROJO, margin: '16px 0 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Total de la pérdida</span><b>{dinero(total)}</b>
+        </div>
+        {err && <div style={{ color: ROJO, fontSize: '12.5px', marginBottom: '10px' }}>{err}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px' }}>
+          <button onClick={onCerrar} style={{ ...btn }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} style={{ ...btn, background: ROJO, color: 'white', borderColor: ROJO, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Dar de baja'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
