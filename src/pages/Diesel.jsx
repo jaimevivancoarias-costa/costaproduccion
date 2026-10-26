@@ -78,6 +78,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [cortes, setCortes] = useState([])              // conteos anteriores con su diferencia
   const [lotes, setLotes] = useState({})                // tipo_id -> [{fecha, galones, queda, precio, rowId, inicial}]
   const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
+  const [resExp, setResExp] = useState(null)            // tipo_id del desglose FIFO del consumo (Resumen)
   const [movAbierto, setMovAbierto] = useState({})      // `${tipo_id}|e` / `|c` -> desglose fecha por fecha abierto
   const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
   const [editRow, setEditRow] = useState(null)          // jefe edita un ingreso/consumo (fecha, tipo, galones, guía…)
@@ -211,6 +212,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const valIngFifoDe = id => (lotes[id] || [])
     .filter(l => !l.inicial && l.fecha >= desde && l.fecha <= hasta)
     .reduce((s, l) => s + Number(l.entro || 0) * Number(l.precio || 0), 0)
+  // Valor del consumo del período: lo consumido de cada lote × su precio (FIFO).
+  const valConsumidoDe = id => (lotes[id] || [])
+    .reduce((s, l) => s + Number(l.consumioP || 0) * Number(l.precio || 0), 0)
+  // Dinero sin ",00" cuando el monto es redondo ($20.000, no $20.000,00).
+  const dineroLimpio = v => { const n = Number(v) || 0; return Math.abs(n % 1) < 0.005 ? '$' + Math.round(n).toLocaleString('es-EC') : dinero(n) }
 
   // Desglose fecha por fecha de Ingresos (pedidos aprobados) y Consumo del
   // período, por tipo de diesel, para las flechitas de "Qué se movió".
@@ -767,22 +773,58 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         {/* Resumen del período */}
         <div style={{ fontSize: '13px', fontWeight: 650, margin: '0 0 10px' }}>Resumen del período</div>
         <Caja>
-          <Fila cabecera gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true] : [false, true, true]}
-            cols={esJefe ? ['Diesel', 'Ingresos (gal)', 'Consumo (gal)', 'Valor ingresos'] : ['Diesel', 'Ingresos (gal)', 'Consumo (gal)']} />
+          <Fila cabecera gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true, true] : [false, true, true]}
+            cols={esJefe ? ['Diesel', 'Ingresos (gal)', 'Consumo (gal)', 'Valor ingresos', 'Consumo $'] : ['Diesel', 'Ingresos (gal)', 'Consumo (gal)']} />
           {tipos.map((t, i) => {
             const m = movDe(t.id); const ing = Number(m?.ingresos) || 0; const con = Number(m?.consumo) || 0
             const p = precios[t.id]; const valIng = valIngFifoDe(t.id)   // cada ingreso al precio de su fecha
+            const valCon = valConsumidoDe(t.id)
+            const lotCon = (lotes[t.id] || []).filter(l => Number(l.consumioP) > 0.0001)
+              .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
+            const abiertoR = resExp === t.id
+            const pCon = con > 0 ? valCon / con : 0
             return (
-              <Fila key={t.id} cebra={i % 2 === 1} gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true] : [false, true, true]} cols={[
-                <b style={{ fontWeight: 600 }}>{t.nombre}</b>,
+              <Fragment key={t.id}>
+              <Fila cebra={i % 2 === 1} gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true, true] : [false, true, true]} cols={[
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  {esJefe && lotCon.length > 0
+                    ? <button onClick={() => setResExp(abiertoR ? null : t.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0 }}>{abiertoR ? '▾' : '▸'}</button>
+                    : null}
+                  <b style={{ fontWeight: 600 }}>{t.nombre}</b>
+                </span>,
                 <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
                 <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
-                ...(esJefe ? [ing ? (
-                  <span>{dinero(valIng)}
-                    {p && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(p.precio)}/gal{p.desde ? ` · ${corta(p.desde).slice(0, 5)}` : ''}</span>}
-                  </span>
-                ) : <span>—</span>] : []),
+                ...(esJefe ? [
+                  ing ? (
+                    <span>{dineroLimpio(valIng)}
+                      {p && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(p.precio)}/gal{p.desde ? ` · ${corta(p.desde).slice(0, 5)}` : ''}</span>}
+                    </span>
+                  ) : <span>—</span>,
+                  con ? (
+                    <span>{dineroLimpio(valCon)}
+                      <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(pCon)}/gal</span>
+                    </span>
+                  ) : <span>—</span>,
+                ] : []),
               ]} />
+              {esJefe && abiertoR && lotCon.length > 0 && (
+                <div style={{ padding: '2px 16px 12px 42px', background: '#fafcfe', borderBottom: '0.5px solid #f1f6f9' }}>
+                  <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 0 7px' }}>{lotCon.length} {lotCon.length === 1 ? 'lote' : 'lotes'} · FIFO (lo más viejo se consume primero)</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center', maxWidth: '560px' }}>
+                    {lotCon.flatMap((l, k) => [
+                      <span key={k + 'f'} style={{ color: GRIS }}>{l.inicial ? 'Inicial' : corta(l.fecha)}</span>,
+                      <span key={k + 'g'} style={{ color: GRIS }}>{miles(l.consumioP)} gal</span>,
+                      <span key={k + 'p'} style={{ textAlign: 'right', color: GRIS }}>{precio6(l.precio)}/gal</span>,
+                      <span key={k + 'v'} style={{ textAlign: 'right', fontWeight: 600, color: NAVY }}>{dineroLimpio(Number(l.consumioP) * Number(l.precio))}</span>,
+                    ])}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: '560px', marginTop: '7px', paddingTop: '7px', borderTop: '0.5px solid ' + BORDE, fontSize: '11.5px', color: '#9fb0bf' }}>
+                    <span>{miles(con)} gal en total</span>
+                    <span style={{ fontWeight: 600, color: GRIS }}>{dineroLimpio(valCon)}</span>
+                  </div>
+                </div>
+              )}
+              </Fragment>
             )
           })}
         </Caja>
@@ -1227,7 +1269,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 }
 
 const GRES = '2fr 1fr 1fr'
-const GRES_J = '1.8fr 1fr 1fr 1.1fr'
+const GRES_J = '1.6fr 0.9fr 0.9fr 1.05fr 1.05fr'
 const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 const G_CORTE2 = '2fr 1fr 1fr 1.2fr'
