@@ -160,17 +160,18 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // Va aparte y no rompe si la función aún no está en la base.
   useEffect(() => {
     let vivo = true
-    supabase.schema('produccion').rpc('fn_reporte_consumo_fifo_todos',
+    supabase.schema('produccion').rpc('fn_reporte_consumo_lotes_todos',
       { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
       .then(({ data, error }) => {
         if (!vivo) return
         if (error) { setPorPrecio({}); return }
         const m = {}
         ;(data || []).forEach(r => {
-          const precio = Number(r.precio), sacos = Number(r.sacos)
-          ;(m[r.producto_id] = m[r.producto_id] || []).push({ precio, sacos, costo: precio * sacos })
+          const precio = Number(r.precio), sacos = Number(r.sacos), fecha = r.fecha || null
+          ;(m[r.producto_id] = m[r.producto_id] || []).push({ fecha, precio, sacos, costo: precio * sacos })
         })
-        Object.values(m).forEach(arr => arr.sort((a, b) => a.precio - b.precio))
+        Object.values(m).forEach(arr => arr.sort((a, b) =>
+          String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
         setPorPrecio(m)
       })
       .catch(() => { if (vivo) setPorPrecio({}) })
@@ -349,6 +350,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // angosta: solo nombre y cantidad.
   // Tabla nueva: Producto · Cantidad (se aplica) · Equivale a (llega) · Costo · Peso.
   const grid = esJefe ? '1.5fr 1.1fr 0.95fr 1.05fr 1.7fr' : '1.6fr 1fr 1fr'
+  // En la vista "Balanceado" se piensa en SACOS (como se compra): sacos primero,
+  // libras como equivalente, y el costo unitario en /saco.
+  const balView = tipo === 'balanceado'
+  const lpsEff = todasFincas ? LIBRAS_POR_SACO : (lps || LIBRAS_POR_SACO)
   // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo → cantidad/factor
   // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
   const equivale = g => {
@@ -372,17 +377,17 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       const ps = (agrupar === 'item' && porPrecio[g.clave]?.length > 1) ? porPrecio[g.clave] : null
       return {
         nombre: g.etiqueta + (agrupar === 'item' && g.tipo !== 'mixto' ? `  (${g.tipo})` : ''),
-        detalle: ps ? 'Por precio: ' + ps.map(x => `${cant2(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
-        cantidad: g.mixto ? '—' : `${cant2(g.cantidad)} ${unidadCel(g)}`,
-        equivale: equivale(g),
+        detalle: ps ? 'Lotes: ' + ps.map(x => `${x.fecha ? corta(x.fecha) : 'Inicial'} · ${cant2(x.sacos)} a ${dinero(x.precio)}`).join(' · ') : '',
+        cantidad: g.mixto ? '—' : balView ? `${cant2(g.cantidad / lpsEff)} sacos` : `${cant2(g.cantidad)} ${unidadCel(g)}`,
+        equivale: balView ? (g.mixto || !g.cantidad ? '—' : `${miles(g.cantidad)} lb`) : equivale(g),
         costo: dinero(g.costo),
-        costoUnit: (!g.mixto && g.cantidad) ? `${dinero(g.costo / g.cantidad)} /${unidadCel(g)}` : '',
+        costoUnit: (!g.mixto && g.cantidad) ? (balView ? `${dinero(g.costo / (g.cantidad / lpsEff))} /saco` : `${dinero(g.costo / g.cantidad)} /${unidadCel(g)}`) : '',
       }
     })
     const columnas = [
       { titulo: cabItem, campo: 'nombre', sub: 'detalle' },
-      { titulo: 'Cantidad (se aplica)', der: true, campo: 'cantidad' },
-      { titulo: 'Equivale a (llega)', der: true, campo: 'equivale' },
+      { titulo: balView ? 'Sacos (se compra)' : 'Cantidad (se aplica)', der: true, campo: 'cantidad' },
+      { titulo: balView ? 'Libras (se aplica)' : 'Equivale a (llega)', der: true, campo: 'equivale' },
       { titulo: 'Costo', der: true, campo: 'costo', sub: 'costoUnit', destacar: true },
     ]
     const total = { nombre: 'Total', detalle: '', cantidad: '', equivale: '', costo: dinero(totalCosto), costoUnit: '' }
@@ -634,8 +639,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                         fontSize: '11.5px', fontWeight: 600, color: '#9fb0bf', textAlign: 'center',
                         borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
             <span style={{ textAlign: 'left' }}>{cabItem}</span>
-            <span>Cantidad (se aplica)</span>
-            <span>Equivale a (llega)</span>
+            <span>{balView ? 'Sacos (se compra)' : 'Cantidad (se aplica)'}</span>
+            <span>{balView ? 'Libras (se aplica)' : 'Equivale a (llega)'}</span>
             {esJefe && <span>Costo</span>}
             {esJefe && <span>Peso</span>}
           </div>
@@ -658,15 +663,19 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 )}
               </span>
               <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>
-                {g.mixto ? '—' : <><b style={{ fontWeight: 600 }}>{cant2(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{unidadCel(g)}</span></>}
+                {g.mixto ? '—' : balView
+                  ? <><b style={{ fontWeight: 600 }}>{cant2(g.cantidad / lpsEff)}</b> <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></>
+                  : <><b style={{ fontWeight: 600 }}>{cant2(g.cantidad)}</b> <span style={{ fontSize: '11px', color: GRIS }}>{unidadCel(g)}</span></>}
               </span>
               <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', color: GRIS, fontSize: '12.5px' }}>
-                {equivale(g)}
+                {balView ? (g.mixto || !g.cantidad ? '—' : miles(g.cantidad) + ' lb') : equivale(g)}
               </span>
               {esJefe && (
                 <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
-                  {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>{dinero(g.costo / g.cantidad)} /{unidadCel(g)}</span> : null}
+                  {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
+                    {balView ? dinero(g.costo / (g.cantidad / lpsEff)) + ' /saco' : dinero(g.costo / g.cantidad) + ' /' + unidadCel(g)}
+                  </span> : null}
                 </span>
               )}
               {esJefe && (
@@ -682,10 +691,23 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
               const tS = ps.reduce((t, x) => t + Number(x.sacos), 0)
               const tC = ps.reduce((t, x) => t + Number(x.costo), 0)
               return (
-                <div style={{ padding: '0 16px 11px 42px', fontSize: '12px', color: GRIS }}>
-                  <b style={{ color: NAVY }}>{ps.length} precios:</b>{' '}
-                  {ps.map((x, i) => `${cant2(x.sacos)} a ${dinero(x.precio)}`).join(' · ')}
-                  {tS > 0 && <span style={{ color: '#a7b4c1' }}> · promedio {dinero(tC / tS)} /saco</span>}
+                <div style={{ margin: '2px 16px 11px 42px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#9fb0bf', marginBottom: '7px' }}>{ps.length} lotes · FIFO (lo más viejo sale primero)</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center' }}>
+                    {ps.flatMap((x, i) => [
+                      <span key={i + 'f'} style={{ color: GRIS }}>{x.fecha ? corta(x.fecha) : 'Inicial'}</span>,
+                      <span key={i + 's'} style={{ color: GRIS }}>{cant2(x.sacos)} sacos</span>,
+                      <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dinero(x.precio)} /saco</span>,
+                      <span key={i + 'c'} style={{ textAlign: 'right', fontWeight: 600 }}>{dinero(x.costo)}</span>,
+                    ])}
+                  </div>
+                  {tS > 0 && (
+                    <div style={{ marginTop: '7px', paddingTop: '7px', borderTop: '0.5px solid ' + BORDE,
+                                  fontSize: '11.5px', color: '#9fb0bf', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Promedio {dinero(tC / tS)} /saco</span>
+                      <span style={{ fontWeight: 600, color: GRIS }}>{dinero(tC)}</span>
+                    </div>
+                  )}
                 </div>
               )
             })()}
