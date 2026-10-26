@@ -491,30 +491,41 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       const hoy = hoyISO()
       const ayer = sumarDias(hoy, -1)
       const ids = reales.map(f => f.id)
-      const [{ data: cerrD }, { data: tiIni }, { data: tbIni }, { data: dcIni }, { data: dCons }, { data: semC }] = await Promise.all([
-        supabase.schema('produccion').from('dia_registro')
-          .select('finca_id, fecha, ambito, estado')
-          .gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids).limit(100000),
+      // Supabase corta en 1000 filas por defecto. Estas tablas (días cerrados,
+      // semanas cerradas, consumo diesel) ya pasan de 1000 → hay que paginar,
+      // si no faltan días cerrados y salen como pendientes falsos.
+      const fetchAll = async build => {
+        const out = []
+        for (let from = 0; ; from += 1000) {
+          const { data, error } = await build().range(from, from + 999)
+          if (error || !data || !data.length) break
+          out.push(...data)
+          if (data.length < 1000) break
+        }
+        return out
+      }
+      const anioPiso = Number(PISO_AVISO.slice(0, 4))
+      const [cerrD, { data: tiIni }, { data: tbIni }, { data: dcIni }, dCons, semC] = await Promise.all([
+        fetchAll(() => supabase.schema('produccion').from('dia_registro')
+          .select('finca_id, fecha, ambito').eq('estado', 'cerrado')
+          .gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids).order('finca_id')),
         supabase.schema('produccion').from('toma_inventario')
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
         supabase.schema('produccion').from('toma_balanceado')
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
         supabase.schema('produccion').from('diesel_conteo')
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
-        supabase.schema('produccion').from('diesel_consumo')
-          .select('finca_id, fecha').gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids).limit(100000),
-        supabase.schema('produccion').from('semana_cerrada')
-          .select('finca_id, anio, semana, ambito')
-          .gte('anio', Number(PISO_AVISO.slice(0, 4))).in('finca_id', ids).limit(100000),
+        fetchAll(() => supabase.schema('produccion').from('diesel_consumo')
+          .select('finca_id, fecha').gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids).order('finca_id')),
+        fetchAll(() => supabase.schema('produccion').from('semana_cerrada')
+          .select('finca_id, anio, semana, ambito').gte('anio', anioPiso).in('finca_id', ids).order('finca_id')),
       ])
       if (!vivo) return
       // Inventario inicial (el más antiguo) por finca y ámbito = desde dónde contar.
       const minPorFinca = rows => { const m = {}; (rows || []).forEach(r => { if (!m[r.finca_id] || r.fecha < m[r.finca_id]) m[r.finca_id] = r.fecha }); return m }
       const iniIns = minPorFinca(tiIni), iniBal = minPorFinca(tbIni), iniDie = minPorFinca(dcIni)
       const cerr = new Set()
-      ;(cerrD || []).forEach(r => {
-        if (r.estado === 'cerrado') cerr.add(`${r.finca_id}|${r.ambito}|${r.fecha}`)
-      })
+      ;(cerrD || []).forEach(r => cerr.add(`${r.finca_id}|${r.ambito}|${r.fecha}`))
       // Una semana en semana_cerrada cierra TODOS sus días (igual que el registro:
       // semana cerrada ⇒ todos cerrados, sin importar reaperturas sueltas por día,
       // y aunque no haya fila por día). Clave por anio-semana ISO.
