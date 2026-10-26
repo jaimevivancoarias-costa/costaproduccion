@@ -1615,6 +1615,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 const cons = consumoToma[t.id]
                 const autor = nombresU[t.creado_por]
                 const nFalt = lins.filter(l => !t.es_inicial && difCorte(l, cons) < -0.001).length
+                const nSobr = lins.filter(l => !t.es_inicial && difCorte(l, cons) > 0.001).length
                 const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(tomas[idx - 1].fecha, -1))
                 const alSis = ddmm(sumarDias(t.fecha, -1))
                 const cabCel = { fontSize: '10px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
@@ -1633,9 +1634,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             {idx === 0 ? 'Corte actual' : t.es_inicial ? 'Inventario inicial' : 'Corte anterior'}</span>
                         </div>
                         <div style={{ color: GRIS, fontSize: '11.5px', marginTop: '3px', marginLeft: '20px' }}>
-                          {autor ? `Contó ${autor} · ` : ''}{lins.length} {lins.length === 1 ? 'balanceado' : 'balanceados'} · {nFalt > 0
-                            ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
-                            : <span style={{ color: VERDE }}>todo cuadró</span>}
+                          {autor ? `Contó ${autor} · ` : ''}{lins.length} {lins.length === 1 ? 'balanceado' : 'balanceados'} · {(nFalt + nSobr) === 0
+                            ? <span style={{ color: VERDE }}>todo cuadró</span>
+                            : <>
+                                {nFalt > 0 && <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>}
+                                {nFalt > 0 && nSobr > 0 && ' · '}
+                                {nSobr > 0 && <b style={{ color: AMBAR }}>{nSobr} {nSobr === 1 ? 'sobrante' : 'sobrantes'}</b>}
+                              </>}
                         </div>
                       </button>
                       <div style={{ display: 'flex', gap: '7px' }}>
