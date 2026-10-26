@@ -1812,6 +1812,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
   // familia distinta (peso<->volumen). Global al producto.
   const [densD, setDensD] = useState(insumo?.densidad != null ? Number(insumo.densidad) : null)
   const [densTxt, setDensTxt] = useState('')  // texto que se está escribiendo
+  const [eqTxt, setEqTxt] = useState({})      // grp -> equivalencia editable "1 envase = X unidad"
 
   const esComp = unidad === '__completo'
   // En "envase entero" se cuenta por la presentación. Se guarda como
@@ -2269,7 +2270,18 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
             {g.unidad && (g.unidad === '__completo' ? (
               <div style={{ background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: '#7a5410', marginTop: '14px' }}>Se cuenta por <b>{cap1(presentacion)}</b> entero (envase completo).</div>
             ) : facF ? (
-              <div style={{ background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: '#7a5410', marginTop: '14px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[g.unidad] || g.unidad}</b> (misma cantidad, otra unidad)</div>
+              cruzaFamilia(uCont, g.unidad) ? (
+                <div style={{ background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: '#7a5410', marginTop: '14px', display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' }}>
+                  1 {cap1(presentacion)} =
+                  <CampoNumero maxDec={6} value={eqTxt[g.grp] != null ? eqTxt[g.grp] : String(Math.round(facF * 100) / 100)}
+                    onChange={v => { setEqTxt(t => ({ ...t, [g.grp]: v })); const E = numDec(v), C = numDec(contenido); if (E > 0 && C > 0) { const r = E / C; setDensTxt(String(r)); setDensD(densInterna(r, uCont, g.unidad)) } }}
+                    style={{ ...inp, width: '82px', textAlign: 'right', fontSize: '13px' }} />
+                  <b>{UNIDAD[g.unidad] || g.unidad}</b>
+                  <span style={{ color: '#9a7a3a', fontSize: '12px' }}>— cuánto rinde la {cap1(presentacion)} (editable)</span>
+                </div>
+              ) : (
+                <div style={{ background: '#fdf7ec', border: '1px solid #e4d8c2', borderRadius: '11px', padding: '11px 14px', fontSize: '13px', color: '#7a5410', marginTop: '14px' }}>1 {cap1(presentacion)} = <b>{Math.round(facF * 100) / 100} {UNIDAD[g.unidad] || g.unidad}</b> (misma cantidad, otra unidad)</div>
+              )
             ) : cruzaFamilia(uCont, g.unidad) ? (
               <div style={{ marginTop: '14px', background: '#FFF7E8', border: '1px solid #f0dcae', borderRadius: '11px', padding: '11px 13px' }}>
                 <div style={{ fontSize: '12px', color: '#8a5a12', marginBottom: '6px' }}>
