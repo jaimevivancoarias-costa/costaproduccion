@@ -1167,6 +1167,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               const abierto = !!cortesAbiertos[c.id]
               const autor = nombresU[c.creadoPor]
               const nFalt = c.esInicial ? 0 : c.lineas.filter(l => l.dif < -0.005).length
+              const nSobr = c.esInicial ? 0 : c.lineas.filter(l => l.dif > 0.005).length
               const nTipo = c.lineas.length
               const hastaTxt = idx === 0 ? 'hoy' : corta(sumarDias(cortes[idx - 1].fecha, -1))
               return (
@@ -1185,9 +1186,13 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                         {idx === 0 ? 'Desde este conteo hasta hoy' : `${corta(c.fecha)} → ${hastaTxt}`}
                         {autor ? ` · contó ${autor}` : ''} · {nTipo} {nTipo === 1 ? 'tipo' : 'tipos'} · {c.esInicial
                           ? <span style={{ color: GRIS }}>inventario inicial</span>
-                          : nFalt > 0
-                            ? <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>
-                            : <span style={{ color: VERDE }}>todo cuadró</span>}
+                          : (nFalt + nSobr) === 0
+                            ? <span style={{ color: VERDE }}>todo cuadró</span>
+                            : <>
+                                {nFalt > 0 && <b style={{ color: ROJO }}>{nFalt} {nFalt === 1 ? 'faltante' : 'faltantes'}</b>}
+                                {nFalt > 0 && nSobr > 0 && ' · '}
+                                {nSobr > 0 && <b style={{ color: AMBAR }}>{nSobr} {nSobr === 1 ? 'sobrante' : 'sobrantes'}</b>}
+                              </>}
                       </div>
                     </button>
                     <div style={{ display: 'flex', gap: '7px' }}>
