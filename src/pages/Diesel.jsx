@@ -782,16 +782,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             const lotCon = (lotes[t.id] || []).filter(l => Number(l.consumioP) > 0.0001)
               .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
             const abiertoR = resExp === t.id
-            const pCon = con > 0 ? valCon / con : 0
             return (
               <Fragment key={t.id}>
               <Fila cebra={i % 2 === 1} gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true, true] : [false, true, true]} cols={[
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  {esJefe && lotCon.length > 0
-                    ? <button onClick={() => setResExp(abiertoR ? null : t.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0 }}>{abiertoR ? '▾' : '▸'}</button>
-                    : null}
-                  <b style={{ fontWeight: 600 }}>{t.nombre}</b>
-                </span>,
+                <b style={{ fontWeight: 600 }}>{t.nombre}</b>,
                 <span style={{ color: ing ? VERDE : '#c3d0db' }}>{ing ? '+' + miles(ing) : '—'}</span>,
                 <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
                 ...(esJefe ? [
@@ -801,8 +795,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     </span>
                   ) : <span>—</span>,
                   con ? (
-                    <span>{dineroLimpio(valCon)}
-                      <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(pCon)}/gal</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {lotCon.length > 0 && <button onClick={() => setResExp(abiertoR ? null : t.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0 }}>{abiertoR ? '▾' : '▸'}</button>}
+                      {dineroLimpio(valCon)}
                     </span>
                   ) : <span>—</span>,
                 ] : []),
