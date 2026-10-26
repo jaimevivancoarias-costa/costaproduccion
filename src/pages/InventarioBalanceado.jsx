@@ -2563,59 +2563,75 @@ const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding
 // Modal "Dar de baja": registra una pérdida (robo/merma/daño) como un ajuste
 // NEGATIVO en ajuste_balanceado (baja el saldo) y muestra el $ perdido FIFO.
 function ModalBajaBal({ finca, productos, precioFifoDe, onCerrar, onHecho }) {
-  const [prod, setProd] = useState('')
-  const [cant, setCant] = useState('')
+  const [filas, setFilas] = useState([{ prod: '', cant: '' }])
   const [motivo, setMotivo] = useState('Robo')
   const [fecha, setFecha] = useState(hoyISO())
   const [guardando, setGuardando] = useState(false)
   const [err, setErr] = useState('')
-  const p = productos.find(x => x.producto_id === prod)
-  const n = numDec(cant)
-  const precio = prod ? precioFifoDe(prod) : 0
-  const perdido = n > 0 ? n * precio : 0
+  const prodDe = id => productos.find(x => x.producto_id === id)
+  const setFila = (i, patch) => setFilas(fs => fs.map((f, k) => k === i ? { ...f, ...patch } : f))
+  const addFila = () => setFilas(fs => [...fs, { prod: '', cant: '' }])
+  const rmFila = i => setFilas(fs => fs.length > 1 ? fs.filter((_, k) => k !== i) : fs)
+  const perdidaDe = f => { const n = numDec(f.cant); return (f.prod && n > 0) ? n * precioFifoDe(f.prod) : 0 }
+  const total = filas.reduce((t, f) => t + perdidaDe(f), 0)
   async function guardar() {
     setErr('')
-    if (!prod) { setErr('Elige el producto.'); return }
-    if (!(n > 0)) { setErr('Pon la cantidad a dar de baja.'); return }
-    if (p && n > Number(p.saldo) + 0.001) { setErr(`Solo hay ${miles(p.saldo)} sacos en bodega.`); return }
+    const validas = filas.filter(f => f.prod && numDec(f.cant) > 0)
+    if (!validas.length) { setErr('Agrega al menos un producto con cantidad.'); return }
+    for (const f of validas) {
+      const p = prodDe(f.prod), n = numDec(f.cant)
+      if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.producto}: solo hay ${miles(p.saldo)} sacos.`); return }
+    }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
     setGuardando(true)
-    const { error } = await supabase.schema('produccion').from('ajuste_balanceado')
-      .insert({ finca_id: finca.id, fecha, producto_id: prod, cantidad: -n, motivo })
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, producto_id: f.prod, cantidad: -numDec(f.cant), motivo }))
+    const { error } = await supabase.schema('produccion').from('ajuste_balanceado').insert(rows)
     setGuardando(false)
     if (error) { setErr(error.message); return }
-    onHecho(`Baja: ${miles(n)} sacos de ${p?.producto} · ${motivo} · ${dinero(perdido)}`)
+    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'producto' : 'productos'} · ${motivo} · ${dinero(total)}`)
   }
   const lbl = { fontSize: '12px', color: GRIS, marginBottom: '4px', display: 'block' }
   return (
     <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '440px', maxWidth: '100%', boxShadow: '0 20px 50px rgba(2,40,71,.28)' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '560px', maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 50px rgba(2,40,71,.28)' }}>
         <div style={{ fontSize: '16px', fontWeight: 600, color: NAVY }}>Dar de baja</div>
-        <div style={{ fontSize: '12px', color: GRIS, margin: '3px 0 16px' }}>Registra una pérdida (robo, merma, daño). Baja el saldo y se costea FIFO.</div>
-        <label style={lbl}>Producto</label>
-        <select value={prod} onChange={e => setProd(e.target.value)} style={{ ...inp, width: '100%', marginBottom: '12px' }}>
-          <option value="">Elegir…</option>
-          {productos.map(f => <option key={f.producto_id} value={f.producto_id}>{f.producto} — hay {miles(f.saldo)} sacos</option>)}
-        </select>
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+        <div style={{ fontSize: '12px', color: GRIS, margin: '3px 0 16px' }}>Registra una pérdida (robo, merma, daño) de uno o varios productos. Baja el saldo y se costea FIFO.</div>
+
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '14px' }}>
           <div style={{ flex: 1 }}>
-            <label style={lbl}>Cantidad (sacos)</label>
-            <CampoNumero maxDec={2} value={cant} onChange={setCant} placeholder="ej. 50" style={{ ...inp, width: '100%' }} />
+            <label style={lbl}>Motivo</label>
+            <select value={motivo} onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%' }}>
+              {MOTIVOS_DESCUADRE.filter(m => m !== 'Error de registro').map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
           </div>
           <div style={{ flex: 1 }}>
             <label style={lbl}>Fecha</label>
             <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={{ ...inp, width: '100%' }} />
           </div>
         </div>
-        <label style={lbl}>Motivo</label>
-        <select value={motivo} onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%', marginBottom: '14px' }}>
-          {MOTIVOS_DESCUADRE.filter(m => m !== 'Error de registro').map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
-        {n > 0 && prod && (
-          <div style={{ background: '#FBEAEA', border: '1px solid #e7cccb', borderRadius: '10px', padding: '10px 13px', fontSize: '13px', color: ROJO, marginBottom: '14px' }}>
-            Pérdida: <b>{miles(n)} sacos</b> · <b>{dinero(perdido)}</b> <span style={{ color: '#a06a66', fontSize: '11px' }}>(FIFO {dinero(precio)}/saco)</span>
-          </div>
-        )}
+
+        <label style={lbl}>Productos</label>
+        {filas.map((f, i) => {
+          const usados = new Set(filas.map((x, k) => k !== i ? x.prod : null).filter(Boolean))
+          const per = perdidaDe(f)
+          return (
+            <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+              <select value={f.prod} onChange={e => setFila(i, { prod: e.target.value })} style={{ ...inp, flex: 2, minWidth: 0 }}>
+                <option value="">Elegir producto…</option>
+                {productos.filter(x => !usados.has(x.producto_id)).map(x => <option key={x.producto_id} value={x.producto_id}>{x.producto} ({miles(x.saldo)})</option>)}
+              </select>
+              <CampoNumero maxDec={2} value={f.cant} onChange={v => setFila(i, { cant: v })} placeholder="sacos" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+              <span style={{ width: '92px', textAlign: 'right', fontSize: '12.5px', color: per > 0 ? ROJO : '#c3d0db', fontVariantNumeric: 'tabular-nums' }}>{per > 0 ? dinero(per) : '—'}</span>
+              <button onClick={() => rmFila(i)} disabled={filas.length === 1} style={{ ...btnLink, color: filas.length === 1 ? '#c3d0db' : ROJO, fontSize: '16px', width: '20px' }}>✕</button>
+            </div>
+          )
+        })}
+        <button onClick={addFila} style={{ ...btnLink, fontSize: '12.5px', marginTop: '2px' }}>+ Agregar otro producto</button>
+
+        <div style={{ background: '#FBEAEA', border: '1px solid #e7cccb', borderRadius: '10px', padding: '11px 14px', fontSize: '14px', color: ROJO, margin: '16px 0 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Total de la pérdida</span><b>{dinero(total)}</b>
+        </div>
+
         {err && <div style={{ color: ROJO, fontSize: '12.5px', marginBottom: '10px' }}>{err}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px' }}>
           <button onClick={onCerrar} style={{ ...btn }}>Cancelar</button>
