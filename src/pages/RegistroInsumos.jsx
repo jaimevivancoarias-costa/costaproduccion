@@ -58,7 +58,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   const [saldoIns, setSaldoIns] = useState({})    // insumo_id -> saldo (unidad de compra)
   const [uCompraIns, setUCompraIns] = useState({})  // insumo_id -> unidad como se compra (saco, tambor…)
   const [filtros, setFiltros] = useState([])  // ids de insumos a filtrar (varios)
-  const [filtroTipo, setFiltroTipo] = useState('todas')  // todas | piscina | precria | reservorio
+  const [filtrosPisc, setFiltrosPisc] = useState([])  // piscinaIds a mostrar (multi-select)
   const [factorIns, setFactorIns] = useState({})  // insumo_id -> factor (app por compra)
 
   // Disponible en unidad de aplicación, y nombre del insumo.
@@ -372,10 +372,10 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
   // Filtro: piscinas que aplicaron alguno de los insumos elegidos en la semana.
   const hayFiltro = filtros.length > 0
   const piscTieneIns = (p) => fechas.some(f => cel(p, f).some(l => filtros.includes(l.insumoId)))
-  const catPisc = p => p.esReservorio ? 'reservorio' : (p.tipo === 'precria' ? 'precria' : 'piscina')
-  const catsPisc = [...new Set(piscinas.map(catPisc))]
+  const tipoLbl = p => p.esReservorio ? ' (reservorio)' : (p.tipo === 'precria' ? ' (precría)' : '')
+  const opcPisc = piscinas.map(p => ({ id: p.piscinaId, nombre: p.nombre + tipoLbl(p) }))
   const visibles = (hayFiltro ? piscinas.filter(piscTieneIns) : piscinas)
-    .filter(p => filtroTipo === 'todas' || catPisc(p) === filtroTipo)
+    .filter(p => !filtrosPisc.length || filtrosPisc.includes(p.piscinaId))
 
   // Se guarda linea por linea: son pocas por celda y evita el baile de
   // diffing de todo el grid. Optimista: se pinta y si falla se revierte.
@@ -509,16 +509,8 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
 
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '18px', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '12px', color: GRIS }}>Ver:</span>
-        {catsPisc.length > 1 && [['todas', 'Todas'], ['piscina', 'Piscinas'], ['precria', 'Precrías'], ['reservorio', 'Reservorios']]
-          .filter(([v]) => v === 'todas' || catsPisc.includes(v))
-          .map(([v, txt]) => {
-            const on = filtroTipo === v
-            return <button key={v} onClick={() => setFiltroTipo(v)} style={{
-              fontSize: '12px', border: '0.5px solid ' + (on ? '#9cc4e8' : BORDE), borderRadius: '20px',
-              padding: '6px 13px', cursor: 'pointer', fontFamily: 'inherit',
-              background: on ? '#E6F1FB' : 'white', color: on ? AZUL : GRIS, fontWeight: on ? 500 : 400 }}>{txt}</button>
-          })}
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <FiltroInsumos cosa="piscina" conteo={false} opciones={opcPisc} valor={filtrosPisc} onCambio={setFiltrosPisc} />
           <FiltroInsumos opciones={insumos} valor={filtros} onCambio={setFiltros} nPisc={visibles.length} />
         </div>
       </div>
@@ -892,7 +884,7 @@ function Cierre({ validaciones, cerrada, puedeCerrar, fechas = [], dias = {}, ho
 // El agregador de una celda: elegir insumo y poner cantidad.
 // Filtro multi-select de insumos (varios a la vez, con chips). Sin color en
 // la cuadrícula: al filtrar solo se ven esos insumos, los demás quedan en "—".
-function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
+function FiltroInsumos({ opciones, valor, onCambio, nPisc, cosa = 'insumo', conteo = true }) {
   const [abierto, setAbierto] = useState(false)
   const [busq, setBusq] = useState('')
   const ref = useRef(null)
@@ -918,13 +910,13 @@ function FiltroInsumos({ opciones, valor, onCambio, nPisc }) {
           <button onClick={() => toggle(id)} style={{ background: 'none', border: 'none', color: '#89b4dd', cursor: 'pointer', fontFamily: 'inherit', padding: 0, fontSize: '12px' }}>✕</button>
         </span>
       ))}
-      {activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
+      {conteo && activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
       <div style={{ position: 'relative' }}>
         <input
           value={busq}
           onChange={e => { setBusq(e.target.value); setAbierto(true) }}
           onFocus={() => setAbierto(true)}
-          placeholder={activo ? '+ insumo…' : 'Filtrar por insumo…'}
+          placeholder={activo ? `+ ${cosa}…` : `Filtrar por ${cosa}…`}
           style={{ ...sel, width: '210px', outline: 'none' }}
         />
         {abierto && (
