@@ -1105,6 +1105,71 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
     .map(v => ({ label: v.insumo, valor: Number(v.valor) || 0 }))
   const fincasBar = (valFincas || []).filter(f => Number(f.valor) > 0)
     .map(f => ({ label: f.finca, valor: Number(f.valor) || 0 }))
+
+  // Desglose por lote del saldo (FIFO: lo que queda = lo más nuevo). Solo por finca.
+  const [abiertoLote, setAbiertoLote] = useState({})   // item key -> abierto
+  const [detLote, setDetLote] = useState({})            // item key -> [{fecha, cantidad, precio}]
+  useEffect(() => {
+    let vivo = true
+    setDetLote({}); setAbiertoLote({})
+    if (esTodas || !fincaSel || fincaSel === 'todas') return () => { vivo = false }
+    ;(async () => {
+      const hoy = hoyISO()
+      if (tipo === 'diesel') {
+        const [{ data }, { data: tp }] = await Promise.all([
+          supabase.schema('produccion').rpc('fn_valor_bodega_diesel_detalle', { p_finca: fincaSel, p_hasta: hoy }),
+          supabase.schema('produccion').from('diesel_tipo').select('id, nombre'),
+        ])
+        if (!vivo) return
+        const nom = {}; (tp || []).forEach(t => { nom[t.id] = t.nombre })
+        const m = {}
+        ;(data || []).forEach(r => { const k = nom[r.tipo_id] || r.tipo_id
+          ;(m[k] = m[k] || []).push({ fecha: r.fecha, cantidad: Number(r.galones), precio: Number(r.precio) }) })
+        setDetLote(m)
+      } else {
+        const fn = tipo === 'balanceado' ? 'fn_valor_bodega_bal_detalle' : 'fn_valor_bodega_insumo_detalle'
+        const { data } = await supabase.schema('produccion').rpc(fn, { p_finca: fincaSel, p_hasta: hoy })
+        if (!vivo) return
+        const m = {}
+        ;(data || []).forEach(r => { const k = r.producto_id || r.insumo_id
+          ;(m[k] = m[k] || []).push({ fecha: r.fecha, cantidad: Number(r.cantidad), precio: Number(r.precio) }) })
+        setDetLote(m)
+      }
+    })()
+    return () => { vivo = false }
+  }, [tipo, fincaSel, esTodas])
+
+  // Desglose de lotes de una fila (fecha · cantidad · precio · valor + total).
+  const Desglose = ({ rows, unidad }) => {
+    const tQ = rows.reduce((t, x) => t + Number(x.cantidad), 0)
+    const tC = rows.reduce((t, x) => t + Number(x.cantidad) * Number(x.precio), 0)
+    return (
+      <div style={{ margin: '0 16px 11px 34px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
+        <div style={{ fontSize: '11px', color: '#9fb0bf', marginBottom: '7px' }}>{rows.length} {rows.length === 1 ? 'lote' : 'lotes'} en bodega · FIFO (lo más nuevo queda)</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center' }}>
+          {rows.flatMap((x, i) => [
+            <span key={i + 'f'} style={{ color: GRIS }}>{x.fecha ? corta(x.fecha) : 'Sin lote'}</span>,
+            <span key={i + 'c'} style={{ color: GRIS }}>{miles(x.cantidad)} {unidad}</span>,
+            <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dinero(x.precio)} /{unidad}</span>,
+            <span key={i + 'v'} style={{ textAlign: 'right', fontWeight: 600 }}>{dinero(Number(x.cantidad) * Number(x.precio))}</span>,
+          ])}
+        </div>
+        {tQ > 0 && (
+          <div style={{ marginTop: '7px', paddingTop: '7px', borderTop: '0.5px solid ' + BORDE,
+                        fontSize: '11.5px', color: '#9fb0bf', display: 'flex', justifyContent: 'space-between' }}>
+            <span>{miles(tQ)} {unidad} en total</span>
+            <span style={{ fontWeight: 600, color: GRIS }}>{dinero(tC)}</span>
+          </div>
+        )}
+      </div>
+    )
+  }
+  const flechaBtn = k => (
+    <button onClick={() => setAbiertoLote(a => ({ ...a, [k]: !a[k] }))}
+      style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, marginRight: '6px' }}>
+      {abiertoLote[k] ? '▾' : '▸'}</button>
+  )
+
   return (
     <>
       <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '14px' }}>
@@ -1143,15 +1208,21 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
               {!esTodas && <span style={{ textAlign: 'right' }}>Precio</span>}
               <span style={{ textAlign: 'right' }}>Valor</span>
             </div>
-            {diesel.map(d => (
-              <div key={d.tipo} style={{ display: 'grid', gridTemplateColumns: DGRID, gap: '12px', padding: '10px 16px',
-                      alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
-                <span>{d.tipo}</span>
+            {diesel.map(d => {
+              const lot = !esTodas && detLote[d.tipo]
+              return (
+              <div key={d.tipo} style={{ borderBottom: '0.5px solid #f1f6f9' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: DGRID, gap: '12px', padding: '10px 16px',
+                      alignItems: 'center', fontSize: '13px' }}>
+                <span>{lot && lot.length ? flechaBtn(d.tipo) : null}{d.tipo}</span>
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(d.saldo)}</span>
                 {!esTodas && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{d.precio != null ? '$' + Number(d.precio).toLocaleString('es-EC', { minimumFractionDigits: 6, maximumFractionDigits: 6 }) : '—'}</span>}
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(d.valor)}</span>
               </div>
-            ))}
+              {lot && lot.length && abiertoLote[d.tipo] && <Desglose rows={lot} unidad="gal" />}
+              </div>
+              )
+            })}
           </Caja>
           </>
         )
@@ -1184,10 +1255,12 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
         </div>
         {conValor.map(v => {
           const conv = Number(v.factor) && Number(v.factor) !== 1
+          const lot = !esTodas && detLote[v.insumo_id]
           return (
-          <div key={v.insumo_id} style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px',
-                  padding: '10px 16px', alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
-            <span>{v.insumo}</span>
+          <div key={v.insumo_id} style={{ borderBottom: '0.5px solid #f1f6f9' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: VGRID, gap: '12px',
+                  padding: '10px 16px', alignItems: 'center', fontSize: '13px' }}>
+            <span>{lot && lot.length ? flechaBtn(v.insumo_id) : null}{v.insumo}</span>
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>
               {miles(v.saldo)} {cap1(v.unidad)}
               {conv && (
@@ -1205,6 +1278,8 @@ function ReporteValorizacion({ valor, valFincas, fincas, fincaSel, onFinca, tipo
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
               {dinero(v.valor)}
             </span>
+          </div>
+          {lot && lot.length && abiertoLote[v.insumo_id] && <Desglose rows={lot} unidad={v.unidad || 'u'} />}
           </div>
           )
         })}
