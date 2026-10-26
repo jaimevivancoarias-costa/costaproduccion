@@ -95,6 +95,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [iniForm, setIniForm] = useState(null)         // { productoId, cantidad, fecha } al cargar inventario inicial de un producto
   const [recosForm, setRecosForm] = useState(null)     // producto_id con la confirmación de recosteo abierta
   const [corrForm, setCorrForm] = useState(null)       // producto_id con el editor de corrección abierto
+  const [bajaOpen, setBajaOpen] = useState(false)      // modal "Dar de baja" (robo/merma)
   const [corrSaldo, setCorrSaldo] = useState('')       // saldo nuevo que se escribe al corregir
   const [corrMotivo, setCorrMotivo] = useState('')
   const [corrFecha, setCorrFecha] = useState('')
@@ -942,6 +943,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         {seccion === 'bodega' && !contando && !cargando && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
             {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            {esJefe && <button onClick={() => setBajaOpen(true)} style={{ ...btn, color: ROJO, borderColor: '#e7cccb' }}>Dar de baja</button>}
             <button onClick={() => { setContoDespues(false); setContando(true) }} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>
               {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
             </button>
@@ -953,6 +955,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
           background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
           color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
+      )}
+
+      {esJefe && bajaOpen && (
+        <ModalBajaBal finca={finca} productos={filas.filter(f => Number(f.saldo) > 0.001)}
+          precioFifoDe={precioFifoDe}
+          onCerrar={() => setBajaOpen(false)}
+          onHecho={async m => { setBajaOpen(false); setAviso({ tipo: 'ok', texto: m }); await cargar() }} />
       )}
 
       {seccion === 'ingresos' ? (
@@ -2550,3 +2559,69 @@ const badgeIni = { display: 'block', fontSize: '9.5px', fontWeight: 400, color: 
 const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
 const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: '13px', color: AZUL, fontWeight: 500 }
+
+// Modal "Dar de baja": registra una pérdida (robo/merma/daño) como un ajuste
+// NEGATIVO en ajuste_balanceado (baja el saldo) y muestra el $ perdido FIFO.
+function ModalBajaBal({ finca, productos, precioFifoDe, onCerrar, onHecho }) {
+  const [prod, setProd] = useState('')
+  const [cant, setCant] = useState('')
+  const [motivo, setMotivo] = useState('Robo')
+  const [fecha, setFecha] = useState(hoyISO())
+  const [guardando, setGuardando] = useState(false)
+  const [err, setErr] = useState('')
+  const p = productos.find(x => x.producto_id === prod)
+  const n = numDec(cant)
+  const precio = prod ? precioFifoDe(prod) : 0
+  const perdido = n > 0 ? n * precio : 0
+  async function guardar() {
+    setErr('')
+    if (!prod) { setErr('Elige el producto.'); return }
+    if (!(n > 0)) { setErr('Pon la cantidad a dar de baja.'); return }
+    if (p && n > Number(p.saldo) + 0.001) { setErr(`Solo hay ${miles(p.saldo)} sacos en bodega.`); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
+    setGuardando(true)
+    const { error } = await supabase.schema('produccion').from('ajuste_balanceado')
+      .insert({ finca_id: finca.id, fecha, producto_id: prod, cantidad: -n, motivo })
+    setGuardando(false)
+    if (error) { setErr(error.message); return }
+    onHecho(`Baja: ${miles(n)} sacos de ${p?.producto} · ${motivo} · ${dinero(perdido)}`)
+  }
+  const lbl = { fontSize: '12px', color: GRIS, marginBottom: '4px', display: 'block' }
+  return (
+    <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '440px', maxWidth: '100%', boxShadow: '0 20px 50px rgba(2,40,71,.28)' }}>
+        <div style={{ fontSize: '16px', fontWeight: 600, color: NAVY }}>Dar de baja</div>
+        <div style={{ fontSize: '12px', color: GRIS, margin: '3px 0 16px' }}>Registra una pérdida (robo, merma, daño). Baja el saldo y se costea FIFO.</div>
+        <label style={lbl}>Producto</label>
+        <select value={prod} onChange={e => setProd(e.target.value)} style={{ ...inp, width: '100%', marginBottom: '12px' }}>
+          <option value="">Elegir…</option>
+          {productos.map(f => <option key={f.producto_id} value={f.producto_id}>{f.producto} — hay {miles(f.saldo)} sacos</option>)}
+        </select>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Cantidad (sacos)</label>
+            <CampoNumero maxDec={2} value={cant} onChange={setCant} placeholder="ej. 50" style={{ ...inp, width: '100%' }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Fecha</label>
+            <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={{ ...inp, width: '100%' }} />
+          </div>
+        </div>
+        <label style={lbl}>Motivo</label>
+        <select value={motivo} onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%', marginBottom: '14px' }}>
+          {MOTIVOS_DESCUADRE.filter(m => m !== 'Error de registro').map(m => <option key={m} value={m}>{m}</option>)}
+        </select>
+        {n > 0 && prod && (
+          <div style={{ background: '#FBEAEA', border: '1px solid #e7cccb', borderRadius: '10px', padding: '10px 13px', fontSize: '13px', color: ROJO, marginBottom: '14px' }}>
+            Pérdida: <b>{miles(n)} sacos</b> · <b>{dinero(perdido)}</b> <span style={{ color: '#a06a66', fontSize: '11px' }}>(FIFO {dinero(precio)}/saco)</span>
+          </div>
+        )}
+        {err && <div style={{ color: ROJO, fontSize: '12.5px', marginBottom: '10px' }}>{err}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px' }}>
+          <button onClick={onCerrar} style={{ ...btn }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} style={{ ...btn, background: ROJO, color: 'white', borderColor: ROJO, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Dar de baja'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
