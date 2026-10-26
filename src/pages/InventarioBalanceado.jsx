@@ -539,7 +539,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const iniVal = apertura != null ? apertura : (iniEsConteo ? conteoRaw : numDec(m?.saldo_inicial))
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
-      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precio : null
+      // El faltante/sobrante se costea al precio FIFO real del saldo (lo que de
+      // verdad costó), no al de catálogo. Así el robo/merma sale bien valorado.
+      const precioFifo = saldoAlDia > 0.0001 ? valor / saldoAlDia : precio
+      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precioFifo : null
       const cq = conteoQuien[id]
       // Lotes en una sola línea (solo si hay más de uno; agrupa "todos al mismo precio").
       const lts = lotes[id] || []
