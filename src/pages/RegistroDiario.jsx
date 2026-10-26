@@ -80,7 +80,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [saldoBal, setSaldoBal] = useState({})
   // Filtro: ver solo piscinas/días donde se aplicó este producto.
   const [filtros, setFiltros] = useState([])   // ids de balanceados a filtrar (varios)
-  const [filtroTipo, setFiltroTipo] = useState('todas')  // todas | piscina | precria
+  const [filtrosPisc, setFiltrosPisc] = useState([])  // piscinaIds a mostrar (multi-select)
   const [vistaDesg, setVistaDesg] = useState('bal')   // desglose: 'bal' | 'ins'
   const [consIns, setConsIns] = useState([])          // consumo_insumo de la semana [{piscina_id, insumo_id, cantidad}]
   const [insMap, setInsMap] = useState({})            // insumo_id -> { nombre, unidad }
@@ -961,10 +961,10 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const visiblesBase = soloPendientes
     ? piscinas.filter(p => pendientesHoy.includes(p) || atrasadas.some(a => a.p === p))
     : piscinas
-  const catPisc = p => p.esReservorio ? 'reservorio' : (p.tipo === 'precria' ? 'precria' : 'piscina')
-  const catsPisc = [...new Set(piscinas.map(catPisc))]
+  const tipoLbl = p => p.tipo === 'precria' ? ' (precría)' : ''
+  const opcPisc = piscinas.map(p => ({ id: p.piscinaId, nombre: p.nombre + tipoLbl(p) }))
   const visibles = (hayFiltro ? visiblesBase.filter(piscTieneAlguno) : visiblesBase)
-    .filter(p => filtroTipo === 'todas' || catPisc(p) === filtroTipo)
+    .filter(p => !filtrosPisc.length || filtrosPisc.includes(p.piscinaId))
 
   const COLS_BASE = '230px 150px'
   const COLS_DIAS = 'repeat(7, minmax(132px, 1fr)) 104px'
@@ -1067,16 +1067,8 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           color: verSacos ? AZUL : GRIS,
           fontWeight: verSacos ? 500 : 400,
         }}>Sacos</button>
-        {catsPisc.length > 1 && [['todas', 'Todas'], ['piscina', 'Piscinas'], ['precria', 'Precrías'], ['reservorio', 'Reservorios']]
-          .filter(([v]) => v === 'todas' || catsPisc.includes(v))
-          .map(([v, txt]) => {
-            const on = filtroTipo === v
-            return <button key={v} onClick={() => setFiltroTipo(v)} style={{
-              ...chip, cursor: 'pointer', fontFamily: 'inherit',
-              background: on ? '#E6F1FB' : 'white', borderColor: on ? '#9cc4e8' : BORDE,
-              color: on ? AZUL : GRIS, fontWeight: on ? 500 : 400 }}>{txt}</button>
-          })}
-        <div style={{ marginLeft: 'auto' }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <FiltroBalanceados cosa="piscina" conteo={false} opciones={opcPisc} valor={filtrosPisc} onCambio={setFiltrosPisc} />
           <FiltroBalanceados opciones={productos} valor={filtros} onCambio={setFiltros} nPisc={visibles.length} />
         </div>
       </div>
@@ -2055,7 +2047,7 @@ function TarjetaReg({ k, v }) {
 }
 // Filtro de VARIOS balanceados (casillas). Muestra chips de los elegidos y
 // cuántas piscinas los usaron.
-function FiltroBalanceados({ opciones, valor, onCambio, nPisc }) {
+function FiltroBalanceados({ opciones, valor, onCambio, nPisc, cosa = 'balanceado', conteo = true }) {
   const [abierto, setAbierto] = useState(false)
   const [busq, setBusq] = useState('')
   const ref = useRef(null)
@@ -2081,13 +2073,13 @@ function FiltroBalanceados({ opciones, valor, onCambio, nPisc }) {
           <button onClick={() => toggle(id)} style={{ background: 'none', border: 'none', color: '#89b4dd', cursor: 'pointer', fontFamily: 'inherit', padding: 0, fontSize: '12px' }}>✕</button>
         </span>
       ))}
-      {activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
+      {conteo && activo && <span style={{ fontSize: '12px', color: GRIS }}>{nPisc} piscinas</span>}
       <div style={{ position: 'relative' }}>
         <input
           value={busq}
           onChange={e => { setBusq(e.target.value); setAbierto(true) }}
           onFocus={() => setAbierto(true)}
-          placeholder={activo ? '+ balanceado…' : 'Filtrar por balanceado…'}
+          placeholder={activo ? `+ ${cosa}…` : `Filtrar por ${cosa}…`}
           style={{ ...sel, width: '210px', outline: 'none' }}
         />
         {abierto && (
