@@ -280,6 +280,11 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     const { error } = await supabase.schema('produccion').from('semana_cerrada')
       .insert({ finca_id: finca.id, anio, semana, ambito: 'insumos', validaciones })
     if (error) { setAviso({ tipo: 'error', texto: error.message }); return }
+    // Cerrar la semana marca también todos sus días (igual que balanceado), para
+    // que el estado quede parejo y la alerta de pendientes no los vea sin cerrar.
+    await supabase.schema('produccion').from('dia_registro')
+      .upsert(fechas.map(f => ({ finca_id: finca.id, fecha: f, ambito: 'insumos', estado: 'cerrado', cerrado_en: new Date().toISOString() })),
+              { onConflict: 'finca_id,fecha,ambito' })
     setAviso({ tipo: 'ok', texto: 'Insumos de la semana cerrados' })
     await cargar()
   }
