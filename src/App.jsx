@@ -511,30 +511,14 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       // Inventario inicial (el más antiguo) por finca y ámbito = desde dónde contar.
       const minPorFinca = rows => { const m = {}; (rows || []).forEach(r => { if (!m[r.finca_id] || r.fecha < m[r.finca_id]) m[r.finca_id] = r.fecha }); return m }
       const iniIns = minPorFinca(tiIni), iniBal = minPorFinca(tbIni), iniDie = minPorFinca(dcIni)
-      const cerr = new Set(), reab = new Set()
+      const cerr = new Set()
       ;(cerrD || []).forEach(r => {
-        const k = `${r.finca_id}|${r.ambito}|${r.fecha}`
-        if (r.estado === 'cerrado') cerr.add(k); else if (r.estado === 'reabierto') reab.add(k)
+        if (r.estado === 'cerrado') cerr.add(`${r.finca_id}|${r.ambito}|${r.fecha}`)
       })
-      // Una semana en semana_cerrada cierra todos sus días, aunque no haya fila por
-      // día (semanas cerradas antes de que existiera el cierre por día, o cerradas
-      // de una). Clave por anio-semana ISO. Un día reabierto a mano sí queda pendiente.
+      // Una semana en semana_cerrada cierra TODOS sus días (igual que el registro:
+      // semana cerrada ⇒ todos cerrados, sin importar reaperturas sueltas por día,
+      // y aunque no haya fila por día). Clave por anio-semana ISO.
       const semCerr = new Set((semC || []).map(r => `${r.finca_id}|${r.ambito}|${r.anio}-${r.semana}`))
-      // TEMP DIAG — quitar después
-      try {
-        const agri = reales.find(f => String(f.nombre || '').toLowerCase().includes('agrimarine'))
-        const probe = agri ? ['2026-09-02', '2026-09-07', '2026-10-20'].map(dd => {
-          const w = semanaISO(dd)
-          return { dd, w, insHas: semCerr.has(`${agri.id}|insumos|${w.anio}-${w.semana}`),
-                   balHas: semCerr.has(`${agri.id}|balanceado|${w.anio}-${w.semana}`) }
-        }) : null
-        const agriKeys = agri ? [...semCerr].filter(k => k.startsWith(agri.id)) : []
-        console.log('AVISO-DIAG', JSON.stringify({
-          semCount: (semC || []).length, semCerrSize: semCerr.size,
-          agriId: agri && agri.id, iniIns: agri && iniIns[agri.id], iniBal: agri && iniBal[agri.id],
-          probe, agriKeys
-        }))
-      } catch (e) { console.log('AVISO-DIAG-ERR', e.message) }
       // Semanas (lunes) con consumo de diesel por finca.
       const dieselSem = {}
       ;(dCons || []).forEach(r => { const lun = lunesDe(r.fecha); (dieselSem[r.finca_id] = dieselSem[r.finca_id] || new Set()).add(lun) })
@@ -546,10 +530,8 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
         for (let d = iniF; d <= ayer; d = sumarDias(d, 1)) {
           const k = `${fid}|${amb}|${d}`
           if (cerr.has(k)) continue                 // día cerrado por su fila
-          if (!reab.has(k)) {                        // no reabierto a mano
-            const { anio, semana } = semanaISO(d)
-            if (semCerr.has(`${fid}|${amb}|${anio}-${semana}`)) continue  // semana cerrada
-          }
+          const { anio, semana } = semanaISO(d)
+          if (semCerr.has(`${fid}|${amb}|${anio}-${semana}`)) continue  // semana cerrada
           out.push(d)
         }
         return out
