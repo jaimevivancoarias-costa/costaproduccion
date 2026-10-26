@@ -528,6 +528,8 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
         if (!iniF || iniF > ayer) return []
         const out = []
         for (let d = iniF; d <= ayer; d = sumarDias(d, 1)) {
+          // Solo semanas ya TERMINADAS (la semana en curso aún no vence, no se avisa).
+          if (sumarDias(lunesDe(d), 6) >= hoy) continue
           const k = `${fid}|${amb}|${d}`
           if (cerr.has(k)) continue                 // día cerrado por su fila
           const { anio, semana } = semanaISO(d)
