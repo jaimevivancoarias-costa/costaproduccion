@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
-import { hoyISO, lunesDe, sumarDias, cortita } from './lib/fechas'
+import { hoyISO, lunesDe, sumarDias, cortita, semanaISO } from './lib/fechas'
 import RegistroDiario from './pages/RegistroDiario'
 import RegistroInsumos from './pages/RegistroInsumos'
 import Gramaje from './pages/Gramaje'
@@ -491,9 +491,9 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       const hoy = hoyISO()
       const ayer = sumarDias(hoy, -1)
       const ids = reales.map(f => f.id)
-      const [{ data: cerrD }, { data: tiIni }, { data: tbIni }, { data: dcIni }, { data: dCons }] = await Promise.all([
+      const [{ data: cerrD }, { data: tiIni }, { data: tbIni }, { data: dcIni }, { data: dCons }, { data: semC }] = await Promise.all([
         supabase.schema('produccion').from('dia_registro')
-          .select('finca_id, fecha, ambito').eq('estado', 'cerrado')
+          .select('finca_id, fecha, ambito, estado')
           .gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids),
         supabase.schema('produccion').from('toma_inventario')
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
@@ -503,12 +503,22 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
           .select('finca_id, fecha').eq('es_inicial', true).in('finca_id', ids),
         supabase.schema('produccion').from('diesel_consumo')
           .select('finca_id, fecha').gte('fecha', PISO_AVISO).lte('fecha', ayer).in('finca_id', ids),
+        supabase.schema('produccion').from('semana_cerrada')
+          .select('finca_id, anio, semana, ambito').in('finca_id', ids),
       ])
       if (!vivo) return
       // Inventario inicial (el más antiguo) por finca y ámbito = desde dónde contar.
       const minPorFinca = rows => { const m = {}; (rows || []).forEach(r => { if (!m[r.finca_id] || r.fecha < m[r.finca_id]) m[r.finca_id] = r.fecha }); return m }
       const iniIns = minPorFinca(tiIni), iniBal = minPorFinca(tbIni), iniDie = minPorFinca(dcIni)
-      const cerr = new Set((cerrD || []).map(r => `${r.finca_id}|${r.ambito}|${r.fecha}`))
+      const cerr = new Set(), reab = new Set()
+      ;(cerrD || []).forEach(r => {
+        const k = `${r.finca_id}|${r.ambito}|${r.fecha}`
+        if (r.estado === 'cerrado') cerr.add(k); else if (r.estado === 'reabierto') reab.add(k)
+      })
+      // Una semana en semana_cerrada cierra todos sus días, aunque no haya fila por
+      // día (semanas cerradas antes de que existiera el cierre por día, o cerradas
+      // de una). Clave por anio-semana ISO. Un día reabierto a mano sí queda pendiente.
+      const semCerr = new Set((semC || []).map(r => `${r.finca_id}|${r.ambito}|${r.anio}-${r.semana}`))
       // Semanas (lunes) con consumo de diesel por finca.
       const dieselSem = {}
       ;(dCons || []).forEach(r => { const lun = lunesDe(r.fecha); (dieselSem[r.finca_id] = dieselSem[r.finca_id] || new Set()).add(lun) })
@@ -517,7 +527,15 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       const diasPend = (iniF, amb, fid) => {
         if (!iniF || iniF > ayer) return []
         const out = []
-        for (let d = iniF; d <= ayer; d = sumarDias(d, 1)) if (!cerr.has(`${fid}|${amb}|${d}`)) out.push(d)
+        for (let d = iniF; d <= ayer; d = sumarDias(d, 1)) {
+          const k = `${fid}|${amb}|${d}`
+          if (cerr.has(k)) continue                 // día cerrado por su fila
+          if (!reab.has(k)) {                        // no reabierto a mano
+            const { anio, semana } = semanaISO(d)
+            if (semCerr.has(`${fid}|${amb}|${anio}-${semana}`)) continue  // semana cerrada
+          }
+          out.push(d)
+        }
         return out
       }
       // Semanas TERMINADAS sin consumo de diesel: desde el inicial de diesel.
