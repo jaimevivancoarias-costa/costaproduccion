@@ -2423,7 +2423,7 @@ function ModalBajaIns({ finca, insumos, precioFifoDe, onCerrar, onHecho }) {
     for (const f of validas) { const p = itemDe(f.item), n = numDec(f.cant); if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.insumo}: solo hay ${fmt(p.saldo)} ${uDe(f.item)}.`); return } }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
     setGuardando(true)
-    const rows = validas.map(f => ({ finca_id: finca.id, fecha, insumo_id: f.item, cantidad: -numDec(f.cant), motivo }))
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, insumo_id: f.item, cantidad: -numDec(f.cant), motivo, precio_unitario: precioFifoDe(f.item) }))
     const { error } = await supabase.schema('produccion').from('ajuste_insumo').insert(rows)
     setGuardando(false)
     if (error) { setErr(error.message); return }
