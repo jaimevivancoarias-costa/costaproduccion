@@ -1302,7 +1302,7 @@ function ModalBajaDsl({ finca, tipos, precioFifoGal, onCerrar, onHecho }) {
     for (const f of validas) { const p = itemDe(f.item), n = numDec(f.cant); if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.tipo}: solo hay ${miles(p.saldo)} gal.`); return } }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
     setGuardando(true)
-    const rows = validas.map(f => ({ finca_id: finca.id, fecha, tipo_id: f.item, cantidad: -numDec(f.cant), motivo }))
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, tipo_id: f.item, cantidad: -numDec(f.cant), motivo, precio_unitario: precioFifoGal(f.item) }))
     const { error } = await supabase.schema('produccion').from('ajuste_diesel').insert(rows)
     setGuardando(false)
     if (error) { setErr(error.message); return }

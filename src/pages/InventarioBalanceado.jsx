@@ -2584,7 +2584,7 @@ function ModalBajaBal({ finca, productos, precioFifoDe, onCerrar, onHecho }) {
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
     setGuardando(true)
-    const rows = validas.map(f => ({ finca_id: finca.id, fecha, producto_id: f.prod, cantidad: -numDec(f.cant), motivo }))
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, producto_id: f.prod, cantidad: -numDec(f.cant), motivo, precio_unitario: precioFifoDe(f.prod) }))
     const { error } = await supabase.schema('produccion').from('ajuste_balanceado').insert(rows)
     setGuardando(false)
     if (error) { setErr(error.message); return }

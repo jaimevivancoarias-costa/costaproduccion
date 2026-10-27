@@ -54,6 +54,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [estTipo, setEstTipo] = useState('insumo')     // 'insumo' | 'balanceado'
   const [descs, setDescs] = useState([])               // descuadres (control de conteos)
   const [descTipo, setDescTipo] = useState('insumo')
+  const [perdFinca, setPerdFinca] = useState(finca.id) // finca del reporte de pérdidas ('todas' = todas)
   const [ciclos, setCiclos] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -478,7 +479,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       {/* Sub-pestañas de Bodega y Producción. */}
       {vista === 'bodega' && (
         <div style={{ marginBottom: '14px' }}>
-          <Seg valor={kind} onCambio={setKind} opciones={[...(esJefe ? [['valorizacion', 'Valorización']] : []), ['estado', 'Estado / Reponer'], ['descuadres', 'Descuadres']]} />
+          <Seg valor={kind} onCambio={setKind} opciones={[...(esJefe ? [['valorizacion', 'Valorización']] : []), ['estado', 'Estado / Reponer'], ['descuadres', 'Descuadres'], ...(esJefe ? [['perdidas', 'Pérdidas']] : [])]} />
         </div>
       )}
       {vista === 'produccion' && (
@@ -555,6 +556,11 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
       {kind === 'descuadres' && (
         <ReporteDescuadres descs={descs} tipo={descTipo} onTipo={setDescTipo} todasFincas={todasFincas} />
+      )}
+
+      {kind === 'perdidas' && esJefe && (
+        <ReportePerdidas fincas={fincas} fincaSel={perdFinca} onFinca={setPerdFinca}
+                         desde={desde} hasta={hasta} />
       )}
 
       {kind === 'consumo' && <>
@@ -1578,6 +1584,163 @@ function ReporteDescuadres({ descs, tipo, onTipo, todasFincas }) {
           )
         })}
       </Caja>
+      </>
+      )}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------
+// Pérdidas: qué se dio de baja (robo, merma, rotura, daño) y cuánto costó.
+// Lee los ajustes NEGATIVOS que guardaron un precio FIFO (las bajas) de
+// balanceado, insumos y diesel. Agrupa por motivo, módulo y finca.
+// ---------------------------------------------------------------------
+const COL_MOTIVO = { Robo: '#B3261E', Merma: '#854F0B', Rotura: '#0D6CB0', 'Daño': '#3f8fce', Otro: '#7d8fa0' }
+const colMotivo = m => COL_MOTIVO[m] || '#9fb0bf'
+
+function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
+  const [filas, setFilas] = useState([])
+  const [cargando, setCargando] = useState(true)
+  const esTodas = fincaSel === 'todas'
+
+  useEffect(() => {
+    let vivo = true
+    setCargando(true)
+    ;(async () => {
+      const base = (tbl, itemCol) => {
+        let q = supabase.schema('produccion').from(tbl)
+          .select(`id, finca_id, fecha, cantidad, motivo, precio_unitario, ${itemCol}`)
+          .lt('cantidad', 0).not('precio_unitario', 'is', null)
+          .gte('fecha', desde).lte('fecha', hasta).limit(5000)
+        if (!esTodas) q = q.eq('finca_id', fincaSel)
+        return q
+      }
+      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }] = await Promise.all([
+        base('ajuste_balanceado', 'producto_id'),
+        base('ajuste_insumo', 'insumo_id'),
+        base('ajuste_diesel', 'tipo_id'),
+        supabase.schema('produccion').from('producto').select('id, nombre'),
+        supabase.schema('produccion').from('insumo').select('id, nombre, unidad'),
+        supabase.schema('produccion').from('diesel_tipo').select('id, nombre'),
+      ])
+      if (!vivo) return
+      const nomF = {}; (fincas || []).forEach(f => { nomF[f.id] = f.nombre })
+      const nomP = {}; (prod || []).forEach(p => { nomP[p.id] = p.nombre })
+      const nomI = {}, uniI = {}; (ins || []).forEach(i => { nomI[i.id] = i.nombre; uniI[i.id] = i.unidad })
+      const nomD = {}; (dt || []).forEach(t => { nomD[t.id] = t.nombre })
+      const mk = (r, modulo, item, unidad) => {
+        const cant = Math.abs(Number(r.cantidad) || 0)
+        return { key: modulo + r.id, modulo, finca: nomF[r.finca_id] || '—', fecha: r.fecha,
+                 item, unidad, motivo: r.motivo || 'Otro', cant, valor: cant * (Number(r.precio_unitario) || 0) }
+      }
+      const rows = [
+        ...(ab || []).map(r => mk(r, 'Balanceado', nomP[r.producto_id] || '—', 'sacos')),
+        ...(ai || []).map(r => mk(r, 'Insumos', nomI[r.insumo_id] || '—', String(uniI[r.insumo_id] || 'u').toLowerCase())),
+        ...(ad || []).map(r => mk(r, 'Diesel', nomD[r.tipo_id] || '—', 'gal')),
+      ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))
+      setFilas(rows)
+      setCargando(false)
+    })()
+    return () => { vivo = false }
+  }, [fincaSel, desde, hasta, fincas, esTodas])
+
+  const total = useMemo(() => filas.reduce((t, f) => t + f.valor, 0), [filas])
+  const agrupar = useMemo(() => (clave) => {
+    const m = {}
+    filas.forEach(f => { m[f[clave]] = (m[f[clave]] || 0) + f.valor })
+    return Object.entries(m).map(([label, valor]) => ({ label, valor })).sort((a, b) => b.valor - a.valor)
+  }, [filas])
+  const porMotivo = agrupar('motivo')
+  const porModulo = agrupar('modulo')
+  const porFinca = esTodas ? agrupar('finca') : []
+
+  const GRID = esTodas
+    ? '92px 1fr 100px 1.3fr 120px 100px 120px'
+    : '92px 100px 1.3fr 120px 100px 120px'
+
+  return (
+    <>
+      {fincas && fincas.length > 1 && (
+        <div style={{ marginBottom: '14px' }}>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
+          <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
+            <option value="todas">Todas las fincas</option>
+            {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+          </select>
+        </div>
+      )}
+
+      {cargando ? (
+        <Caja><Centro>Cargando…</Centro></Caja>
+      ) : !filas.length ? (
+        <Caja><Centro>No hay pérdidas registradas en este rango.<br />
+          <span style={{ fontSize: '12px' }}>Las bajas (robo, merma, daño) se registran con el botón “Dar de baja” en Bodega.</span>
+        </Centro></Caja>
+      ) : (
+      <>
+        <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
+          <Kpi titulo="Total perdido" valor={dinero(total)} />
+          <Kpi titulo="Bajas registradas" valor={String(filas.length)} />
+          <Kpi titulo="Motivos" valor={String(porMotivo.length)} />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: esTodas ? '1fr 1fr' : '1fr 1fr',
+                      gap: '14px', marginBottom: '14px' }}>
+          <CajaGrafica titulo="Por motivo">
+            <div style={{ display: 'flex', gap: '18px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <Donut segmentos={porMotivo.map(m => ({ valor: m.valor, color: colMotivo(m.label) }))}
+                     centro={String(filas.length)} sub={filas.length === 1 ? 'baja' : 'bajas'} />
+              <div style={{ flex: 1, minWidth: '150px' }}>
+                {porMotivo.map(m => (
+                  <div key={m.label} style={{ display: 'flex', alignItems: 'center', gap: '8px',
+                        justifyContent: 'space-between', fontSize: '12.5px', marginBottom: '7px' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                      <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: colMotivo(m.label) }} />
+                      {m.label}
+                    </span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(m.valor)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CajaGrafica>
+          <CajaGrafica titulo={esTodas ? 'Por finca' : 'Por módulo'}>
+            <BarrasH items={esTodas ? porFinca : porModulo} money />
+          </CajaGrafica>
+        </div>
+
+        <Caja>
+          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '11px 16px',
+                        fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
+            <span>Fecha</span>
+            {esTodas && <span>Finca</span>}
+            <span>Módulo</span>
+            <span>Ítem</span>
+            <span style={{ textAlign: 'right' }}>Cantidad</span>
+            <span>Motivo</span>
+            <span style={{ textAlign: 'right' }}>Perdido</span>
+          </div>
+          {filas.map(f => (
+            <div key={f.key} style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '10px 16px',
+                    alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
+              <span style={{ color: GRIS }}>{corta(f.fecha)}</span>
+              {esTodas && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.finca}</span>}
+              <span style={{ color: GRIS }}>{f.modulo}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.item}</span>
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(f.cant)} {f.unidad}</span>
+              <span>
+                <span style={{ fontSize: '11.5px', fontWeight: 500, color: colMotivo(f.motivo),
+                      background: colMotivo(f.motivo) + '18', padding: '2px 8px', borderRadius: '20px' }}>{f.motivo}</span>
+              </span>
+              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(f.valor)}</span>
+            </div>
+          ))}
+          <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '12px 16px',
+                        alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
+            <span>Total</span>{esTodas && <span />}<span /><span /><span /><span />
+            <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(total)}</span>
+          </div>
+        </Caja>
       </>
       )}
     </>
