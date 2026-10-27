@@ -67,6 +67,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [userId, setUserId] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
+  const [bajaOpen, setBajaOpen] = useState(false)       // modal "Dar de baja" diesel (robo/merma)
   const [form, setForm] = useState(null)
   const [revPrecio, setRevPrecio] = useState(null)
 
@@ -208,6 +209,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   // Valor por FIFO: cada lote (ingreso/inicial) al precio que regía en SU fecha,
   // no al precio de hoy. Así cambiar el precio no revaloriza lo viejo.
   const valorFifoDe = id => (lotes[id] || []).reduce((s, l) => s + Number(l.queda || 0) * Number(l.precio || 0), 0)
+  // Precio FIFO por galón (valor del saldo ÷ saldo) para costear bajas.
+  const precioFifoGal = id => { const s = saldos.find(x => x.tipo_id === id); const sld = Number(s?.saldo); return sld > 0.0001 ? valorFifoDe(id) / sld : 0 }
   // Valor de los ingresos del período: cada ingreso × el precio de su fecha.
   const valIngFifoDe = id => (lotes[id] || [])
     .filter(l => !l.inicial && l.fecha >= desde && l.fecha <= hasta)
@@ -1059,6 +1062,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
           <Seg valor={vistaBod} onCambio={setVistaBod} opciones={[['hay', 'Cuánto hay'], ['movio', 'Qué se movió']]} />
           <span style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
             {esJefe && <BotonDescargar conRango={false} desde={desde} hasta={hasta} setDesde={() => {}} setHasta={() => {}} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            {esJefe && <button onClick={() => setBajaOpen(true)} style={{ background: 'white', color: ROJO, border: '0.5px solid #e7cccb', borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>Dar de baja</button>}
             {!soloLectura && !conteo && (
               <button onClick={() => setConteo({ fecha: hoyISO(), valores: {} })} style={{ background: AZUL, color: 'white', border: '0.5px solid ' + AZUL, borderRadius: '9px', padding: '8px 15px', fontFamily: 'inherit', fontSize: '13px', fontWeight: 500, cursor: 'pointer' }}>
                 {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}
@@ -1066,6 +1070,13 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             )}
           </span>
         </div>
+
+        {esJefe && bajaOpen && (
+          <ModalBajaDsl finca={finca} tipos={saldos.filter(s => Number(s.saldo) > 0.001)}
+            precioFifoGal={precioFifoGal}
+            onCerrar={() => setBajaOpen(false)}
+            onHecho={async m => { setBajaOpen(false); setAviso({ tipo: 'ok', texto: m }); await cargar() }} />
+        )}
 
         {conteo && (
           <Caja estilo={{ marginBottom: '14px' }}>
@@ -1268,6 +1279,85 @@ const GRES_J = '1.6fr 0.9fr 0.9fr 1.05fr 1.05fr'
 const G_HAY = '2fr 1fr'
 const G_HAY_J = '1.6fr 1fr 1.2fr 1fr'
 const G_CORTE2 = '2fr 1fr 1fr 1.2fr'
+const MOTIVOS_BAJA_DSL = ['Robo', 'Merma', 'Daño', 'Otro']
+
+// Modal "Dar de baja" de diesel: pérdida (robo/merma) de uno o varios tipos
+// como ajuste NEGATIVO en ajuste_diesel (baja el saldo) + $ FIFO por galón.
+function ModalBajaDsl({ finca, tipos, precioFifoGal, onCerrar, onHecho }) {
+  const [filas, setFilas] = useState([{ item: '', cant: '' }])
+  const [motivo, setMotivo] = useState('Robo')
+  const [fecha, setFecha] = useState(hoyISO())
+  const [guardando, setGuardando] = useState(false)
+  const [err, setErr] = useState('')
+  const itemDe = id => tipos.find(x => x.tipo_id === id)
+  const setFila = (i, patch) => setFilas(fs => fs.map((f, k) => k === i ? { ...f, ...patch } : f))
+  const addFila = () => setFilas(fs => [...fs, { item: '', cant: '' }])
+  const rmFila = i => setFilas(fs => fs.length > 1 ? fs.filter((_, k) => k !== i) : fs)
+  const perdidaDe = f => { const n = numDec(f.cant); return (f.item && n > 0) ? n * precioFifoGal(f.item) : 0 }
+  const total = filas.reduce((t, f) => t + perdidaDe(f), 0)
+  async function guardar() {
+    setErr('')
+    const validas = filas.filter(f => f.item && numDec(f.cant) > 0)
+    if (!validas.length) { setErr('Agrega al menos un tipo con galones.'); return }
+    for (const f of validas) { const p = itemDe(f.item), n = numDec(f.cant); if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.tipo}: solo hay ${miles(p.saldo)} gal.`); return } }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
+    setGuardando(true)
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, tipo_id: f.item, cantidad: -numDec(f.cant), motivo }))
+    const { error } = await supabase.schema('produccion').from('ajuste_diesel').insert(rows)
+    setGuardando(false)
+    if (error) { setErr(error.message); return }
+    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'tipo' : 'tipos'} · ${motivo} · ${dinero(total)}`)
+  }
+  const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid #dce6ef', borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
+  const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid #dce6ef', borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
+  const lnk = { background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontFamily: 'inherit', fontSize: '12.5px', color: AZUL, fontWeight: 500 }
+  const lbl = { fontSize: '12px', color: GRIS, marginBottom: '4px', display: 'block' }
+  return (
+    <div onClick={onCerrar} style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'white', borderRadius: '14px', padding: '20px 22px', width: '540px', maxWidth: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 20px 50px rgba(2,40,71,.28)' }}>
+        <div style={{ fontSize: '16px', fontWeight: 600, color: NAVY }}>Dar de baja</div>
+        <div style={{ fontSize: '12px', color: GRIS, margin: '3px 0 16px' }}>Registra una pérdida de diesel (robo, merma). Baja el saldo y se costea FIFO.</div>
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '14px' }}>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Motivo</label>
+            <select value={motivo} onChange={e => setMotivo(e.target.value)} style={{ ...inp, width: '100%' }}>
+              {MOTIVOS_BAJA_DSL.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={lbl}>Fecha</label>
+            <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={{ ...inp, width: '100%' }} />
+          </div>
+        </div>
+        <label style={lbl}>Diesel</label>
+        {filas.map((f, i) => {
+          const usados = new Set(filas.map((x, k) => k !== i ? x.item : null).filter(Boolean))
+          const per = perdidaDe(f)
+          return (
+            <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '8px' }}>
+              <select value={f.item} onChange={e => setFila(i, { item: e.target.value })} style={{ ...inp, flex: 2, minWidth: 0 }}>
+                <option value="">Elegir tipo…</option>
+                {tipos.filter(x => !usados.has(x.tipo_id)).map(x => <option key={x.tipo_id} value={x.tipo_id}>{x.tipo} ({miles(x.saldo)} gal)</option>)}
+              </select>
+              <CampoNumero maxDec={2} value={f.cant} onChange={v => setFila(i, { cant: v })} placeholder="gal" style={{ ...inp, width: '90px', textAlign: 'right' }} />
+              <span style={{ width: '92px', textAlign: 'right', fontSize: '12.5px', color: per > 0 ? ROJO : '#c3d0db', fontVariantNumeric: 'tabular-nums' }}>{per > 0 ? dinero(per) : '—'}</span>
+              <button onClick={() => rmFila(i)} disabled={filas.length === 1} style={{ ...lnk, color: filas.length === 1 ? '#c3d0db' : ROJO, fontSize: '16px', width: '20px' }}>✕</button>
+            </div>
+          )
+        })}
+        <button onClick={addFila} style={{ ...lnk, marginTop: '2px' }}>+ Agregar otro tipo</button>
+        <div style={{ background: '#FBEAEA', border: '1px solid #e7cccb', borderRadius: '10px', padding: '11px 14px', fontSize: '14px', color: ROJO, margin: '16px 0 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>Total de la pérdida</span><b>{dinero(total)}</b>
+        </div>
+        {err && <div style={{ color: ROJO, fontSize: '12.5px', marginBottom: '10px' }}>{err}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '9px' }}>
+          <button onClick={onCerrar} style={{ ...btn }}>Cancelar</button>
+          <button onClick={guardar} disabled={guardando} style={{ ...btn, background: ROJO, color: 'white', borderColor: ROJO, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Dar de baja'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
 const G_MOV = '1.6fr 1fr 1fr 1fr 1fr'
 const G_LOTE = '1.8fr 1fr 1fr 1fr 1fr 1.3fr'
 
