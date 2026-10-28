@@ -98,6 +98,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [corrForm, setCorrForm] = useState(null)       // producto_id con el editor de corrección abierto
   const [bajaOpen, setBajaOpen] = useState(false)      // modal "Dar de baja" (robo/merma)
   const [bajas, setBajas] = useState([])               // bajas registradas (ajustes negativos con precio FIFO)
+  const [bajasLotes, setBajasLotes] = useState({})     // baja_id -> [{fecha, precio, qty}] desglose FIFO por lote
   const [corrSaldo, setCorrSaldo] = useState('')       // saldo nuevo que se escribe al corregir
   const [corrMotivo, setCorrMotivo] = useState('')
   const [corrFecha, setCorrFecha] = useState('')
@@ -226,6 +227,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
         .order('fecha', { ascending: false }).limit(100)
       setBajas((bj || []).map(b => ({ ...b, autor: nombreU[b.creado_por] || null })))
+      if (bj && bj.length) {
+        const desdeB = bj.reduce((mn, x) => x.fecha < mn ? x.fecha : mn, bj[0].fecha)
+        const { data: lt } = await supabase.schema('produccion').rpc('fn_reporte_perdidas_lotes', { p_finca: finca.id, p_desde: desdeB, p_hasta: hoyISO() })
+        const d = {}; (lt || []).forEach(x => { (d[x.baja_id] = d[x.baja_id] || []).push({ fecha: x.lote_fecha, precio: Number(x.precio) || 0, qty: Number(x.sacos) || 0 }) })
+        setBajasLotes(d)
+      } else setBajasLotes({})
       } catch { /* la autoría es opcional: si falla, la tabla igual se muestra */ }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
@@ -1632,9 +1639,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
             const s = saldos.find(x => x.producto_id === b.producto_id)
             const cant = Math.abs(Number(b.cantidad) || 0)
-            return { id: b.id, fecha: b.fecha, item: s?.producto || '—', cantTxt: `${miles(cant)} sacos`,
-              motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
-              perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} sacos` : '—' }
+            const lotes = bajasLotes[b.id]
+            const perdido = lotes && lotes.length ? lotes.reduce((t, l) => t + l.precio * l.qty, 0) : cant * (Number(b.precio_unitario) || 0)
+            return { id: b.id, fecha: b.fecha, item: s?.producto || '—', cantTxt: `${miles(cant)} sacos`, unidad: 'sacos',
+              motivo: b.motivo || 'Otro', autor: b.autor, lotes,
+              perdido, quedaTxt: s ? `${miles(s.saldo)} sacos` : '—' }
           })} />
 
           {tomas.length > 0 && (
