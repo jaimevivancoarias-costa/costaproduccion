@@ -6,6 +6,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
+import TarjetaBajas from '../components/TarjetaBajas'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -96,6 +97,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [recosForm, setRecosForm] = useState(null)     // producto_id con la confirmación de recosteo abierta
   const [corrForm, setCorrForm] = useState(null)       // producto_id con el editor de corrección abierto
   const [bajaOpen, setBajaOpen] = useState(false)      // modal "Dar de baja" (robo/merma)
+  const [bajas, setBajas] = useState([])               // bajas registradas (ajustes negativos con precio FIFO)
   const [corrSaldo, setCorrSaldo] = useState('')       // saldo nuevo que se escribe al corregir
   const [corrMotivo, setCorrMotivo] = useState('')
   const [corrFecha, setCorrFecha] = useState('')
@@ -217,6 +219,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         if (tt.es_inicial && !iniR[l.producto_id]) iniR[l.producto_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
       }))
       setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
+
+      // Bajas (robo/merma/daño): ajustes NEGATIVOS que guardaron un precio FIFO.
+      const { data: bj } = await supabase.schema('produccion').from('ajuste_balanceado')
+        .select('id, fecha, producto_id, cantidad, motivo, precio_unitario, creado_por, creado_en')
+        .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
+        .order('fecha', { ascending: false }).limit(100)
+      setBajas((bj || []).map(b => ({ ...b, autor: nombreU[b.creado_por] || null })))
       } catch { /* la autoría es opcional: si falla, la tabla igual se muestra */ }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
@@ -1144,6 +1153,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               </>
             )}
           </div>
+
+          <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
+            const s = saldos.find(x => x.producto_id === b.producto_id)
+            const cant = Math.abs(Number(b.cantidad) || 0)
+            return { id: b.id, fecha: b.fecha, item: s?.producto || '—', cantTxt: `${miles(cant)} sacos`,
+              motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
+              perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} sacos` : '—' }
+          })} />
 
           {vista === 'saldo' ? (
             <>
