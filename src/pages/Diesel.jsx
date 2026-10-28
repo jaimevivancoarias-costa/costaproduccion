@@ -1087,14 +1087,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             onHecho={async m => { setBajaOpen(false); setAviso({ tipo: 'ok', texto: m }); await cargar() }} />
         )}
 
-        <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
-          const s = saldos.find(x => x.tipo_id === b.tipo_id)
-          const cant = Math.abs(Number(b.cantidad) || 0)
-          return { id: b.id, fecha: b.fecha, item: nombreTipo(b.tipo_id), cantTxt: `${miles(cant)} gal`,
-            motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
-            perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} gal` : '—' }
-        })} />
-
         {conteo && (
           <Caja estilo={{ marginBottom: '14px' }}>
             <div style={{ padding: '14px 16px' }}>
@@ -1218,6 +1210,14 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             </Caja>
           </>
         )}
+
+        <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
+          const s = saldos.find(x => x.tipo_id === b.tipo_id)
+          const cant = Math.abs(Number(b.cantidad) || 0)
+          return { id: b.id, fecha: b.fecha, item: nombreTipo(b.tipo_id), cantTxt: `${miles(cant)} gal`,
+            motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
+            perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} gal` : '—' }
+        })} />
 
         {/* Conteos anteriores · se mantiene en ambas vistas (Cuánto hay / Qué se movió) */}
         <div style={{ fontSize: '15px', fontWeight: 500, margin: '22px 0 12px' }}>Conteos anteriores</div>
