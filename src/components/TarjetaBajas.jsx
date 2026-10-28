@@ -43,6 +43,7 @@ export default function TarjetaBajas({ rows, esJefe }) {
           {rows.map(r => {
             const hayLotes = esJefe && r.lotes && r.lotes.length > 0
             const ab = !!filaAb[r.id]
+            const totQty = hayLotes ? r.lotes.reduce((t, l) => t + l.qty, 0) : 0
             return [
               <div key={r.id} style={{ display: 'grid', gridTemplateColumns: GRID, gap: '16px', padding: '11px 16px',
                       alignItems: 'center', fontSize: '13px', borderBottom: ab ? 'none' : '0.5px solid #f1f6f9' }}>
@@ -67,17 +68,22 @@ export default function TarjetaBajas({ rows, esJefe }) {
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{r.quedaTxt}</span>
               </div>,
               hayLotes && ab && (
-                <div key={r.id + '-d'} style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '8px 16px 12px 42px' }}>
-                  <div style={{ fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '5px' }}>Desglose FIFO por lote</div>
+                <div key={r.id + '-d'} style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '12px 16px 14px 42px' }}>
+                  <div style={{ fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '8px' }}>Desglose FIFO por lote</div>
                   {r.lotes.map((l, i) => (
-                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '150px 130px 120px 1fr', gap: '12px',
-                          fontSize: '12.5px', padding: '3px 0', fontVariantNumeric: 'tabular-nums' }}>
-                      <span style={{ color: GRIS }}>{l.fecha ? corta(l.fecha) : 'Inventario inicial'}</span>
-                      <span style={{ textAlign: 'right', color: GRIS }}>{miles(l.qty)}{r.unidad ? ' ' + r.unidad : ''}</span>
-                      <span style={{ textAlign: 'right', color: GRIS }}>a {dinero(l.precio)}</span>
-                      <span style={{ textAlign: 'right', fontWeight: 500 }}>{dinero(l.precio * l.qty)}</span>
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '12px', alignItems: 'center',
+                          fontSize: '12.5px', padding: '7px 0', borderBottom: '0.5px solid #eef3f7', fontVariantNumeric: 'tabular-nums' }}>
+                      <span style={{ color: NAVY }}>{l.fecha ? 'Lote del ' + corta(l.fecha) : 'Inventario inicial'}</span>
+                      <span style={{ textAlign: 'right', color: GRIS }}>{miles(l.qty)}{r.unidad ? ' ' + r.unidad : ''} &times; {dinero(l.precio)}</span>
+                      <span style={{ textAlign: 'right', fontWeight: 500, minWidth: '90px' }}>{dinero(l.precio * l.qty)}</span>
                     </div>
                   ))}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '12px', alignItems: 'center',
+                        fontSize: '13px', padding: '9px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                    <span style={{ color: NAVY, fontWeight: 500 }}>Total</span>
+                    <span style={{ textAlign: 'right', color: GRIS }}>{miles(totQty)}{r.unidad ? ' ' + r.unidad : ''}</span>
+                    <span style={{ textAlign: 'right', fontWeight: 500, color: NAVY, minWidth: '90px' }}>{dinero(r.perdido)}</span>
+                  </div>
                 </div>
               ),
             ]
