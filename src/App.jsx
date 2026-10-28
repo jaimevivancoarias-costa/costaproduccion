@@ -530,9 +530,16 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
       // semana cerrada ⇒ todos cerrados, sin importar reaperturas sueltas por día,
       // y aunque no haya fila por día). Clave por anio-semana ISO.
       const semCerr = new Set((semC || []).map(r => `${r.finca_id}|${r.ambito}|${r.anio}-${r.semana}`))
-      // Semanas (lunes) con consumo de diesel por finca.
+      // Semanas (lunes) con consumo de diesel por finca + primer lunes con
+      // consumo (desde cuándo la finca REALMENTE registra diesel). El aviso
+      // no debe salir para semanas anteriores al primer registro.
       const dieselSem = {}
-      ;(dCons || []).forEach(r => { const lun = lunesDe(r.fecha); (dieselSem[r.finca_id] = dieselSem[r.finca_id] || new Set()).add(lun) })
+      const primerDiesel = {}
+      ;(dCons || []).forEach(r => {
+        const lun = lunesDe(r.fecha)
+        ;(dieselSem[r.finca_id] = dieselSem[r.finca_id] || new Set()).add(lun)
+        if (!primerDiesel[r.finca_id] || lun < primerDiesel[r.finca_id]) primerDiesel[r.finca_id] = lun
+      })
 
       // Días sin cerrar (insumos/balanceado): desde el inicial de la finca hasta ayer.
       const diasPend = (iniF, amb, fid) => {
@@ -549,11 +556,14 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
         }
         return out
       }
-      // Semanas TERMINADAS sin consumo de diesel: desde el inicial de diesel.
-      const semDieselPend = (iniF, fid) => {
-        if (!iniF) return []
+      // Semanas TERMINADAS sin consumo de diesel: desde el PRIMER consumo real
+      // de la finca (no desde el inventario inicial, que suele ir backdateado).
+      // Si la finca nunca registró diesel, no se avisa.
+      const semDieselPend = fid => {
+        const inicio = primerDiesel[fid]
+        if (!inicio) return []
         const out = []
-        for (let lun = lunesDe(iniF); ; lun = sumarDias(lun, 7)) {
+        for (let lun = inicio; ; lun = sumarDias(lun, 7)) {
           const dom = sumarDias(lun, 6)
           if (dom >= hoy) break               // semana no terminada → parar
           if (!(dieselSem[fid] && dieselSem[fid].has(lun))) out.push({ lun, dom })
@@ -568,7 +578,7 @@ function AvisoCierres({ fincas, esJefe, onCerrar }) {
         if (diasBal.length) ambitos.push({ ...AMBITOS_CIERRE[0], tipo: 'dias', dias: diasBal })
         const diasIns = diasPend(iniIns[f.id], 'insumos', f.id)
         if (diasIns.length) ambitos.push({ ...AMBITOS_CIERRE[1], tipo: 'dias', dias: diasIns })
-        const semDie = semDieselPend(iniDie[f.id], f.id)
+        const semDie = semDieselPend(f.id)
         if (semDie.length) ambitos.push({ ...CHIP_DIESEL, tipo: 'semanas', semanas: semDie })
         if (!ambitos.length) return
         const diasTot = new Set([...diasBal, ...diasIns]).size
