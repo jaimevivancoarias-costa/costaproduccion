@@ -5,6 +5,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { Seg } from '../components/controles'
+import TarjetaBajas from '../components/TarjetaBajas'
 
 // Diesel unificado · dos subsecciones:
 //  - Registro: ingresos y consumos (lo del día) con resumen del período y
@@ -68,6 +69,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [bajaOpen, setBajaOpen] = useState(false)       // modal "Dar de baja" diesel (robo/merma)
+  const [bajas, setBajas] = useState([])                // bajas registradas (ajustes negativos con precio FIFO)
   const [form, setForm] = useState(null)
   const [revPrecio, setRevPrecio] = useState(null)
 
@@ -133,6 +135,13 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       if (pm[r.tipo_id] == null || esFinca) pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
     })
     setPrecios(pm)
+
+    // Bajas (robo/merma/daño): ajustes NEGATIVOS que guardaron un precio FIFO.
+    const { data: bj } = await supabase.schema('produccion').from('ajuste_diesel')
+      .select('id, fecha, tipo_id, cantidad, motivo, precio_unitario, creado_por, creado_en')
+      .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
+      .order('fecha', { ascending: false }).limit(100)
+    setBajas((bj || []).map(b => ({ ...b, autor: nu[b.creado_por] || null })))
 
     // Inventario inicial existente (para editarlo).
     const { data: iniC } = await supabase.schema('produccion').from('diesel_conteo')
@@ -1077,6 +1086,14 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             onCerrar={() => setBajaOpen(false)}
             onHecho={async m => { setBajaOpen(false); setAviso({ tipo: 'ok', texto: m }); await cargar() }} />
         )}
+
+        <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
+          const s = saldos.find(x => x.tipo_id === b.tipo_id)
+          const cant = Math.abs(Number(b.cantidad) || 0)
+          return { id: b.id, fecha: b.fecha, item: nombreTipo(b.tipo_id), cantTxt: `${miles(cant)} gal`,
+            motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
+            perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} gal` : '—' }
+        })} />
 
         {conteo && (
           <Caja estilo={{ marginBottom: '14px' }}>
