@@ -6,6 +6,10 @@ import CampoNumero from '../components/CampoNumero'
 // Etiqueta corta de cada unidad, para el desglose del bodeguero.
 const UNIDAD = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
                  libras: 'lb', kg: 'kg', unidad: 'u' }
+// Unidades de MEDIDA (peso/volumen): para estas se muestra la unidad de uso
+// (gramos, litros…). Si la unidad de compra es un paquete (sacos, funda…),
+// se muestra "como se compra" (ej. 8 sacos en vez de 240 kg).
+const MEDIDA = new Set(['gramos', 'g', 'kg', 'kilogramos', 'kilos', 'litros', 'lt', 'l', 'ml', 'libras', 'lb', 'mg', 'ton', 'toneladas'])
 
 // Presupuesto mensual de insumos · modulo Produccion
 //
@@ -37,6 +41,7 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
   const [historico, setHistorico] = useState([])
   const [resumen, setResumen] = useState([])
   const [consumo, setConsumo] = useState([])   // desglose por insumo del mes (sin precios, para bodeguero)
+  const [factores, setFactores] = useState({}) // insumo_id -> { unidad, unidad_compra, factor } (override por finca)
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
   const [nuevo, setNuevo] = useState('')
@@ -50,7 +55,7 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
     // Primer y ultimo dia del mes elegido, para el desglose por insumo.
     const desde = `${anio}-${String(mes).padStart(2, '0')}-01`
     const hasta = new Date(anio, mes, 0).toISOString().slice(0, 10)
-    const [{ data: p }, { data: g }, { data: h }, { data: r }, { data: cons }] = await Promise.all([
+    const [{ data: p }, { data: g }, { data: h }, { data: r }, { data: cons }, { data: insAll }, { data: insOv }] = await Promise.all([
       supabase.schema('produccion').from('presupuesto_insumo')
         .select('monto').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle(),
       supabase.schema('produccion').rpc('fn_gasto_insumos_mes',
@@ -61,11 +66,18 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
       // "En qué se va el mes" (cantidad y %, sin $): lo ven jefe y bodeguero.
       supabase.schema('produccion').rpc('fn_reporte_consumo',
         { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+      supabase.schema('produccion').from('insumo').select('id, unidad, unidad_compra, factor').eq('activo', true),
+      supabase.schema('produccion').from('insumo_finca').select('insumo_id, unidad, factor').eq('finca_id', finca.id),
     ])
     setMonto(p ? Number(p.monto) : null)
     setGasto(Number(g) || 0)
     setHistorico((h || []).filter(x => !(x.anio === anio && x.mes === mes)))
     setResumen(r || [])
+    // Factor y unidades por insumo (catálogo), con override por finca.
+    const fm = {}
+    ;(insAll || []).forEach(i => { fm[i.id] = { unidad: i.unidad, unidad_compra: i.unidad_compra, factor: Number(i.factor) || 1 } })
+    ;(insOv || []).forEach(x => { if (fm[x.insumo_id]) { if (x.unidad) fm[x.insumo_id].unidad = x.unidad; if (x.factor != null) fm[x.insumo_id].factor = Number(x.factor) || 1 } })
+    setFactores(fm)
     // Agrupar por insumo: suma de costo (para el %) y de cantidad por unidad.
     const m = {}
     ;(cons || []).forEach(f => {
@@ -124,6 +136,21 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
     setEditando(false); setNuevo('')
     setAviso({ tipo: 'ok', texto: 'Presupuesto borrado.' })
     await cargar()
+  }
+
+  // Cantidad consumida con la unidad correcta: catálogo manda (arregla
+  // etiquetas mal del RPC) y, si el envase es un paquete, se muestra como
+  // se compra (cantidad ÷ factor en la unidad de compra).
+  const cantidadTxt = c => {
+    if (c.mixto) return '—'
+    const fi = factores[c.id]
+    const fmt = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
+    const uUso = (fi && fi.unidad) || c.unidad
+    const uc = fi && fi.unidad_compra
+    if (uc && String(uc).toLowerCase() !== String(uUso).toLowerCase() && !MEDIDA.has(String(uc).toLowerCase())) {
+      return `${fmt(c.cantidad / (fi.factor || 1))} ${UNIDAD[uc] || uc}`
+    }
+    return `${fmt(c.cantidad)} ${UNIDAD[uUso] || uUso || ''}`
   }
 
   const pct = monto ? Math.min(100, Math.round(gasto / monto * 100)) : 0
@@ -306,7 +333,7 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
                       <span style={{ fontSize: '11px', color: AMBAR, marginLeft: '7px' }}>insumo</span>
                     </span>
                     <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>
-                      {c.mixto ? '—' : `${miles(c.cantidad)} ${UNIDAD[c.unidad] || c.unidad || ''}`}
+                      {cantidadTxt(c)}
                     </span>
                     <span style={{ textAlign: 'right', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
                       {pc}%
