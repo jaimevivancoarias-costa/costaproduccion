@@ -85,6 +85,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [porLoteIns, setPorLoteIns] = useState({}) // insumo_id  -> [{fecha, precio, cantidad, costo}] (insumos, unidad de compra)
   const [porLoteDsl, setPorLoteDsl] = useState({}) // tipo_id    -> [{fecha, precio, galones, costo}] (diesel)
   const [cicloSel, setCicloSel] = useState('')
+  const [perdidasR, setPerdidasR] = useState(0)   // $ de bajas (robo/merma) del rango, cargadas al costo
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -292,6 +293,24 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       .then(({ data, error }) => { if (!vivo) return; if (error) setAviso({ tipo: 'error', texto: error.message }); setDescs(data || []) })
     return () => { vivo = false }
   }, [finca.id, desde, hasta, todasFincas, descTipo])
+
+  // Pérdidas (bajas) del rango, para cargarlas al costo de la finca.
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      const q = tbl => {
+        let b = supabase.schema('produccion').from(tbl).select('cantidad, precio_unitario')
+          .lt('cantidad', 0).not('precio_unitario', 'is', null).gte('fecha', desde).lte('fecha', hasta).limit(5000)
+        if (!todasFincas) b = b.eq('finca_id', finca.id)
+        return b
+      }
+      const [a, b, c] = await Promise.all([q('ajuste_balanceado'), q('ajuste_insumo'), q('ajuste_diesel')])
+      if (!vivo) return
+      const sum = r => (r.data || []).reduce((t, x) => t + Math.abs(Number(x.cantidad) || 0) * (Number(x.precio_unitario) || 0), 0)
+      setPerdidasR(sum(a) + sum(b) + sum(c))
+    })()
+    return () => { vivo = false }
+  }, [finca.id, desde, hasta, todasFincas])
 
   // Ciclos de la finca, para el atajo "por ciclo".
   useEffect(() => {
@@ -597,7 +616,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <div style={{ display: 'flex', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden',
                       marginBottom: '16px', boxShadow: '0 1px 4px rgba(2,40,71,.07)', flexWrap: 'wrap' }}>
           {esJefe && <KCel hl k={verTodoR ? 'Gasto del rango (con diesel)' : 'Gasto del rango'}
-                           v={dinero(totalCosto + (verTodoR ? dslR.total : 0))} />}
+                           v={dinero(totalCosto + perdidasR + (verTodoR ? dslR.total : 0))} />}
+          {esJefe && perdidasR > 0 && <KCel k="Pérdidas (bajas)" v={dinero(perdidasR)} />}
           {esJefe && !todasFincas && <KCel k="Diesel del rango" v={dinero(dslR.total)} />}
           <KCel k={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'} v={String(grupos.length)} />
           <KCel k="Días" v={String(dias(desde, hasta))} />
@@ -617,11 +637,13 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         const bal = filas.filter(f => f.tipo === 'balanceado').reduce((t, f) => t + Number(f.costo || 0), 0)
         const ins = filas.filter(f => f.tipo === 'insumo').reduce((t, f) => t + Number(f.costo || 0), 0)
         const dsl = todasFincas ? 0 : Number(dslR.total || 0)
-        const tot = bal + ins + dsl
+        const per = Number(perdidasR || 0)
+        const tot = bal + ins + dsl + per
         const segs = [
           { label: 'Balanceado', valor: bal, color: '#0D6CB0' },
           { label: 'Insumos', valor: ins, color: '#E3B15F' },
           { label: 'Diesel', valor: dsl, color: '#5F5E5A' },
+          { label: 'Pérdidas', valor: per, color: '#B3261E' },
         ].filter(s => s.valor > 0)
         let off = 25
         return (
