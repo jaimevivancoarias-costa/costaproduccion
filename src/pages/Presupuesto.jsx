@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, dinero, miles } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
+import { Seg } from '../components/controles'
 
 // Etiqueta corta de cada unidad, para el desglose del bodeguero.
 const UNIDAD = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
@@ -42,6 +43,7 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
   const [resumen, setResumen] = useState([])
   const [consumo, setConsumo] = useState([])   // desglose por insumo del mes (sin precios, para bodeguero)
   const [factores, setFactores] = useState({}) // insumo_id -> { unidad, unidad_compra, factor } (override por finca)
+  const [unidadVista, setUnidadVista] = useState('compra')  // 'compra' | 'aplica' — cómo ver la cantidad
   const [cargando, setCargando] = useState(true)
   const [editando, setEditando] = useState(false)
   const [nuevo, setNuevo] = useState('')
@@ -147,9 +149,12 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
     const fmt = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
     const uUso = (fi && fi.unidad) || c.unidad
     const uc = fi && fi.unidad_compra
-    if (uc && String(uc).toLowerCase() !== String(uUso).toLowerCase() && !MEDIDA.has(String(uc).toLowerCase())) {
+    const hayCompra = uc && String(uc).toLowerCase() !== String(uUso).toLowerCase()
+    // "Como se compra" = cantidad ÷ factor en la unidad de compra (si la hay).
+    if (unidadVista === 'compra' && hayCompra) {
       return `${fmt(c.cantidad / (fi.factor || 1))} ${UNIDAD[uc] || uc}`
     }
+    // "Como se aplica" = cantidad en la unidad de uso del catálogo.
     return `${fmt(c.cantidad)} ${UNIDAD[uUso] || uUso || ''}`
   }
 
@@ -312,6 +317,10 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
             <p style={{ fontSize: '13px', color: GRIS, margin: '0 0 11px' }}>
               Consumo de {MESES[mes - 1]} por insumo. El % es cuánto pesa cada uno en el mes.
             </p>
+            <div style={{ marginBottom: '11px' }}>
+              <Seg valor={unidadVista} onCambio={setUnidadVista}
+                   opciones={[['compra', 'Como se compra'], ['aplica', 'Como se aplica']]} />
+            </div>
             <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 52px 1fr',
                             gap: '12px', alignItems: 'center', padding: '11px 16px',
