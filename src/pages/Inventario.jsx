@@ -23,6 +23,8 @@ const GRIS = '#7d8fa0'
 const ROJO = '#8A2F2E'
 const VERDE = '#0F6E56'
 const AMBAR = '#854F0B'
+const COL_MOTIVO_BAJA = { Robo: '#B3261E', Merma: '#854F0B', Rotura: '#0D6CB0', 'Daño': '#3f8fce', Otro: '#7d8fa0' }
+const colBaja = m => COL_MOTIVO_BAJA[m] || '#9fb0bf'
 
 // Sin abreviaturas: el bodeguero no tiene por que descifrar "lt".
 // El inventario se muestra en unidad de compra (tambores, botellas,
@@ -1805,6 +1807,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               // Desglose del saldo (Queda): cómo se arma. Solo en "Por fechas".
               const keyS = m.insumo_id + '|saldo'
               const openS = modoMov === 'fechas' && !!movAbierto[keyS]
+              // Bajas (robo/merma/daño) del insumo dentro del período, para la
+              // flechita de la columna Ajuste (solo en "Por conteo").
+              const keyAj = m.insumo_id + '|ajuste'
+              const bajasProd = bajas.filter(b => b.insumo_id === m.insumo_id && b.fecha >= desde && b.fecha <= hasta)
+              const openAj = modoMov === 'conteo' && !!movAbierto[keyAj] && bajasProd.length > 0
               const sIni = Number(iniMostrar) || 0, sIng = Number(m.ingresos) || 0, sCon = Number(m.consumo) || 0
               const sResta = sIni + sIng - sCon
               const sFin = Number(m.saldo_final) || 0
@@ -1888,7 +1895,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       {Number(m.devuelto) ? '−' + val(m.devuelto) : '—'}
                     </Celda>
                     <Celda derecha color={Number(m.ajustes) ? (Number(m.ajustes) < 0 ? ROJO : VERDE) : '#c3d0db'}>
-                      {Number(m.ajustes) ? (Number(m.ajustes) > 0 ? '+' : '−') + val(Math.abs(Number(m.ajustes))) : '—'}
+                      {Number(m.ajustes)
+                        ? (bajasProd.length > 0
+                            ? <button onClick={() => setMovAbierto(x => ({ ...x, [keyAj]: !x[keyAj] }))} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: 'inherit', fontVariantNumeric: 'tabular-nums' }}>{(Number(m.ajustes) > 0 ? '+' : '−') + val(Math.abs(Number(m.ajustes)))} <span style={{ color: AZUL, fontSize: '9px' }}>{openAj ? '▾' : '▸'}</span></button>
+                            : (Number(m.ajustes) > 0 ? '+' : '−') + val(Math.abs(Number(m.ajustes))))
+                        : '—'}
                     </Celda>
                     {!ocultaConteo && (
                       <Celda derecha color={conteoMostrar === null || conteoMostrar === undefined ? '#c3d0db' : AZUL}>
@@ -1910,6 +1921,24 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         : null}
                     </div>
                   ))}
+                </div>
+              )}
+              {openAj && (
+                <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '10px 20px 12px 42px' }}>
+                  <div style={{ fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '6px' }}>Bajas del período</div>
+                  {bajasProd.map(b => {
+                    const c = Math.abs(Number(b.cantidad) || 0)
+                    const u = unidadIns(b.insumo_id)
+                    return (
+                      <div key={b.id} style={{ display: 'flex', gap: '12px', alignItems: 'baseline', padding: '5px 0', flexWrap: 'wrap', fontSize: '12.5px' }}>
+                        <span style={{ fontSize: '11.5px', fontWeight: 500, color: colBaja(b.motivo), background: colBaja(b.motivo) + '18', padding: '2px 8px', borderRadius: '20px' }}>{b.motivo || 'Otro'}</span>
+                        <span style={{ color: GRIS }}>{corta(b.fecha)}</span>
+                        {b.autor && <span style={{ color: '#a7b4c1' }}>· {b.autor}</span>}
+                        <span style={{ color: ROJO, fontVariantNumeric: 'tabular-nums' }}>−{val(c)}{u ? ' ' + u : ''}</span>
+                        {esJefe && <span style={{ marginLeft: 'auto', fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>{dinero(c * (Number(b.precio_unitario) || 0))}</span>}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
               {openS && (
