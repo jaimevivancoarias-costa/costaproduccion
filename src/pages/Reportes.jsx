@@ -1619,47 +1619,62 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
       }
       // El desglose FIFO por lote (función SQL) solo se pide con una finca
       // elegida; en "Todas" se valora con el precio FIFO guardado.
-      const loteReqs = esTodas ? [] : [
+      // El desglose FIFO por lote y el precio actual (catálogo) solo se piden
+      // con una finca elegida; en "Todas" se valora con el precio FIFO guardado.
+      const extra = esTodas ? [] : [
         supabase.schema('produccion').rpc('fn_reporte_perdidas_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').rpc('fn_reporte_perdidas_insumo_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').rpc('fn_reporte_perdidas_diesel_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').from('precio_producto').select('producto_id, finca_id, precio_saco').eq('plazo', 0).is('vigente_hasta', null).or(`finca_id.is.null,finca_id.eq.${fincaSel}`),
+        supabase.schema('produccion').from('precio_insumo').select('insumo_id, finca_id, precio_unitario').eq('plazo', 0).is('vigente_hasta', null).or(`finca_id.is.null,finca_id.eq.${fincaSel}`),
+        supabase.schema('produccion').from('diesel_precio').select('tipo_id, finca_id, precio_galon').is('vigente_hasta', null).or(`finca_id.is.null,finca_id.eq.${fincaSel}`),
+        supabase.schema('produccion').from('insumo_finca').select('insumo_id, factor').eq('finca_id', fincaSel),
       ]
-      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }, ...loteRes] = await Promise.all([
+      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }, ...ex] = await Promise.all([
         base('ajuste_balanceado', 'producto_id'),
         base('ajuste_insumo', 'insumo_id'),
         base('ajuste_diesel', 'tipo_id'),
         supabase.schema('produccion').from('producto').select('id, nombre'),
-        supabase.schema('produccion').from('insumo').select('id, nombre, unidad'),
+        supabase.schema('produccion').from('insumo').select('id, nombre, unidad, factor'),
         supabase.schema('produccion').from('diesel_tipo').select('id, nombre'),
-        ...loteReqs,
+        ...extra,
       ])
       if (!vivo) return
       const d = {}
       const pushLote = (rows, qtyCol) => (rows || []).forEach(x => {
         ;(d[x.baja_id] = d[x.baja_id] || []).push({ fecha: x.lote_fecha, precio: Number(x.precio) || 0, qty: Number(x[qtyCol]) || 0 })
       })
-      if (!esTodas && loteRes.length === 3) {
-        pushLote(loteRes[0].data, 'sacos')
-        pushLote(loteRes[1].data, 'cantidad')
-        pushLote(loteRes[2].data, 'galones')
+      // Precio actual (catálogo vigente hoy); la fila con finca gana a la general.
+      const override = (rows, idCol, valCol) => {
+        const m = {}; (rows || []).forEach(r => { if (m[r[idCol]] == null || r.finca_id) m[r[idCol]] = Number(r[valCol]) }); return m
+      }
+      let prodPrecio = {}, insPrecio = {}, dslPrecio = {}, facOv = {}
+      if (!esTodas && ex.length === 7) {
+        pushLote(ex[0].data, 'sacos'); pushLote(ex[1].data, 'cantidad'); pushLote(ex[2].data, 'galones')
+        prodPrecio = override(ex[3].data, 'producto_id', 'precio_saco')
+        insPrecio = override(ex[4].data, 'insumo_id', 'precio_unitario')
+        dslPrecio = override(ex[5].data, 'tipo_id', 'precio_galon')
+        ;(ex[6].data || []).forEach(r => { facOv[r.insumo_id] = Number(r.factor) })
       }
       setDet(d)
       const fifoTotal = id => { const ls = d[id]; return ls && ls.length ? ls.reduce((s, l) => s + l.precio * l.qty, 0) : null }
       const nomF = {}; (fincas || []).forEach(f => { nomF[f.id] = f.nombre })
       const nomP = {}; (prod || []).forEach(p => { nomP[p.id] = p.nombre })
-      const nomI = {}, uniI = {}; (ins || []).forEach(i => { nomI[i.id] = i.nombre; uniI[i.id] = i.unidad })
+      const nomI = {}, uniI = {}, facI = {}; (ins || []).forEach(i => { nomI[i.id] = i.nombre; uniI[i.id] = i.unidad; facI[i.id] = Number(i.factor) || 1 })
       const nomD = {}; (dt || []).forEach(t => { nomD[t.id] = t.nombre })
-      const mk = (r, modulo, item, unidad) => {
+      const mk = (r, modulo, item, unidad, actualUnit) => {
         const cant = Math.abs(Number(r.cantidad) || 0)
         const ft = fifoTotal(r.id)   // FIFO real por lote; si no, el precio FIFO guardado
         return { key: modulo + r.id, id: r.id, modulo, finca: nomF[r.finca_id] || '—', fecha: r.fecha,
                  item, unidad, motivo: r.motivo || 'Otro', cant,
-                 valor: ft != null ? ft : cant * (Number(r.precio_unitario) || 0) }
+                 valor: ft != null ? ft : cant * (Number(r.precio_unitario) || 0),
+                 actual: esTodas ? null : (actualUnit ? cant * actualUnit : 0) }
       }
       const rows = [
-        ...(ab || []).map(r => mk(r, 'Balanceado', nomP[r.producto_id] || '—', 'sacos')),
-        ...(ai || []).map(r => mk(r, 'Insumos', nomI[r.insumo_id] || '—', String(uniI[r.insumo_id] || 'u').toLowerCase())),
-        ...(ad || []).map(r => mk(r, 'Diesel', nomD[r.tipo_id] || '—', 'gal')),
+        ...(ab || []).map(r => mk(r, 'Balanceado', nomP[r.producto_id] || '—', 'sacos', prodPrecio[r.producto_id])),
+        ...(ai || []).map(r => mk(r, 'Insumos', nomI[r.insumo_id] || '—', String(uniI[r.insumo_id] || 'u').toLowerCase(),
+          insPrecio[r.insumo_id] != null ? insPrecio[r.insumo_id] * (facOv[r.insumo_id] ?? facI[r.insumo_id] ?? 1) : null)),
+        ...(ad || []).map(r => mk(r, 'Diesel', nomD[r.tipo_id] || '—', 'gal', dslPrecio[r.tipo_id])),
       ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))
       setFilas(rows)
       setCargando(false)
@@ -1668,6 +1683,7 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
   }, [fincaSel, desde, hasta, fincas, esTodas])
 
   const total = useMemo(() => filas.reduce((t, f) => t + f.valor, 0), [filas])
+  const totalActual = useMemo(() => filas.reduce((t, f) => t + (f.actual || 0), 0), [filas])
   const agrupar = useMemo(() => (clave) => {
     const m = {}
     filas.forEach(f => { m[f[clave]] = (m[f[clave]] || 0) + f.valor })
@@ -1678,8 +1694,8 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
   const porFinca = esTodas ? agrupar('finca') : []
 
   const GRID = esTodas
-    ? '92px 1fr 100px 1.3fr 120px 100px 120px'
-    : '92px 100px 1.3fr 120px 100px 120px'
+    ? '90px 1fr 95px 1.2fr 110px 95px 120px'
+    : '88px 92px 1.2fr 105px 92px 120px 120px'
 
   return (
     <>
@@ -1741,7 +1757,8 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
             <span>Ítem</span>
             <span style={{ textAlign: 'right' }}>Cantidad</span>
             <span>Motivo</span>
-            <span style={{ textAlign: 'right' }}>Perdido</span>
+            <span style={{ textAlign: 'right' }}>Perdido{!esTodas && <span style={{ display: 'block', fontSize: '9.5px', color: '#a7b4c1', fontWeight: 400 }}>FIFO</span>}</span>
+            {!esTodas && <span style={{ textAlign: 'right' }}>Precio actual<span style={{ display: 'block', fontSize: '9.5px', color: '#a7b4c1', fontWeight: 400 }}>catálogo hoy</span></span>}
           </div>
           {filas.map(f => {
             const lotes = det[f.id]
@@ -1767,6 +1784,7 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
                   )}
                   {dinero(f.valor)}
                 </span>
+                {!esTodas && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{f.actual ? dinero(f.actual) : '—'}</span>}
               </div>,
               hayLotes && ab && (
                 <div key={f.key + '-d'} style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '8px 16px 12px 42px' }}>
@@ -1788,6 +1806,7 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
                         alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
             <span>Total</span>{esTodas && <span />}<span /><span /><span /><span />
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(total)}</span>
+            {!esTodas && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{dinero(totalActual)}</span>}
           </div>
         </Caja>
       </>
