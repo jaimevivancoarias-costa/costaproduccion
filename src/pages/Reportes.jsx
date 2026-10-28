@@ -1600,12 +1600,14 @@ const colMotivo = m => COL_MOTIVO[m] || '#9fb0bf'
 
 function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
   const [filas, setFilas] = useState([])
+  const [det, setDet] = useState({})        // baja_id -> [{fecha, precio, qty}] (desglose FIFO por lote)
+  const [abierto, setAbierto] = useState({})
   const [cargando, setCargando] = useState(true)
   const esTodas = fincaSel === 'todas'
 
   useEffect(() => {
     let vivo = true
-    setCargando(true)
+    setCargando(true); setAbierto({})
     ;(async () => {
       const base = (tbl, itemCol) => {
         let q = supabase.schema('produccion').from(tbl)
@@ -1615,23 +1617,44 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
         if (!esTodas) q = q.eq('finca_id', fincaSel)
         return q
       }
-      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }] = await Promise.all([
+      // El desglose FIFO por lote (función SQL) solo se pide con una finca
+      // elegida; en "Todas" se valora con el precio FIFO guardado.
+      const loteReqs = esTodas ? [] : [
+        supabase.schema('produccion').rpc('fn_reporte_perdidas_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').rpc('fn_reporte_perdidas_insumo_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').rpc('fn_reporte_perdidas_diesel_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
+      ]
+      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }, ...loteRes] = await Promise.all([
         base('ajuste_balanceado', 'producto_id'),
         base('ajuste_insumo', 'insumo_id'),
         base('ajuste_diesel', 'tipo_id'),
         supabase.schema('produccion').from('producto').select('id, nombre'),
         supabase.schema('produccion').from('insumo').select('id, nombre, unidad'),
         supabase.schema('produccion').from('diesel_tipo').select('id, nombre'),
+        ...loteReqs,
       ])
       if (!vivo) return
+      const d = {}
+      const pushLote = (rows, qtyCol) => (rows || []).forEach(x => {
+        ;(d[x.baja_id] = d[x.baja_id] || []).push({ fecha: x.lote_fecha, precio: Number(x.precio) || 0, qty: Number(x[qtyCol]) || 0 })
+      })
+      if (!esTodas && loteRes.length === 3) {
+        pushLote(loteRes[0].data, 'sacos')
+        pushLote(loteRes[1].data, 'cantidad')
+        pushLote(loteRes[2].data, 'galones')
+      }
+      setDet(d)
+      const fifoTotal = id => { const ls = d[id]; return ls && ls.length ? ls.reduce((s, l) => s + l.precio * l.qty, 0) : null }
       const nomF = {}; (fincas || []).forEach(f => { nomF[f.id] = f.nombre })
       const nomP = {}; (prod || []).forEach(p => { nomP[p.id] = p.nombre })
       const nomI = {}, uniI = {}; (ins || []).forEach(i => { nomI[i.id] = i.nombre; uniI[i.id] = i.unidad })
       const nomD = {}; (dt || []).forEach(t => { nomD[t.id] = t.nombre })
       const mk = (r, modulo, item, unidad) => {
         const cant = Math.abs(Number(r.cantidad) || 0)
-        return { key: modulo + r.id, modulo, finca: nomF[r.finca_id] || '—', fecha: r.fecha,
-                 item, unidad, motivo: r.motivo || 'Otro', cant, valor: cant * (Number(r.precio_unitario) || 0) }
+        const ft = fifoTotal(r.id)   // FIFO real por lote; si no, el precio FIFO guardado
+        return { key: modulo + r.id, id: r.id, modulo, finca: nomF[r.finca_id] || '—', fecha: r.fecha,
+                 item, unidad, motivo: r.motivo || 'Otro', cant,
+                 valor: ft != null ? ft : cant * (Number(r.precio_unitario) || 0) }
       }
       const rows = [
         ...(ab || []).map(r => mk(r, 'Balanceado', nomP[r.producto_id] || '—', 'sacos')),
@@ -1720,21 +1743,47 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
             <span>Motivo</span>
             <span style={{ textAlign: 'right' }}>Perdido</span>
           </div>
-          {filas.map(f => (
-            <div key={f.key} style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '10px 16px',
-                    alignItems: 'center', fontSize: '13px', borderBottom: '0.5px solid #f1f6f9' }}>
-              <span style={{ color: GRIS }}>{corta(f.fecha)}</span>
-              {esTodas && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.finca}</span>}
-              <span style={{ color: GRIS }}>{f.modulo}</span>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.item}</span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(f.cant)} {f.unidad}</span>
-              <span>
-                <span style={{ fontSize: '11.5px', fontWeight: 500, color: colMotivo(f.motivo),
-                      background: colMotivo(f.motivo) + '18', padding: '2px 8px', borderRadius: '20px' }}>{f.motivo}</span>
-              </span>
-              <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(f.valor)}</span>
-            </div>
-          ))}
+          {filas.map(f => {
+            const lotes = det[f.id]
+            const hayLotes = lotes && lotes.length > 0
+            const ab = !!abierto[f.id]
+            return [
+              <div key={f.key} style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '10px 16px',
+                      alignItems: 'center', fontSize: '13px', borderBottom: ab ? 'none' : '0.5px solid #f1f6f9' }}>
+                <span style={{ color: GRIS }}>{corta(f.fecha)}</span>
+                {esTodas && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.finca}</span>}
+                <span style={{ color: GRIS }}>{f.modulo}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.item}</span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(f.cant)} {f.unidad}</span>
+                <span>
+                  <span style={{ fontSize: '11.5px', fontWeight: 500, color: colMotivo(f.motivo),
+                        background: colMotivo(f.motivo) + '18', padding: '2px 8px', borderRadius: '20px' }}>{f.motivo}</span>
+                </span>
+                <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                  {hayLotes && (
+                    <button onClick={() => setAbierto(a => ({ ...a, [f.id]: !a[f.id] }))}
+                      style={{ border: 'none', background: 'none', cursor: 'pointer', color: AZUL, fontSize: '9px', padding: 0, marginRight: '6px' }}>
+                      {ab ? '▾' : '▸'}</button>
+                  )}
+                  {dinero(f.valor)}
+                </span>
+              </div>,
+              hayLotes && ab && (
+                <div key={f.key + '-d'} style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '8px 16px 12px 42px' }}>
+                  <div style={{ fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '5px' }}>Desglose FIFO por lote</div>
+                  {lotes.map((l, i) => (
+                    <div key={i} style={{ display: 'grid', gridTemplateColumns: '140px 120px 120px 1fr', gap: '12px',
+                          fontSize: '12.5px', padding: '3px 0', fontVariantNumeric: 'tabular-nums' }}>
+                      <span style={{ color: GRIS }}>{l.fecha ? corta(l.fecha) : 'Inventario inicial'}</span>
+                      <span style={{ textAlign: 'right', color: GRIS }}>{miles(l.qty)} {f.unidad}</span>
+                      <span style={{ textAlign: 'right', color: GRIS }}>a {dinero(l.precio)}</span>
+                      <span style={{ textAlign: 'right', fontWeight: 500 }}>{dinero(l.precio * l.qty)}</span>
+                    </div>
+                  ))}
+                </div>
+              ),
+            ]
+          })}
           <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '12px 16px',
                         alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
             <span>Total</span>{esTodas && <span />}<span /><span /><span /><span />
