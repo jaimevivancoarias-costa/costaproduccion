@@ -70,6 +70,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [aviso, setAviso] = useState(null)
   const [bajaOpen, setBajaOpen] = useState(false)       // modal "Dar de baja" diesel (robo/merma)
   const [bajas, setBajas] = useState([])                // bajas registradas (ajustes negativos con precio FIFO)
+  const [bajasLotes, setBajasLotes] = useState({})      // baja_id -> [{fecha, precio, qty}] desglose FIFO por lote
   const [form, setForm] = useState(null)
   const [revPrecio, setRevPrecio] = useState(null)
 
@@ -142,6 +143,12 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
       .order('fecha', { ascending: false }).limit(100)
     setBajas((bj || []).map(b => ({ ...b, autor: nu[b.creado_por] || null })))
+    if (bj && bj.length) {
+      const desdeB = bj.reduce((mn, x) => x.fecha < mn ? x.fecha : mn, bj[0].fecha)
+      const { data: lt } = await supabase.schema('produccion').rpc('fn_reporte_perdidas_diesel_lotes', { p_finca: finca.id, p_desde: desdeB, p_hasta: hoyISO() })
+      const d = {}; (lt || []).forEach(x => { (d[x.baja_id] = d[x.baja_id] || []).push({ fecha: x.lote_fecha, precio: Number(x.precio) || 0, qty: Number(x.galones) || 0 }) })
+      setBajasLotes(d)
+    } else setBajasLotes({})
 
     // Inventario inicial existente (para editarlo).
     const { data: iniC } = await supabase.schema('produccion').from('diesel_conteo')
@@ -1214,9 +1221,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
           const s = saldos.find(x => x.tipo_id === b.tipo_id)
           const cant = Math.abs(Number(b.cantidad) || 0)
-          return { id: b.id, fecha: b.fecha, item: nombreTipo(b.tipo_id), cantTxt: `${miles(cant)} gal`,
-            motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
-            perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} gal` : '—' }
+          const lotes = bajasLotes[b.id]
+          const perdido = lotes && lotes.length ? lotes.reduce((t, l) => t + l.precio * l.qty, 0) : cant * (Number(b.precio_unitario) || 0)
+          return { id: b.id, fecha: b.fecha, item: nombreTipo(b.tipo_id), cantTxt: `${miles(cant)} gal`, unidad: 'gal',
+            motivo: b.motivo || 'Otro', autor: b.autor, lotes,
+            perdido, quedaTxt: s ? `${miles(s.saldo)} gal` : '—' }
         })} />
 
         {/* Conteos anteriores · se mantiene en ambas vistas (Cuánto hay / Qué se movió) */}
