@@ -50,7 +50,7 @@ export default function TarjetaBajas({ rows, esJefe }) {
                       background: colMotivo(r.motivo) + '18', padding: '2px 8px', borderRadius: '20px' }}>{r.motivo}</span>
               </span>
               <span style={{ fontSize: '12px', color: GRIS, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {r.autor || '—'}{r.registrada ? <span style={{ color: '#a7b4c1' }}> · {corta(r.registrada)}</span> : null}
+                {r.autor || '—'}{r.registrada ? <span style={{ color: '#a7b4c1' }}> · {corta(String(r.registrada).slice(0, 10))}</span> : null}
               </span>
               {esJefe && <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dinero(r.perdido)}</span>}
               <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{r.quedaTxt}</span>

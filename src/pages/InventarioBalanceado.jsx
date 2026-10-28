@@ -1154,14 +1154,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             )}
           </div>
 
-          <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
-            const s = saldos.find(x => x.producto_id === b.producto_id)
-            const cant = Math.abs(Number(b.cantidad) || 0)
-            return { id: b.id, fecha: b.fecha, item: s?.producto || '—', cantTxt: `${miles(cant)} sacos`,
-              motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
-              perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} sacos` : '—' }
-          })} />
-
           {vista === 'saldo' ? (
             <>
               {esJefe && (
@@ -1636,6 +1628,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               {' '}Su saldo y su consumo valen $0 (si es el <b>inventario inicial</b>, carga el precio en <b>Catálogo</b> con vigencia desde la fecha del inicial, o antes).
             </Nota>
           )}
+
+          <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
+            const s = saldos.find(x => x.producto_id === b.producto_id)
+            const cant = Math.abs(Number(b.cantidad) || 0)
+            return { id: b.id, fecha: b.fecha, item: s?.producto || '—', cantTxt: `${miles(cant)} sacos`,
+              motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
+              perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${miles(s.saldo)} sacos` : '—' }
+          })} />
 
           {tomas.length > 0 && (
             <div style={{ marginTop: '20px' }}>

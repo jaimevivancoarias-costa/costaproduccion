@@ -370,9 +370,24 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   // "Conteos anteriores": tarjetas colapsables por corte. Se muestra igual en
   // "Cuánto hay" y en "Qué se movió". Nacen todas cerradas; el usuario abre.
-  function renderConteosAnteriores() {
-    if (!conteos.length) return null
+  function renderBajas() {
     return (
+      <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
+        const s = saldos.find(x => x.insumo_id === b.insumo_id)
+        const cant = Math.abs(Number(b.cantidad) || 0)
+        const u = unidadIns(b.insumo_id)
+        const fmt = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
+        return { id: b.id, fecha: b.fecha, item: s?.insumo || '—', cantTxt: `${fmt(cant)}${u ? ' ' + u : ''}`,
+          motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
+          perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${fmt(s.saldo)}${u ? ' ' + u : ''}` : '—' }
+      })} />
+    )
+  }
+  function renderConteosAnteriores() {
+    if (!conteos.length) return renderBajas()
+    return (
+      <>
+            {renderBajas()}
             <div style={{ marginTop: '20px' }}>
               <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 12px' }}>Conteos anteriores</h3>
               {conteos.map((c, idx) => {
@@ -536,6 +551,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 )
               })}
             </div>
+      </>
     )
   }
 
@@ -1446,18 +1462,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </label>
           ) : null}
         </div>
-      )}
-
-      {!contando && (
-        <TarjetaBajas esJefe={esJefe} rows={bajas.map(b => {
-          const s = saldos.find(x => x.insumo_id === b.insumo_id)
-          const cant = Math.abs(Number(b.cantidad) || 0)
-          const u = unidadIns(b.insumo_id)
-          const fmt = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
-          return { id: b.id, fecha: b.fecha, item: s?.insumo || '—', cantTxt: `${fmt(cant)}${u ? ' ' + u : ''}`,
-            motivo: b.motivo || 'Otro', autor: b.autor, registrada: b.creado_en,
-            perdido: cant * (Number(b.precio_unitario) || 0), quedaTxt: s ? `${fmt(s.saldo)}${u ? ' ' + u : ''}` : '—' }
-        })} />
       )}
 
       {!contando && !cargando && vista === 'saldo' && (
