@@ -304,10 +304,31 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         if (!todasFincas) b = b.eq('finca_id', finca.id)
         return b
       }
-      const [a, b, c] = await Promise.all([q('ajuste_balanceado'), q('ajuste_insumo'), q('ajuste_diesel')])
+      // Con una finca elegida también se suman los FALTANTES de conteo (ya
+      // bajaron el saldo; aquí solo se costean al FIFO actual, sin re-restar).
+      const hoy = hoyISO()
+      const faltReqs = todasFincas ? [] : [
+        supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_valor_bodega_fifo', { p_finca: finca.id, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_reporte_descuadres_bal', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').rpc('fn_reporte_descuadres', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+      ]
+      const [a, b, c, ...fx] = await Promise.all([q('ajuste_balanceado'), q('ajuste_insumo'), q('ajuste_diesel'), ...faltReqs])
       if (!vivo) return
       const sum = r => (r.data || []).reduce((t, x) => t + Math.abs(Number(x.cantidad) || 0) * (Number(x.precio_unitario) || 0), 0)
-      setPerdidasR(sum(a) + sum(b) + sum(c))
+      let faltTot = 0
+      if (!todasFincas && fx.length === 6) {
+        const esPerdida = m => m && String(m).trim() !== '' && m !== 'Error de registro'
+        const sB = {}; (fx[0].data || []).forEach(r => { sB[r.producto_id] = Number(r.saldo) })
+        const pB = {}; (fx[1].data || []).forEach(r => { const s = sB[r.producto_id]; if (s > 0.0001) pB[r.producto_id] = Number(r.valor) / s })
+        const sI = {}; (fx[2].data || []).forEach(r => { sI[r.insumo_id] = Number(r.saldo) })
+        const pI = {}; (fx[3].data || []).forEach(r => { const s = sI[r.insumo_id]; if (s > 0.0001) pI[r.insumo_id] = Number(r.valor) / s })
+        ;(fx[4].data || []).forEach(x => { if (Number(x.diferencia) < -0.0001 && esPerdida(x.motivo)) faltTot += Math.abs(Number(x.diferencia)) * (pB[x.producto_id ?? x.insumo_id] || 0) })
+        ;(fx[5].data || []).forEach(x => { if (Number(x.diferencia) < -0.0001 && esPerdida(x.motivo)) faltTot += Math.abs(Number(x.diferencia)) * (pI[x.insumo_id] || 0) })
+      }
+      setPerdidasR(sum(a) + sum(b) + sum(c) + faltTot)
     })()
     return () => { vivo = false }
   }, [finca.id, desde, hasta, todasFincas])
@@ -1639,31 +1660,44 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
         if (!esTodas) q = q.eq('finca_id', fincaSel)
         return q
       }
-      // El desglose FIFO por lote (función SQL) solo se pide con una finca
-      // elegida; en "Todas" se valora con el precio FIFO guardado.
-      const loteReqs = esTodas ? [] : [
+      // Con una finca elegida se pide: el desglose FIFO por lote de las bajas
+      // y, para costear los FALTANTES de conteo, el saldo + valor FIFO actual
+      // por ítem (precio FIFO = valor/saldo, igual que la pantalla del conteo)
+      // y los descuadres del rango. En "Todas" solo van las bajas (precio guardado).
+      const hoy = hoyISO()
+      const extra = esTodas ? [] : [
         supabase.schema('produccion').rpc('fn_reporte_perdidas_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').rpc('fn_reporte_perdidas_insumo_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
         supabase.schema('produccion').rpc('fn_reporte_perdidas_diesel_lotes', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: fincaSel, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: fincaSel, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: fincaSel, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_valor_bodega_fifo', { p_finca: fincaSel, p_hasta: hoy }),
+        supabase.schema('produccion').rpc('fn_reporte_descuadres_bal', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').rpc('fn_reporte_descuadres', { p_finca: fincaSel, p_desde: desde, p_hasta: hasta }),
       ]
-      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }, ...loteRes] = await Promise.all([
+      const [{ data: ab }, { data: ai }, { data: ad }, { data: prod }, { data: ins }, { data: dt }, ...ex] = await Promise.all([
         base('ajuste_balanceado', 'producto_id'),
         base('ajuste_insumo', 'insumo_id'),
         base('ajuste_diesel', 'tipo_id'),
         supabase.schema('produccion').from('producto').select('id, nombre'),
         supabase.schema('produccion').from('insumo').select('id, nombre, unidad'),
         supabase.schema('produccion').from('diesel_tipo').select('id, nombre'),
-        ...loteReqs,
+        ...extra,
       ])
       if (!vivo) return
       const d = {}
       const pushLote = (rows, qtyCol) => (rows || []).forEach(x => {
         ;(d[x.baja_id] = d[x.baja_id] || []).push({ fecha: x.lote_fecha, precio: Number(x.precio) || 0, qty: Number(x[qtyCol]) || 0 })
       })
-      if (!esTodas && loteRes.length === 3) {
-        pushLote(loteRes[0].data, 'sacos')
-        pushLote(loteRes[1].data, 'cantidad')
-        pushLote(loteRes[2].data, 'galones')
+      // Precio FIFO actual por ítem (valor ÷ saldo), para costear faltantes.
+      const precioBal = {}, precioIns = {}
+      if (!esTodas && ex.length === 9) {
+        pushLote(ex[0].data, 'sacos'); pushLote(ex[1].data, 'cantidad'); pushLote(ex[2].data, 'galones')
+        const sB = {}; (ex[3].data || []).forEach(r => { sB[r.producto_id] = Number(r.saldo) })
+        ;(ex[4].data || []).forEach(r => { const s = sB[r.producto_id]; if (s > 0.0001) precioBal[r.producto_id] = Number(r.valor) / s })
+        const sI = {}; (ex[5].data || []).forEach(r => { sI[r.insumo_id] = Number(r.saldo) })
+        ;(ex[6].data || []).forEach(r => { const s = sI[r.insumo_id]; if (s > 0.0001) precioIns[r.insumo_id] = Number(r.valor) / s })
       }
       setDet(d)
       const fifoTotal = id => { const ls = d[id]; return ls && ls.length ? ls.reduce((s, l) => s + l.precio * l.qty, 0) : null }
@@ -1674,14 +1708,35 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
       const mk = (r, modulo, item, unidad) => {
         const cant = Math.abs(Number(r.cantidad) || 0)
         const ft = fifoTotal(r.id)   // FIFO real por lote; si no, el precio FIFO guardado
-        return { key: modulo + r.id, id: r.id, modulo, finca: nomF[r.finca_id] || '—', fecha: r.fecha,
+        return { key: 'b' + r.id, id: r.id, origen: 'Baja', modulo, finca: nomF[r.finca_id] || '—', fecha: r.fecha,
                  item, unidad, motivo: r.motivo || 'Otro', cant,
                  valor: ft != null ? ft : cant * (Number(r.precio_unitario) || 0) }
       }
+      // Faltantes de conteo (diferencia < 0 con motivo de pérdida) = también son
+      // pérdidas, pero el conteo YA bajó el saldo → aquí solo se leen y costean,
+      // no se vuelve a restar. Se valoran al FIFO actual del ítem.
+      const esPerdida = m => m && String(m).trim() !== '' && m !== 'Error de registro'
+      const descBal = (ex[7] && ex[7].data) || [], descIns = (ex[8] && ex[8].data) || []
+      const conteoRows = [
+        ...descBal.filter(x => Number(x.diferencia) < -0.0001 && esPerdida(x.motivo)).map(x => {
+          const pid = x.producto_id ?? x.insumo_id   // la fn de bal puede nombrarlo de una u otra forma
+          const cant = Math.abs(Number(x.diferencia))
+          return { key: 'cb' + pid + x.fecha, id: 'cb' + pid + x.fecha, origen: 'Conteo', modulo: 'Balanceado',
+                   finca: nomF[x.finca_id] || '—', fecha: x.fecha, item: nomP[pid] || x.producto || x.insumo || '—', unidad: 'sacos',
+                   motivo: x.motivo, cant, valor: cant * (precioBal[pid] || 0) }
+        }),
+        ...descIns.filter(x => Number(x.diferencia) < -0.0001 && esPerdida(x.motivo)).map(x => {
+          const cant = Math.abs(Number(x.diferencia))
+          return { key: 'ci' + x.insumo_id + x.fecha, id: 'ci' + x.insumo_id + x.fecha, origen: 'Conteo', modulo: 'Insumos',
+                   finca: nomF[x.finca_id] || '—', fecha: x.fecha, item: nomI[x.insumo_id] || x.insumo || '—',
+                   unidad: String(x.unidad || uniI[x.insumo_id] || 'u').toLowerCase(), motivo: x.motivo, cant, valor: cant * (precioIns[x.insumo_id] || 0) }
+        }),
+      ]
       const rows = [
         ...(ab || []).map(r => mk(r, 'Balanceado', nomP[r.producto_id] || '—', 'sacos')),
         ...(ai || []).map(r => mk(r, 'Insumos', nomI[r.insumo_id] || '—', String(uniI[r.insumo_id] || 'u').toLowerCase())),
         ...(ad || []).map(r => mk(r, 'Diesel', nomD[r.tipo_id] || '—', 'gal')),
+        ...conteoRows,
       ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''))
       setFilas(rows)
       setCargando(false)
@@ -1698,10 +1753,12 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
   const porMotivo = agrupar('motivo')
   const porModulo = agrupar('modulo')
   const porFinca = esTodas ? agrupar('finca') : []
+  const nConteo = filas.filter(f => f.origen === 'Conteo').length
 
   const GRID = esTodas
-    ? '92px 1fr 100px 1.3fr 120px 100px 120px'
-    : '92px 100px 1.3fr 120px 100px 120px'
+    ? '84px 1fr 80px 92px 1.1fr 95px 92px 115px'
+    : '84px 80px 92px 1.2fr 95px 92px 115px'
+  const colOrigen = o => o === 'Conteo' ? '#854F0B' : '#0D6CB0'
 
   return (
     <>
@@ -1719,14 +1776,27 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
         <Caja><Centro>Cargando…</Centro></Caja>
       ) : !filas.length ? (
         <Caja><Centro>No hay pérdidas registradas en este rango.<br />
-          <span style={{ fontSize: '12px' }}>Las bajas (robo, merma, daño) se registran con el botón “Dar de baja” en Bodega.</span>
+          <span style={{ fontSize: '12px' }}>Entran las bajas (botón “Dar de baja” en Bodega) y los faltantes de conteo con motivo de pérdida.</span>
         </Centro></Caja>
       ) : (
       <>
         <div style={{ display: 'flex', gap: '11px', flexWrap: 'wrap', marginBottom: '14px' }}>
           <Kpi titulo="Total perdido" valor={dinero(total)} />
-          <Kpi titulo="Bajas registradas" valor={String(filas.length)} />
+          <Kpi titulo="Pérdidas" valor={String(filas.length)} />
+          {!esTodas && <Kpi titulo="De conteo" valor={String(nConteo)} />}
           <Kpi titulo="Motivos" valor={String(porMotivo.length)} />
+        </div>
+
+        {/* Qué es cada origen. */}
+        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center', fontSize: '12px', color: GRIS, marginBottom: '14px' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '10.5px', fontWeight: 500, color: '#0D6CB0', background: '#0D6CB018', padding: '2px 8px', borderRadius: '20px' }}>Baja</span>
+            registrada a mano en “Dar de baja”
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '10.5px', fontWeight: 500, color: '#854F0B', background: '#854F0B18', padding: '2px 8px', borderRadius: '20px' }}>Conteo</span>
+            faltante detectado al contar la bodega
+          </span>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: esTodas ? '1fr 1fr' : '1fr 1fr',
@@ -1734,7 +1804,7 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
           <CajaGrafica titulo="Por motivo">
             <div style={{ display: 'flex', gap: '18px', alignItems: 'center', flexWrap: 'wrap' }}>
               <Donut segmentos={porMotivo.map(m => ({ valor: m.valor, color: colMotivo(m.label) }))}
-                     centro={String(filas.length)} sub={filas.length === 1 ? 'baja' : 'bajas'} />
+                     centro={String(filas.length)} sub={filas.length === 1 ? 'pérdida' : 'pérdidas'} />
               <div style={{ flex: 1, minWidth: '150px' }}>
                 {porMotivo.map(m => (
                   <div key={m.label} style={{ display: 'flex', alignItems: 'center', gap: '8px',
@@ -1759,6 +1829,7 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
                         fontSize: '12px', color: GRIS, borderBottom: '0.5px solid ' + BORDE, background: '#f6f9fb' }}>
             <span>Fecha</span>
             {esTodas && <span>Finca</span>}
+            <span>Origen</span>
             <span>Módulo</span>
             <span>Ítem</span>
             <span style={{ textAlign: 'right' }}>Cantidad</span>
@@ -1774,6 +1845,10 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
                       alignItems: 'center', fontSize: '13px', borderBottom: ab ? 'none' : '0.5px solid #f1f6f9' }}>
                 <span style={{ color: GRIS }}>{corta(f.fecha)}</span>
                 {esTodas && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.finca}</span>}
+                <span>
+                  <span style={{ fontSize: '10.5px', fontWeight: 500, color: colOrigen(f.origen),
+                        background: colOrigen(f.origen) + '18', padding: '2px 8px', borderRadius: '20px' }}>{f.origen}</span>
+                </span>
                 <span style={{ color: GRIS }}>{f.modulo}</span>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.item}</span>
                 <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: GRIS }}>{miles(f.cant)} {f.unidad}</span>
@@ -1813,7 +1888,7 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
           })}
           <div style={{ display: 'grid', gridTemplateColumns: GRID, gap: '12px', padding: '12px 16px',
                         alignItems: 'center', background: '#fafcfd', fontSize: '14px', fontWeight: 500 }}>
-            <span>Total</span>{esTodas && <span />}<span /><span /><span /><span />
+            <span>Total</span>{esTodas && <span />}<span /><span /><span /><span /><span />
             <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{dinero(total)}</span>
           </div>
         </Caja>
