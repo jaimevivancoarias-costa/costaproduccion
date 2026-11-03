@@ -65,21 +65,22 @@ export const sobrevDe = g => sobrevTabla(g)   // sobrevivencia esperada a un gra
 // la biomasa cambia con el crecimiento y la mortalidad, y la tasa baja al subir el
 // gramaje. Devuelve alimento acumulado futuro, días, biomasa y sobrevivencia a meta,
 // partiendo de la biomasa actual (misma población inicial que hoy).
-export function proyectarAMeta({ gHoy, meta, biomasaActual, finca }) {
+export function proyectarAMeta({ gHoy, meta, biomasaActual, finca, desempeno = 1 }) {
   const f = { ...FINCA_DEFECTO, ...(finca || {}) }
   const g0 = Number(gHoy) || 0
   const bio0 = Number(biomasaActual) || 0
   const metaUsa = metaEfectiva(g0, Number(meta ?? f.meta))
   if (!(g0 > 0) || !(bio0 > 0) || metaUsa <= g0) return null
   const ajusteB = f.tabla === 'B' ? PARAM.fcrMetaB / PARAM.fcrMetaA : 1
+  const vel = Math.max(Number(desempeno) || 1, 0.3)   // ritmo de crecimiento (1 = curva biológica)
   const sHoy = sobrevTabla(g0)
   const N0 = bio0 * G_POR_LB / g0                 // animales vivos hoy (de la biomasa actual)
   let g = g0, alimento = 0, dias = 0
-  while (g < metaUsa && dias < 400) {
+  while (g < metaUsa && dias < 600) {
     const vivos = N0 * (sHoy > 0 ? sobrevTabla(g) / sHoy : 1)
     const bio = vivos * g / G_POR_LB
     alimento += bio * (pct(g, 'MEDIO') / 100) * ajusteB   // lb/día a la talla de ese día
-    g += gDiaObj(g)
+    g += gDiaObj(g) * vel
     dias++
   }
   const vivosMeta = N0 * (sHoy > 0 ? sobrevTabla(metaUsa) / sHoy : 1)
