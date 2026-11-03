@@ -1534,7 +1534,8 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
                 </span>
               ))}
               <button onClick={() => setPickFor(pickFor === g.id ? null : g.id)} style={{ fontSize: '12.5px', color: C.azul, background: '#fff', border: '1px solid #bcd3ec', borderRadius: '20px', padding: '6px 13px', cursor: 'pointer', fontWeight: 600 }}>+ Elegir fincas ▾</button>
-              {pickFor === g.id && (
+              {pickFor === g.id && (<>
+                <div onClick={() => setPickFor(null)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
                 <div style={{ position: 'absolute', top: '36px', left: 0, zIndex: 20, background: '#fff', border: '1px solid ' + C.borde, borderRadius: '12px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '8px', width: '230px', maxHeight: '260px', overflow: 'auto' }}>
                   {activas.map(f => {
                     const enOtro = enGrupos.has(f.id) && !g.fincaIds.includes(f.id)
@@ -1547,7 +1548,7 @@ function EditorPrecios({ insumo, fincas, facFinca, presLabel, uAppLabel, factorS
                     )
                   })}
                 </div>
-              )}
+              </>)}
             </div>
             <div style={{ fontSize: '11px', color: C.gris, margin: '4px 0 14px' }}>Elige <b>una o varias</b> · todas tendrán este mismo precio.</div>
             {PlzGrid({ obj: g, onP: (pz, v) => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, precios: { ...x.precios, [pz]: v }, plazoRige: (x.plazoRige == null && numDec(v) > 0) ? pz : x.plazoRige })), onRige: pz => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, plazoRige: pz })) })}
@@ -1663,7 +1664,8 @@ function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError
                 </span>
               ))}
               <button onClick={() => setPickFor(pickFor === g.id ? null : g.id)} style={{ fontSize: '12.5px', color: AZUL, background: '#fff', border: '1px solid #bcd3ec', borderRadius: '20px', padding: '6px 13px', cursor: 'pointer', fontWeight: 600 }}>+ Elegir fincas ▾</button>
-              {pickFor === g.id && (
+              {pickFor === g.id && (<>
+                <div onClick={() => setPickFor(null)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
                 <div style={{ position: 'absolute', top: '36px', left: 0, zIndex: 20, background: '#fff', border: '1px solid #e6edf3', borderRadius: '12px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '8px', width: '230px', maxHeight: '260px', overflow: 'auto' }}>
                   {activas.map(f => { const enOtro = enGrupos.has(f.id) && !g.fincaIds.includes(f.id); const on = g.fincaIds.includes(f.id); return (
                     <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '7px 9px', borderRadius: '8px', fontSize: '13px', cursor: enOtro ? 'default' : 'pointer', opacity: enOtro ? 0.4 : 1 }}>
@@ -1671,7 +1673,7 @@ function EditorMinimos({ insumo, fincas, unitLabel, initStd, initGrupos, onError
                       {f.nombre}{enOtro ? ' (en otro bloque)' : ''}
                     </label>) })}
                 </div>
-              )}
+              </>)}
             </div>
             {Campos({ obj: g, on: (k, v) => setGrupos(gs => gs.map(x => x.id !== g.id ? x : { ...x, [k]: v })) })}
           </div>
@@ -2233,7 +2235,8 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
                 </span>
               ))}
               <button onClick={() => setPickFor(pickFor === g.grp ? null : g.grp)} style={{ fontSize: '12.5px', color: AZUL, background: '#fff', border: '1px solid #bcd3ec', borderRadius: '20px', padding: '6px 13px', cursor: 'pointer', fontWeight: 600 }}>+ Elegir fincas ▾</button>
-              {pickFor === g.grp && (
+              {pickFor === g.grp && (<>
+                <div onClick={() => setPickFor(null)} style={{ position: 'fixed', inset: 0, zIndex: 19 }} />
                 <div style={{ position: 'absolute', top: '36px', left: 0, zIndex: 20, background: '#fff', border: '1px solid ' + BORDE, borderRadius: '12px', boxShadow: '0 10px 30px rgba(11,42,68,.15)', padding: '8px', width: '240px', maxHeight: '300px', overflow: 'auto' }}>
                   {zonasDisp.length > 1 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingBottom: '8px', marginBottom: '6px', borderBottom: '1px solid ' + BORDE }}>
@@ -2253,7 +2256,7 @@ function EditorConfigTodo({ insumo, fincas, presentaciones, actual, excIni, sinP
                     )
                   })}
                 </div>
-              )}
+              </>)}
             </div>
             <div style={{ fontSize: '11px', color: GRIS, margin: '4px 0 16px' }}>Elige <b>una o varias</b> · todas se aplican en esta unidad.</div>
 
