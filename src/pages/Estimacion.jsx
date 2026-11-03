@@ -42,7 +42,11 @@ function ventana14(rows, hasta) {
   const dPrev = nP > 0 ? sumP / nP : null
   const tend = (d7 != null && dPrev != null && dPrev > 0) ? d7 / dPrev - 1 : null
   const simple = (sum7 + sumP) / 14   // método actual: faltantes y ayunos cuentan como 0
-  const ponder = (d7 != null && dPrev != null) ? (2 * d7 + dPrev) / 3 : (d7 != null ? d7 : (dPrev != null ? dPrev : 0))
+  // Ponderado = suma reciente doble peso sobre suma anterior, dividido por los
+  // días válidos ponderados (NO el atajo /3, que falla si las semanas tienen
+  // distinto número de días válidos).
+  const denom = 2 * n7 + nP
+  const ponder = denom > 0 ? (2 * sum7 + sumP) / denom : 0
   const valido = n7 >= 6 && (n7 + nP) >= 12
   return { d7, dPrev, tend, simple, ponder, alim, ayuno, falt, validos: n7 + nP, valido }
 }
@@ -456,7 +460,7 @@ function TablaDiagnostico({ filas, hasta }) {
                 <td style={td}>{dp(v)}</td>
                 <td style={{ ...td, color: tndCol(v) }}>{tnd(v)}</td>
                 <td style={{ ...td, color: GRIS }}>{miles(v.simple)}</td>
-                <td style={{ ...td, color: NAVY }}>{v.valido ? miles(v.ponder) : '—'}</td>
+                <td style={{ ...td, color: v.valido ? NAVY : GRIS }} title={v.valido ? '' : 'Simulación — no cumple 12/14 días válidos'}>{miles(v.ponder)}{!v.valido && <span style={{ fontSize: '10px', color: GRIS }}> simul.</span>}</td>
                 <td style={{ ...td, color: GRIS }}>{v.alim} / {v.ayuno} / <span style={{ color: v.falt > 0 ? AMBAR : GRIS }}>{v.falt}</span></td>
                 <td style={td}>{v.valido ? <><span style={{ color: GRIS }}>{miles(bA)}</span> → {miles(bB)}</> : <span style={{ color: GRIS }}>—</span>}</td>
                 <td style={td}>{v.valido ? <><span style={{ color: GRIS }}>{Math.round(difA * 100)}%</span> → {Math.round(difB * 100)}%</> : <span style={{ color: GRIS }}>—</span>}</td>
