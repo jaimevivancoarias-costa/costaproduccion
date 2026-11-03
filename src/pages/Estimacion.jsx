@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
-import { estimar, cfgFinca, PARAM, sobrevDe } from '../lib/estimacion'
+import { estimar, cfgFinca, PARAM, sobrevDe, proyectarAMeta } from '../lib/estimacion'
 import { construirDias, nivelCambio as nivelCambioDe, planVsEjecutado } from '../lib/calendario'
 import { precioPorGramaje, ENT_TALLAS, COLA_TALLAS, ENT_LISTA_DEF, COLA_LISTA_DEF, REND_ENTERO_DEF, REND_COLA_DEF, CV_DEF } from '../lib/precios'
 
@@ -171,19 +171,17 @@ function resumenPiscina(f, ctx) {
   // Rentabilidad: valor de continuar (cosechar hoy vs esperar a meta).
   let rent = null
   if (!bloqueado && biomasaSel > 0) {
-    const metaG = est.metaUsa, diasRest = Math.max(0, Math.round(est.diasProyectados - f.dias))
     const pHoy = precioPorGramaje(f.gramaje, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
-    if (metaG <= f.gramaje || diasRest <= 0) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0 }
+    const pr = proyectarAMeta({ gHoy: f.gramaje, meta, biomasaActual: biomasaSel, finca: cfg })
+    if (!pr) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0 }
     else {
-      const sHoy = sobrevDe(f.gramaje), sMeta = sobrevDe(metaG)
-      const biomasaMeta = sHoy > 0 ? biomasaSel * (sMeta * metaG) / (sHoy * f.gramaje) : biomasaSel
-      const pMeta = precioPorGramaje(metaG, precioOpts)
-      const costoAlim = biomasaSel * est.plan[recoInten].tasaDia / 100 * diasRest / PARAM.pesoSaco * est.alimento.usdSaco
-      const costoOper = (cfg.costoHaDia || 0) * f.area * diasRest
-      const netoMeta = biomasaMeta * pMeta.mejor - costoAlim - costoOper
+      const pMeta = precioPorGramaje(pr.metaUsa, precioOpts)
+      const costoAlim = pr.alimentoLb / PARAM.pesoSaco * est.alimento.usdSaco
+      const costoOper = (cfg.costoHaDia || 0) * f.area * pr.dias
+      const netoMeta = pr.biomasaMeta * pMeta.mejor - costoAlim - costoOper
       const valor = netoMeta - ingresoHoy
-      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: valor / diasRest, conviene: pMeta.conviene, diasRest }
+      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, conviene: pMeta.conviene, diasRest: pr.dias }
     }
   }
   return { f, est, biomasaSel, bloqueado, estadoPlan, recoInten, ap, confirmado, diasAlim, recoSacos, sacosShow: ap ? Number(ap.sacos_operativos) : (bloqueado ? null : recoSacos), sugerido: !ap, delta, deltaEstado, pve, cumplimiento, muDias, alertas, difPct, precioAplicado, usdSaco: est.alimento.usdSaco, rent }
@@ -697,22 +695,19 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // 5.4 Rentabilidad: cosechar hoy vs esperar a meta (valor de continuar). Larva = costo hundido.
   const rent = (() => {
     if (!est || !fila || bloqueado || !(biomasaSel > 0)) return null
-    const gHoy = fila.gramaje, metaG = est.metaUsa
-    const diasRest = Math.max(0, Math.round(est.diasProyectados - fila.dias))
+    const gHoy = fila.gramaje
     const pHoy = precioPorGramaje(gHoy, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
-    if (metaG <= gHoy || diasRest <= 0) return { listo: true, gHoy, pHoy, ingresoHoy }
-    const sHoy = sobrevDe(gHoy), sMeta = sobrevDe(metaG)
-    const biomasaMeta = sHoy > 0 ? biomasaSel * (sMeta * metaG) / (sHoy * gHoy) : biomasaSel
-    const pMeta = precioPorGramaje(metaG, precioOpts)
-    const brutoMeta = biomasaMeta * pMeta.mejor
-    const lbDiaRef = biomasaSel * est.planReco.tasaDia / 100
-    const alimentoSacos = lbDiaRef * diasRest / PARAM.pesoSaco
-    const costoAlim = alimentoSacos * est.alimento.usdSaco
-    const costoOper = (cfg.costoHaDia || 0) * fila.area * diasRest
+    const pr = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg })
+    if (!pr) return { listo: true, gHoy, pHoy, ingresoHoy }
+    const pMeta = precioPorGramaje(pr.metaUsa, precioOpts)
+    const brutoMeta = pr.biomasaMeta * pMeta.mejor
+    const costoAlim = pr.alimentoLb / PARAM.pesoSaco * est.alimento.usdSaco
+    const costoOper = (cfg.costoHaDia || 0) * fila.area * pr.dias
     const netoMeta = brutoMeta - costoAlim - costoOper
     const valor = netoMeta - ingresoHoy
-    return { listo: false, gHoy, metaG, diasRest, pHoy, pMeta, ingresoHoy, biomasaMeta, brutoMeta, costoAlim, costoOper, alimentoSacos: Math.ceil(alimentoSacos), costoOperN: costoOper, netoMeta, valor, valorDia: valor / diasRest, sMeta, fcrMeta: est.fcrProyectado }
+    const fcrMarg = (pr.biomasaMeta - biomasaSel) > 0 ? pr.alimentoLb / (pr.biomasaMeta - biomasaSel) : 0
+    return { listo: false, gHoy, metaUsa: pr.metaUsa, subeEscalon: pr.metaUsa !== Number(meta), diasRest: pr.dias, pHoy, pMeta, ingresoHoy, biomasaMeta: pr.biomasaMeta, brutoMeta, costoAlim, costoOperN: costoOper, alimentoSacos: Math.ceil(pr.alimentoLb / PARAM.pesoSaco), netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, sMeta: pr.sobrevMeta, sHoy: pr.sobrevHoy, fcrAcum: est.fcrProyectado, fcrMarg }
   })()
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
@@ -1237,27 +1232,29 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   <Row k="Ingreso hoy" v={dinero(rent.ingresoHoy)} fuerte top />
                 </div>
                 <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
-                  <div style={titMini}>Esperar a meta · {num1(rent.metaG)} g ({rent.diasRest} días)</div>
+                  <div style={titMini}>Esperar a meta · {num1(rent.metaUsa)} g ({rent.diasRest} días)</div>
                   <Row k="Biomasa proyectada" v={miles(rent.biomasaMeta) + ' lb'} />
                   <Row k={`Bruto (${rent.pMeta.conviene} ${dinero(rent.pMeta.mejor)}/lb)`} v={dinero(rent.brutoMeta)} />
-                  <Row k={`− Alimento (${rent.alimentoSacos} sacos)`} v={'− ' + dinero(rent.costoAlim)} />
+                  <Row k={`− Alimento futuro (${rent.alimentoSacos} sacos)`} v={'− ' + dinero(rent.costoAlim)} />
                   <Row k="− Costo operativo" v={'− ' + dinero(rent.costoOperN)} />
                   <Row k="Ingreso neto a meta" v={dinero(rent.netoMeta)} fuerte top />
                 </div>
               </div>
+              {rent.subeEscalon && <div style={{ fontSize: '11.5px', color: AMBAR, margin: '0 0 10px' }}>Meta de {num1(meta)} g ya alcanzada ({num1(rent.gHoy)} g); se evalúa el siguiente escalón de {num1(rent.metaUsa)} g.</div>}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: rent.valor >= 0 ? '#e7f6ef' : '#FBF5E9', border: '0.5px solid ' + (rent.valor >= 0 ? '#bfe6d2' : '#ecd9b4'), borderRadius: '10px', padding: '12px 15px', flexWrap: 'wrap' }}>
                 <span style={{ width: '26px', height: '26px', borderRadius: '50%', background: rent.valor >= 0 ? VERDE : AMBAR, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{rent.valor >= 0 ? '↑' : '↓'}</span>
                 <div style={{ flex: 1, minWidth: '220px' }}>
-                  <div style={{ fontSize: '14px', fontWeight: 500, color: rent.valor >= 0 ? VERDE : AMBAR }}>{rent.valor >= 0 ? 'Conviene esperar a la meta' : 'Conviene cosechar antes'}</div>
+                  <div style={{ fontSize: '14px', fontWeight: 500, color: rent.valor >= 0 ? VERDE : AMBAR }}>En el escenario base {rent.valor >= 0 ? 'conviene esperar a la meta' : 'conviene cosechar antes'}</div>
                   <div style={{ fontSize: '12.5px', color: rent.valor >= 0 ? '#3d7a63' : '#9a7636' }}>Valor de continuar: <b>{rent.valor >= 0 ? '+' : ''}{dinero(rent.valor)}</b> en {rent.diasRest} días (≈ <b>{dinero(rent.valorDia)}/día</b>).</div>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '10px', fontSize: '12px', color: GRIS }}>
-                <span>FCR a meta: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(rent.fcrMeta)}</b></span>
-                <span>Sobrevivencia a meta: <b style={{ color: NAVY, fontWeight: 500 }}>{pct0(rent.sMeta)}</b></span>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '9px', marginTop: '10px', fontSize: '12px', color: GRIS }}>
+                <span>FCR acumulado a meta: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(rent.fcrAcum)}</b></span>
+                <span>FCR marginal de continuar: <b style={{ color: rent.fcrMarg > rent.fcrAcum ? AMBAR : NAVY, fontWeight: 500 }}>{num2(rent.fcrMarg)}</b></span>
+                <span>Sobrevivencia esperada: <b style={{ color: NAVY, fontWeight: 500 }}>hoy {pct0(rent.sHoy)} → meta {pct0(rent.sMeta)}</b></span>
                 <span>Costo de esperar: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(rent.costoAlim + rent.costoOperN)}</b></span>
               </div>
-              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>La larva es costo hundido (no entra). Precios de la lista AQUAGOLD; no incluye riesgo de mortalidad ni variación de precio. Biomasa a meta proyectada con la sobrevivencia esperada.</div>
+              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Alimento futuro proyectado con la curva del motor (la biomasa y la tasa cambian al crecer). Larva = costo hundido. Precios: lista AQUAGOLD · CV {Math.round((precioOpts.cv ?? CV_DEF) * 100)}% · rendimiento entero {Math.round((precioOpts.rendEntero ?? REND_ENTERO_DEF) * 100)}% · cola {Math.round((precioOpts.rendCola ?? REND_COLA_DEF) * 100)}%. Escenario base: no incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
             </>)}
           </Caja></div>
         )}
