@@ -522,7 +522,7 @@ export default function App() {
           ) : tabId === 'historial' ? (
             <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
           ) : tabId === 'estimacion' ? (
-            <Estimacion key={finca.id} finca={finca} esJefe={esJefe} />
+            <Estimacion key={finca.id} finca={finca} esJefe={esJefe} nombre={nombre} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === tabId)} />
           )}
