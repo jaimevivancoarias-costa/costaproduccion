@@ -87,27 +87,36 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [cicloSel, setCicloSel] = useState('')
   const [perdidasR, setPerdidasR] = useState(0)   // $ de bajas (robo/merma) del rango, cargadas al costo
 
+  // Consumo: lo esencial de la pestaña Consumo. Cosechas y "En proceso" se
+  // cargan aparte, solo al abrir Producción, para no saturar el arranque.
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    // Cada reporte carga por su cuenta: si uno se cuelga (timeout), los demás
-    // igual se muestran, y el aviso dice cuál falló.
     const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
-    const pp = { p_finca: todasFincas ? null : finca.id, p_hasta: hasta }
-    const run = (fn, params, set, label) =>
-      supabase.schema('produccion').rpc(fn, params)
-        .then(({ data, error }) => { if (error) throw error; set(data || []); return null })
-        .catch(err => { set([]); return `${label} (${err.message || 'error'})` })
-    const fails = await Promise.all([
-      run('fn_reporte_consumo', p, setFilas, 'Consumo'),
-      run('fn_reporte_cosechas', p, setCosechas, 'Cosechas'),
-      run('fn_reporte_en_proceso', pp, setProceso, 'En proceso'),
-    ])
-    const malos = fails.filter(Boolean)
-    if (malos.length) setAviso({ tipo: 'error', texto: 'No se pudo cargar: ' + malos.join(' · ') })
+    const { data, error } = await supabase.schema('produccion').rpc('fn_reporte_consumo', p)
+    if (error) { setFilas([]); setAviso({ tipo: 'error', texto: 'No se pudo cargar el consumo. ' + (error.message || '') }) }
+    else setFilas(data || [])
     setCargando(false)
   }, [finca.id, desde, hasta, todasFincas])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Cosechas + "En proceso": solo cuando se abre Producción (son pesadas y no
+  // se ven en Consumo). Cada una por su cuenta: si una se cuelga, la otra va.
+  useEffect(() => {
+    if (vista !== 'produccion') return
+    let vivo = true
+    const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
+    const pp = { p_finca: todasFincas ? null : finca.id, p_hasta: hasta }
+    const run = (fn, params, set, label) =>
+      supabase.schema('produccion').rpc(fn, params)
+        .then(({ data, error }) => { if (!vivo) return null; if (error) throw error; set(data || []); return null })
+        .catch(err => { if (vivo) set([]); return `${label} (${err.message || 'error'})` })
+    Promise.all([
+      run('fn_reporte_cosechas', p, setCosechas, 'Cosechas'),
+      run('fn_reporte_en_proceso', pp, setProceso, 'En proceso'),
+    ]).then(fails => { const m = fails.filter(Boolean); if (vivo && m.length) setAviso({ tipo: 'error', texto: 'No se pudo cargar: ' + m.join(' · ') }) })
+    return () => { vivo = false }
+  }, [vista, finca.id, desde, hasta, todasFincas])
 
   // Factor libras/saco de la finca (Marexport 55.1156, resto 55 por defecto).
   useEffect(() => {
@@ -135,9 +144,11 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   }, [finca.id])
 
   // Costo por semana (últimas 8), anclado en el "hasta" del rango. Balanceado + insumos.
+  // Solo en Consumo y diferido, para no saturar el arranque.
   useEffect(() => {
+    if (vista !== 'consumo') return
     let vivo = true
-    ;(async () => {
+    const t = setTimeout(() => (async () => {
       const { data: ps } = await supabase.schema('produccion').from('piscina').select('id').eq('finca_id', finca.id)
       const ids = (ps || []).map(p => p.id)
       if (!ids.length) { if (vivo) setTendencia([]); return }
@@ -152,58 +163,67 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       ;(tBal || []).forEach(r => { const k = lunesDe(r.fecha); if (tw[k]) tw[k].bal += Number(r.costo) })
       ;(tIns || []).forEach(r => { const k = lunesDe(r.fecha); if (tw[k]) tw[k].ins += Number(r.cantidad) * Number(r.precio_unitario || 0) })
       if (vivo) setTendencia(semanas.map(s => tw[s]))
-    })()
-    return () => { vivo = false }
-  }, [finca.id, hasta])
+    })(), 900)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [vista, finca.id, hasta])
 
   // Desglose del consumo de balanceado por precio REAL (FIFO por lote): cuántos
   // sacos salieron a cada precio de compra. "Lo que es", no el promedio por día.
   // Va aparte y no rompe si la función aún no está en la base.
   useEffect(() => {
+    if (vista !== 'consumo') return
     let vivo = true
-    supabase.schema('produccion').rpc('fn_reporte_consumo_lotes_todos',
-      { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
-      .then(({ data, error }) => {
-        if (!vivo) return
-        if (error) { setPorPrecio({}); return }
-        const m = {}
-        ;(data || []).forEach(r => {
-          const precio = Number(r.precio), sacos = Number(r.sacos), fecha = r.fecha || null
-          ;(m[r.producto_id] = m[r.producto_id] || []).push({ fecha, precio, sacos, costo: precio * sacos })
+    // Se difiere ~0,5s para no competir con la consulta principal del consumo
+    // (si no, bajo carga simultánea una se pasa del límite de tiempo).
+    const t = setTimeout(() => {
+      supabase.schema('produccion').rpc('fn_reporte_consumo_lotes_todos',
+        { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
+        .then(({ data, error }) => {
+          if (!vivo) return
+          if (error) { setPorPrecio({}); return }
+          const m = {}
+          ;(data || []).forEach(r => {
+            const precio = Number(r.precio), sacos = Number(r.sacos), fecha = r.fecha || null
+            ;(m[r.producto_id] = m[r.producto_id] || []).push({ fecha, precio, sacos, costo: precio * sacos })
+          })
+          Object.values(m).forEach(arr => arr.sort((a, b) =>
+            String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
+          setPorPrecio(m)
         })
-        Object.values(m).forEach(arr => arr.sort((a, b) =>
-          String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
-        setPorPrecio(m)
-      })
-      .catch(() => { if (vivo) setPorPrecio({}) })
-    return () => { vivo = false }
-  }, [finca.id, desde, hasta])
+        .catch(() => { if (vivo) setPorPrecio({}) })
+    }, 500)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [vista, finca.id, desde, hasta])
 
   // Desglose del consumo de INSUMOS por lote REAL (FIFO): fecha de compra,
   // cantidad (en unidad de compra) y precio de cada lote. Solo por finca.
   useEffect(() => {
+    if (vista !== 'consumo') return
     let vivo = true
     if (todasFincas) { setPorLoteIns({}); return () => { vivo = false } }
-    supabase.schema('produccion').rpc('fn_reporte_consumo_insumo_lotes_todos',
-      { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
-      .then(({ data, error }) => {
-        if (!vivo) return
-        if (error) { setPorLoteIns({}); return }
-        const m = {}
-        ;(data || []).forEach(r => {
-          const precio = Number(r.precio), cantidad = Number(r.cantidad), fecha = r.fecha || null
-          ;(m[r.insumo_id] = m[r.insumo_id] || []).push({ fecha, precio, cantidad, costo: precio * cantidad })
+    const t = setTimeout(() => {
+      supabase.schema('produccion').rpc('fn_reporte_consumo_insumo_lotes_todos',
+        { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
+        .then(({ data, error }) => {
+          if (!vivo) return
+          if (error) { setPorLoteIns({}); return }
+          const m = {}
+          ;(data || []).forEach(r => {
+            const precio = Number(r.precio), cantidad = Number(r.cantidad), fecha = r.fecha || null
+            ;(m[r.insumo_id] = m[r.insumo_id] || []).push({ fecha, precio, cantidad, costo: precio * cantidad })
+          })
+          Object.values(m).forEach(arr => arr.sort((a, b) =>
+            String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
+          setPorLoteIns(m)
         })
-        Object.values(m).forEach(arr => arr.sort((a, b) =>
-          String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
-        setPorLoteIns(m)
-      })
-      .catch(() => { if (vivo) setPorLoteIns({}) })
-    return () => { vivo = false }
-  }, [finca.id, desde, hasta, todasFincas])
+        .catch(() => { if (vivo) setPorLoteIns({}) })
+    }, 650)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [vista, finca.id, desde, hasta, todasFincas])
 
-  // Diesel del rango (finca individual). En modo Todas se omite.
+  // Diesel del rango (finca individual). En modo Todas se omite. Solo en Consumo.
   useEffect(() => {
+    if (vista !== 'consumo') return
     let vivo = true
     ;(async () => {
       if (todasFincas) { setDslR({ total: 0, tipos: [] }); setPorLoteDsl({}); return }
@@ -238,7 +258,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       setDslR({ total: tipos.reduce((s, t) => s + t.gasto, 0), tipos })
     })()
     return () => { vivo = false }
-  }, [finca.id, todasFincas, desde, hasta])
+  }, [vista, finca.id, todasFincas, desde, hasta])
 
   // Al cambiar la finca global, los reportes "ahora" la siguen.
   useEffect(() => { setValFinca(finca.id); setEstFinca(finca.id) }, [finca.id])
@@ -292,19 +312,22 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     return () => { vivo = false }
   }, [estFinca, estTipo])
 
-  // Descuadres (control de conteos): usa el rango de fechas y la finca.
+  // Descuadres (control de conteos): solo al abrir Bodega (no en Consumo).
   useEffect(() => {
+    if (vista !== 'bodega') return
     let vivo = true
     supabase.schema('produccion').rpc(descTipo === 'balanceado' ? 'fn_reporte_descuadres_bal' : 'fn_reporte_descuadres',
       { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta })
       .then(({ data, error }) => { if (!vivo) return; if (error) setAviso({ tipo: 'error', texto: error.message }); setDescs(data || []) })
     return () => { vivo = false }
-  }, [finca.id, desde, hasta, todasFincas, descTipo])
+  }, [vista, finca.id, desde, hasta, todasFincas, descTipo])
 
-  // Pérdidas (bajas) del rango, para cargarlas al costo de la finca.
+  // Pérdidas (bajas + faltantes) del rango, para el KPI de costo de Consumo.
+  // Es pesado (hasta 9 consultas) → se difiere y solo en la pestaña Consumo.
   useEffect(() => {
+    if (vista !== 'consumo') return
     let vivo = true
-    ;(async () => {
+    const t = setTimeout(() => (async () => {
       const q = tbl => {
         let b = supabase.schema('produccion').from(tbl).select('cantidad, precio_unitario')
           .lt('cantidad', 0).not('precio_unitario', 'is', null).gte('fecha', desde).lte('fecha', hasta).limit(5000)
@@ -336,9 +359,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         ;(fx[5].data || []).forEach(x => { if (Number(x.diferencia) < -0.0001 && esPerdida(x.motivo)) faltTot += Math.abs(Number(x.diferencia)) * (pI[x.insumo_id] || 0) })
       }
       setPerdidasR(sum(a) + sum(b) + sum(c) + faltTot)
-    })()
-    return () => { vivo = false }
-  }, [finca.id, desde, hasta, todasFincas])
+    })(), 800)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [vista, finca.id, desde, hasta, todasFincas])
 
   // Ciclos de la finca, para el atajo "por ciclo".
   useEffect(() => {
