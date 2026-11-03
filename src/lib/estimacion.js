@@ -59,6 +59,7 @@ const diaEq = g => filaDe(g).diaEq
 const gDiaObj = g => filaDe(g).gDia
 const gSemObj = g => filaDe(g).gSem
 const sobrevTabla = g => filaDe(g).sobrev
+export const sobrevDe = g => sobrevTabla(g)   // sobrevivencia esperada a un gramaje (para proyectar biomasa a meta)
 const fcrMaxTabla = g => filaDe(g).fcrMax || 0
 const fcrEspTabla = g => filaDe(g).fcrEsp || 0
 const pct = (g, esc) => { const r = filaDe(g); return esc === 'BAJO' ? r.pBajo : esc === 'ALTO' ? r.pAlto : r.pMedio }
