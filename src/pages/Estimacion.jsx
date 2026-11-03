@@ -124,7 +124,7 @@ function planEstadoDe({ est, v, bm, bloqueado, vig }) {
 
 // Estimación por piscina. Toma gramaje (muestreo), consumo de balanceado y los
 // datos del ciclo, corre el motor y aplica el control de calidad de biomasa.
-export default function Estimacion({ finca, esJefe }) {
+export default function Estimacion({ finca, esJefe, nombre }) {
   const [hasta, setHasta] = useState(() => { const d = domingoDe(hoyISO()); return d > hoyISO() ? hoyISO() : d })
   const cfg = useMemo(() => cfgFinca(finca.nombre), [finca.nombre])
   const [meta, setMeta] = useState(() => { try { return Number(localStorage.getItem('metaEst|' + finca.id)) || cfg.meta } catch { return cfg.meta } })
@@ -173,6 +173,13 @@ export default function Estimacion({ finca, esJefe }) {
     const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion }) })
     const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
     const apDe = {}; (ap || []).forEach(r => { apDe[r.ciclo_id] = r })
+    // Nombre de quién aplicó cada escenario (vive en public.usuarios).
+    const quienes = [...new Set((ap || []).map(r => r.aplicado_por).filter(Boolean))]
+    if (quienes.length) {
+      const { data: us } = await supabase.from('usuarios').select('id, nombre').in('id', quienes)
+      const nomDe = {}; (us || []).forEach(u => { nomDe[u.id] = u.nombre })
+      Object.values(apDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
+    }
     setValida(bvDe); setAplicado(apDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
@@ -291,32 +298,33 @@ export default function Estimacion({ finca, esJefe }) {
     setCiclos(cs => cs.map(c => c.cicloId === sel ? { ...c, raciones: n } : c))
     setEditRac(false)
   }
-  // Aplica la celda activa: marca el plan anterior de esta semana como reemplazado
-  // e inserta uno nuevo (fotografía histórica). Motivo obligatorio si no es la recomendada.
+  // Aplica la celda activa vía la función aplicar_escenario (una sola transacción:
+  // valida rol+finca+motivo, marca el activo como reemplazado e inserta el nuevo).
   async function aplicarEscenario() {
     if (!est || !fila || !aplicarOk) return
     if (requiereMotivo && !motivoTxt.trim()) { setPidiendoMotivo(true); return }
-    const registro = {
-      ciclo_id: sel, semana_ref: hasta, fila_pct: celdaAct.fila, intensidad: celdaAct.inten,
-      biomasa_lb: biomasaAsumida, tasa_pct: tasaApl, lb_dia: lbDiaSel,
-      sacos_calc: sacosSemCalc, sacos_operativos: pedir, costo_usd: usdSemSel,
-      raciones: racSinConfirmar ? null : racValor, es_recomendada: esReco,
-      motivo_eleccion: requiereMotivo ? motivoTxt.trim() : null, aplicado_por: userId,
-      datos: {
-        gramaje: fila.gramaje, dias: fila.dias, biomasaOficial: biomasaSel, fuente: fuenteUsada,
-        escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
-        usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
-        tolvas: fila.tolvas, sacosProxPedir,
-        ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
-      },
+    const datos = {
+      gramaje: fila.gramaje, dias: fila.dias, biomasaOficial: biomasaSel, fuente: fuenteUsada,
+      escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
+      usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
+      tolvas: fila.tolvas, sacosProxPedir,
+      ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
     }
-    await supabase.schema('produccion').from('escenario_aplicado').update({ estado: 'reemplazado' }).eq('ciclo_id', sel).eq('semana_ref', hasta).eq('estado', 'activo')
-    const { data, error } = await supabase.schema('produccion').from('escenario_aplicado').insert(registro).select().single()
+    const { data, error } = await supabase.schema('produccion').rpc('aplicar_escenario', {
+      p_ciclo_id: sel, p_semana_ref: hasta, p_fila_pct: celdaAct.fila, p_intensidad: celdaAct.inten,
+      p_biomasa_lb: biomasaAsumida, p_tasa_pct: tasaApl, p_lb_dia: lbDiaSel,
+      p_sacos_calc: sacosSemCalc, p_sacos_operativos: pedir, p_costo_usd: usdSemSel,
+      p_raciones: racSinConfirmar ? null : racValor, p_es_recomendada: esReco,
+      p_motivo: requiereMotivo ? motivoTxt.trim() : null, p_datos: datos,
+    })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
-    setAplicado(a => ({ ...a, [sel]: data }))
+    const reg = Array.isArray(data) ? data[0] : data
+    setAplicado(a => ({ ...a, [sel]: { ...reg, aplicado_nombre: nombre || null } }))
     setPidiendoMotivo(false); setMotivoTxt(''); setCelda(null)
     setAviso({ tipo: 'ok', texto: esReco ? 'Escenario recomendado aplicado.' : 'Escenario aplicado con motivo.' })
   }
+  // Fecha y hora legible de la aplicación.
+  const fechaHora = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
 
   const diasRest = est ? Math.max(0, est.diasProyectados - fila.dias) : 0
   const estadoPlan = planEstadoDe({ est, v, bm, bloqueado, vig })
@@ -350,10 +358,11 @@ export default function Estimacion({ finca, esJefe }) {
   const racValor = racConf != null ? racConf : 2
   const repartoOk = !bloqueado && fila && fila.tolvas > 0 && !racSinConfirmar
   const lbTolvaRacion = (fila && fila.tolvas > 0) ? lbDiaSel / fila.tolvas / racValor : null
-  // Aplicar: deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
-  const aplicarOk = !!(estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
+  // Aplicar: solo jefe; deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
+  const puedeAplicar = finca.rol === 'jefe'
+  const aplicarOk = !!(puedeAplicar && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
   const requiereMotivo = !esReco
-  const yaAplicada = apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten
+  const yaAplicada = !!(apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten)
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
   const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
@@ -620,8 +629,19 @@ export default function Estimacion({ finca, esJefe }) {
             </div>
           </div>
 
-          {/* Aplicar escenario (trazabilidad) */}
-          {!bloqueado && (
+          {/* Escenario aplicado (trazabilidad) o controles para aplicar/reemplazar */}
+          {!bloqueado && (yaAplicada && apRec ? (
+            <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '9px', background: '#e7f6ef', border: '0.5px solid #bfe6d2', borderRadius: '9px', padding: '11px 13px' }}>
+                <span style={{ color: VERDE, fontSize: '15px', lineHeight: 1.3 }}>✓</span>
+                <div style={{ fontSize: '12px', color: '#2f6b55', lineHeight: 1.55 }}>
+                  <b style={{ fontWeight: 500 }}>Aplicado{apRec.aplicado_nombre ? ' por ' + apRec.aplicado_nombre : ''}</b> · {fechaHora(apRec.aplicado_en)} · {apRec.fila_pct}% × {cap(intenLbl(apRec.intensidad))}
+                  <div style={{ color: GRIS }}>Motivo: {apRec.motivo_eleccion || 'combinación recomendada'}</div>
+                  {puedeAplicar && <div style={{ color: '#9fb0bf', marginTop: '2px' }}>Elige otra celda para reemplazarlo.</div>}
+                </div>
+              </div>
+            </div>
+          ) : puedeAplicar ? (
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
               {requiereMotivo && (
                 <div style={{ marginBottom: '10px' }}>
@@ -630,15 +650,15 @@ export default function Estimacion({ finca, esJefe }) {
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <button onClick={aplicarEscenario} disabled={!aplicarOk || yaAplicada} style={{ ...btnAzul, opacity: (!aplicarOk || yaAplicada) ? 0.5 : 1, cursor: (!aplicarOk || yaAplicada) ? 'default' : 'pointer' }}>
-                  {yaAplicada ? 'Escenario aplicado' : 'Aplicar este escenario'}
+                <button onClick={aplicarEscenario} disabled={!aplicarOk} style={{ ...btnAzul, opacity: !aplicarOk ? 0.5 : 1, cursor: !aplicarOk ? 'default' : 'pointer' }}>
+                  {apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
                 </button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
                   {!aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
                 </span>
               </div>
             </div>
-          )}
+          ) : null)}
 
           <div style={{ fontSize: '12.5px', color: GRIS, marginTop: '13px' }}>Alimento: <b style={{ color: NAVY, fontWeight: 500 }}>{est.alimento.nombre}</b> · {dinero(est.alimento.usdSaco)} el saco</div>
         </Caja>
