@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
-import { estimar } from '../lib/estimacion'
+import { estimar, cfgFinca } from '../lib/estimacion'
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const VERDE = '#0F6E56', AMBAR = '#854F0B', ROJO = '#8A2F2E'
@@ -14,7 +14,8 @@ const diasEntre = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000)
 // y los datos del ciclo, y corre el motor (lib/estimacion) para proyectar.
 export default function Estimacion({ finca, esJefe }) {
   const [hasta, setHasta] = useState(hoyISO())
-  const [meta, setMeta] = useState(() => { try { return Number(localStorage.getItem('metaEst|' + finca.id)) || 35 } catch { return 35 } })
+  const cfg = useMemo(() => cfgFinca(finca.nombre), [finca.nombre])
+  const [meta, setMeta] = useState(() => { try { return Number(localStorage.getItem('metaEst|' + finca.id)) || cfg.meta } catch { return cfg.meta } })
   const [ciclos, setCiclos] = useState([])     // [{ cicloId, piscinaId, nombre, area, larva, pl, siembra, tolvas, gramaje, gIni, diasIni, consumoAcum, consumoVentana, dias }]
   const [sel, setSel] = useState('')           // cicloId elegido
   const [cargando, setCargando] = useState(true)
@@ -72,8 +73,8 @@ export default function Estimacion({ finca, esJefe }) {
   const est = useMemo(() => fila ? estimar({
     area: fila.area, dias: fila.dias, pl: fila.pl, gramajeHoy: fila.gramaje,
     consumoAcum: fila.consumoAcum, larva: fila.larva, gInicio: fila.gIni,
-    diasInicio: fila.diasIni, consumoVentana: fila.consumoVentana, meta,
-  }) : null, [fila, meta])
+    diasInicio: fila.diasIni, consumoVentana: fila.consumoVentana, meta, finca: cfg,
+  }) : null, [fila, meta, cfg])
 
   async function guardarTolvas() {
     const n = parseInt(tolvasTxt, 10)
