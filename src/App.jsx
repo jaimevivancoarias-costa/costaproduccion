@@ -28,19 +28,28 @@ const AZUL = '#0D6CB0'
 const BORDE = '#dce6ef'
 const GRIS = '#7d8fa0'
 
-const MODULOS = [
-  { id: 'presupuesto', nombre: 'Presupuesto',    icono: 'moneda' },
-  { id: 'resumen',    nombre: 'Resumen',        icono: 'grid', soloJefe: true },
-  { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
-  { id: 'diesel',     nombre: 'Diesel',         icono: 'bidon' },
-  { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
-  { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
-  { id: 'catalogo',   nombre: 'Catálogo',       icono: 'etiqueta', soloJefe: true },
-  { id: 'costos',     nombre: 'Costos',         icono: 'moneda', soloJefe: true },
-  { id: 'reportes',   nombre: 'Reportes',       icono: 'barras', soloJefe: true },
-  // El historial es la bitacora de cambios: herramienta de supervision.
-  { id: 'historial',  nombre: 'Historial',      icono: 'reloj', soloJefe: true },
+// El menú va en 3 grupos colapsables: Día a día (operación), Planeación
+// (presupuesto/precios) y Análisis (reportes/supervisión del jefe).
+const GRUPOS = [
+  { titulo: 'Día a día', items: [
+    { id: 'registro',   nombre: 'Registro diario', icono: 'calendario' },
+    { id: 'gramaje',    nombre: 'Gramaje',        icono: 'barras' },
+    { id: 'diesel',     nombre: 'Diesel',         icono: 'bidon' },
+    { id: 'inventario', nombre: 'Inventario',     icono: 'caja' },
+  ] },
+  { titulo: 'Planeación', items: [
+    { id: 'presupuesto', nombre: 'Presupuesto',   icono: 'moneda' },
+    { id: 'catalogo',   nombre: 'Catálogo',       icono: 'etiqueta', soloJefe: true },
+  ] },
+  { titulo: 'Análisis', items: [
+    { id: 'resumen',    nombre: 'Resumen',        icono: 'grid', soloJefe: true },
+    { id: 'reportes',   nombre: 'Reportes',       icono: 'barras', soloJefe: true },
+    { id: 'costos',     nombre: 'Costos',         icono: 'moneda', soloJefe: true },
+    // El historial es la bitacora de cambios: herramienta de supervision.
+    { id: 'historial',  nombre: 'Historial',      icono: 'reloj', soloJefe: true },
+  ] },
 ]
+const MODULOS = GRUPOS.flatMap(g => g.items)   // lista plana para búsquedas
 
 // Recordar lo último entre recargas (si el navegador no deja, no pasa nada).
 const lsGet = (k, d) => { try { return localStorage.getItem(k) || d } catch { return d } }
@@ -65,6 +74,42 @@ export default function App() {
   const [fincaId, setFincaId] = useState(null)
   const [zona, setZona] = useState('jambeli')
   const [modulo, setModulo] = useState(() => lsGet('modulo', 'registro'))
+  // Pestañas abiertas (máx 5): se ve una a la vez, pero cada una conserva su
+  // estado porque se mantiene montada. Clic en el menú abre/activa su pestaña.
+  const MAX_TABS = 5
+  const [tabs, setTabs] = useState(() => {
+    try { const t = JSON.parse(localStorage.getItem('tabs')); if (Array.isArray(t) && t.length) return t } catch (e) { /* sin storage */ }
+    return [lsGet('modulo', 'registro')]
+  })
+  // Qué pestañas ya se montaron (se montan al activarse por primera vez y se
+  // mantienen; así al recargar no se cargan 5 secciones pesadas de golpe).
+  const [montados, setMontados] = useState(() => [lsGet('modulo', 'registro')])
+  useEffect(() => { setMontados(m => m.includes(modulo) ? m : [...m, modulo]) }, [modulo])
+  // Grupos del menú abiertos/cerrados.
+  const [gruposAbiertos, setGruposAbiertos] = useState(() => {
+    try { const g = JSON.parse(localStorage.getItem('grupos')); if (g) return g } catch (e) { /* sin storage */ }
+    return { 'Día a día': true, 'Planeación': true, 'Análisis': true }
+  })
+  const toggleGrupo = t => setGruposAbiertos(g => { const n = { ...g, [t]: !g[t] }; try { localStorage.setItem('grupos', JSON.stringify(n)) } catch (e) { /* sin storage */ } return n })
+  // Abrir/activar una pestaña (si no está, se agrega; si pasa de 5, sale la más vieja).
+  const irModulo = useCallback(id => {
+    setTabs(t => {
+      if (t.includes(id)) return t
+      const n = [...t, id]
+      const r = n.length > MAX_TABS ? n.slice(n.length - MAX_TABS) : n
+      try { localStorage.setItem('tabs', JSON.stringify(r)) } catch (e) { /* sin storage */ }
+      return r
+    })
+    setModulo(id)
+  }, [])
+  const cerrarTab = id => setTabs(t => {
+    if (t.length <= 1) return t   // no cerrar la última
+    const i = t.indexOf(id)
+    const n = t.filter(x => x !== id)
+    try { localStorage.setItem('tabs', JSON.stringify(n)) } catch (e) { /* sin storage */ }
+    if (id === modulo) setModulo(n[Math.min(i, n.length - 1)])
+    return n
+  })
   // Dentro de Registro diario: balanceado o insumos. Comparten semana.
   const [panelReg, setPanelReg] = useState(() => lsGet('panelReg', 'balanceado'))
   // Cuando se entra a Reportes desde la barra de presupuesto, arranca
@@ -106,6 +151,8 @@ export default function App() {
 
   // Recordar la última página y pestañas, para volver a ellas al recargar.
   useEffect(() => { lsSet('modulo', modulo) }, [modulo])
+  // El módulo activo siempre debe tener su pestaña abierta.
+  useEffect(() => { if (!tabs.includes(modulo)) irModulo(modulo) }, [modulo, tabs, irModulo])
   useEffect(() => { lsSet('panelReg', panelReg) }, [panelReg])
   useEffect(() => { lsSet('panelInv', panelInv) }, [panelInv])
   // El diesel ya no es sub-tab de Inventario; si quedó guardado, cae a insumos.
@@ -118,7 +165,7 @@ export default function App() {
   useEffect(() => {
     if (cargando) return
     const m = MODULOS.find(x => x.id === modulo)
-    if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) setModulo('registro')
+    if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) irModulo('registro')
   }, [modulo, esJefe, esJefeGlobal, cargando])
 
   // Mantener la zona sincronizada con la finca elegida.
@@ -191,12 +238,12 @@ export default function App() {
   function irACorreccion(c) {
     setFincaId(c.finca_id)
     if (c.zona) setZona(c.zona)
-    if (c.destino === 'reg-bal') { setModulo('registro'); setPanelReg('balanceado') }
-    else if (c.destino === 'reg-ins') { setModulo('registro'); setPanelReg('insumos') }
-    else if (c.destino === 'inv-bal') { setModulo('inventario'); setPanelInv('balanceado'); setPedirIngresos(n => n + 1) }
-    else if (c.destino === 'cat-ins') { setCatTab('insumos'); setCatNonce(n => n + 1); setModulo('catalogo') }
-    else if (c.destino === 'cat-bal') { setCatTab('balanceados'); setCatNonce(n => n + 1); setModulo('catalogo') }
-    else { setModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1) }
+    if (c.destino === 'reg-bal') { irModulo('registro'); setPanelReg('balanceado') }
+    else if (c.destino === 'reg-ins') { irModulo('registro'); setPanelReg('insumos') }
+    else if (c.destino === 'inv-bal') { irModulo('inventario'); setPanelInv('balanceado'); setPedirIngresos(n => n + 1) }
+    else if (c.destino === 'cat-ins') { setCatTab('insumos'); setCatNonce(n => n + 1); irModulo('catalogo') }
+    else if (c.destino === 'cat-bal') { setCatTab('balanceados'); setCatNonce(n => n + 1); irModulo('catalogo') }
+    else { irModulo('inventario'); setPanelInv('insumos'); setPedirIngresos(n => n + 1) }
   }
 
   // Red de seguridad: si por alguna navegacion interna un bodeguero
@@ -204,7 +251,7 @@ export default function App() {
   // lo devolvemos a Registro diario.
   useEffect(() => {
     const m = MODULOS.find(x => x.id === modulo)
-    if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) setModulo('registro')
+    if (m && ((m.soloJefe && !esJefe) || (m.soloJefeGlobal && !esJefeGlobal))) irModulo('registro')
   }, [modulo, esJefe, esJefeGlobal])
 
   if (cargando) return <Centro>Cargando...</Centro>
@@ -221,6 +268,9 @@ export default function App() {
 
   const finca = fincas.find(f => f.id === fincaId) || fincas[0]
   const soloLectura = finca.rol === 'visor'
+  // Pestañas visibles según permiso (por si en localStorage quedó una de jefe).
+  const permiteMod = m => m && (!m.soloJefe || esJefe) && (!m.soloJefeGlobal || esJefeGlobal)
+  const tabsVis = tabs.filter(id => permiteMod(MODULOS.find(m => m.id === id)))
 
   return (
     <div style={{ minHeight: '100vh' }}>
@@ -282,8 +332,8 @@ export default function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           {esJefe && <Campana corrPend={corrPend} reponer={reponer} dieselPend={dieselPend} onIr={irACorreccion}
-                       onIrReponer={id => { setFincaId(id); setModulo('inventario') }}
-                       onIrDiesel={d => { setFincaId(d.finca_id); if (d.zona) setZona(d.zona); setModulo('diesel') }} />}
+                       onIrReponer={id => { setFincaId(id); irModulo('inventario') }}
+                       onIrDiesel={d => { setFincaId(d.finca_id); if (d.zona) setZona(d.zona); irModulo('diesel') }} />}
           <a href={HUB_URL} style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', textDecoration: 'none' }}>Portal</a>
           <span style={{ fontSize: '12px', color: 'rgba(255,255,255,0.75)' }}>{nombre || user.email}</span>
           <button onClick={logout} style={{ background: 'none', border: 'none', cursor: 'pointer',
@@ -299,8 +349,8 @@ export default function App() {
           key={finca.id}
           finca={finca}
           esJefe={esJefe}
-          onIr={esJefe ? () => { setVerInsumos(true); setModulo('reportes') } : undefined}
-          onIrDiesel={() => { setPptoTab('diesel'); setModulo('presupuesto') }}
+          onIr={esJefe ? () => { setVerInsumos(true); irModulo('reportes') } : undefined}
+          onIrDiesel={() => { setPptoTab('diesel'); irModulo('presupuesto') }}
         />
       )}
 
@@ -309,8 +359,8 @@ export default function App() {
         esJefe={esJefe}
         onCerrar={(fid, z, amb, dia) => {
           setFincaId(fid); if (z) setZona(z)
-          if (amb === 'diesel') { setModulo('diesel') }
-          else { setModulo('registro'); setPanelReg(amb); setLunes(lunesDe(dia)) }
+          if (amb === 'diesel') { irModulo('diesel') }
+          else { irModulo('registro'); setPanelReg(amb); setLunes(lunesDe(dia)) }
         }}
       />
 
@@ -319,27 +369,39 @@ export default function App() {
                       borderRight: '0.5px solid ' + BORDE, minHeight: 'calc(100vh - 56px)',
                       padding: '1.1rem 0.7rem', transition: 'width .12s',
                       display: 'flex', flexDirection: 'column' }}>
-          {MODULOS.filter(m => (!m.soloJefe || esJefe) && (!m.soloJefeGlobal || esJefeGlobal)).map(m => {
-            const activo = m.id === modulo
+          {GRUPOS.map(grupo => {
+            const items = grupo.items.filter(m => (!m.soloJefe || esJefe) && (!m.soloJefeGlobal || esJefeGlobal))
+            if (!items.length) return null
+            const abierto = gruposAbiertos[grupo.titulo] !== false
             return (
-              <button
-                key={m.id}
-                onClick={() => { setModulo(m.id); setVerInsumos(false) }}
-                title={m.nombre}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: '9px', width: '100%',
-                  justifyContent: navColapsado ? 'center' : 'flex-start',
-                  border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
-                  padding: '10px', borderRadius: '8px', marginBottom: '2px', textAlign: 'left',
-                  background: activo ? '#E6F1FB' : 'transparent',
-                  color: activo ? AZUL : NAVY,
-                  fontWeight: activo ? 500 : 400,
-                  opacity: activo ? 1 : 0.85,
-                }}
-              >
-                <Icono tipo={m.icono} />
-                {!navColapsado && m.nombre}
-              </button>
+              <div key={grupo.titulo} style={{ marginBottom: '4px' }}>
+                {!navColapsado && (
+                  <button onClick={() => toggleGrupo(grupo.titulo)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%', border: 'none',
+                             background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', color: GRIS,
+                             fontSize: '10.5px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em',
+                             padding: '9px 10px 5px' }}>
+                    <span style={{ fontSize: '9px' }}>{abierto ? '▾' : '▸'}</span>{grupo.titulo}
+                  </button>
+                )}
+                {(navColapsado || abierto) && items.map(m => {
+                  const activo = m.id === modulo
+                  return (
+                    <button key={m.id} onClick={() => { irModulo(m.id); setVerInsumos(false) }} title={m.nombre}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '9px', width: '100%',
+                        justifyContent: navColapsado ? 'center' : 'flex-start',
+                        border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px',
+                        padding: '10px', borderRadius: '8px', marginBottom: '2px', textAlign: 'left',
+                        background: activo ? '#E6F1FB' : 'transparent',
+                        color: activo ? AZUL : NAVY, fontWeight: activo ? 500 : 400, opacity: activo ? 1 : 0.85,
+                      }}>
+                      <Icono tipo={m.icono} />
+                      {!navColapsado && m.nombre}
+                    </button>
+                  )
+                })}
+              </div>
             )
           })}
           {/* Colapsar el menu: al fondo. */}
@@ -354,7 +416,11 @@ export default function App() {
         </nav>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          {modulo === 'presupuesto' ? (
+          <BarraPestanas tabs={tabsVis} activo={modulo} modDe={id => MODULOS.find(m => m.id === id)}
+                         onIr={irModulo} onCerrar={cerrarTab} />
+          {tabsVis.map(tabId => (montados.includes(tabId) || tabId === modulo) && (
+          <div key={tabId} style={{ display: tabId === modulo ? 'block' : 'none' }}>
+          {tabId === 'presupuesto' ? (
             <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1180px' }}>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
                 {[['insumos', 'Insumos'], ['diesel', 'Diesel']].map(([id, txt]) => (
@@ -376,21 +442,21 @@ export default function App() {
               ) : (
                 <Presupuesto key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe}
                   onIrReporte={id => {
-                    setFincaId(id); setVerInsumos(true); setModulo('reportes')
+                    setFincaId(id); setVerInsumos(true); irModulo('reportes')
                     const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
                   }} />
               )}
             </div>
-          ) : modulo === 'resumen' ? (
+          ) : tabId === 'resumen' ? (
             <Resumen
               fincas={fincas}
               esJefe={esJefe}
               onIrAFinca={id => {
-                setFincaId(id); setModulo('registro')
+                setFincaId(id); irModulo('registro')
                 const f = fincas.find(x => x.id === id); if (f && f.zona) setZona(f.zona)
               }}
             />
-          ) : modulo === 'registro' ? (
+          ) : tabId === 'registro' ? (
             <div>
               <div style={{ display: 'flex', gap: '4px', padding: '14px 1.4rem 0' }}>
                 {[['balanceado', 'Balanceado'], ['insumos', 'Insumos']].map(([id, txt]) => (
@@ -423,11 +489,11 @@ export default function App() {
                 />
               )}
             </div>
-          ) : modulo === 'gramaje' ? (
+          ) : tabId === 'gramaje' ? (
             <Gramaje key={finca.id} finca={finca} esJefe={esJefe} soloLectura={soloLectura} lunes={lunes} setLunes={setLunes} />
-          ) : modulo === 'costos' ? (
+          ) : tabId === 'costos' ? (
             <Costos key={finca.id} finca={finca} esJefe={esJefe} lunes={lunes} setLunes={setLunes} />
-          ) : modulo === 'inventario' ? (
+          ) : tabId === 'inventario' ? (
             <div>
               <div style={{ display: 'flex', gap: '4px', padding: '14px 1.5rem 0' }}>
                 {[['insumos', 'Insumos'], ['balanceado', 'Balanceado']].map(([id, txt]) => (
@@ -444,19 +510,49 @@ export default function App() {
                 ? <InventarioBalanceado key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />
                 : <Inventario key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} abrirIngresos={pedirIngresos} abrirPrecios={pedirPrecios} onCorreccion={cargarCorr} />}
             </div>
-          ) : modulo === 'diesel' ? (
+          ) : tabId === 'diesel' ? (
             <Diesel key={finca.id} finca={finca} esJefe={esJefe} esJefeGlobal={esJefeGlobal} soloLectura={soloLectura} onCambio={cargarDiesel} />
-          ) : modulo === 'catalogo' ? (
+          ) : tabId === 'catalogo' ? (
             <Catalogo key={catNonce} esJefe={esJefe} esJefeGlobal={esJefeGlobal} fincas={fincas} tabInicial={catTab} />
-          ) : modulo === 'reportes' ? (
+          ) : tabId === 'reportes' ? (
             <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
-          ) : modulo === 'historial' ? (
+          ) : tabId === 'historial' ? (
             <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
           ) : (
-            <EnConstruccion modulo={MODULOS.find(m => m.id === modulo)} />
+            <EnConstruccion modulo={MODULOS.find(m => m.id === tabId)} />
           )}
+          </div>
+          ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Barra de pestañas abiertas: se ve una a la vez, clic para cambiar, ✕ para
+// cerrar. Cada pestaña conserva su estado porque su contenido sigue montado.
+function BarraPestanas({ tabs, activo, modDe, onIr, onCerrar }) {
+  if (!tabs || tabs.length <= 1) return null
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch', gap: '2px', padding: '6px 10px 0',
+                  borderBottom: '0.5px solid ' + BORDE, background: '#fbfcfe', overflowX: 'auto' }}>
+      {tabs.map(id => {
+        const m = modDe(id); if (!m) return null
+        const on = id === activo
+        return (
+          <span key={id} onClick={() => onIr(id)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer',
+                     padding: '8px 12px', fontSize: '13px', whiteSpace: 'nowrap', flex: '0 0 auto',
+                     color: on ? NAVY : GRIS, fontWeight: on ? 500 : 400,
+                     border: '0.5px solid ' + BORDE, borderBottom: on ? '2px solid ' + AZUL : '0.5px solid ' + BORDE,
+                     borderRadius: '9px 9px 0 0', background: 'white' }}>
+            <Icono tipo={m.icono} />
+            {m.nombre}
+            <span onClick={e => { e.stopPropagation(); onCerrar(id) }}
+              style={{ color: '#aab8c6', fontSize: '15px', lineHeight: 1, padding: '0 2px' }}>×</span>
+          </span>
+        )
+      })}
     </div>
   )
 }
