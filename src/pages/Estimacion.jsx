@@ -7,6 +7,7 @@ const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const VERDE = '#0F6E56', AMBAR = '#854F0B', ROJO = '#8A2F2E'
 const num1 = n => Number(n || 0).toLocaleString('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const num2 = n => Number(n || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const num3 = n => Number(n || 0).toLocaleString('es-EC', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 const pct0 = n => Math.round(Number(n || 0) * 100) + '%'
 const diasEntre = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000)
 const domingoDe = iso => sumarDias(lunesDe(iso), 6)
@@ -426,7 +427,7 @@ export default function Estimacion({ finca, esJefe }) {
               <FilaBio k="Biomasa (lb)" a={miles(est.biomasaConsumo)} b={miles(est.biomasaDensidad)} dif={`${Math.round(bm.difPct * 100) * (bm.menorQue ? -1 : 1)}%`} col={bm.color} />
               <FilaBio k="Sobrevivencia" a={pct0(est.sobrevConsumo)} b={pct0(est.sobrevDensidad)} dif={`${Math.round((est.sobrevConsumo - est.sobrevDensidad) * 100)}pp`} col={bm.color} />
               <FilaBio k="Biomasa por hectárea" a={miles(est.lbHa)} b={miles(fila.area > 0 ? est.biomasaDensidad / fila.area : 0)} dif="—" col={GRIS} />
-              <FilaBio k="FCR parcial" a={num2(est.fcrParcial)} b={num2(est.fcrParcial > 0 ? est.consumoAcum / est.biomasaDensidad : 0)} dif="—" col={GRIS} />
+              <FilaBio k="FCR parcial" a={est.fcrParcial > 0 ? num2(est.fcrParcial) : '—'} b={est.biomasaDensidad > 0 ? num2(est.consumoAcum / est.biomasaDensidad) : '—'} dif="—" col={GRIS} />
             </div>
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
@@ -480,10 +481,10 @@ export default function Estimacion({ finca, esJefe }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '13px', marginBottom: '11px' }}>
                 <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
                   <div style={titMini}>Cómo sale la dosis · hoy</div>
-                  <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num2(tasaBase) + '%'} />
+                  <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num3(tasaBase) + '%'} />
                   <Row k={`Ajuste intensidad ${cap(est.escenario)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
-                  <Row k="Tasa aplicada" v={num2(tasaApl) + '%'} fuerte top />
-                  <Row k={`${miles(biomasaSel)} lb × ${num2(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
+                  <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
+                  <Row k={`${miles(biomasaSel)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
                 </div>
                 <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
                   <div style={titMini}>Sacos a pedir</div>
