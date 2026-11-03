@@ -186,6 +186,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
   const [patronAudit, setPatronAudit] = useState(null) // { nombre, en } de la última edición del patrón
   const [aplicadoPrev, setAplicadoPrev] = useState({}) // cicloId -> aplicado de la semana anterior (para Δ)
+  const [productos, setProductos] = useState({})       // producto_id -> nombre
+  const [inventario, setInventario] = useState({})     // producto_id -> saldo_final (sacos)
+  const [transito, setTransito] = useState({})         // producto_id -> pendiente (sacos)
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
   const [filtro, setFiltro] = useState('todas')
   const [desdeTablero, setDesdeTablero] = useState(false)
@@ -225,9 +228,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const ids = lista.map(c => c.id)
     const piscIds = lista.map(c => c.piscina.id)
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
-    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }] = await Promise.all([
+    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }, { data: prod }, { data: inv }, { data: tran }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
-      supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco').in('ciclo_id', ids).lte('fecha', hasta),
+      supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco, producto_id').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
       supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).eq('estado', 'activo'),
       supabase.schema('produccion').from('finca').select('raciones').eq('id', finca.id).maybeSingle(),
@@ -235,6 +238,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       supabase.schema('produccion').from('piscina_patron_dia').select('piscina_id, dia, alimenta').in('piscina_id', piscIds),
       supabase.schema('produccion').from('semana_plan').select('ciclo_id, confirmada, confirmada_en, confirmada_por, dias:semana_plan_dia(fecha, alimenta)').in('ciclo_id', ids).eq('semana_ref', hasta),
       supabase.schema('produccion').from('escenario_aplicado').select('ciclo_id, lb_dia, fila_pct, intensidad').in('ciclo_id', ids).eq('semana_ref', sumarDias(hasta, -7)).eq('estado', 'activo'),
+      supabase.schema('produccion').from('producto').select('id, nombre, nombre_corto'),
+      supabase.schema('produccion').from('vw_inventario').select('producto_id, anio, semana, saldo_final').eq('finca_id', finca.id),
+      supabase.schema('produccion').from('vw_pedido_balanceado_pendiente').select('producto_id, pendiente').eq('finca_id', finca.id),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
@@ -262,6 +268,13 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     setPatronAudit(patEn ? { nombre: nomDe[patPor] || null, en: patEn } : null)
     const apPrevDe = {}; (apPrev || []).forEach(r => { apPrevDe[r.ciclo_id] = r })
     setAplicadoPrev(apPrevDe)
+    // Producto por piscina (el de la alimentación más reciente), inventario y tránsito.
+    const prodNom = {}; (prod || []).forEach(p => { prodNom[p.id] = p.nombre_corto || p.nombre })
+    const prodCic = {}; (al || []).forEach(r => { if (r.sin_alimentacion || !r.producto_id) return; const c = prodCic[r.ciclo_id]; if (!c || r.fecha > c.fecha) prodCic[r.ciclo_id] = { fecha: r.fecha, pid: r.producto_id } })
+    const invMap = {}, invSeen = {}
+    ;(inv || []).slice().sort((a, b) => (b.anio - a.anio) || (b.semana - a.semana)).forEach(r => { if (invSeen[r.producto_id]) return; invSeen[r.producto_id] = 1; invMap[r.producto_id] = Number(r.saldo_final) || 0 })
+    const tranMap = {}; (tran || []).forEach(r => { tranMap[r.producto_id] = (tranMap[r.producto_id] || 0) + (Number(r.pendiente) || 0) })
+    setProductos(prodNom); setInventario(invMap); setTransito(tranMap)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -274,6 +287,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         cicloId: c.id, piscinaId: c.piscina.id, nombre: c.piscina.nombre,
         area: Number(c.piscina.hectareas) || 0, tolvas: c.piscina.tolvas != null ? Number(c.piscina.tolvas) : null,
         raciones: c.piscina.raciones != null ? Number(c.piscina.raciones) : null,
+        productoId: (prodCic[c.id] || {}).pid || null,
         larva: Number(c.cantidad_larva) || 0, pl: Number(c.gramaje_precria) || 0.5, siembra,
         gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
@@ -363,6 +377,26 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     }
     return { bioConf, sacCalc, sacOper, costoCons, desembolso, cob, nConf, total: tablero.length, extraSacos, extraCosto, bloq, sinEsc, desv }
   }, [tablero])
+
+  // Pedido neto por producto = requerimiento (sacos operativos del plan confirmado)
+  // − inventario − en tránsito + reserva. Agrupa las piscinas por su producto reciente.
+  const pedidoNeto = useMemo(() => {
+    if (vista !== 'tablero') return []
+    const porProd = {}
+    for (const r of tablero) {
+      if (!(r.ap && r.confirmado)) continue
+      const pid = r.f.productoId || 'sin'
+      const o = (porProd[pid] ||= { req: 0, usd: 0, n: 0 })
+      o.req += Number(r.ap.sacos_operativos) || 0
+      o.usd += r.precioAplicado; o.n++
+    }
+    return Object.entries(porProd).map(([pid, o]) => {
+      const inv = inventario[pid] || 0, tr = transito[pid] || 0, reserva = 0
+      const neto = Math.max(0, Math.ceil(o.req - inv - tr + reserva))
+      const precio = o.n ? o.usd / o.n : 0
+      return { pid, nombre: pid === 'sin' ? 'Sin producto reciente' : (productos[pid] || 'Producto'), req: o.req, inv, tr, reserva, neto, desembolso: neto * precio }
+    }).sort((a, b) => b.neto - a.neto)
+  }, [vista, tablero, inventario, transito, productos])
 
   // Biomasa seleccionada: la validada (si existe y sigue VIGENTE), si no la de consumo.
   const vald = valida[sel]
@@ -714,7 +748,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
       ) : vista === 'tablero' ? (
-        <TableroView tablero={tablero} totales={totales} filtro={filtro} setFiltro={setFiltro} hasta={hasta}
+        <TableroView tablero={tablero} totales={totales} pedidoNeto={pedidoNeto} filtro={filtro} setFiltro={setFiltro} hasta={hasta}
           onVer={id => { setSel(id); setVista('piscina'); setDesdeTablero(true) }} />
       ) : !fila ? (
         <Caja><Centro>No hay piscinas con muestreo de gramaje en esta finca a la fecha.<br />
@@ -1126,8 +1160,10 @@ function TablaDiagnostico({ filas, hasta }) {
 const cardMini = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 12px' }
 // Vista Tablero: todas las piscinas + totales en dos niveles + filtros. Solo lectura
 // (las acciones se hacen al abrir la piscina).
-function TableroView({ tablero, totales, filtro, setFiltro, hasta, onVer }) {
+function TableroView({ tablero, totales, pedidoNeto, filtro, setFiltro, hasta, onVer }) {
   const [exp, setExp] = useState(null)
+  const netoTotal = pedidoNeto.reduce((t, p) => t + p.neto, 0)
+  const desembolsoNeto = pedidoNeto.reduce((t, p) => t + p.desembolso, 0)
   const FILTROS = [['todas', 'Todas'], ['pendientes', 'Pendientes'], ['confirmar', 'Confirmar'], ['simbloq', 'Simulación / bloqueadas'], ['desv', 'Con desviación']]
   const pasa = r => filtro === 'todas' ? true : filtro === 'pendientes' ? !r.ap : filtro === 'confirmar' ? r.estadoPlan.k === 'confirmar' : filtro === 'simbloq' ? (r.estadoPlan.k === 'simulacion' || r.bloqueado) : filtro === 'desv' ? (r.delta != null && Math.abs(r.delta) > 0.10) : true
   const filas = tablero.filter(pasa)
@@ -1148,11 +1184,42 @@ function TableroView({ tablero, totales, filtro, setFiltro, hasta, onVer }) {
       </div>}
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '9px', marginBottom: '12px' }}>
-      <div style={cardMini}><div style={{ fontSize: '10.5px', color: '#185FA5' }}>Pedido neto</div><div style={{ fontSize: '12px', fontWeight: 500, color: '#9fb0bf' }}>Pendiente de inventario y tránsito</div></div>
+      <div style={cardMini}><div style={{ fontSize: '10.5px', color: '#185FA5' }}>Pedido neto</div><div style={{ fontSize: '18px', fontWeight: 500, color: AZUL }}>{netoTotal} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></div></div>
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Bloqueadas</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.bloq ? ROJO : NAVY }}>{totales.bloq}</div></div>
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Sin escenario</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.sinEsc ? AMBAR : NAVY }}>{totales.sinEsc}</div></div>
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Con desviación</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.desv ? AMBAR : NAVY }}>{totales.desv}</div></div>
     </div>
+    {pedidoNeto.length > 0 && (
+      <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+          <div style={{ ...titMini, marginBottom: 0 }}>Pedido neto por producto</div>
+          <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>= requerimiento − inventario − tránsito + reserva</span>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+          <thead><tr style={{ color: GRIS }}>
+            <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Producto</th>
+            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Requerim.</th>
+            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Inventario</th>
+            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Tránsito</th>
+            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Reserva</th>
+            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Neto</th>
+          </tr></thead>
+          <tbody>
+            {pedidoNeto.map(p => (
+              <tr key={p.pid} style={{ borderTop: '0.5px solid #eef3f7' }}>
+                <td style={{ padding: '7px 6px', color: NAVY }}>{p.nombre}</td>
+                <td style={{ padding: '7px 6px', textAlign: 'right' }}>{p.req}</td>
+                <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.inv)}</td>
+                <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.tr)}</td>
+                <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>+{p.reserva}</td>
+                <td style={{ padding: '7px 6px', textAlign: 'right', fontWeight: 500, color: p.neto > 0 ? AZUL : VERDE }}>{p.neto > 0 ? p.neto : '0 · cubierto'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Inventario (saldo de bodega) y tránsito se descuentan una sola vez. Desembolso estimado del neto: <b style={{ color: '#51606c', fontWeight: 500 }}>{dinero(desembolsoNeto)}</b>. Reserva de seguridad: pendiente de configurar.</div>
+      </div>
+    )}
     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '9px' }}>
       {FILTROS.map(([k, l]) => <button key={k} type="button" aria-pressed={filtro === k} onClick={() => setFiltro(k)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 11px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (filtro === k ? AZUL : BORDE), background: filtro === k ? '#e8f1fb' : 'white', color: filtro === k ? AZUL : NAVY, fontWeight: filtro === k ? 500 : 400 }}>{l}</button>)}
     </div>
