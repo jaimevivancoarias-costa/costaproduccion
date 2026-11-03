@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
 import { estimar, cfgFinca, PARAM } from '../lib/estimacion'
+import { construirDias } from '../lib/calendario'
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const VERDE = '#0F6E56', AMBAR = '#854F0B', ROJO = '#8A2F2E'
@@ -136,6 +137,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [patFinca, setPatFinca] = useState({}) // dia(1-7) -> alimenta (patrón de la finca)
   const [patPisc, setPatPisc] = useState({})   // piscinaId -> { dia -> alimenta } (override)
   const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
+  const [patronAudit, setPatronAudit] = useState(null) // { nombre, en } de la última edición del patrón
   const [cal, setCal] = useState(null)         // overrides de días futuros: { fecha -> alimenta } (null = propuesta)
   const [editPat, setEditPat] = useState(false) // editor del patrón de finca
   const [patTmp, setPatTmp] = useState({})      // patrón en edición { dia -> alimenta }
@@ -178,7 +180,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
       supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).eq('estado', 'activo'),
       supabase.schema('produccion').from('finca').select('raciones').eq('id', finca.id).maybeSingle(),
-      supabase.schema('produccion').from('finca_patron_dia').select('dia, alimenta').eq('finca_id', finca.id),
+      supabase.schema('produccion').from('finca_patron_dia').select('dia, alimenta, actualizado_por, actualizado_en').eq('finca_id', finca.id),
       supabase.schema('produccion').from('piscina_patron_dia').select('piscina_id, dia, alimenta').in('piscina_id', piscIds),
       supabase.schema('produccion').from('semana_plan').select('ciclo_id, confirmada, confirmada_en, confirmada_por, dias:semana_plan_dia(fecha, alimenta)').in('ciclo_id', ids).eq('semana_ref', hasta),
     ])
@@ -187,15 +189,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion }) })
     const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
     const apDe = {}; (ap || []).forEach(r => { apDe[r.ciclo_id] = r })
-    // Nombre de quién aplicó cada escenario (vive en public.usuarios).
-    const quienes = [...new Set((ap || []).map(r => r.aplicado_por).filter(Boolean))]
+    // Patrón de finca + su auditoría (quién lo editó por última vez y cuándo).
+    const patF = {}; let patPor = null, patEn = null
+    ;(pf || []).forEach(r => { patF[r.dia] = r.alimenta; if (r.actualizado_en && (!patEn || r.actualizado_en > patEn)) { patEn = r.actualizado_en; patPor = r.actualizado_por } })
+    // Nombres (quién aplicó escenarios + quién editó el patrón), de public.usuarios.
+    const quienes = [...new Set([...(ap || []).map(r => r.aplicado_por), patPor].filter(Boolean))]
+    const nomDe = {}
     if (quienes.length) {
       const { data: us } = await supabase.from('usuarios').select('id, nombre').in('id', quienes)
-      const nomDe = {}; (us || []).forEach(u => { nomDe[u.id] = u.nombre })
+      ;(us || []).forEach(u => { nomDe[u.id] = u.nombre })
       Object.values(apDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
     }
-    // Patrones de alimentación (finca y override por piscina) y plan semanal confirmado.
-    const patF = {}; (pf || []).forEach(r => { patF[r.dia] = r.alimenta })
     const patP = {}; (pp || []).forEach(r => { (patP[r.piscina_id] ||= {})[r.dia] = r.alimenta })
     const planDe = {}; (sp || []).forEach(r => {
       const dias = {}; (r.dias || []).forEach(d => { dias[d.fecha] = d.alimenta })
@@ -203,6 +207,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     })
     setValida(bvDe); setAplicado(apDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
     setPatFinca(patF); setPatPisc(patP); setPlanSemana(planDe)
+    setPatronAudit(patEn ? { nombre: nomDe[patPor] || null, en: patEn } : null)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -370,11 +375,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   }
   // Guarda el patrón de alimentación de la finca (7 días).
   async function guardarPatron() {
-    const filasPat = [1, 2, 3, 4, 5, 6, 7].map(d => ({ finca_id: finca.id, dia: d, alimenta: patTmp[d] !== false }))
+    const ahora = new Date().toISOString()
+    const filasPat = [1, 2, 3, 4, 5, 6, 7].map(d => ({ finca_id: finca.id, dia: d, alimenta: patTmp[d] !== false, actualizado_por: userId, actualizado_en: ahora }))
     const { error } = await supabase.schema('produccion').from('finca_patron_dia').upsert(filasPat, { onConflict: 'finca_id,dia' })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar el patrón') }); return }
     const nuevo = {}; filasPat.forEach(r => { nuevo[r.dia] = r.alimenta })
-    setPatFinca(nuevo); setEditPat(false)
+    setPatFinca(nuevo); setPatronAudit({ nombre: nombre || null, en: ahora }); setEditPat(false)
     const ayunoDias = [1, 2, 3, 4, 5, 6, 7].filter(d => patTmp[d] === false).map(d => DIA_LBL[d - 1])
     setAviso({ tipo: 'ok', texto: `Patrón guardado por ${nombre || 'ti'} · ${ayunoDias.length ? 'ayuno ' + ayunoDias.join(', ') : 'todos los días'} · vigente desde ${corta(hoyISO())}` })
   }
@@ -517,7 +523,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
             <div style={{ fontSize: '14px', fontWeight: 500 }}>Patrón de alimentación · {finca.nombre}</div>
-            <span onClick={() => setEditPat(false)} style={{ color: GRIS, cursor: 'pointer', fontSize: '12px' }}>Cerrar</span>
+            <button onClick={() => setEditPat(false)} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '6px' }}>
             {[1, 2, 3, 4, 5, 6, 7].map(d => {
@@ -535,6 +541,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <button onClick={guardarPatron} style={btnAzul}>Guardar patrón</button>
             <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Es solo la sugerencia por defecto; cada semana se confirma y cada piscina puede cambiar días.</span>
           </div>
+          {patronAudit && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Última edición{patronAudit.nombre ? ' por ' + patronAudit.nombre : ''} · {fechaHora(patronAudit.en)}</div>}
         </div>
       )}
 
@@ -554,9 +561,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <button onClick={() => { setMasivo(false); setMasSel(null) }} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
           </div>
           <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '8px' }}>Revisa o ajusta el borrador y luego confirma. Días cerrados = ejecución real (borde sólido); futuros = patrón (borde punteado).</div>
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', fontSize: '11.5px' }}>
-            <span onClick={() => setMasSel(new Set(confirmables))} style={{ color: AZUL, cursor: 'pointer' }}>Seleccionar confirmables</span>
-            <span onClick={() => setMasSel(new Set())} style={{ color: AZUL, cursor: 'pointer' }}>Ninguna</span>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+            <button onClick={() => setMasSel(new Set(confirmables))} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: AZUL, borderColor: AZUL }}>Seleccionar confirmables</button>
+            <button onClick={() => setMasSel(new Set())} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: GRIS }}>Ninguna</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '340px', overflowY: 'auto' }}>
             {datos.map(({ f, dias, da, sinReg, conf }) => {
@@ -569,7 +576,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                     {dias.map((d, i) => {
                       const col = d.tipo === 'sin' ? ROJO : d.alimenta ? '#0F6E56' : '#854F0B'
                       const bg = d.tipo === 'sin' ? '#FBEAEA' : d.alimenta ? '#e7f6ef' : '#FBF5E9'
-                      return <span key={i} title={`${DIA_LBL[d.i]} · ${d.cerrado ? (d.tipo === 'sin' ? 'sin registro' : 'ejecutado') : 'patrón'} · ${d.alimenta ? 'alimenta' : 'ayuno'}`}
+                      return <span key={i} role="img" aria-label={diaDescripcion(d)} title={diaDescripcion(d)}
                         style={{ fontSize: '9px', width: '17px', textAlign: 'center', padding: '2px 0', borderRadius: '3px', background: bg, color: col, border: (d.cerrado ? '1px solid ' : '1px dashed ') + col }}>{DIA_LBL[d.i][0]}</span>
                     })}
                   </span>
@@ -583,10 +590,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             })}
           </div>
           <div style={{ fontSize: '12px', color: NAVY, margin: '11px 0 9px' }}>
-            Confirmar <b style={{ fontWeight: 500 }}>{nSel}</b> piscina(s) · <b style={{ fontWeight: 500 }}>{diasSel}</b> días alimentados{bloqueadas.length > 0 && <span style={{ color: ROJO }}> · {bloqueadas.length} requieren registros pendientes</span>}
+            Confirmar <b style={{ fontWeight: 500 }}>{nSel}</b> {nSel === 1 ? 'piscina' : 'piscinas'} · <b style={{ fontWeight: 500 }}>{diasSel}</b> días alimentados{bloqueadas.length > 0 && <span style={{ color: ROJO }}> · {bloqueadas.length} {bloqueadas.length === 1 ? 'requiere registro pendiente' : 'requieren registros pendientes'}</span>}
           </div>
           {bloqueadas.length > 0 && <div style={{ fontSize: '11px', color: '#9a7636', marginBottom: '9px' }}>Pendientes: {bloqueadas.map(m => m.f.nombre).join(', ')}</div>}
-          <button onClick={confirmarMasivo} disabled={nSel === 0} style={{ ...btnAzul, opacity: nSel === 0 ? 0.5 : 1, cursor: nSel === 0 ? 'default' : 'pointer' }}>Confirmar seleccionadas ({nSel})</button>
+          <button onClick={confirmarMasivo} disabled={nSel === 0} style={{ ...btnAzul, opacity: nSel === 0 ? 0.5 : 1, cursor: nSel === 0 ? 'default' : 'pointer' }}>{nSel === 1 ? 'Confirmar 1 piscina' : `Confirmar ${nSel} piscinas`}</button>
         </div>
         )
       })()}
@@ -1019,37 +1026,12 @@ const MOTIVOS = [
   ['ayuno', 'Ayuno programado'], ['comercial', 'Decisión comercial'], ['otro', 'Otro'],
 ]
 const DIA_LBL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
-// Construye los 7 días de la semana de una piscina: pasados desde la ejecución real
-// (alsRaw), futuros desde overrides → plan confirmado → patrón de piscina → patrón de
-// finca → todos. Reutilizado por la piscina seleccionada y por la acción masiva.
-function construirDias(fila, semFechas, hoy, patFinca, patPisc, plan, overrides) {
-  const ejec = {}
-  for (const r of (fila.alsRaw || [])) {
-    if (!semFechas.length || r.fecha < semFechas[0] || r.fecha > semFechas[6]) continue
-    const e = (ejec[r.fecha] ||= { lb: 0, fed: false, ayuno: false, rec: false })
-    e.rec = true
-    if (r.ayuno) e.ayuno = true; else { e.lb += r.lb; e.fed = true }
-  }
-  const planDias = plan ? plan.dias : null
-  const ov = patPisc[fila.piscinaId] || null
-  return semFechas.map((f, i) => {
-    const dia = i + 1
-    const e = ejec[f]
-    const ejecutado = !!(e && e.rec)
-    // Cerrado = ya ejecutado (aunque sea HOY) o día pasado. La ejecución real manda.
-    if (ejecutado || f < hoy) {
-      if (!ejecutado) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
-      if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb }
-      return { fecha: f, i, cerrado: true, tipo: 'ayuno', alimenta: false, lb: 0 }
-    }
-    let a
-    if (overrides && overrides[f] !== undefined) a = overrides[f]
-    else if (planDias && planDias[f] !== undefined) a = planDias[f]
-    else if (ov && ov[dia] !== undefined) a = ov[dia]
-    else if (patFinca[dia] !== undefined) a = patFinca[dia]
-    else a = true
-    return { fecha: f, i, cerrado: false, tipo: 'plan', alimenta: a, lb: 0 }
-  })
+const DIA_LARGO = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+// Descripción accesible de un día del calendario (para lectores de pantalla).
+function diaDescripcion(d) {
+  const quien = d.cerrado ? (d.tipo === 'sin' ? 'sin registro' : 'ejecutado') : 'propuesto por patrón'
+  const qué = d.tipo === 'fed' ? `alimentó ${miles(d.lb)} lb` : d.tipo === 'sin' ? 'resolver antes de confirmar' : d.alimenta ? 'alimentar' : 'ayuno'
+  return `${DIA_LARGO[d.i]} ${Number(d.fecha.slice(8, 10))} · ${quien} · ${qué}`
 }
 // Calendario semanal: 7 celdas L–D. Días cerrados = ejecución real (solo lectura);
 // días futuros = planificables (botón con aria-pressed). Verde alimenta, ámbar ayuno,
@@ -1072,8 +1054,8 @@ function Calendario({ dias, editable, onToggle }) {
           {sub && <div style={{ fontSize: '9px', color: GRIS }}>{sub}</div>}
         </>)
         return interactivo
-          ? <button key={d.fecha} type="button" aria-pressed={d.alimenta} aria-label={`${DIA_LBL[d.i ?? i]} ${Number(d.fecha.slice(8, 10))}: ${d.alimenta ? 'alimenta' : 'ayuno'}`} onClick={() => onToggle(d.fecha, d.alimenta)} style={{ ...base, cursor: 'pointer' }}>{inner}</button>
-          : <div key={d.fecha} style={{ ...base, opacity: d.cerrado ? 0.92 : 1 }}>{inner}</div>
+          ? <button key={d.fecha} type="button" aria-pressed={d.alimenta} aria-label={diaDescripcion(d)} onClick={() => onToggle(d.fecha, d.alimenta)} style={{ ...base, cursor: 'pointer' }}>{inner}</button>
+          : <div key={d.fecha} role="img" aria-label={diaDescripcion(d)} style={{ ...base, opacity: d.cerrado ? 0.92 : 1 }}>{inner}</div>
       })}
     </div>
   )
