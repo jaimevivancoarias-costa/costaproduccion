@@ -787,11 +787,12 @@ function Matriz({ oficial, plan, pesoSaco, recoFila, recoInten, hayReco, sel, on
                 const esS = sel.fila === f && sel.inten === k
                 const borde = esR ? '2px solid ' + VERDE : esS ? '2px solid ' + AZUL : '0.5px solid transparent'
                 const bg = esR ? '#e7f6ef' : esS ? '#e8f1fb' : 'transparent'
+                const activa = esOf || esS || esR
                 return (
                   <div key={k} onClick={() => onSel(f, k)} style={{ cursor: 'pointer', textAlign: 'center', margin: '3px', padding: '7px 4px', border: borde, borderRadius: '9px', background: bg }}>
                     {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esR ? VERDE : AZUL }}>{esR ? '✓ Recomendada' : '● Tu elección'}</div>}
-                    <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: esOf ? NAVY : GRIS }}>{miles(lb)}</div>
-                    <div style={{ fontSize: '10px', color: esOf ? '#3d7a63' : '#9fb0bf' }}>{sacos} sacos</div>
+                    <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: activa ? NAVY : GRIS }}>{miles(lb)}</div>
+                    <div style={{ fontSize: '10px', color: activa ? '#3d7a63' : '#9fb0bf' }}>{sacos} sacos</div>
                   </div>
                 )
               })}
