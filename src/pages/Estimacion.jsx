@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
 import { estimar, cfgFinca, PARAM } from '../lib/estimacion'
@@ -131,6 +131,11 @@ export default function Estimacion({ finca, esJefe }) {
   const [ciclos, setCiclos] = useState([])
   const [sel, setSel] = useState('')
   const [valida, setValida] = useState({})     // cicloId -> { fuente, valor_lb }
+  const [aplicado, setAplicado] = useState({}) // cicloId -> registro de escenario_aplicado (activo, de esta semana)
+  const [fincaRac, setFincaRac] = useState(null) // raciones/día configuradas en la finca (null = sin confirmar)
+  const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
+  const [motivoTxt, setMotivoTxt] = useState('')
+  const [pidiendoMotivo, setPidiendoMotivo] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [userId, setUserId] = useState(null)
   const [aviso, setAviso] = useState(null)
@@ -140,6 +145,8 @@ export default function Estimacion({ finca, esJefe }) {
   // Tolvas
   const [editTolvas, setEditTolvas] = useState(false)
   const [tolvasTxt, setTolvasTxt] = useState('')
+  const [editRac, setEditRac] = useState(false)
+  const [racTxt, setRacTxt] = useState('')
   // Modo diagnóstico de la ventana de consumo (solo lectura)
   const [diag, setDiag] = useState(false)
 
@@ -149,21 +156,24 @@ export default function Estimacion({ finca, esJefe }) {
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     const { data: cic } = await supabase.schema('produccion').from('ciclo')
-      .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, cantidad_larva, gramaje_precria, piscina:piscina_origen_id (id, nombre, hectareas, tolvas)')
+      .select('id, fecha_siembra, fecha_ocupacion, fecha_cierre, cantidad_larva, gramaje_precria, piscina:piscina_origen_id (id, nombre, hectareas, tolvas, raciones)')
       .eq('finca_id', finca.id).is('fecha_cierre', null).lte('fecha_siembra', hasta)
     const lista = (cic || []).filter(c => c.piscina)
     const ids = lista.map(c => c.id)
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
-    const [{ data: mu }, { data: al }, { data: bv }] = await Promise.all([
+    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
+      supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).eq('estado', 'activo'),
+      supabase.schema('produccion').from('finca').select('raciones').eq('id', finca.id).maybeSingle(),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
     const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion }) })
     const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
-    setValida(bvDe)
+    const apDe = {}; (ap || []).forEach(r => { apDe[r.ciclo_id] = r })
+    setValida(bvDe); setAplicado(apDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -175,6 +185,7 @@ export default function Estimacion({ finca, esJefe }) {
       return {
         cicloId: c.id, piscinaId: c.piscina.id, nombre: c.piscina.nombre,
         area: Number(c.piscina.hectareas) || 0, tolvas: c.piscina.tolvas != null ? Number(c.piscina.tolvas) : null,
+        raciones: c.piscina.raciones != null ? Number(c.piscina.raciones) : null,
         larva: Number(c.cantidad_larva) || 0, pl: Number(c.gramaje_precria) || 0.5, siembra,
         gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
@@ -193,6 +204,8 @@ export default function Estimacion({ finca, esJefe }) {
   }, [finca.id, hasta])
 
   useEffect(() => { cargar() }, [cargar])
+  // Al cambiar de piscina o semana, la vista previa vuelve a la recomendada/aplicada.
+  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt('') }, [sel, hasta])
 
   const fila = ciclos.find(c => c.cicloId === sel)
   const est = useMemo(() => fila ? estimar({
@@ -270,23 +283,77 @@ export default function Estimacion({ finca, esJefe }) {
     setCiclos(cs => cs.map(c => c.cicloId === sel ? { ...c, tolvas: n } : c))
     setEditTolvas(false)
   }
+  async function guardarRaciones() {
+    const n = parseInt(racTxt, 10)
+    if (!isFinite(n) || n < 1) { setEditRac(false); return }
+    const { error } = await supabase.schema('produccion').from('piscina').update({ raciones: n }).eq('id', fila.piscinaId)
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar las raciones') }); return }
+    setCiclos(cs => cs.map(c => c.cicloId === sel ? { ...c, raciones: n } : c))
+    setEditRac(false)
+  }
+  // Aplica la celda activa: marca el plan anterior de esta semana como reemplazado
+  // e inserta uno nuevo (fotografía histórica). Motivo obligatorio si no es la recomendada.
+  async function aplicarEscenario() {
+    if (!est || !fila || !aplicarOk) return
+    if (requiereMotivo && !motivoTxt.trim()) { setPidiendoMotivo(true); return }
+    const registro = {
+      ciclo_id: sel, semana_ref: hasta, fila_pct: celdaAct.fila, intensidad: celdaAct.inten,
+      biomasa_lb: biomasaAsumida, tasa_pct: tasaApl, lb_dia: lbDiaSel,
+      sacos_calc: sacosSemCalc, sacos_operativos: pedir, costo_usd: usdSemSel,
+      raciones: racSinConfirmar ? null : racValor, es_recomendada: esReco,
+      motivo_eleccion: requiereMotivo ? motivoTxt.trim() : null, aplicado_por: userId,
+      datos: {
+        gramaje: fila.gramaje, dias: fila.dias, biomasaOficial: biomasaSel, fuente: fuenteUsada,
+        escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
+        usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
+        tolvas: fila.tolvas, sacosProxPedir,
+        ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
+      },
+    }
+    await supabase.schema('produccion').from('escenario_aplicado').update({ estado: 'reemplazado' }).eq('ciclo_id', sel).eq('semana_ref', hasta).eq('estado', 'activo')
+    const { data, error } = await supabase.schema('produccion').from('escenario_aplicado').insert(registro).select().single()
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
+    setAplicado(a => ({ ...a, [sel]: data }))
+    setPidiendoMotivo(false); setMotivoTxt(''); setCelda(null)
+    setAviso({ tipo: 'ok', texto: esReco ? 'Escenario recomendado aplicado.' : 'Escenario aplicado con motivo.' })
+  }
 
   const diasRest = est ? Math.max(0, est.diasProyectados - fila.dias) : 0
   const estadoPlan = planEstadoDe({ est, v, bm, bloqueado, vig })
-  // RACIÓN de esta semana: una sola biomasa fuente × tasa a la talla de HOY.
-  // lbDía = biomasaSel × tasaApl (cierre exacto). Redondeo solo al pedir.
-  const tasaApl = est ? est.planReco.tasaDia : 0
+  // Matriz de escenarios: filas = supuesto de biomasa (% de la oficial), columnas
+  // = intensidad. La recomendada es siempre 100% × escenario del motor (no baja
+  // sola); bajar a 90/80/70 exige motivo. La celda activa es la vista previa, o la
+  // aplicada de esta semana, o la recomendada.
+  const recoInten = est ? est.escenario : 'MEDIO'
+  const recoFila = 100
+  const hayReco = !bloqueado
+  const apRec = aplicado[sel] || null
+  const celdaAct = celda || (apRec ? { fila: apRec.fila_pct, inten: apRec.intensidad } : { fila: recoFila, inten: recoInten })
+  const esReco = hayReco && celdaAct.fila === recoFila && celdaAct.inten === recoInten
+  // RACIÓN de la celda activa: una sola biomasa fuente × tasa a la talla de HOY.
+  // biomasaAsumida = oficial × supuesto%. lbDía = biomasaAsumida × tasa (cierre exacto).
+  const biomasaAsumida = biomasaSel * celdaAct.fila / 100
+  const tasaApl = est ? est.plan[celdaAct.inten].tasaDia : 0
   const tasaBase = est ? est.plan.MEDIO.tasaDia : 0           // base = Medio a talla de hoy
   const ajusteInt = tasaBase > 0 ? tasaApl / tasaBase - 1 : 0
-  const lbDiaSel = biomasaSel * tasaApl / 100
+  const lbDiaSel = biomasaAsumida * tasaApl / 100
   const sacosDiaSel = lbDiaSel / PARAM.pesoSaco
   const sacosSemCalc = lbDiaSel * 7 / PARAM.pesoSaco          // sacos calculados (sin redondear)
   const pedir = Math.ceil(sacosSemCalc)                       // requerimiento operativo (hacia arriba)
   const usdSemSel = sacosSemCalc * (est ? est.alimento.usdSaco : 0)
-  // PEDIDO para la próxima semana: proyección aparte (no afecta la dosis de hoy).
+  // PEDIDO para la próxima semana: proyección aparte, sobre la biomasa oficial.
   const lbDiaProx = est ? biomasaSel * est.factorProx * est.planReco.tasaProx / 100 : 0
   const sacosProxPedir = Math.ceil(lbDiaProx * 7 / PARAM.pesoSaco)
-  const lbPorTolva = (!bloqueado && fila && fila.tolvas > 0 && est) ? biomasaSel / fila.tolvas : null
+  // Reparto por tolva: solo operativo si hay tolvas Y raciones confirmadas.
+  const racConf = (fila && fila.raciones != null) ? fila.raciones : fincaRac
+  const racSinConfirmar = racConf == null
+  const racValor = racConf != null ? racConf : 2
+  const repartoOk = !bloqueado && fila && fila.tolvas > 0 && !racSinConfirmar
+  const lbTolvaRacion = (fila && fila.tolvas > 0) ? lbDiaSel / fila.tolvas / racValor : null
+  // Aplicar: deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
+  const aplicarOk = !!(estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
+  const requiereMotivo = !esReco
+  const yaAplicada = apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
   const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
@@ -457,86 +524,124 @@ export default function Estimacion({ finca, esJefe }) {
           </Caja>
         </div>
 
-        {/* Plan + tolvas */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '14px' }}>
-          <Caja>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
-              <Titulo sinMargen>Plan de alimentación · esta semana</Titulo>
-              {!bloqueado && est && <span style={{ fontSize: '11.5px', fontWeight: 500, color: estadoPlan.color, background: estadoPlan.color + '18', padding: '3px 10px', borderRadius: '20px' }}>{estadoPlan.k === 'aplicable' ? '✓' : estadoPlan.k === 'simulacion' ? '◐' : '⚠'} Plan: {cap(estadoPlan.k === 'simulacion' ? 'simulación' : estadoPlan.k)} · {cap(est.escenario)}</span>}
+        {/* Plan de alimentación + matriz de escenarios */}
+        <Caja>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
+            <Titulo sinMargen>Plan de alimentación · esta semana</Titulo>
+            <div style={{ display: 'flex', gap: '7px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {apRec && <span style={{ fontSize: '11px', color: AZUL, background: '#e8f1fb', padding: '3px 10px', borderRadius: '20px' }}>Aplicado: {apRec.fila_pct}% · {cap(intenLbl(apRec.intensidad))}</span>}
+              {!bloqueado && est && <span style={{ fontSize: '11.5px', fontWeight: 500, color: estadoPlan.color, background: estadoPlan.color + '18', padding: '3px 10px', borderRadius: '20px' }}>{estadoPlan.k === 'aplicable' ? '✓' : estadoPlan.k === 'simulacion' ? '◐' : '⚠'} Plan: {cap(estadoPlan.k === 'simulacion' ? 'simulación' : estadoPlan.k)}</span>}
             </div>
-            {bloqueado ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '11px', background: '#f6f9fb', borderRadius: '9px', padding: '13px 15px' }}>
-                <span style={{ fontSize: '18px' }}>🔒</span>
-                <div style={{ fontSize: '12.5px', color: GRIS }}>Elige y <b>valida la biomasa</b> arriba para desbloquear el plan. Mientras tanto, los sacos de abajo son solo <b>simulación</b>.</div>
-              </div>
-            ) : (<>
-              {estadoPlan.k !== 'aplicable' && (
-                <div style={{ background: estadoPlan.color + '14', border: '0.5px solid ' + estadoPlan.color + '44', borderRadius: '9px', padding: '10px 13px', marginBottom: '12px', fontSize: '12px', color: estadoPlan.color, lineHeight: 1.5 }}>
-                  <b>{estadoPlan.txt}.</b> {estadoPlan.detalle}{estadoPlan.k === 'simulacion' ? ' — la dosis es referencial hasta revisar.' : ''}
-                </div>
-              )}
-              <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px', marginBottom: '13px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.6 }}>
-                <b style={{ color: NAVY, fontWeight: 500 }}>¿Por qué {cap(est.escenario)}?</b> {porQueTxt}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '13px', marginBottom: '11px' }}>
-                <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
-                  <div style={titMini}>Cómo sale la dosis · hoy</div>
-                  <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num3(tasaBase) + '%'} />
-                  <Row k={`Ajuste intensidad ${cap(est.escenario)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
-                  <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
-                  <Row k={`${miles(biomasaSel)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
-                </div>
-                <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
-                  <div style={titMini}>Sacos a pedir</div>
-                  <Row k="Por día" v={num1(sacosDiaSel) + ' sacos'} fuerte />
-                  <Row k={`Semana calculada (${PARAM.pesoSaco} lb)`} v={num1(sacosSemCalc) + ' sacos'} />
-                  <Row k="Requerimiento operativo" v={pedir + ' sacos'} fuerte top azul />
-                  <Row k="Costo semana" v={dinero(usdSemSel)} />
-                </div>
-              </div>
-              <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px', display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' }}>
-                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Proyección próxima semana</span>
-                pedido anticipado <b style={{ color: NAVY, fontWeight: 500 }}>{sacosProxPedir} sacos</b> — no afecta la dosis de esta semana.
-              </div>
-            </>)}
-            <div style={{ fontSize: '12.5px', color: GRIS, margin: bloqueado ? '12px 0 0' : '0 0 12px' }}>Alimento: <b style={{ color: NAVY, fontWeight: 500 }}>{est.alimento.nombre}</b> · {dinero(est.alimento.usdSaco)} el saco</div>
-            <div style={{ borderTop: '0.5px solid #eef3f7', paddingTop: '12px', display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', gap: '9px 12px', fontSize: '12.5px', alignItems: 'center' }}>
-              <span style={{ color: '#9fb0bf', fontSize: '11px' }}>Intensidad</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: (!bloqueado && est.escenario === e) ? VERDE : GRIS, fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400 }}>{cap(e)}</span>)}
-              <span style={{ color: GRIS }}>Tasa aplicada</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <b key={e} style={{ textAlign: 'right', fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400, color: NAVY }}>{num2(est.plan[e].tasaDia)}%</b>)}
-              <span style={{ color: GRIS }}>Pedir sacos/semana</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: GRIS }}>{Math.ceil(biomasaSel * est.plan[e].tasaDia / 100 * 7 / PARAM.pesoSaco)}</span>)}
+          </div>
+          {bloqueado ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '11px', background: '#f6f9fb', borderRadius: '9px', padding: '13px 15px', marginBottom: '13px' }}>
+              <span style={{ fontSize: '18px' }}>🔒</span>
+              <div style={{ fontSize: '12.5px', color: GRIS }}>Valida la biomasa arriba para desbloquear el plan. La matriz de abajo es solo <b>simulación</b> hasta validar.</div>
             </div>
-          </Caja>
+          ) : estadoPlan.k !== 'aplicable' ? (
+            <div style={{ background: estadoPlan.color + '14', border: '0.5px solid ' + estadoPlan.color + '44', borderRadius: '9px', padding: '10px 13px', marginBottom: '12px', fontSize: '12px', color: estadoPlan.color, lineHeight: 1.5 }}>
+              <b>{estadoPlan.txt}.</b> {estadoPlan.detalle}{estadoPlan.k === 'simulacion' ? ' — los sacos son referenciales.' : ''}
+            </div>
+          ) : (
+            <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px', marginBottom: '13px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.6 }}>
+              <b style={{ color: NAVY, fontWeight: 500 }}>¿Por qué {cap(est.escenario)}?</b> {porQueTxt}
+            </div>
+          )}
 
-          <Caja>
-            <Titulo>Reparto por tolva</Titulo>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-              <span style={{ fontSize: '13px', color: GRIS }}>Número de tolvas</span>
-              {editTolvas ? (
-                <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                  <input autoFocus type="number" min="0" value={tolvasTxt} onChange={e => setTolvasTxt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') guardarTolvas() }} style={{ ...inp, width: '62px' }} />
-                  <button onClick={guardarTolvas} style={btnAzul}>Guardar</button>
-                </span>
+          <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => setCelda({ fila: f, inten: k })} />
+          <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 2px 14px', lineHeight: 1.5 }}>
+            ✓ Recomendada {hayReco ? `(100% · ${intenLbl(recoInten)})` : '— sin recomendación hasta validar'} · ● tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '14px' }}>
+            {/* Detalle de la celda activa (cierra exacto: biomasa × tasa = lb/día) */}
+            <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '13px 15px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <div style={{ ...titMini, marginBottom: 0 }}>Detalle · {celdaAct.fila}% × {intenLbl(celdaAct.inten)}</div>
+                {esReco && <span style={{ fontSize: '10px', color: VERDE, background: '#e7f6ef', borderRadius: '20px', padding: '2px 9px' }}>✓ Recomendada</span>}
+              </div>
+              <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num3(tasaBase) + '%'} />
+              <Row k={`Ajuste intensidad ${intenLbl(celdaAct.inten)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
+              <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
+              <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
+              <div style={{ borderTop: '0.5px solid #e3ecf2', marginTop: '7px', paddingTop: '6px' }}>
+                <Row k="Sacos calculados" v={num1(sacosSemCalc) + ' sacos'} />
+                <Row k="Requerimiento operativo" v={pedir + ' sacos'} fuerte azul />
+                <Row k="Costo semana" v={dinero(usdSemSel)} />
+              </div>
+              <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Pedido próx. semana</span> {sacosProxPedir} sacos — no afecta hoy.
+              </div>
+            </div>
+
+            {/* Reparto por tolva: operativo solo con tolvas Y raciones confirmadas */}
+            <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '13px 15px' }}>
+              <div style={titMini}>Reparto por tolva</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', padding: '3px 0' }}>
+                <span style={{ color: GRIS }}>Tolvas</span>
+                {editTolvas ? (
+                  <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                    <input autoFocus type="number" min="0" value={tolvasTxt} onChange={e => setTolvasTxt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') guardarTolvas() }} style={{ ...inp, width: '56px' }} />
+                    <button onClick={guardarTolvas} style={btnAzul}>Ok</button>
+                  </span>
+                ) : (
+                  <span style={{ display: 'inline-flex', gap: '8px', alignItems: 'center' }}>
+                    <b style={{ fontWeight: 500 }}>{fila.tolvas != null ? fila.tolvas : '—'}</b>
+                    {esJefe && <span onClick={() => { setTolvasTxt(fila.tolvas != null ? String(fila.tolvas) : ''); setEditTolvas(true) }} style={{ color: AZUL, cursor: 'pointer', fontSize: '11.5px' }}>{fila.tolvas != null ? 'editar' : 'configurar'}</span>}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', padding: '3px 0' }}>
+                <span style={{ color: GRIS }}>Raciones por día</span>
+                {editRac ? (
+                  <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                    <input autoFocus type="number" min="1" value={racTxt} onChange={e => setRacTxt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') guardarRaciones() }} style={{ ...inp, width: '56px' }} />
+                    <button onClick={guardarRaciones} style={btnAzul}>Ok</button>
+                  </span>
+                ) : (
+                  <span style={{ display: 'inline-flex', gap: '8px', alignItems: 'center' }}>
+                    <b style={{ fontWeight: 500, color: racSinConfirmar ? AMBAR : NAVY }}>{racSinConfirmar ? '2 · sin confirmar' : racConf}</b>
+                    {esJefe && <span onClick={() => { setRacTxt(racConf != null ? String(racConf) : '2'); setEditRac(true) }} style={{ color: AZUL, cursor: 'pointer', fontSize: '11.5px' }}>{racSinConfirmar ? 'confirmar' : 'editar'}</span>}
+                  </span>
+                )}
+              </div>
+              {repartoOk ? (
+                <div style={{ background: '#e8f1fb', borderRadius: '9px', padding: '11px 13px', textAlign: 'center', marginTop: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#185FA5' }}>Balanceado por tolva y ración</div>
+                  <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{miles(lbTolvaRacion)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span></div>
+                </div>
               ) : (
-                <span style={{ display: 'inline-flex', gap: '9px', alignItems: 'center' }}>
-                  <span style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '6px 12px', fontSize: '14px', fontWeight: 500 }}>{fila.tolvas != null ? fila.tolvas : '—'}</span>
-                  {esJefe && <button onClick={() => { setTolvasTxt(fila.tolvas != null ? String(fila.tolvas) : ''); setEditTolvas(true) }} style={btnLink}>{fila.tolvas != null ? 'Editar' : 'Configurar'}</button>}
-                </span>
+                <div style={{ background: '#FBF5E9', borderRadius: '9px', padding: '11px 13px', marginTop: '8px' }}>
+                  <div style={{ fontSize: '12px', color: '#854F0B', fontWeight: 500 }}>Reparto no disponible</div>
+                  <div style={{ fontSize: '11.5px', color: '#9a7636', marginTop: '2px' }}>{bloqueado ? 'Valida la biomasa' : !fila.tolvas ? 'Configura el número de tolvas' : 'Confirma las raciones por día'} para el reparto operativo.</div>
+                  {fila.tolvas > 0 && lbTolvaRacion != null && <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Estimación preliminar ({racValor} raciones sugeridas): {miles(lbTolvaRacion)} lb por tolva.</div>}
+                </div>
               )}
             </div>
-            {lbPorTolva != null ? (
-              <div style={{ background: '#e8f1fb', borderRadius: '9px', padding: '13px 14px', textAlign: 'center' }}>
-                <div style={{ fontSize: '11.5px', color: '#185FA5' }}>Lbs de camarón por tolva</div>
-                <div style={{ fontSize: '26px', fontWeight: 500, color: NAVY }}>{miles(biomasaSel / fila.tolvas)} <span style={{ fontSize: '13px', color: GRIS }}>lb</span></div>
+          </div>
+
+          {/* Aplicar escenario (trazabilidad) */}
+          {!bloqueado && (
+            <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
+              {requiereMotivo && (
+                <div style={{ marginBottom: '10px' }}>
+                  <div style={{ fontSize: '11.5px', color: AMBAR, marginBottom: '5px' }}>Elegiste un escenario distinto al recomendado{pidiendoMotivo && !motivoTxt.trim() ? ' — anota el motivo para continuar' : ''}. Queda en el historial:</div>
+                  <input value={motivoTxt} onChange={e => setMotivoTxt(e.target.value)} placeholder="Mortalidad, raleo, transferencia, muestreo…" style={{ ...inp, width: '100%', borderColor: pidiendoMotivo && !motivoTxt.trim() ? AMBAR : BORDE }} />
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <button onClick={aplicarEscenario} disabled={!aplicarOk || yaAplicada} style={{ ...btnAzul, opacity: (!aplicarOk || yaAplicada) ? 0.5 : 1, cursor: (!aplicarOk || yaAplicada) ? 'default' : 'pointer' }}>
+                  {yaAplicada ? 'Escenario aplicado' : 'Aplicar este escenario'}
+                </button>
+                <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
+                  {!aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
+                </span>
               </div>
-            ) : (
-              <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '13px 14px', fontSize: '12.5px', color: GRIS, textAlign: 'center' }}>{bloqueado ? 'Valida la biomasa para ver el reparto.' : 'Configura el número de tolvas.'}</div>
-            )}
-            <div style={{ fontSize: '11.5px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>Revisa la carga por tolva cada semana. Si supera la capacidad o el rango operativo, ajusta tolvas, raciones u horarios.</div>
-          </Caja>
-        </div>
+            </div>
+          )}
+
+          <div style={{ fontSize: '12.5px', color: GRIS, marginTop: '13px' }}>Alimento: <b style={{ color: NAVY, fontWeight: 500 }}>{est.alimento.nombre}</b> · {dinero(est.alimento.usdSaco)} el saco</div>
+        </Caja>
       </>
       )}
 
@@ -653,6 +758,50 @@ function Mini({ k, v }) {
   return <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px' }}><div style={{ fontSize: '11px', color: GRIS }}>{k}</div><div style={{ fontSize: '19px', fontWeight: 500, color: NAVY }}>{v}</div></div>
 }
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
+const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
+// Matriz de escenarios: filas = supuesto de biomasa (% de la oficial), columnas =
+// intensidad. Marca la recomendada (verde ✓) y la elegida (azul ●). Clic = vista previa.
+function Matriz({ oficial, plan, pesoSaco, recoFila, recoInten, hayReco, sel, onSel }) {
+  const FILAS = [100, 90, 80, 70]
+  const COLS = [['BAJO', 'Baja'], ['MEDIO', 'Media'], ['ALTO', 'Alta']]
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '128px repeat(3,1fr)', minWidth: '440px', alignItems: 'center' }}>
+        <div style={{ fontSize: '10.5px', color: '#9fb0bf', padding: '10px 0 8px' }}>Supuesto de biomasa</div>
+        {COLS.map(([k, lbl]) => (
+          <div key={k} style={{ textAlign: 'center', padding: '10px 0 8px' }}><div style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>{lbl}</div><div style={{ fontSize: '10.5px', color: GRIS }}>{num3(plan[k].tasaDia)}%</div></div>
+        ))}
+        <div style={{ gridColumn: '1 / -1', borderTop: '0.5px solid #e3ecf2' }} />
+        {FILAS.map(f => {
+          const esOf = f === 100
+          return (
+            <Fragment key={f}>
+              <div style={{ padding: '8px 0' }}>
+                <div style={{ fontSize: esOf ? '13px' : '12.5px', fontWeight: esOf ? 500 : 400, color: esOf ? NAVY : '#51606c' }}>{f}% · {esOf ? 'oficial' : 'conservador'}</div>
+                <div style={{ fontSize: '10px', color: '#9fb0bf' }}>{miles(oficial * f / 100)} lb</div>
+              </div>
+              {COLS.map(([k]) => {
+                const lb = oficial * f / 100 * plan[k].tasaDia / 100
+                const sacos = Math.ceil(lb * 7 / pesoSaco)
+                const esR = hayReco && f === recoFila && k === recoInten
+                const esS = sel.fila === f && sel.inten === k
+                const borde = esR ? '2px solid ' + VERDE : esS ? '2px solid ' + AZUL : '0.5px solid transparent'
+                const bg = esR ? '#e7f6ef' : esS ? '#e8f1fb' : 'transparent'
+                return (
+                  <div key={k} onClick={() => onSel(f, k)} style={{ cursor: 'pointer', textAlign: 'center', margin: '3px', padding: '7px 4px', border: borde, borderRadius: '9px', background: bg }}>
+                    {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esR ? VERDE : AZUL }}>{esR ? '✓ Recomendada' : '● Tu elección'}</div>}
+                    <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: esOf ? NAVY : GRIS }}>{miles(lb)}</div>
+                    <div style={{ fontSize: '10px', color: esOf ? '#3d7a63' : '#9fb0bf' }}>{sacos} sacos</div>
+                  </div>
+                )
+              })}
+            </Fragment>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 function Row({ k, v, fuerte, top, azul }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', padding: '3px 0', ...(top ? { borderTop: '0.5px solid #e3ecf2', marginTop: '5px', paddingTop: '7px' } : {}) }}>
