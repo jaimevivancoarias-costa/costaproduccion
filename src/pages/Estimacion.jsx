@@ -125,6 +125,51 @@ function planEstadoDe({ est, v, bm, bloqueado, vig }) {
   return { k: 'aplicable', txt: 'Aplicable', detalle: '', color: VERDE }
 }
 
+// Resumen de una piscina para el tablero: corre el motor, estado, recomendado,
+// aplicado, Δ vs semana anterior (aplicado-vs-aplicado), plan vs ejecutado y alertas.
+function resumenPiscina(f, ctx) {
+  const { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas } = ctx
+  const est = estimar({ area: f.area, dias: f.dias, pl: f.pl, gramajeHoy: f.gramaje, consumoAcum: f.consumoAcum, larva: f.larva, gInicio: f.gIni, diasInicio: f.diasIni, consumoVentana: f.consumoVentana, meta, finca: cfg })
+  const bc = est.biomasaConsumo, bd = est.biomasaDensidad
+  const mayor = Math.max(bc, bd), menor = Math.min(bc, bd)
+  const difPct = mayor > 0 ? (mayor - menor) / mayor : 0
+  const nb = nivelBiomasa(difPct)
+  const vald = valida[f.cicloId]
+  const vig = vald ? vigenciaDe(vald, f, bc, hasta) : null
+  const valdOk = !!(vald && (!vig || vig.vigente))
+  const biomasaSel = valdOk ? vald.valor_lb : bc
+  const v = f.ventana
+  const consumoInsuf = v ? !v.valido : false
+  const bloqueado = !!((nb.bloquea || consumoInsuf) && !valdOk)
+  const estadoPlan = planEstadoDe({ est, v, bm: null, bloqueado, vig })
+  const recoInten = est.escenario
+  const ap = aplicado[f.cicloId] || null
+  const prev = aplicadoPrev[f.cicloId] || null
+  const confirmado = !!(planSemana[f.cicloId] && planSemana[f.cicloId].confirmada)
+  const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
+  const diasAlim = dias.filter(d => d.alimenta).length
+  const recoSacosCalc = biomasaSel * est.plan[recoInten].tasaDia / 100 * diasAlim / PARAM.pesoSaco
+  const recoSacos = Math.ceil(recoSacosCalc)
+  let deltaEstado, delta = null
+  if (!ap) deltaEstado = 'pendiente'
+  else if (!prev) deltaEstado = 'sin-comparable'
+  else { delta = Number(prev.lb_dia) > 0 ? (Number(ap.lb_dia) - Number(prev.lb_dia)) / Number(prev.lb_dia) : null; deltaEstado = 'ok' }
+  const vigenteDesde = ap ? String(ap.aplicado_en).slice(0, 10) : null
+  const pve = (ap && confirmado) ? planVsEjecutado({ calDias: dias, planDias: planSemana[f.cicloId].dias, lbDia: Number(ap.lb_dia), vigenteDesde }) : null
+  const cumplimiento = (pve && pve.planLb > 0) ? pve.ejecLb / pve.planLb : null
+  const muDias = f.ultMuestreo ? Math.round((new Date(hasta) - new Date(f.ultMuestreo)) / 86400000) : null
+  const alertas = []
+  if (bloqueado) alertas.push(nb.bloquea && !consumoInsuf ? `Validar biomasa ${Math.round(difPct * 100)}%` : 'Datos insuficientes · validar')
+  if (pve && pve.sinReg > 0) alertas.push(`${pve.sinReg} día(s) sin registro`)
+  if (estadoPlan.k === 'simulacion') alertas.push(estadoPlan.detalle || 'Simulación')
+  if (delta != null && Math.abs(delta) > 0.20) alertas.push(`Cambio ${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%`)
+  if (estadoPlan.k === 'confirmar' && estadoPlan.detalle) alertas.push(estadoPlan.detalle)
+  if (delta != null && Math.abs(delta) > 0.10 && Math.abs(delta) <= 0.20) alertas.push(`Cambio ${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%`)
+  if (muDias != null && muDias > 14) alertas.push(`Muestreo hace ${muDias} d`)
+  const precioAplicado = ap && Number(ap.sacos_calc) > 0 ? Number(ap.costo_usd) / Number(ap.sacos_calc) : est.alimento.usdSaco
+  return { f, est, biomasaSel, bloqueado, estadoPlan, recoInten, ap, confirmado, diasAlim, recoSacos, sacosShow: ap ? Number(ap.sacos_operativos) : (bloqueado ? null : recoSacos), sugerido: !ap, delta, deltaEstado, pve, cumplimiento, muDias, alertas, difPct, precioAplicado, usdSaco: est.alimento.usdSaco }
+}
+
 // Estimación por piscina. Toma gramaje (muestreo), consumo de balanceado y los
 // datos del ciclo, corre el motor y aplica el control de calidad de biomasa.
 export default function Estimacion({ finca, esJefe, nombre }) {
@@ -140,6 +185,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [patPisc, setPatPisc] = useState({})   // piscinaId -> { dia -> alimenta } (override)
   const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
   const [patronAudit, setPatronAudit] = useState(null) // { nombre, en } de la última edición del patrón
+  const [aplicadoPrev, setAplicadoPrev] = useState({}) // cicloId -> aplicado de la semana anterior (para Δ)
+  const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
+  const [filtro, setFiltro] = useState('todas')
+  const [desdeTablero, setDesdeTablero] = useState(false)
   const [cal, setCal] = useState(null)         // overrides de días futuros: { fecha -> alimenta } (null = propuesta)
   const [editPat, setEditPat] = useState(false) // editor del patrón de finca
   const [patTmp, setPatTmp] = useState({})      // patrón en edición { dia -> alimenta }
@@ -176,7 +225,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const ids = lista.map(c => c.id)
     const piscIds = lista.map(c => c.piscina.id)
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
-    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }] = await Promise.all([
+    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
@@ -185,6 +234,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       supabase.schema('produccion').from('finca_patron_dia').select('dia, alimenta, actualizado_por, actualizado_en').eq('finca_id', finca.id),
       supabase.schema('produccion').from('piscina_patron_dia').select('piscina_id, dia, alimenta').in('piscina_id', piscIds),
       supabase.schema('produccion').from('semana_plan').select('ciclo_id, confirmada, confirmada_en, confirmada_por, dias:semana_plan_dia(fecha, alimenta)').in('ciclo_id', ids).eq('semana_ref', hasta),
+      supabase.schema('produccion').from('escenario_aplicado').select('ciclo_id, lb_dia, fila_pct, intensidad').in('ciclo_id', ids).eq('semana_ref', sumarDias(hasta, -7)).eq('estado', 'activo'),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
@@ -210,6 +260,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     setValida(bvDe); setAplicado(apDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
     setPatFinca(patF); setPatPisc(patP); setPlanSemana(planDe)
     setPatronAudit(patEn ? { nombre: nomDe[patPor] || null, en: patEn } : null)
+    const apPrevDe = {}; (apPrev || []).forEach(r => { apPrevDe[r.ciclo_id] = r })
+    setAplicadoPrev(apPrevDe)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -277,6 +329,40 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       return { f, v, bA: eA.biomasaConsumo, bB: eB.biomasaConsumo, difA, difB, nb, conf }
     })
   }, [diag, ciclos, hasta, meta, cfg])
+
+  // Tablero: resumen de todas las piscinas de la finca para la semana.
+  const tablero = useMemo(() => {
+    if (vista !== 'tablero' || !ciclos.length) return []
+    const hoy = hoyISO()
+    const semFechas = Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i))
+    const ctx = { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas }
+    return ciclos.map(f => resumenPiscina(f, ctx))
+  }, [vista, ciclos, hasta, meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc])
+
+  // Totales en dos niveles: plan confirmado (aplicado + calendario confirmado) y
+  // proyección completa (+ recomendaciones pendientes).
+  const totales = useMemo(() => {
+    let bioConf = 0, sacCalc = 0, sacOper = 0, costoCons = 0, desembolso = 0, cob = 0, nConf = 0
+    let extraSacos = 0, extraCosto = 0, bloq = 0, sinEsc = 0, desv = 0
+    for (const r of tablero) {
+      if (r.ap) cob++
+      if (r.ap && r.confirmado) {
+        nConf++
+        bioConf += Number(r.ap.biomasa_lb) || 0
+        sacCalc += Number(r.ap.sacos_calc) || 0
+        sacOper += Number(r.ap.sacos_operativos) || 0
+        costoCons += Number(r.ap.costo_usd) || 0
+        desembolso += (Number(r.ap.sacos_operativos) || 0) * r.precioAplicado
+      } else if (!r.bloqueado) {
+        extraSacos += r.recoSacos
+        extraCosto += r.recoSacos * r.usdSaco
+      }
+      if (r.bloqueado) bloq++
+      if (!r.ap) sinEsc++
+      if (r.delta != null && Math.abs(r.delta) > 0.10) desv++
+    }
+    return { bioConf, sacCalc, sacOper, costoCons, desembolso, cob, nConf, total: tablero.length, extraSacos, extraCosto, bloq, sinEsc, desv }
+  }, [tablero])
 
   // Biomasa seleccionada: la validada (si existe y sigue VIGENTE), si no la de consumo.
   const vald = valida[sel]
@@ -505,11 +591,18 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem', background: '#eef2f6', minHeight: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <div>
-          <h1 style={{ fontSize: '21px', fontWeight: 500, margin: '0 0 2px' }}>Estimación · Por piscina</h1>
-          <div style={{ fontSize: '12.5px', color: GRIS }}>{finca.nombre} · Calculado con datos registrados hasta el {corta(hasta)}</div>
+          <h1 style={{ fontSize: '21px', fontWeight: 500, margin: '0 0 2px' }}>Estimación · {vista === 'tablero' ? 'Tablero' : 'Por piscina'}</h1>
+          <div style={{ fontSize: '12.5px', color: GRIS }}>{finca.nombre} · {vista === 'tablero' ? `${totales.cob} de ${totales.total} con escenario aplicado` : `datos registrados hasta el ${corta(hasta)}`}</div>
         </div>
         <div style={{ display: 'flex', gap: '9px', alignItems: 'center', flexWrap: 'wrap' }}>
           {ciclos.length > 0 && (
+            <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
+              {['piscina', 'tablero'].map(x => (
+                <button key={x} onClick={() => setVista(x)} style={{ padding: '7px 13px', fontSize: '12.5px', fontFamily: 'inherit', border: 'none', cursor: 'pointer', fontWeight: vista === x ? 500 : 400, background: vista === x ? AZUL : 'white', color: vista === x ? 'white' : GRIS }}>{x === 'piscina' ? 'Por piscina' : 'Tablero'}</button>
+              ))}
+            </span>
+          )}
+          {vista !== 'tablero' && ciclos.length > 0 && (
             <select value={sel} onChange={e => setSel(e.target.value)} style={inp}>
               {ciclos.map(c => <option key={c.cicloId} value={c.cicloId}>{c.nombre}</option>)}
             </select>
@@ -620,12 +713,18 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
+      ) : vista === 'tablero' ? (
+        <TableroView tablero={tablero} totales={totales} filtro={filtro} setFiltro={setFiltro} hasta={hasta}
+          onVer={id => { setSel(id); setVista('piscina'); setDesdeTablero(true) }} />
       ) : !fila ? (
         <Caja><Centro>No hay piscinas con muestreo de gramaje en esta finca a la fecha.<br />
           <span style={{ fontSize: '12px' }}>Registra el gramaje en el módulo Gramaje para que salga la estimación.</span>
         </Centro></Caja>
       ) : (
       <>
+        {desdeTablero && (
+          <button onClick={() => setVista('tablero')} style={{ ...inp, cursor: 'pointer', color: AZUL, borderColor: BORDE, marginBottom: '12px' }}>‹ Volver al tablero</button>
+        )}
         {vald && !valdOk && vig && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '9px', background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '10px', padding: '10px 14px', marginBottom: '10px', fontSize: '12.5px', color: AMBAR }}>
             <span>⏱</span><span>La validación manual venció: <b>{vig.motivos.join(' · ')}</b>. Se usa la biomasa por consumo; vuelve a validar si corresponde.</span>
@@ -1022,6 +1121,85 @@ function TablaDiagnostico({ filas, hasta }) {
       </div>
     </div>
   )
+}
+
+const cardMini = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 12px' }
+// Vista Tablero: todas las piscinas + totales en dos niveles + filtros. Solo lectura
+// (las acciones se hacen al abrir la piscina).
+function TableroView({ tablero, totales, filtro, setFiltro, hasta, onVer }) {
+  const [exp, setExp] = useState(null)
+  const FILTROS = [['todas', 'Todas'], ['pendientes', 'Pendientes'], ['confirmar', 'Confirmar'], ['simbloq', 'Simulación / bloqueadas'], ['desv', 'Con desviación']]
+  const pasa = r => filtro === 'todas' ? true : filtro === 'pendientes' ? !r.ap : filtro === 'confirmar' ? r.estadoPlan.k === 'confirmar' : filtro === 'simbloq' ? (r.estadoPlan.k === 'simulacion' || r.bloqueado) : filtro === 'desv' ? (r.delta != null && Math.abs(r.delta) > 0.10) : true
+  const filas = tablero.filter(pasa)
+  const estPill = k => k === 'aplicable' ? ['Aplicable', VERDE] : k === 'confirmar' ? ['Confirmar', AMBAR] : k === 'simulacion' ? ['Simulación', ROJO] : ['Bloqueado', ROJO]
+  const th = { padding: '9px 6px', fontWeight: 500, textAlign: 'right', color: GRIS }
+  return (<>
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '10px' }}>
+      <div style={{ ...titMini, marginBottom: '9px' }}>Total del plan semanal confirmado · {totales.nConf} piscinas</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: '11px' }}>
+        <Mini k="Biomasa confiable" v={miles(totales.bioConf) + ' lb'} />
+        <Mini k="Sacos calculados" v={num1(totales.sacCalc)} />
+        <Mini k="Sacos operativos (Σ ceil)" v={String(totales.sacOper)} />
+        <Mini k="Costo de consumo" v={dinero(totales.costoCons)} />
+        <Mini k="Desembolso operativo" v={dinero(totales.desembolso)} />
+      </div>
+      {(totales.sinEsc - totales.bloq) > 0 && <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '11px', paddingTop: '9px', fontSize: '12px', color: '#4a5a67' }}>
+        <b style={{ fontWeight: 500, color: AZUL }}>Proyección completa:</b> si se aceptan las {totales.sinEsc - totales.bloq} recomendaciones pendientes → +{totales.extraSacos} sacos · +{dinero(totales.extraCosto)}.
+      </div>}
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '9px', marginBottom: '12px' }}>
+      <div style={cardMini}><div style={{ fontSize: '10.5px', color: '#185FA5' }}>Pedido neto</div><div style={{ fontSize: '12px', fontWeight: 500, color: '#9fb0bf' }}>Pendiente de inventario y tránsito</div></div>
+      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Bloqueadas</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.bloq ? ROJO : NAVY }}>{totales.bloq}</div></div>
+      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Sin escenario</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.sinEsc ? AMBAR : NAVY }}>{totales.sinEsc}</div></div>
+      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Con desviación</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.desv ? AMBAR : NAVY }}>{totales.desv}</div></div>
+    </div>
+    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '9px' }}>
+      {FILTROS.map(([k, l]) => <button key={k} onClick={() => setFiltro(k)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 11px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (filtro === k ? AZUL : BORDE), background: filtro === k ? '#e8f1fb' : 'white', color: filtro === k ? AZUL : NAVY, fontWeight: filtro === k ? 500 : 400 }}>{l}</button>)}
+    </div>
+    <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+        <thead><tr style={{ color: GRIS }}>
+          <th style={{ ...th, textAlign: 'left', paddingLeft: '12px' }}>Piscina</th>
+          <th style={{ ...th, textAlign: 'left' }}>Estado</th>
+          <th style={th}>Gramaje</th>
+          <th style={th}>Biomasa</th>
+          <th style={th}>Aplicado</th>
+          <th style={th}>Sacos</th>
+          <th style={{ ...th, textAlign: 'left' }}>Alerta</th>
+          <th style={{ ...th, paddingRight: '12px' }}></th>
+        </tr></thead>
+        <tbody>
+          {filas.map(r => {
+            const [et, ec] = estPill(r.estadoPlan.k)
+            const abierto = exp === r.f.cicloId
+            return (<Fragment key={r.f.cicloId}>
+              <tr style={{ borderTop: '0.5px solid ' + BORDE }}>
+                <td style={{ padding: '9px 6px 9px 12px', color: NAVY, fontWeight: 500 }}>{r.f.nombre}</td>
+                <td style={{ padding: '9px 6px' }}><span style={{ fontSize: '10px', fontWeight: 500, color: ec, background: ec + '18', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap' }}>{et}</span></td>
+                <td style={{ padding: '9px 6px', textAlign: 'right', color: GRIS }}>{num1(r.f.gramaje)} g</td>
+                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.bloqueado && !r.ap ? <span style={{ color: '#c9d3dc' }}>—</span> : miles(r.biomasaSel) + ' lb'}</td>
+                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.ap ? <b style={{ fontWeight: 500 }}>{r.ap.fila_pct}% · {cap(intenLbl(r.ap.intensidad))}</b> : <span style={{ color: '#c9d3dc' }}>—</span>}</td>
+                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.sacosShow == null ? <span style={{ color: '#c9d3dc' }}>sim.</span> : r.sugerido ? <span style={{ color: GRIS }}>{r.sacosShow} <span style={{ fontSize: '9px' }}>sug.</span></span> : <b style={{ fontWeight: 500 }}>{r.sacosShow}</b>}</td>
+                <td style={{ padding: '9px 6px', textAlign: 'left', color: r.alertas.length ? ((r.bloqueado || r.estadoPlan.k === 'simulacion') ? ROJO : AMBAR) : '#c9d3dc' }}>{r.alertas[0] || '—'}{r.alertas.length > 1 && <span style={{ color: GRIS, fontSize: '10px' }}> +{r.alertas.length - 1}</span>}</td>
+                <td style={{ padding: '9px 12px 9px 6px', textAlign: 'right' }}><span onClick={() => setExp(abierto ? null : r.f.cicloId)} style={{ color: AZUL, cursor: 'pointer' }}>{abierto ? 'Ocultar' : 'Ver'} ›</span></td>
+              </tr>
+              {abierto && <tr style={{ background: '#f6f9fb' }}><td colSpan={8} style={{ padding: '10px 12px' }}>
+                <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px', color: GRIS }}>
+                  <span>Recomendado: <b style={{ color: NAVY, fontWeight: 500 }}>100% · {cap(intenLbl(r.recoInten))}</b></span>
+                  <span>Δ vs semana anterior: <b style={{ color: NAVY, fontWeight: 500 }}>{r.deltaEstado === 'pendiente' ? 'Pendiente' : r.deltaEstado === 'sin-comparable' ? 'Sin semana comparable' : `${r.delta >= 0 ? '+' : ''}${Math.round(r.delta * 100)}%`}</b></span>
+                  <span>Plan / ejecutado: <b style={{ color: NAVY, fontWeight: 500 }}>{r.cumplimiento != null ? Math.round(r.cumplimiento * 100) + '%' : '—'}</b></span>
+                  <span>Muestreo: <b style={{ color: NAVY, fontWeight: 500 }}>{r.muDias != null ? `hace ${r.muDias} d` : '—'}</b></span>
+                </div>
+                {r.alertas.length > 0 && <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Alertas: {r.alertas.join(' · ')}</div>}
+                <button onClick={() => onVer(r.f.cicloId)} style={{ ...btnAzul, marginTop: '10px' }}>Abrir piscina ›</button>
+              </td></tr>}
+            </Fragment>)
+          })}
+        </tbody>
+      </table>
+    </div>
+    <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Totales del plan semanal (sumas). El confirmado suma solo escenarios aplicados con calendario confirmado; la proyección agrega las recomendaciones pendientes.</div>
+  </>)
 }
 
 const inp = { padding: '7px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, boxSizing: 'border-box' }
