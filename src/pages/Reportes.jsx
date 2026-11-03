@@ -167,58 +167,12 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     return () => { vivo = false; clearTimeout(t) }
   }, [vista, finca.id, hasta])
 
-  // Desglose del consumo de balanceado por precio REAL (FIFO por lote): cuántos
-  // sacos salieron a cada precio de compra. "Lo que es", no el promedio por día.
-  // Va aparte y no rompe si la función aún no está en la base.
+  // El desglose por lote (FIFO real) se carga POR PRODUCTO al abrir su flechita
+  // (fn_reporte_consumo_lotes de UN producto), no todos de golpe — las versiones
+  // "_todos" son muy pesadas en fincas grandes y se pasan del límite de tiempo.
+  // Al cambiar finca/rango se limpia la caché para no mostrar datos viejos.
   useEffect(() => {
-    if (vista !== 'consumo') return
-    let vivo = true
-    // Se difiere ~0,5s para no competir con la consulta principal del consumo
-    // (si no, bajo carga simultánea una se pasa del límite de tiempo).
-    const t = setTimeout(() => {
-      supabase.schema('produccion').rpc('fn_reporte_consumo_lotes_todos',
-        { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
-        .then(({ data, error }) => {
-          if (!vivo) return
-          if (error) { setPorPrecio({}); return }
-          const m = {}
-          ;(data || []).forEach(r => {
-            const precio = Number(r.precio), sacos = Number(r.sacos), fecha = r.fecha || null
-            ;(m[r.producto_id] = m[r.producto_id] || []).push({ fecha, precio, sacos, costo: precio * sacos })
-          })
-          Object.values(m).forEach(arr => arr.sort((a, b) =>
-            String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
-          setPorPrecio(m)
-        })
-        .catch(() => { if (vivo) setPorPrecio({}) })
-    }, 500)
-    return () => { vivo = false; clearTimeout(t) }
-  }, [vista, finca.id, desde, hasta])
-
-  // Desglose del consumo de INSUMOS por lote REAL (FIFO): fecha de compra,
-  // cantidad (en unidad de compra) y precio de cada lote. Solo por finca.
-  useEffect(() => {
-    if (vista !== 'consumo') return
-    let vivo = true
-    if (todasFincas) { setPorLoteIns({}); return () => { vivo = false } }
-    const t = setTimeout(() => {
-      supabase.schema('produccion').rpc('fn_reporte_consumo_insumo_lotes_todos',
-        { p_finca: finca.id, p_desde: desde, p_hasta: hasta })
-        .then(({ data, error }) => {
-          if (!vivo) return
-          if (error) { setPorLoteIns({}); return }
-          const m = {}
-          ;(data || []).forEach(r => {
-            const precio = Number(r.precio), cantidad = Number(r.cantidad), fecha = r.fecha || null
-            ;(m[r.insumo_id] = m[r.insumo_id] || []).push({ fecha, precio, cantidad, costo: precio * cantidad })
-          })
-          Object.values(m).forEach(arr => arr.sort((a, b) =>
-            String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
-          setPorLoteIns(m)
-        })
-        .catch(() => { if (vivo) setPorLoteIns({}) })
-    }, 650)
-    return () => { vivo = false; clearTimeout(t) }
+    setPorPrecio({}); setPorLoteIns({}); setAbiertoP({})
   }, [vista, finca.id, desde, hasta, todasFincas])
 
   // Diesel del rango (finca individual). En modo Todas se omite. Solo en Consumo.
@@ -475,6 +429,28 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       return { rows: ps.map(x => ({ fecha: x.fecha, cant: x.cantidad, precio: x.precio, costo: x.costo })), countUnit: uc, priceUnit: uc }
     }
     return null
+  }
+  // Flechita de desglose por lote: se muestra para ítem con consumo (balanceado/
+  // insumo, una finca) y el detalle se CARGA al abrir (lazy, un producto).
+  const puedeLote = g => agrupar === 'item' && !todasFincas && !g.mixto && Number(g.cantidad) > 0 &&
+    (g.tipo === 'balanceado' || g.tipo === 'insumo')
+  const cacheLote = g => g.tipo === 'balanceado' ? porPrecio[g.clave] : porLoteIns[g.clave]
+  async function abrirLote(g) {
+    const abrir = !abiertoP[g.clave]
+    setAbiertoP(a => ({ ...a, [g.clave]: abrir }))
+    if (!abrir || cacheLote(g) !== undefined) return
+    const id = g.clave
+    if (g.tipo === 'balanceado') {
+      const { data } = await supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: id, p_desde: desde, p_hasta: hasta })
+      const arr = (data || []).map(r => ({ fecha: r.fecha || null, precio: Number(r.precio), sacos: Number(r.sacos), costo: Number(r.precio) * Number(r.sacos) }))
+        .sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio)
+      setPorPrecio(m => ({ ...m, [id]: arr }))
+    } else {
+      const { data } = await supabase.schema('produccion').rpc('fn_reporte_consumo_insumo_lotes', { p_finca: finca.id, p_insumo: id, p_desde: desde, p_hasta: hasta })
+      const arr = (data || []).map(r => ({ fecha: r.fecha || null, precio: Number(r.precio), cantidad: Number(r.cantidad), costo: Number(r.precio) * Number(r.cantidad) }))
+        .sort((a, b) => String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio)
+      setPorLoteIns(m => ({ ...m, [id]: arr }))
+    }
   }
   // "Equivale a" (como llega). Balanceado → sacos (lb/55). Insumo → cantidad/factor
   // en la unidad de compra, solo cuando la unidad de uso es real y distinta.
@@ -816,8 +792,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
                     padding: '11px 16px', alignItems: 'center', fontSize: '13px' }}>
               <span>
-                {esJefe && loteDatos(g) && (
-                  <button onClick={() => setAbiertoP(a => ({ ...a, [g.clave]: !a[g.clave] }))}
+                {esJefe && puedeLote(g) && (
+                  <button onClick={() => abrirLote(g)}
                     style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, marginRight: '6px' }}>
                     {abiertoP[g.clave] ? '▾' : '▸'}</button>
                 )}
@@ -852,6 +828,12 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 </span>
               )}
             </div>
+            {esJefe && abiertoP[g.clave] && puedeLote(g) && cacheLote(g) === undefined && (
+              <div style={{ margin: '2px 16px 11px 42px', fontSize: '12px', color: GRIS }}>Cargando lotes…</div>
+            )}
+            {esJefe && abiertoP[g.clave] && cacheLote(g) !== undefined && !loteDatos(g) && (
+              <div style={{ margin: '2px 16px 11px 42px', fontSize: '12px', color: GRIS }}>Salió todo a un solo precio.</div>
+            )}
             {esJefe && abiertoP[g.clave] && loteDatos(g) && (() => {
               const ld = loteDatos(g)
               const tU = ld.rows.reduce((t, x) => t + Number(x.cant), 0)
