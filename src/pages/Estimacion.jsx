@@ -137,6 +137,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [patPisc, setPatPisc] = useState({})   // piscinaId -> { dia -> alimenta } (override)
   const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
   const [cal, setCal] = useState(null)         // overrides de días futuros: { fecha -> alimenta } (null = propuesta)
+  const [editPat, setEditPat] = useState(false) // editor del patrón de finca
+  const [patTmp, setPatTmp] = useState({})      // patrón en edición { dia -> alimenta }
+  const [masivo, setMasivo] = useState(false)   // panel de preparación masiva
+  const [masSel, setMasSel] = useState(null)    // Set de cicloId seleccionados en el panel masivo
   const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
   const [motivoTxt, setMotivoTxt] = useState('')
   const [pidiendoMotivo, setPidiendoMotivo] = useState(false)
@@ -360,6 +364,37 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     setCal(null)
     setAviso({ tipo: 'ok', texto: 'Semana confirmada.' })
   }
+  // Guarda el patrón de alimentación de la finca (7 días).
+  async function guardarPatron() {
+    const filasPat = [1, 2, 3, 4, 5, 6, 7].map(d => ({ finca_id: finca.id, dia: d, alimenta: patTmp[d] !== false }))
+    const { error } = await supabase.schema('produccion').from('finca_patron_dia').upsert(filasPat, { onConflict: 'finca_id,dia' })
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar el patrón') }); return }
+    const nuevo = {}; filasPat.forEach(r => { nuevo[r.dia] = r.alimenta })
+    setPatFinca(nuevo); setEditPat(false)
+    setAviso({ tipo: 'ok', texto: 'Patrón de finca guardado.' })
+  }
+  // Abre el panel masivo preseleccionando las piscinas confirmables (sin días sin registro).
+  function abrirMasivo() {
+    const sel0 = new Set(ciclos.filter(f => !construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null).some(d => d.tipo === 'sin')).map(f => f.cicloId))
+    setMasSel(sel0); setMasivo(true)
+  }
+  // Confirma la semana para las piscinas seleccionadas (bucle sobre confirmar_semana).
+  async function confirmarMasivo() {
+    const seleccion = masSel || new Set()
+    let ok = 0, err = 0
+    for (const f of ciclos.filter(c => seleccion.has(c.cicloId))) {
+      const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
+      if (dias.some(d => d.tipo === 'sin')) { err++; continue }
+      const payload = dias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta }))
+      const { error } = await supabase.schema('produccion').rpc('confirmar_semana', { p_ciclo_id: f.cicloId, p_semana_ref: hasta, p_dias: payload })
+      if (error) { err++; continue }
+      const dm = {}; payload.forEach(d => { dm[d.fecha] = d.alimenta })
+      setPlanSemana(p => ({ ...p, [f.cicloId]: { confirmada: true, confirmada_en: new Date().toISOString(), confirmada_por: userId, dias: dm } }))
+      ok++
+    }
+    setMasivo(false); setMasSel(null)
+    setAviso({ tipo: err ? 'error' : 'ok', texto: `Confirmadas ${ok} piscina(s)${err ? ` · ${err} con días sin registro` : ''}.` })
+  }
 
   const diasRest = est ? Math.max(0, est.diasProyectados - fila.dias) : 0
   const estadoPlan = planEstadoDe({ est, v, bm, bloqueado, vig })
@@ -378,31 +413,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // los días de hoy en adelante se planifican. La propuesta futura sale del plan
   // confirmado → override de piscina → patrón de finca → todos.
   const hoy = hoyISO()
-  const semFechas = (est && fila) ? Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i)) : []
+  const semFechas = Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i))
   const planSel = planSemana[sel] || null
-  const ejecSem = {}
-  if (fila) for (const r of fila.alsRaw) {
-    if (!semFechas.length || r.fecha < semFechas[0] || r.fecha > semFechas[6]) continue
-    const e = (ejecSem[r.fecha] ||= { lb: 0, fed: false, ayuno: false, rec: false })
-    e.rec = true
-    if (r.ayuno) e.ayuno = true; else { e.lb += r.lb; e.fed = true }
-  }
-  const calDias = semFechas.map((f, i) => {
-    const dia = i + 1
-    if (f < hoy) {                                   // día cerrado → ejecución real
-      const e = ejecSem[f]
-      if (!e || !e.rec) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
-      if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb }
-      return { fecha: f, i, cerrado: true, tipo: 'ayuno', alimenta: false, lb: 0 }
-    }
-    let alim                                         // día futuro → planificable
-    if (cal && cal[f] !== undefined) alim = cal[f]
-    else if (planSel && planSel.dias[f] !== undefined) alim = planSel.dias[f]
-    else if (fila && patPisc[fila.piscinaId] && patPisc[fila.piscinaId][dia] !== undefined) alim = patPisc[fila.piscinaId][dia]
-    else if (patFinca[dia] !== undefined) alim = patFinca[dia]
-    else alim = true
-    return { fecha: f, i, cerrado: false, tipo: 'plan', alimenta: alim, lb: 0 }
-  })
+  const calDias = fila ? construirDias(fila, semFechas, hoy, patFinca, patPisc, planSel, cal) : []
   const diasAlim = calDias.filter(d => d.alimenta).length
   const haySinRegistro = calDias.some(d => d.tipo === 'sin')
   const hayEdit = !!(cal && Object.keys(cal).length)
@@ -474,6 +487,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <span style={{ color: NAVY, minWidth: '118px', textAlign: 'center' }}>{corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</span>
             <button onClick={() => setHasta(h => { const n = sumarDias(h, 7); return n > hoyISO() ? h : n })} style={{ ...flecha, opacity: domingoDe(hasta) >= hoyISO() ? 0.35 : 1 }} title="Semana siguiente">›</button>
           </span>
+          {finca.rol === 'jefe' && ciclos.length > 0 && (<>
+            <button onClick={() => { setPatTmp(Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map(d => [d, patFinca[d] !== false]))); setEditPat(true) }} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Define qué días alimenta la finca por defecto">Patrón de finca</button>
+            <button onClick={abrirMasivo} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Prepara y confirma la semana para varias piscinas">Preparar semana</button>
+          </>)}
           {esJefe && ciclos.length > 0 && (
             <button onClick={() => setDiag(d => !d)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: diag ? AZUL : GRIS, borderColor: diag ? AZUL : BORDE }} title="Compara la ventana de consumo actual con la ponderada">
               {diag ? 'Ocultar diagnóstico' : 'Diagnóstico'}
@@ -483,6 +500,64 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       </div>
 
       {aviso && <div style={{ borderRadius: '10px', padding: '11px 14px', fontSize: '13px', marginBottom: '12px', background: aviso.tipo === 'ok' ? '#E1F5EE' : '#FBEAEA', color: aviso.tipo === 'ok' ? '#0F6E56' : '#8A2F2E' }}>{aviso.texto}</div>}
+
+      {editPat && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 500 }}>Patrón de alimentación · {finca.nombre}</div>
+            <span onClick={() => setEditPat(false)} style={{ color: GRIS, cursor: 'pointer', fontSize: '12px' }}>Cerrar</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '6px' }}>
+            {[1, 2, 3, 4, 5, 6, 7].map(d => {
+              const on = patTmp[d] !== false
+              return (
+                <button key={d} type="button" aria-pressed={on} onClick={() => setPatTmp(p => ({ ...p, [d]: !on }))}
+                  style={{ textAlign: 'center', padding: '8px 2px', borderRadius: '8px', fontFamily: 'inherit', cursor: 'pointer', background: on ? '#e7f6ef' : '#FBF5E9', border: '1px solid ' + (on ? '#bfe6d2' : '#ecd9b4') }}>
+                  <div style={{ fontSize: '11px', color: NAVY, fontWeight: 500 }}>{DIA_LBL[d - 1]}</div>
+                  <div style={{ fontSize: '9.5px', color: on ? '#0F6E56' : '#854F0B' }}>{on ? 'Alimenta' : 'Ayuno'}</div>
+                </button>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+            <button onClick={guardarPatron} style={btnAzul}>Guardar patrón</button>
+            <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Es solo la sugerencia por defecto; cada semana se confirma y cada piscina puede cambiar días.</span>
+          </div>
+        </div>
+      )}
+
+      {masivo && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 500 }}>Preparar semana · {corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</div>
+            <span onClick={() => { setMasivo(false); setMasSel(null) }} style={{ color: GRIS, cursor: 'pointer', fontSize: '12px' }}>Cerrar</span>
+          </div>
+          <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>Revisa y destilda las que no quieras. Para cambiar días puntuales de una piscina, confírmala y ajústala en su calendario.</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '320px', overflowY: 'auto' }}>
+            {ciclos.map(f => {
+              const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
+              const da = dias.filter(d => d.alimenta).length
+              const sinReg = dias.some(d => d.tipo === 'sin')
+              const ayunos = dias.filter(d => !d.cerrado && !d.alimenta).map(d => DIA_LBL[d.i]).join(', ')
+              const conf = planSemana[f.cicloId] && planSemana[f.cicloId].confirmada
+              const checked = !!(masSel && masSel.has(f.cicloId))
+              return (
+                <label key={f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 9px', borderRadius: '8px', background: '#f6f9fb', fontSize: '12.5px', cursor: sinReg ? 'default' : 'pointer', opacity: sinReg ? 0.6 : 1 }}>
+                  <input type="checkbox" disabled={sinReg} checked={checked} onChange={e => setMasSel(s => { const n = new Set(s); if (e.target.checked) n.add(f.cicloId); else n.delete(f.cicloId); return n })} />
+                  <span style={{ flex: 1, color: NAVY }}>{f.nombre}</span>
+                  <span style={{ color: GRIS }}>{da}/7 días</span>
+                  <span style={{ color: GRIS, minWidth: '120px', textAlign: 'right' }}>{sinReg ? <span style={{ color: ROJO }}>día sin registro</span> : ayunos ? 'Ayuno: ' + ayunos : 'sin ayunos'}</span>
+                  {conf && <span style={{ color: VERDE, fontSize: '10.5px' }}>✓ confirmada</span>}
+                </label>
+              )
+            })}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+            <button onClick={confirmarMasivo} disabled={!masSel || masSel.size === 0} style={{ ...btnAzul, opacity: (!masSel || masSel.size === 0) ? 0.5 : 1, cursor: (!masSel || masSel.size === 0) ? 'default' : 'pointer' }}>Confirmar seleccionadas ({masSel ? masSel.size : 0})</button>
+            <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Las piscinas con un día pasado sin registro no se pueden confirmar hasta resolverlo.</span>
+          </div>
+        </div>
+      )}
 
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
@@ -889,6 +964,36 @@ function Mini({ k, v }) {
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
 const DIA_LBL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+// Construye los 7 días de la semana de una piscina: pasados desde la ejecución real
+// (alsRaw), futuros desde overrides → plan confirmado → patrón de piscina → patrón de
+// finca → todos. Reutilizado por la piscina seleccionada y por la acción masiva.
+function construirDias(fila, semFechas, hoy, patFinca, patPisc, plan, overrides) {
+  const ejec = {}
+  for (const r of (fila.alsRaw || [])) {
+    if (!semFechas.length || r.fecha < semFechas[0] || r.fecha > semFechas[6]) continue
+    const e = (ejec[r.fecha] ||= { lb: 0, fed: false, ayuno: false, rec: false })
+    e.rec = true
+    if (r.ayuno) e.ayuno = true; else { e.lb += r.lb; e.fed = true }
+  }
+  const planDias = plan ? plan.dias : null
+  const ov = patPisc[fila.piscinaId] || null
+  return semFechas.map((f, i) => {
+    const dia = i + 1
+    if (f < hoy) {
+      const e = ejec[f]
+      if (!e || !e.rec) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
+      if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb }
+      return { fecha: f, i, cerrado: true, tipo: 'ayuno', alimenta: false, lb: 0 }
+    }
+    let a
+    if (overrides && overrides[f] !== undefined) a = overrides[f]
+    else if (planDias && planDias[f] !== undefined) a = planDias[f]
+    else if (ov && ov[dia] !== undefined) a = ov[dia]
+    else if (patFinca[dia] !== undefined) a = patFinca[dia]
+    else a = true
+    return { fecha: f, i, cerrado: false, tipo: 'plan', alimenta: a, lb: 0 }
+  })
+}
 // Calendario semanal: 7 celdas L–D. Días cerrados = ejecución real (solo lectura);
 // días futuros = planificables (botón con aria-pressed). Verde alimenta, ámbar ayuno,
 // rojo sin registro.
