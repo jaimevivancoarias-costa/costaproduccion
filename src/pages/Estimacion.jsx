@@ -189,6 +189,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [productos, setProductos] = useState({})       // producto_id -> nombre
   const [inventario, setInventario] = useState({})     // producto_id -> saldo_final (sacos)
   const [transito, setTransito] = useState({})         // producto_id -> pendiente (sacos)
+  const [precioProd, setPrecioProd] = useState({})     // producto_id -> { precio, fecha } (precio vigente)
+  const [invCorte, setInvCorte] = useState(null)       // fecha/hora del corte de inventario
+  const [reservaDias, setReservaDias] = useState(2)    // parámetro: días alimentados de reserva
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
   const [filtro, setFiltro] = useState('todas')
   const [desdeTablero, setDesdeTablero] = useState(false)
@@ -228,7 +231,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const ids = lista.map(c => c.id)
     const piscIds = lista.map(c => c.piscina.id)
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
-    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }, { data: prod }, { data: inv }, { data: tran }] = await Promise.all([
+    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }, { data: prod }, { data: inv }, { data: tran }, { data: par }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco, producto_id').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
@@ -239,8 +242,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       supabase.schema('produccion').from('semana_plan').select('ciclo_id, confirmada, confirmada_en, confirmada_por, dias:semana_plan_dia(fecha, alimenta)').in('ciclo_id', ids).eq('semana_ref', hasta),
       supabase.schema('produccion').from('escenario_aplicado').select('ciclo_id, lb_dia, fila_pct, intensidad').in('ciclo_id', ids).eq('semana_ref', sumarDias(hasta, -7)).eq('estado', 'activo'),
       supabase.schema('produccion').from('producto').select('id, nombre, nombre_corto'),
-      supabase.schema('produccion').from('vw_inventario').select('producto_id, anio, semana, saldo_final').eq('finca_id', finca.id),
+      supabase.schema('produccion').from('vw_inventario').select('producto_id, anio, semana, saldo_final, actualizado_en').eq('finca_id', finca.id),
       supabase.schema('produccion').from('vw_pedido_balanceado_pendiente').select('producto_id, pendiente').eq('finca_id', finca.id),
+      supabase.schema('produccion').from('parametro').select('clave, valor'),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
@@ -274,7 +278,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const invMap = {}, invSeen = {}
     ;(inv || []).slice().sort((a, b) => (b.anio - a.anio) || (b.semana - a.semana)).forEach(r => { if (invSeen[r.producto_id]) return; invSeen[r.producto_id] = 1; invMap[r.producto_id] = Number(r.saldo_final) || 0 })
     const tranMap = {}; (tran || []).forEach(r => { tranMap[r.producto_id] = (tranMap[r.producto_id] || 0) + (Number(r.pendiente) || 0) })
+    // Corte del inventario (máx actualizado_en) y precio vigente por producto (último precio_saco registrado).
+    let corte = null; (inv || []).forEach(r => { if (r.actualizado_en && (!corte || r.actualizado_en > corte)) corte = r.actualizado_en })
+    const precioMap = {}; (al || []).forEach(r => { if (!r.producto_id || !(Number(r.precio_saco) > 0)) return; const c = precioMap[r.producto_id]; if (!c || r.fecha > c.fecha) precioMap[r.producto_id] = { precio: Number(r.precio_saco), fecha: r.fecha } })
+    const paramMap = {}; (par || []).forEach(p => { paramMap[p.clave] = Number(p.valor) })
     setProductos(prodNom); setInventario(invMap); setTransito(tranMap)
+    setPrecioProd(precioMap); setInvCorte(corte); setReservaDias(paramMap.reserva_dias_balanceado != null ? paramMap.reserva_dias_balanceado : 2)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -382,21 +391,30 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // − inventario − en tránsito + reserva. Agrupa las piscinas por su producto reciente.
   const pedidoNeto = useMemo(() => {
     if (vista !== 'tablero') return []
+    // 1) Sumar el requerimiento de TODAS las piscinas por producto (y el consumo
+    //    diario, para la reserva). 2) Descontar inventario/tránsito una sola vez.
     const porProd = {}
     for (const r of tablero) {
       if (!(r.ap && r.confirmado)) continue
       const pid = r.f.productoId || 'sin'
-      const o = (porProd[pid] ||= { req: 0, usd: 0, n: 0 })
-      o.req += Number(r.ap.sacos_operativos) || 0
-      o.usd += r.precioAplicado; o.n++
+      const o = (porProd[pid] ||= { req: 0, dia: 0, piscinas: [] })
+      const sac = Number(r.ap.sacos_operativos) || 0
+      o.req += sac
+      if (r.diasAlim > 0) o.dia += sac / r.diasAlim          // consumo diario del producto
+      o.piscinas.push({ nombre: r.f.nombre, sacos: sac })
     }
     return Object.entries(porProd).map(([pid, o]) => {
-      const inv = inventario[pid] || 0, tr = transito[pid] || 0, reserva = 0
-      const neto = Math.max(0, Math.ceil(o.req - inv - tr + reserva))
-      const precio = o.n ? o.usd / o.n : 0
-      return { pid, nombre: pid === 'sin' ? 'Sin producto reciente' : (productos[pid] || 'Producto'), req: o.req, inv, tr, reserva, neto, desembolso: neto * precio }
+      const inv = inventario[pid]                            // undefined = sin dato de stock
+      const invN = inv || 0
+      const tr = transito[pid] || 0                          // "a tiempo": hoy sin fecha de llegada → 0
+      const reserva = o.dia * reservaDias                    // 2 días alimentados por defecto
+      const neto = Math.max(0, Math.ceil(o.req - invN - tr + reserva))
+      const pv = precioProd[pid]
+      const faltaDato = pid === 'sin' || inv === undefined || !pv
+      const estado = faltaDato ? 'falta' : neto > 0 ? 'pedir' : 'cubierto'
+      return { pid, nombre: pid === 'sin' ? 'Sin producto reciente' : (productos[pid] || 'Producto'), req: o.req, inv: invN, invFalta: inv === undefined, tr, reserva, neto, estado, precio: pv, desembolso: pv ? neto * pv.precio : 0, piscinas: o.piscinas.sort((a, b) => b.sacos - a.sacos) }
     }).sort((a, b) => b.neto - a.neto)
-  }, [vista, tablero, inventario, transito, productos])
+  }, [vista, tablero, inventario, transito, productos, precioProd, reservaDias])
 
   // Biomasa seleccionada: la validada (si existe y sigue VIGENTE), si no la de consumo.
   const vald = valida[sel]
@@ -748,7 +766,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
       ) : vista === 'tablero' ? (
-        <TableroView tablero={tablero} totales={totales} pedidoNeto={pedidoNeto} filtro={filtro} setFiltro={setFiltro} hasta={hasta}
+        <TableroView tablero={tablero} totales={totales} pedidoNeto={pedidoNeto} invCorte={invCorte} reservaDias={reservaDias} filtro={filtro} setFiltro={setFiltro} hasta={hasta}
           onVer={id => { setSel(id); setVista('piscina'); setDesdeTablero(true) }} />
       ) : !fila ? (
         <Caja><Centro>No hay piscinas con muestreo de gramaje en esta finca a la fecha.<br />
@@ -1160,10 +1178,13 @@ function TablaDiagnostico({ filas, hasta }) {
 const cardMini = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 12px' }
 // Vista Tablero: todas las piscinas + totales en dos niveles + filtros. Solo lectura
 // (las acciones se hacen al abrir la piscina).
-function TableroView({ tablero, totales, pedidoNeto, filtro, setFiltro, hasta, onVer }) {
+function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filtro, setFiltro, hasta, onVer }) {
   const [exp, setExp] = useState(null)
+  const [expP, setExpP] = useState(null)
   const netoTotal = pedidoNeto.reduce((t, p) => t + p.neto, 0)
   const desembolsoNeto = pedidoNeto.reduce((t, p) => t + p.desembolso, 0)
+  const fechaHoraCorta = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
+  const estProd = { pedir: ['Pedir', AZUL], cubierto: ['Cubierto', VERDE], falta: ['Dato faltante', AMBAR] }
   const FILTROS = [['todas', 'Todas'], ['pendientes', 'Pendientes'], ['confirmar', 'Confirmar'], ['simbloq', 'Simulación / bloqueadas'], ['desv', 'Con desviación']]
   const pasa = r => filtro === 'todas' ? true : filtro === 'pendientes' ? !r.ap : filtro === 'confirmar' ? r.estadoPlan.k === 'confirmar' : filtro === 'simbloq' ? (r.estadoPlan.k === 'simulacion' || r.bloqueado) : filtro === 'desv' ? (r.delta != null && Math.abs(r.delta) > 0.10) : true
   const filas = tablero.filter(pasa)
@@ -1191,33 +1212,48 @@ function TableroView({ tablero, totales, pedidoNeto, filtro, setFiltro, hasta, o
     </div>
     {pedidoNeto.length > 0 && (
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
           <div style={{ ...titMini, marginBottom: 0 }}>Pedido neto por producto</div>
-          <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>= requerimiento − inventario − tránsito + reserva</span>
+          <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>= requerimiento − inventario − tránsito + reserva ({reservaDias} días)</span>
         </div>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
+        <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginBottom: '8px' }}>Inventario al corte: {invCorte ? fechaHoraCorta(invCorte) : '—'}</div>
+        <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', minWidth: '560px' }}>
           <thead><tr style={{ color: GRIS }}>
             <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Producto</th>
             <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Requerim.</th>
             <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Inventario</th>
-            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Tránsito</th>
+            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Tránsito a tiempo</th>
             <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Reserva</th>
             <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Neto</th>
+            <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Estado</th>
+            <th style={{ padding: '6px 6px' }}></th>
           </tr></thead>
           <tbody>
-            {pedidoNeto.map(p => (
-              <tr key={p.pid} style={{ borderTop: '0.5px solid #eef3f7' }}>
-                <td style={{ padding: '7px 6px', color: NAVY }}>{p.nombre}</td>
-                <td style={{ padding: '7px 6px', textAlign: 'right' }}>{p.req}</td>
-                <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.inv)}</td>
-                <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.tr)}</td>
-                <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>+{p.reserva}</td>
-                <td style={{ padding: '7px 6px', textAlign: 'right', fontWeight: 500, color: p.neto > 0 ? AZUL : VERDE }}>{p.neto > 0 ? p.neto : '0 · cubierto'}</td>
-              </tr>
-            ))}
+            {pedidoNeto.map(p => {
+              const [et, ec] = estProd[p.estado]
+              const abierto = expP === p.pid
+              return (<Fragment key={p.pid}>
+                <tr style={{ borderTop: '0.5px solid #eef3f7' }}>
+                  <td style={{ padding: '7px 6px', color: NAVY }}>{p.nombre}</td>
+                  <td style={{ padding: '7px 6px', textAlign: 'right' }}>{p.req}</td>
+                  <td style={{ padding: '7px 6px', textAlign: 'right', color: p.invFalta ? AMBAR : GRIS }}>{p.invFalta ? 'sin dato' : '−' + miles(p.inv)}</td>
+                  <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.tr)}</td>
+                  <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>+{num1(p.reserva)}</td>
+                  <td style={{ padding: '7px 6px', textAlign: 'right', fontWeight: 500, color: p.neto > 0 ? AZUL : VERDE }}>{p.neto > 0 ? p.neto : '0'}</td>
+                  <td style={{ padding: '7px 6px' }}><span style={{ fontSize: '10px', fontWeight: 500, color: ec, background: ec + '18', padding: '2px 8px', borderRadius: '20px' }}>{et}</span></td>
+                  <td style={{ padding: '7px 6px', textAlign: 'right' }}><button type="button" aria-expanded={abierto} onClick={() => setExpP(abierto ? null : p.pid)} style={{ background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '11px', color: AZUL, cursor: 'pointer', fontWeight: 500 }}>{abierto ? 'Ocultar' : 'Ver'}</button></td>
+                </tr>
+                {abierto && <tr style={{ background: '#f6f9fb' }}><td colSpan={8} style={{ padding: '9px 10px', fontSize: '11px', color: GRIS }}>
+                  {p.precio ? <span>Precio vigente: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(p.precio.precio)}/saco</b> · actualizado {corta(p.precio.fecha)}. </span> : <span style={{ color: AMBAR }}>Sin precio registrado. </span>}
+                  Piscinas: {p.piscinas.map(x => `${x.nombre} (${x.sacos})`).join(' · ')}
+                </td></tr>}
+              </Fragment>)
+            })}
           </tbody>
         </table>
-        <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Inventario (saldo de bodega) y tránsito se descuentan una sola vez. Desembolso estimado del neto: <b style={{ color: '#51606c', fontWeight: 500 }}>{dinero(desembolsoNeto)}</b>. Reserva de seguridad: pendiente de configurar.</div>
+        </div>
+        <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Reserva = consumo diario del producto × {reservaDias} días alimentados. Inventario y tránsito se descuentan una sola vez; el neto se redondea hacia arriba. Desembolso estimado del neto: <b style={{ color: '#51606c', fontWeight: 500 }}>{dinero(desembolsoNeto)}</b>.</div>
       </div>
     )}
     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '9px' }}>
