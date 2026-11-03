@@ -69,7 +69,8 @@ export default function Estimacion({ finca, esJefe }) {
         cicloId: c.id, piscinaId: c.piscina.id, nombre: c.piscina.nombre,
         area: Number(c.piscina.hectareas) || 0, tolvas: c.piscina.tolvas != null ? Number(c.piscina.tolvas) : null,
         larva: Number(c.cantidad_larva) || 0, pl: Number(c.gramaje_precria) || 0.5, siembra,
-        gramaje, gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
+        gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
+        gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
         consumoAcum: als.reduce((t, r) => t + r.lb, 0),
         consumoVentana: als.filter(r => r.fecha > ini14).reduce((t, r) => t + r.lb, 0) / 2,
         dias: diasEntre(siembra, hasta),
@@ -111,7 +112,7 @@ export default function Estimacion({ finca, esJefe }) {
     if (!(valor > 0)) { setAviso({ tipo: 'error', texto: 'Pon un valor de biomasa válido.' }); return }
     const { error } = await supabase.schema('produccion').from('biomasa_validada')
       .insert({ ciclo_id: sel, fecha_ref: hasta, fuente: fuenteSel, valor_lb: valor, validada_por: userId })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'validar la biomasa') }); return }
     setValida(v => ({ ...v, [sel]: { fuente: fuenteSel, valor_lb: valor } }))
     setAviso({ tipo: 'ok', texto: 'Biomasa validada.' })
   }
@@ -123,7 +124,7 @@ export default function Estimacion({ finca, esJefe }) {
     const n = parseInt(tolvasTxt, 10)
     if (!isFinite(n) || n < 0) { setEditTolvas(false); return }
     const { error } = await supabase.schema('produccion').from('piscina').update({ tolvas: n }).eq('id', fila.piscinaId)
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar las tolvas. ' + error.message }); return }
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar las tolvas') }); return }
     setCiclos(cs => cs.map(c => c.cicloId === sel ? { ...c, tolvas: n } : c))
     setEditTolvas(false)
   }
@@ -132,6 +133,15 @@ export default function Estimacion({ finca, esJefe }) {
   const lbPorTolva = (!bloqueado && fila && fila.tolvas > 0 && est) ? biomasaSel * (est.planReco.pctDia / 100) / fila.tolvas : null
   const sacosSemSel = est ? est.planReco.sacosSem * factorBio : 0
   const usdSemSel = est ? est.planReco.usdSem * factorBio : 0
+  // Tasa auditable y redondeo de sacos del plan recomendado.
+  const escFactor = est ? (est.escenario === 'BAJO' ? 0.9 : est.escenario === 'ALTO' ? 1.1 : 1.0) : 1
+  const tasaApl = est ? est.planReco.pctDia : 0
+  const tasaBase = escFactor ? tasaApl / escFactor : tasaApl
+  const lbDiaSel = est ? est.planReco.lbDia * factorBio : 0
+  const sacosDiaSel = lbDiaSel / 55
+  const pedir = Math.round(sacosSemSel)
+  const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
+  const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, la biomasa es consistente (dif. ${bm ? Math.round(bm.difPct * 100) : 0}%), y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem', background: '#eef2f6', minHeight: '100%' }}>
@@ -150,9 +160,12 @@ export default function Estimacion({ finca, esJefe }) {
             Meta <input type="number" min="1" value={meta} onChange={e => setMeta(Number(e.target.value) || 1)} style={{ ...inp, width: '58px' }} /> g
           </label>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 6px', fontSize: '12.5px' }}>
-            <button onClick={() => setHasta(h => sumarDias(h, -7))} style={flecha}>‹</button>
-            <span style={{ color: NAVY, minWidth: '128px', textAlign: 'center' }}>{corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</span>
-            <button onClick={() => setHasta(h => { const n = sumarDias(h, 7); return n > hoyISO() ? h : n })} style={{ ...flecha, opacity: domingoDe(hasta) >= hoyISO() ? 0.35 : 1 }}>›</button>
+            <button onClick={() => setHasta(h => sumarDias(h, -7))} style={flecha} title="Semana anterior">‹</button>
+            <input type="date" value={hasta} max={hoyISO()} title="Elige cualquier día; se aplica a su semana"
+              onChange={e => { if (!e.target.value) return; const d = domingoDe(e.target.value); setHasta(d > hoyISO() ? hoyISO() : d) }}
+              style={{ border: 'none', background: 'none', fontFamily: 'inherit', fontSize: '12px', color: GRIS, width: '112px' }} />
+            <span style={{ color: NAVY, minWidth: '118px', textAlign: 'center' }}>{corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</span>
+            <button onClick={() => setHasta(h => { const n = sumarDias(h, 7); return n > hoyISO() ? h : n })} style={{ ...flecha, opacity: domingoDe(hasta) >= hoyISO() ? 0.35 : 1 }} title="Semana siguiente">›</button>
           </span>
         </div>
       </div>
@@ -240,6 +253,11 @@ export default function Estimacion({ finca, esJefe }) {
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
               <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b>{vald && esJefe && <span onClick={quitarValidacion} style={{ color: AZUL, cursor: 'pointer' }}> · cambiar</span>}</span>
             </div>
+            {!bloqueado && bm && (
+              <div style={{ fontSize: '11.5px', color: bm.color, marginTop: '8px' }}>
+                Confianza {confianza}: diferencia {Math.round(bm.difPct * 100)}%{muestreoDias != null && ` · muestreo de hace ${muestreoDias} día${muestreoDias === 1 ? '' : 's'}`}
+              </div>
+            )}
 
             {/* Selector de biomasa (jefe) cuando hay que validar o no está validada */}
             {esJefe && !vald && (
@@ -271,21 +289,35 @@ export default function Estimacion({ finca, esJefe }) {
                 <span style={{ fontSize: '18px' }}>🔒</span>
                 <div style={{ fontSize: '12.5px', color: GRIS }}>Elige y <b>valida la biomasa</b> arriba para desbloquear el plan. Mientras tanto, los sacos de abajo son solo <b>simulación</b>.</div>
               </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '11px', marginBottom: '14px' }}>
-                <Mini k="Sacos/día" v={miles(sacosSemSel / 7)} />
-                <Mini k="Sacos/semana" v={miles(sacosSemSel)} />
-                <Mini k="US$/semana" v={dinero(usdSemSel)} />
+            ) : (<>
+              <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px', marginBottom: '13px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.6 }}>
+                <b style={{ color: NAVY, fontWeight: 500 }}>¿Por qué {cap(est.escenario)}?</b> {porQueTxt}
               </div>
-            )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '13px', marginBottom: '13px' }}>
+                <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
+                  <div style={titMini}>Cómo sale la dosis</div>
+                  <Row k={`Tasa base (${num1(fila.gramaje)} g)`} v={num2(tasaBase) + '%'} />
+                  <Row k={`Ajuste intensidad ${cap(est.escenario)}`} v={(escFactor >= 1 ? '+' : '') + Math.round((escFactor - 1) * 100) + '%'} />
+                  <Row k="Tasa aplicada" v={num2(tasaApl) + '%'} fuerte top />
+                  <Row k={`${miles(biomasaSel)} lb × ${num2(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
+                </div>
+                <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
+                  <div style={titMini}>Sacos a pedir</div>
+                  <Row k="Por día" v={num1(sacosDiaSel) + ' sacos'} fuerte />
+                  <Row k="Semana calculada" v={num1(sacosSemSel) + ' sacos'} />
+                  <Row k="Pedir (redondeado)" v={pedir + ' sacos'} fuerte top azul />
+                  <Row k="Costo semana" v={dinero(usdSemSel)} />
+                </div>
+              </div>
+            </>)}
             <div style={{ fontSize: '12.5px', color: GRIS, margin: bloqueado ? '12px 0 0' : '0 0 12px' }}>Alimento: <b style={{ color: NAVY, fontWeight: 500 }}>{est.alimento.nombre}</b> · {dinero(est.alimento.usdSaco)} el saco</div>
             <div style={{ borderTop: '0.5px solid #eef3f7', paddingTop: '12px', display: 'grid', gridTemplateColumns: 'auto 1fr 1fr 1fr', gap: '9px 12px', fontSize: '12.5px', alignItems: 'center' }}>
               <span style={{ color: '#9fb0bf', fontSize: '11px' }}>Intensidad</span>
               {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: (!bloqueado && est.escenario === e) ? VERDE : GRIS, fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400 }}>{cap(e)}</span>)}
-              <span style={{ color: GRIS }}>Sacos/semana</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <b key={e} style={{ textAlign: 'right', fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400, color: NAVY }}>{miles(est.plan[e].sacosSem * factorBio)}</b>)}
-              <span style={{ color: GRIS }}>US$/semana</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: GRIS }}>{dinero(est.plan[e].usdSem * factorBio)}</span>)}
+              <span style={{ color: GRIS }}>Tasa aplicada</span>
+              {['BAJO', 'MEDIO', 'ALTO'].map(e => <b key={e} style={{ textAlign: 'right', fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400, color: NAVY }}>{num2(est.plan[e].pctDia)}%</b>)}
+              <span style={{ color: GRIS }}>Pedir sacos/semana</span>
+              {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: GRIS }}>{Math.round(est.plan[e].sacosSem * factorBio)}</span>)}
             </div>
           </Caja>
 
@@ -327,6 +359,12 @@ const flecha = { border: 'none', background: 'none', cursor: 'pointer', color: G
 const btnAzul = { padding: '7px 14px', fontSize: '12.5px', fontFamily: 'inherit', fontWeight: 500, border: 'none', borderRadius: '8px', background: AZUL, color: 'white', cursor: 'pointer' }
 const btnLink = { background: 'none', border: 'none', color: AZUL, fontFamily: 'inherit', fontSize: '12.5px', cursor: 'pointer', padding: 0, fontWeight: 500 }
 const cap = s => { const t = String(s || '').toLowerCase(); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t }
+// Mensaje de error amable: esconde el detalle técnico de permisos.
+function msgError(error, accion) {
+  const m = String(error?.message || '')
+  if (/row-level security|permission|not authorized|policy/i.test(m)) return `No tienes permiso para ${accion}. Avisa al administrador.`
+  return `No se pudo ${accion}. Intenta de nuevo.`
+}
 
 function Opc({ on, onClick, children }) {
   return <span onClick={onClick} style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', cursor: 'pointer', border: (on ? '1.5px' : '0.5px') + ' solid ' + (on ? AZUL : BORDE), background: on ? '#e8f1fb' : 'white', color: on ? AZUL : NAVY, borderRadius: '9px', padding: '8px 13px', fontSize: '13px', fontWeight: on ? 500 : 400 }}>{children}</span>
@@ -359,6 +397,15 @@ function Kpi({ k, v, u, color, nota, notaColor }) {
 }
 function Mini({ k, v }) {
   return <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px' }}><div style={{ fontSize: '11px', color: GRIS }}>{k}</div><div style={{ fontSize: '19px', fontWeight: 500, color: NAVY }}>{v}</div></div>
+}
+const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
+function Row({ k, v, fuerte, top, azul }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px', padding: '3px 0', ...(top ? { borderTop: '0.5px solid #e3ecf2', marginTop: '5px', paddingTop: '7px' } : {}) }}>
+      <span style={{ color: GRIS, fontSize: '11.5px' }}>{k}</span>
+      <b style={{ fontWeight: fuerte ? 500 : 400, color: azul ? AZUL : NAVY, whiteSpace: 'nowrap' }}>{v}</b>
+    </div>
+  )
 }
 function Linea({ k, v, fuerte, color }) {
   return <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: GRIS }}>{k}</span><span style={{ fontWeight: fuerte ? 500 : 400, color: color || NAVY }}>{v}</span></div>
