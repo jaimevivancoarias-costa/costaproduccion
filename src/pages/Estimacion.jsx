@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
 import { estimar, cfgFinca, PARAM, sobrevDe } from '../lib/estimacion'
 import { construirDias, nivelCambio as nivelCambioDe, planVsEjecutado } from '../lib/calendario'
-import { precioPorGramaje } from '../lib/precios'
+import { precioPorGramaje, ENT_TALLAS, COLA_TALLAS, ENT_LISTA_DEF, COLA_LISTA_DEF, REND_ENTERO_DEF, REND_COLA_DEF, CV_DEF } from '../lib/precios'
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const VERDE = '#0F6E56', AMBAR = '#854F0B', ROJO = '#8A2F2E'
@@ -129,7 +129,7 @@ function planEstadoDe({ est, v, bm, bloqueado, vig }) {
 // Resumen de una piscina para el tablero: corre el motor, estado, recomendado,
 // aplicado, Δ vs semana anterior (aplicado-vs-aplicado), plan vs ejecutado y alertas.
 function resumenPiscina(f, ctx) {
-  const { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas } = ctx
+  const { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas, precioOpts } = ctx
   const est = estimar({ area: f.area, dias: f.dias, pl: f.pl, gramajeHoy: f.gramaje, consumoAcum: f.consumoAcum, larva: f.larva, gInicio: f.gIni, diasInicio: f.diasIni, consumoVentana: f.consumoVentana, meta, finca: cfg })
   const bc = est.biomasaConsumo, bd = est.biomasaDensidad
   const mayor = Math.max(bc, bd), menor = Math.min(bc, bd)
@@ -168,7 +168,25 @@ function resumenPiscina(f, ctx) {
   if (delta != null && Math.abs(delta) > 0.10 && Math.abs(delta) <= 0.20) alertas.push(`Cambio ${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%`)
   if (muDias != null && muDias > 14) alertas.push(`Muestreo hace ${muDias} d`)
   const precioAplicado = ap && Number(ap.sacos_calc) > 0 ? Number(ap.costo_usd) / Number(ap.sacos_calc) : est.alimento.usdSaco
-  return { f, est, biomasaSel, bloqueado, estadoPlan, recoInten, ap, confirmado, diasAlim, recoSacos, sacosShow: ap ? Number(ap.sacos_operativos) : (bloqueado ? null : recoSacos), sugerido: !ap, delta, deltaEstado, pve, cumplimiento, muDias, alertas, difPct, precioAplicado, usdSaco: est.alimento.usdSaco }
+  // Rentabilidad: valor de continuar (cosechar hoy vs esperar a meta).
+  let rent = null
+  if (!bloqueado && biomasaSel > 0) {
+    const metaG = est.metaUsa, diasRest = Math.max(0, Math.round(est.diasProyectados - f.dias))
+    const pHoy = precioPorGramaje(f.gramaje, precioOpts)
+    const ingresoHoy = biomasaSel * pHoy.mejor
+    if (metaG <= f.gramaje || diasRest <= 0) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0 }
+    else {
+      const sHoy = sobrevDe(f.gramaje), sMeta = sobrevDe(metaG)
+      const biomasaMeta = sHoy > 0 ? biomasaSel * (sMeta * metaG) / (sHoy * f.gramaje) : biomasaSel
+      const pMeta = precioPorGramaje(metaG, precioOpts)
+      const costoAlim = biomasaSel * est.plan[recoInten].tasaDia / 100 * diasRest / PARAM.pesoSaco * est.alimento.usdSaco
+      const costoOper = (cfg.costoHaDia || 0) * f.area * diasRest
+      const netoMeta = biomasaMeta * pMeta.mejor - costoAlim - costoOper
+      const valor = netoMeta - ingresoHoy
+      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: valor / diasRest, conviene: pMeta.conviene, diasRest }
+    }
+  }
+  return { f, est, biomasaSel, bloqueado, estadoPlan, recoInten, ap, confirmado, diasAlim, recoSacos, sacosShow: ap ? Number(ap.sacos_operativos) : (bloqueado ? null : recoSacos), sugerido: !ap, delta, deltaEstado, pve, cumplimiento, muDias, alertas, difPct, precioAplicado, usdSaco: est.alimento.usdSaco, rent }
 }
 
 // Estimación por piscina. Toma gramaje (muestreo), consumo de balanceado y los
@@ -193,6 +211,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [precioProd, setPrecioProd] = useState({})     // producto_id -> { precio, fecha } (precio vigente)
   const [invCorte, setInvCorte] = useState(null)       // fecha/hora del corte de inventario
   const [reservaDias, setReservaDias] = useState(2)    // parámetro: días alimentados de reserva
+  const [precioOpts, setPrecioOpts] = useState({})     // lista de precios + rendimientos + cv (desde la base)
+  const [editPrecio, setEditPrecio] = useState(false)  // editor de precios de venta
+  const [precioTmp, setPrecioTmp] = useState(null)     // edición en curso del editor de precios
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
   const [filtro, setFiltro] = useState('todas')
   const [desdeTablero, setDesdeTablero] = useState(false)
@@ -232,7 +253,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const ids = lista.map(c => c.id)
     const piscIds = lista.map(c => c.piscina.id)
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
-    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }, { data: prod }, { data: inv }, { data: tran }, { data: par }] = await Promise.all([
+    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }, { data: apPrev }, { data: prod }, { data: inv }, { data: tran }, { data: par }, { data: pc }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco, producto_id').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
@@ -246,6 +267,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       supabase.schema('produccion').from('vw_inventario').select('producto_id, anio, semana, saldo_final, actualizado_en').eq('finca_id', finca.id),
       supabase.schema('produccion').from('vw_pedido_balanceado_pendiente').select('producto_id, pendiente').eq('finca_id', finca.id),
       supabase.schema('produccion').from('parametro').select('clave, valor'),
+      supabase.schema('produccion').from('precio_camaron').select('tipo, orden, etiqueta, precio').order('orden'),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
@@ -285,6 +307,16 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const paramMap = {}; (par || []).forEach(p => { paramMap[p.clave] = Number(p.valor) })
     setProductos(prodNom); setInventario(invMap); setTransito(tranMap)
     setPrecioProd(precioMap); setInvCorte(corte); setReservaDias(paramMap.reserva_dias_balanceado != null ? paramMap.reserva_dias_balanceado : 2)
+    // Lista de precios de venta (editable) + rendimientos/dispersión; si falta, usa los del motor.
+    const entL = [], colL = [], etq = { entero: [], cola: [] }
+    ;(pc || []).forEach(r => { (r.tipo === 'entero' ? entL : colL)[r.orden] = Number(r.precio); etq[r.tipo][r.orden] = r.etiqueta })
+    const po = {}
+    if (entL.length) po.enteroLista = entL
+    if (colL.length) po.colaLista = colL
+    if (paramMap.rend_entero != null) po.rendEntero = paramMap.rend_entero
+    if (paramMap.rend_cola != null) po.rendCola = paramMap.rend_cola
+    if (paramMap.cv_talla != null) po.cv = paramMap.cv_talla
+    setPrecioOpts(po)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -359,16 +391,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (vista !== 'tablero' || !ciclos.length) return []
     const hoy = hoyISO()
     const semFechas = Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i))
-    const ctx = { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas }
+    const ctx = { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas, precioOpts }
     return ciclos.map(f => resumenPiscina(f, ctx))
-  }, [vista, ciclos, hasta, meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc])
+  }, [vista, ciclos, hasta, meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, precioOpts])
 
   // Totales en dos niveles: plan confirmado (aplicado + calendario confirmado) y
   // proyección completa (+ recomendaciones pendientes).
   const totales = useMemo(() => {
     let bioConf = 0, sacCalc = 0, sacOper = 0, costoCons = 0, desembolso = 0, cob = 0, nConf = 0
-    let extraSacos = 0, extraCosto = 0, bloq = 0, sinEsc = 0, desv = 0
+    let extraSacos = 0, extraCosto = 0, bloq = 0, sinEsc = 0, desv = 0, valorCont = 0
     for (const r of tablero) {
+      if (r.rent && !r.rent.listo) valorCont += r.rent.valor
       if (r.ap) cob++
       if (r.ap && r.confirmado) {
         nConf++
@@ -385,7 +418,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       if (!r.ap) sinEsc++
       if (r.delta != null && Math.abs(r.delta) > 0.10) desv++
     }
-    return { bioConf, sacCalc, sacOper, costoCons, desembolso, cob, nConf, total: tablero.length, extraSacos, extraCosto, bloq, sinEsc, desv }
+    return { bioConf, sacCalc, sacOper, costoCons, desembolso, cob, nConf, total: tablero.length, extraSacos, extraCosto, bloq, sinEsc, desv, valorCont }
   }, [tablero])
 
   // Pedido neto por producto = requerimiento (sacos operativos del plan confirmado)
@@ -525,6 +558,31 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const ayunoDias = [1, 2, 3, 4, 5, 6, 7].filter(d => patTmp[d] === false).map(d => DIA_LBL[d - 1])
     setAviso({ tipo: 'ok', texto: `Patrón guardado por ${nombre || 'ti'} · ${ayunoDias.length ? 'ayuno ' + ayunoDias.join(', ') : 'todos los días'} · vigente desde ${corta(hoyISO())}` })
   }
+  // Editor de precios de venta (lista entero/cola + rendimientos + dispersión).
+  function abrirPrecios() {
+    setPrecioTmp({
+      enteroLista: ENT_TALLAS.map((_, i) => precioOpts.enteroLista?.[i] ?? ENT_LISTA_DEF[i]),
+      colaLista: COLA_TALLAS.map((_, i) => precioOpts.colaLista?.[i] ?? COLA_LISTA_DEF[i]),
+      rendEntero: precioOpts.rendEntero ?? REND_ENTERO_DEF,
+      rendCola: precioOpts.rendCola ?? REND_COLA_DEF,
+      cv: precioOpts.cv ?? CV_DEF,
+    })
+    setEditPrecio(true)
+  }
+  async function guardarPrecios() {
+    const t = precioTmp, ahora = new Date().toISOString()
+    const filas = [
+      ...ENT_TALLAS.map((et, i) => ({ tipo: 'entero', orden: i, etiqueta: et, precio: Number(t.enteroLista[i]) || 0, actualizado_por: userId, actualizado_en: ahora })),
+      ...COLA_TALLAS.map((et, i) => ({ tipo: 'cola', orden: i, etiqueta: et, precio: Number(t.colaLista[i]) || 0, actualizado_por: userId, actualizado_en: ahora })),
+    ]
+    const { error } = await supabase.schema('produccion').from('precio_camaron').upsert(filas, { onConflict: 'tipo,orden' })
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar los precios') }); return }
+    for (const [clave, valor] of [['rend_entero', t.rendEntero], ['rend_cola', t.rendCola], ['cv_talla', t.cv]]) {
+      await supabase.schema('produccion').from('parametro').update({ valor: Number(valor), actualizado_en: ahora }).eq('clave', clave)
+    }
+    setPrecioOpts({ enteroLista: t.enteroLista.map(Number), colaLista: t.colaLista.map(Number), rendEntero: Number(t.rendEntero), rendCola: Number(t.rendCola), cv: Number(t.cv) })
+    setEditPrecio(false); setAviso({ tipo: 'ok', texto: 'Precios de venta actualizados.' })
+  }
   // Abre el panel masivo preseleccionando las piscinas confirmables (sin días sin registro).
   function abrirMasivo() {
     const sel0 = new Set(ciclos.filter(f => !construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null).some(d => d.tipo === 'sin')).map(f => f.cicloId))
@@ -641,12 +699,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (!est || !fila || bloqueado || !(biomasaSel > 0)) return null
     const gHoy = fila.gramaje, metaG = est.metaUsa
     const diasRest = Math.max(0, Math.round(est.diasProyectados - fila.dias))
-    const pHoy = precioPorGramaje(gHoy)
+    const pHoy = precioPorGramaje(gHoy, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
     if (metaG <= gHoy || diasRest <= 0) return { listo: true, gHoy, pHoy, ingresoHoy }
     const sHoy = sobrevDe(gHoy), sMeta = sobrevDe(metaG)
     const biomasaMeta = sHoy > 0 ? biomasaSel * (sMeta * metaG) / (sHoy * gHoy) : biomasaSel
-    const pMeta = precioPorGramaje(metaG)
+    const pMeta = precioPorGramaje(metaG, precioOpts)
     const brutoMeta = biomasaMeta * pMeta.mejor
     const lbDiaRef = biomasaSel * est.planReco.tasaDia / 100
     const alimentoSacos = lbDiaRef * diasRest / PARAM.pesoSaco
@@ -694,6 +752,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           {finca.rol === 'jefe' && ciclos.length > 0 && (<>
             <button onClick={() => { setPatTmp(Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map(d => [d, patFinca[d] !== false]))); setEditPat(true) }} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Define qué días alimenta la finca por defecto">Patrón de finca</button>
             <button onClick={abrirMasivo} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Prepara y confirma la semana para varias piscinas">Preparar semana</button>
+            <button onClick={abrirPrecios} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Edita la lista de precios de venta (entero/cola)">Precios</button>
           </>)}
           {esJefe && ciclos.length > 0 && (
             <button onClick={() => setDiag(d => !d)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: diag ? AZUL : GRIS, borderColor: diag ? AZUL : BORDE }} title="Compara la ventana de consumo actual con la ponderada">
@@ -730,6 +789,44 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           {patronAudit && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Última edición{patronAudit.nombre ? ' por ' + patronAudit.nombre : ''} · {fechaHora(patronAudit.en)}</div>}
         </div>
       )}
+
+      {editPrecio && precioTmp && (() => {
+        const setArr = (campo, i, v) => setPrecioTmp(p => { const a = p[campo].slice(); a[i] = v; return { ...p, [campo]: a } })
+        const gPrev = (fila && fila.gramaje) || 28
+        const pv = precioPorGramaje(gPrev, { enteroLista: precioTmp.enteroLista.map(Number), colaLista: precioTmp.colaLista.map(Number), rendEntero: Number(precioTmp.rendEntero), rendCola: Number(precioTmp.rendCola), cv: Number(precioTmp.cv) })
+        const miniInp = { ...inp, width: '72px', padding: '5px 8px', fontSize: '12px' }
+        return (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 500 }}>Precios de venta</div>
+            <button onClick={() => setEditPrecio(false)} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
+          </div>
+          <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {[['rendEntero', 'Rend. entero'], ['rendCola', 'Rend. cola'], ['cv', 'Dispersión (CV)']].map(([k, l]) => (
+              <label key={k} style={{ fontSize: '12px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>{l} <input type="number" step="0.01" value={precioTmp[k]} onChange={e => setPrecioTmp(p => ({ ...p, [k]: e.target.value }))} style={miniInp} /></label>
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div>
+              <div style={titMini}>Entero · $/kg por pz/kg</div>
+              {ENT_TALLAS.map((et, i) => (
+                <div key={et} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: '12px' }}><span style={{ color: GRIS }}>{et}</span><input type="number" step="0.01" value={precioTmp.enteroLista[i]} onChange={e => setArr('enteroLista', i, e.target.value)} style={miniInp} /></div>
+              ))}
+            </div>
+            <div>
+              <div style={titMini}>Cola · $/lb por pz/lb</div>
+              {COLA_TALLAS.map((et, i) => (
+                <div key={et} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: '12px' }}><span style={{ color: GRIS }}>{et}</span><input type="number" step="0.01" value={precioTmp.colaLista[i]} onChange={e => setArr('colaLista', i, e.target.value)} style={miniInp} /></div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
+            <button onClick={guardarPrecios} style={btnAzul}>Guardar precios</button>
+            <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>A {num1(gPrev)} g: entero <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(pv.entero)}/lb</b> · cola <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(pv.cola)}/lb</b> · conviene <b style={{ color: NAVY, fontWeight: 500 }}>{pv.conviene}</b></span>
+          </div>
+        </div>
+        )
+      })()}
 
       {masivo && (() => {
         const datos = ciclos.map(f => {
@@ -1269,6 +1366,7 @@ function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filt
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Bloqueadas</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.bloq ? ROJO : NAVY }}>{totales.bloq}</div></div>
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Sin escenario</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.sinEsc ? AMBAR : NAVY }}>{totales.sinEsc}</div></div>
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Con desviación</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.desv ? AMBAR : NAVY }}>{totales.desv}</div></div>
+      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Valor de continuar</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.valorCont >= 0 ? VERDE : AMBAR }}>{totales.valorCont >= 0 ? '+' : ''}{dinero(totales.valorCont)}</div></div>
     </div>
     {pedidoNeto.length > 0 && (
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '12px' }}>
@@ -1352,6 +1450,7 @@ function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filt
                   <span>Δ vs semana anterior: <b style={{ color: NAVY, fontWeight: 500 }}>{r.deltaEstado === 'pendiente' ? 'Pendiente' : r.deltaEstado === 'sin-comparable' ? 'Sin semana comparable' : `${r.delta >= 0 ? '+' : ''}${Math.round(r.delta * 100)}%`}</b></span>
                   <span>Plan / ejecutado: <b style={{ color: NAVY, fontWeight: 500 }}>{r.cumplimiento != null ? Math.round(r.cumplimiento * 100) + '%' : '—'}</b></span>
                   <span>Muestreo: <b style={{ color: NAVY, fontWeight: 500 }}>{r.muDias != null ? `hace ${r.muDias} d` : '—'}</b></span>
+                  {r.rent && <span>Rentabilidad: <b style={{ color: r.rent.listo ? NAVY : (r.rent.valor >= 0 ? VERDE : AMBAR), fontWeight: 500 }}>{r.rent.listo ? 'listo para cosechar' : `${r.rent.valor >= 0 ? 'esperar' : 'cosechar'} · ${r.rent.valor >= 0 ? '+' : ''}${dinero(r.rent.valor)} (${dinero(r.rent.valorDia)}/día)`}</b></span>}
                 </div>
                 {r.alertas.length > 0 && <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Alertas: {r.alertas.join(' · ')}</div>}
                 <button onClick={() => onVer(r.f.cicloId)} style={{ ...btnAzul, marginTop: '10px' }}>Abrir piscina ›</button>
