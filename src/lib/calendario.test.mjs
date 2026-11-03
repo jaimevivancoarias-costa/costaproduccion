@@ -67,5 +67,13 @@ ok(pv.ayNoPlan === 0, 'no hay ayuno no planificado (jue es sin registro, no ayun
 ok(pv.planLb === 1000, 'planificado = solo jue (mié era ayuno planificado) = 1×1000')
 ok(pv.ejecLb === 1200, 'ejecutado = mié 1200 (jue sin registro aporta 0)')
 
+// Costo ejecutado respeta el precio por registro (cambio de producto entre días).
+const calC = [
+  { fecha: sem[0], cerrado: true, tipo: 'fed', lb: 1100, costoBase: 1100 * 30 }, // producto A $30/saco
+  { fecha: sem[1], cerrado: true, tipo: 'fed', lb: 1100, costoBase: 1100 * 50 }, // producto B $50/saco
+]
+const pvC = planVsEjecutado({ calDias: calC, planDias: { [sem[0]]: true, [sem[1]]: true }, lbDia: 1100, vigenteDesde: sem[0] })
+ok(pvC.ejecCostBase === 1100 * 30 + 1100 * 50, 'costo ejecutado suma el precio de cada registro (cambio de producto)')
+
 if (fallos) { console.error(`\n${fallos} prueba(s) de calendario fallaron.`); process.exit(1) }
 console.log('\nTodas las pruebas de calendario pasaron.')

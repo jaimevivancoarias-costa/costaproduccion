@@ -7,9 +7,9 @@ export function construirDias(fila, semFechas, hoy, patFinca, patPisc, plan, ove
   const ejec = {}
   for (const r of (fila.alsRaw || [])) {
     if (!semFechas.length || r.fecha < semFechas[0] || r.fecha > semFechas[6]) continue
-    const e = (ejec[r.fecha] ||= { lb: 0, fed: false, ayuno: false, rec: false })
+    const e = (ejec[r.fecha] ||= { lb: 0, fed: false, ayuno: false, rec: false, lbPrecio: 0 })
     e.rec = true
-    if (r.ayuno) e.ayuno = true; else { e.lb += r.lb; e.fed = true }
+    if (r.ayuno) e.ayuno = true; else { e.lb += r.lb; e.fed = true; e.lbPrecio += r.lb * (r.precio || 0) }
   }
   const planDias = plan ? plan.dias : null
   const ov = patPisc[fila.piscinaId] || null
@@ -19,7 +19,7 @@ export function construirDias(fila, semFechas, hoy, patFinca, patPisc, plan, ove
     const ejecutado = !!(e && e.rec)
     if (ejecutado || f < hoy) {
       if (!ejecutado) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
-      if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb }
+      if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb, costoBase: e.lbPrecio }
       return { fecha: f, i, cerrado: true, tipo: 'ayuno', alimenta: false, lb: 0 }
     }
     let a
@@ -45,7 +45,7 @@ export function nivelCambio(delta) {
 // (vigenteDesde). Separa ayuno planificado, ayuno no planificado, día sin registro
 // (problema de datos) y alimentó pese a ayuno planificado. Los días abiertos no cuentan.
 export function planVsEjecutado({ calDias, planDias, lbDia, vigenteDesde }) {
-  let planLb = 0, ejecLb = 0, ayPlan = 0, ayNoPlan = 0, sinReg = 0, fedExtra = 0, dias = 0
+  let planLb = 0, ejecLb = 0, ejecCostBase = 0, ayPlan = 0, ayNoPlan = 0, sinReg = 0, fedExtra = 0, dias = 0
   for (const d of (calDias || [])) {
     if (!d.cerrado) continue
     if (vigenteDesde && d.fecha < vigenteDesde) continue
@@ -53,11 +53,12 @@ export function planVsEjecutado({ calDias, planDias, lbDia, vigenteDesde }) {
     const previsto = planDias ? planDias[d.fecha] : undefined   // true=alimentar, false=ayuno
     if (d.tipo === 'sin') { sinReg++; if (previsto !== false) planLb += lbDia; continue }
     if (previsto === false) {
-      if (d.tipo === 'fed') { fedExtra++; ejecLb += d.lb } else ayPlan++
+      if (d.tipo === 'fed') { fedExtra++; ejecLb += d.lb; ejecCostBase += (d.costoBase || 0) } else ayPlan++
     } else {
       planLb += lbDia
-      if (d.tipo === 'fed') ejecLb += d.lb; else ayNoPlan++
+      if (d.tipo === 'fed') { ejecLb += d.lb; ejecCostBase += (d.costoBase || 0) } else ayNoPlan++
     }
   }
-  return { planLb, ejecLb, ayPlan, ayNoPlan, sinReg, fedExtra, dias }
+  // ejecCostBase = Σ(libras × precio_saco); el costo real = ejecCostBase / pesoSaco.
+  return { planLb, ejecLb, ejecCostBase, ayPlan, ayNoPlan, sinReg, fedExtra, dias }
 }

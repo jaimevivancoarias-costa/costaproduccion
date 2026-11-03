@@ -178,7 +178,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
     const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
-      supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion').in('ciclo_id', ids).lte('fecha', hasta),
+      supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
       supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).eq('estado', 'activo'),
       supabase.schema('produccion').from('finca').select('raciones').eq('id', finca.id).maybeSingle(),
@@ -188,7 +188,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
-    const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion }) })
+    const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion, precio: Number(r.precio_saco) || 0 }) })
     const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
     const apDe = {}; (ap || []).forEach(r => { apDe[r.ciclo_id] = r })
     // Patrón de finca + su auditoría (quién lo editó por última vez y cuándo).
@@ -490,6 +490,11 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const pve = (apRec && planConfirmado) ? planVsEjecutado({ calDias, planDias: planSel.dias, lbDia: Number(apRec.lb_dia), vigenteDesde }) : null
   const cumplimiento = (pve && pve.planLb > 0) ? pve.ejecLb / pve.planLb : null
   const difSacosPvE = pve ? (pve.ejecLb - pve.planLb) / PARAM.pesoSaco : null
+  // Costo REAL ejecutado = Σ(libras × precio_saco de cada registro) / peso — respeta
+  // cambios de producto. Planificado = sacos planificados × precio del plan aplicado.
+  const plannedPrice = apRec ? (Number(apRec.sacos_calc) > 0 ? Number(apRec.costo_usd) / Number(apRec.sacos_calc) : (est ? est.alimento.usdSaco : 0)) : 0
+  const ejecCostPvE = pve ? pve.ejecCostBase / PARAM.pesoSaco : 0
+  const difCostPvE = pve ? ejecCostPvE - (pve.planLb / PARAM.pesoSaco) * plannedPrice : null
   const semanaCompleta = semFechas.length === 7 && semFechas[6] < hoy
   const mostrarPvE = !!(pve && pve.dias > 0)
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
@@ -935,7 +940,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <Mini k="Planificado a la fecha" v={`${miles(pve.planLb)} lb`} />
               <Mini k="Alimentado a la fecha" v={`${miles(pve.ejecLb)} lb`} />
               <Mini k="Diferencia" v={`${difSacosPvE >= 0 ? '+' : ''}${num1(difSacosPvE)} sacos`} />
-              <Mini k="Diferencia costo" v={dinero(difSacosPvE * est.alimento.usdSaco)} />
+              <Mini k="Diferencia costo" v={`${difCostPvE >= 0 ? '+' : ''}${dinero(difCostPvE)}`} />
             </div>
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '12px', fontSize: '12px', color: GRIS }}>
               <span>Ayunos no planificados: <b style={{ color: pve.ayNoPlan > 0 ? AMBAR : NAVY, fontWeight: 500 }}>{pve.ayNoPlan}</b></span>
@@ -944,7 +949,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <span>Ayunos planificados: <b style={{ color: NAVY, fontWeight: 500 }}>{pve.ayPlan}</b></span>
             </div>
             <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>
-              Plan vigente desde {corta(vigenteDesde)}{apRec.aplicado_nombre ? ', aplicado por ' + apRec.aplicado_nombre : ''} · {pve.dias} día(s) comparados. Diferencia de costo aproximada (precio del alimento planificado); el costo real por producto está pendiente.
+              Plan vigente desde {corta(vigenteDesde)}{apRec.aplicado_nombre ? ', aplicado por ' + apRec.aplicado_nombre : ''} · {pve.dias} día(s) comparados. Costo ejecutado real (precio de cada registro, respeta cambios de producto): {dinero(ejecCostPvE)}.
             </div>
           </Caja></div>
         )}
