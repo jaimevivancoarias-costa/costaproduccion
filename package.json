@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "test": "node src/lib/estimacion.test.mjs",
+    "build": "node src/lib/estimacion.test.mjs && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

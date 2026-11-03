@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
-import { estimar, cfgFinca } from '../lib/estimacion'
+import { estimar, cfgFinca, PARAM } from '../lib/estimacion'
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const VERDE = '#0F6E56', AMBAR = '#854F0B', ROJO = '#8A2F2E'
@@ -85,6 +85,42 @@ function confiabilidadDe(v) {
 }
 const difBio = e => { const mx = Math.max(e.biomasaConsumo, e.biomasaDensidad), mn = Math.min(e.biomasaConsumo, e.biomasaDensidad); return mx > 0 ? (mx - mn) / mx : 0 }
 
+// Vigencia de una validación manual de biomasa. Vence al ocurrir lo PRIMERO de:
+// un muestreo nuevo posterior a fecha_ref, 7 días desde fecha_ref, o que la biomasa
+// ponderada nueva difiera >10% de la validada. (El cambio de ciclo se maneja solo:
+// otra validación tiene otro ciclo_id.)
+function vigenciaDe(vald, fila, biomasaPonder, hasta) {
+  const ref = vald.fecha_ref || (vald.validada_en ? vald.validada_en.slice(0, 10) : hasta)
+  const dias = diasEntre(ref, hasta)
+  const difPond = vald.valor_lb > 0 ? Math.abs(biomasaPonder - vald.valor_lb) / vald.valor_lb : 0
+  const motivos = []
+  if (fila.ultMuestreo && fila.ultMuestreo > ref) motivos.push('hay un muestreo nuevo')
+  if (dias >= 7) motivos.push(`pasaron ${dias} días`)
+  if (difPond > 0.10) motivos.push(`el consumo cambió ${Math.round(difPond * 100)}%`)
+  const vigente = motivos.length === 0
+  // Próxima a vencer: a un día de los 7, o diferencia de consumo entre 7% y 10%.
+  const porVencer = vigente && (dias >= 6 || difPond > 0.07)
+  return { vigente, porVencer, motivos, dias, difPond }
+}
+
+// Estado del plan. Precedencia estricta: bloqueado → simulación → confirmar → aplicable.
+//   sin cobertura/muestra o biomasa en conflicto (sin validar) → bloqueado
+//   5+ ayunos → simulación · 3-4 ayunos / tendencia anormal / validación por vencer → confirmar
+function planEstadoDe({ est, v, bm, bloqueado, vig }) {
+  if (!est || !v) return { k: 'bloqueado', txt: 'Sin datos', detalle: '', color: ROJO }
+  if (bloqueado) {
+    const motivo = !v.valido ? (v.coberturaOk ? `pocos días alimentados (${v.alim}/14)` : `faltan registros (${v.documentados}/14)`) : 'biomasa en conflicto'
+    return { k: 'bloqueado', txt: 'Bloqueado · valida la biomasa', detalle: cap(motivo), color: ROJO }
+  }
+  if (v.ayuno >= 5) return { k: 'simulacion', txt: 'Simulación · revisión obligatoria', detalle: `${v.ayuno} ayunos en la ventana`, color: ROJO }
+  const motivos = []
+  if (v.ayuno >= 3) motivos.push(`${v.ayuno} ayunos`)
+  if (v.tend != null && (v.tend > 0.20 || v.tend < -0.15)) motivos.push(`tendencia ${(v.tend >= 0 ? '+' : '') + Math.round(v.tend * 100)}%`)
+  if (vig && vig.porVencer) motivos.push('validación por vencer')
+  if (motivos.length) return { k: 'confirmar', txt: 'Confirmar antes de aplicar', detalle: motivos.map(cap).join(' · '), color: AMBAR }
+  return { k: 'aplicable', txt: 'Aplicable', detalle: '', color: VERDE }
+}
+
 // Estimación por piscina. Toma gramaje (muestreo), consumo de balanceado y los
 // datos del ciclo, corre el motor y aplica el control de calidad de biomasa.
 export default function Estimacion({ finca, esJefe }) {
@@ -134,6 +170,7 @@ export default function Estimacion({ finca, esJefe }) {
       const prev = [...ms].reverse().find(m => m.fecha <= ini14)
       const siembra = c.fecha_ocupacion || c.fecha_siembra
       const als = alDe[c.id] || []
+      const v = ventana14(alRawDe[c.id] || [], hasta)
       return {
         cicloId: c.id, piscinaId: c.piscina.id, nombre: c.piscina.nombre,
         area: Number(c.piscina.hectareas) || 0, tolvas: c.piscina.tolvas != null ? Number(c.piscina.tolvas) : null,
@@ -141,7 +178,10 @@ export default function Estimacion({ finca, esJefe }) {
         gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
         consumoAcum: als.reduce((t, r) => t + r.lb, 0),
-        consumoVentana: als.filter(r => r.fecha > ini14).reduce((t, r) => t + r.lb, 0) / 2,
+        // Ventana ponderada (lb/semana): fuente de consumo del motor. Si no cumple
+        // cobertura+muestra, el plan queda bloqueado (obliga validar a mano).
+        consumoVentana: v.ponder * 7,
+        ventana: v,
         alsRaw: alRawDe[c.id] || [],
         dias: diasEntre(siembra, hasta),
       }
@@ -188,20 +228,25 @@ export default function Estimacion({ finca, esJefe }) {
     })
   }, [diag, ciclos, hasta, meta, cfg])
 
-  // Biomasa seleccionada: la validada si existe, si no la de consumo.
+  // Biomasa seleccionada: la validada (si existe y sigue VIGENTE), si no la de consumo.
   const vald = valida[sel]
-  const biomasaSel = vald ? vald.valor_lb : (est ? est.biomasaConsumo : 0)
-  const fuenteUsada = vald ? 'validada manualmente' : 'por consumo'
+  const v = fila ? fila.ventana : null
+  const vig = (vald && est && fila) ? vigenciaDe(vald, fila, est.biomasaConsumo, hasta) : null
+  const valdOk = !!(vald && (!vig || vig.vigente))     // validación vigente
+  const biomasaSel = valdOk ? vald.valor_lb : (est ? est.biomasaConsumo : 0)
+  const fuenteUsada = valdOk ? 'validada manualmente' : 'por consumo'
   // Etiqueta de procedencia: validada (usuario + fecha) o el nivel de confianza por consumo.
-  const notaBio = vald
+  const notaBio = valdOk
     ? `Validada manualmente · ${vald.fecha_ref ? corta(vald.fecha_ref) : (vald.validada_en ? corta(vald.validada_en) : '—')}`
     : `Por consumo · confianza ${bm ? bm.confianza : 'alta'}`
-  const confianza = vald ? 'alta' : (bm ? bm.confianza : 'alta')
-  const bloqueado = bm && bm.bloquea && !vald
+  const confianza = valdOk ? 'alta' : (bm ? bm.confianza : 'alta')
+  // Consumo insuficiente: la ventana no cumple cobertura/muestra → no hay biomasa
+  // oficial, obliga validar a mano.
+  const consumoInsuf = v ? !v.valido : false
+  const bloqueado = !!(est && ((bm && bm.bloquea) || consumoInsuf) && !valdOk)
   // Aunque esté validada, si consumo y densidad siguen difiriendo >25% hay que avisar
   // (una validación no vuelve "consistente" una diferencia grande).
   const difGrande = bm && bm.difPct > 0.25
-  const factorBio = (est && est.biomasaConsumo > 0) ? biomasaSel / est.biomasaConsumo : 1
 
   async function validarBiomasa() {
     let valor = fuenteSel === 'consumo' ? est.biomasaConsumo : fuenteSel === 'densidad' ? est.biomasaDensidad : Number(String(aprobTxt).replace(',', '.'))
@@ -226,16 +271,21 @@ export default function Estimacion({ finca, esJefe }) {
   }
 
   const diasRest = est ? Math.max(0, est.diasProyectados - fila.dias) : 0
-  const lbPorTolva = (!bloqueado && fila && fila.tolvas > 0 && est) ? biomasaSel * (est.planReco.pctDia / 100) / fila.tolvas : null
-  const sacosSemSel = est ? est.planReco.sacosSem * factorBio : 0
-  const usdSemSel = est ? est.planReco.usdSem * factorBio : 0
-  // Tasa auditable y redondeo de sacos del plan recomendado.
-  const escFactor = est ? (est.escenario === 'BAJO' ? 0.9 : est.escenario === 'ALTO' ? 1.1 : 1.0) : 1
-  const tasaApl = est ? est.planReco.pctDia : 0
-  const tasaBase = escFactor ? tasaApl / escFactor : tasaApl
-  const lbDiaSel = est ? est.planReco.lbDia * factorBio : 0
-  const sacosDiaSel = lbDiaSel / 55
-  const pedir = Math.round(sacosSemSel)
+  const estadoPlan = planEstadoDe({ est, v, bm, bloqueado, vig })
+  // RACIÓN de esta semana: una sola biomasa fuente × tasa a la talla de HOY.
+  // lbDía = biomasaSel × tasaApl (cierre exacto). Redondeo solo al pedir.
+  const tasaApl = est ? est.planReco.tasaDia : 0
+  const tasaBase = est ? est.plan.MEDIO.tasaDia : 0           // base = Medio a talla de hoy
+  const ajusteInt = tasaBase > 0 ? tasaApl / tasaBase - 1 : 0
+  const lbDiaSel = biomasaSel * tasaApl / 100
+  const sacosDiaSel = lbDiaSel / PARAM.pesoSaco
+  const sacosSemCalc = lbDiaSel * 7 / PARAM.pesoSaco          // sacos calculados (sin redondear)
+  const pedir = Math.ceil(sacosSemCalc)                       // requerimiento operativo (hacia arriba)
+  const usdSemSel = sacosSemCalc * (est ? est.alimento.usdSaco : 0)
+  // PEDIDO para la próxima semana: proyección aparte (no afecta la dosis de hoy).
+  const lbDiaProx = est ? biomasaSel * est.factorProx * est.planReco.tasaProx / 100 : 0
+  const sacosProxPedir = Math.ceil(lbDiaProx * 7 / PARAM.pesoSaco)
+  const lbPorTolva = (!bloqueado && fila && fila.tolvas > 0 && est) ? biomasaSel / fila.tolvas : null
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
   const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
@@ -282,8 +332,14 @@ export default function Estimacion({ finca, esJefe }) {
         </Centro></Caja>
       ) : (
       <>
+        {vald && !valdOk && vig && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '9px', background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '10px', padding: '10px 14px', marginBottom: '10px', fontSize: '12.5px', color: AMBAR }}>
+            <span>⏱</span><span>La validación manual venció: <b>{vig.motivos.join(' · ')}</b>. Se usa la biomasa por consumo; vuelve a validar si corresponde.</span>
+          </div>
+        )}
         {/* Veredicto: verde si datos consistentes; ámbar/rojo si hay que validar la biomasa */}
         {bloqueado ? (
+          (bm && bm.bloquea) ? (
           <div style={{ background: bm.color === ROJO ? '#FBEAEA' : '#FBF5E9', border: '0.5px solid ' + (bm.color === ROJO ? '#e7cccb' : '#ecd9b4'), borderRadius: '12px', padding: '14px 16px', marginBottom: '10px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: '11px' }}>
               <span style={{ fontSize: '21px', color: bm.color, lineHeight: 1 }}>⚠</span>
@@ -302,6 +358,24 @@ export default function Estimacion({ finca, esJefe }) {
               </div>
             </div>
           </div>
+          ) : (
+          <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '12px', padding: '14px 16px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '11px' }}>
+              <span style={{ fontSize: '21px', color: AMBAR, lineHeight: 1 }}>⚠</span>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: '14.5px', fontWeight: 500, color: AMBAR }}>Datos de consumo insuficientes</span>
+                <div style={{ fontSize: '12.5px', color: '#9a7636', marginTop: '3px' }}>
+                  {v && (v.coberturaOk
+                    ? <>Solo <b>{v.alim}/14</b> días alimentados ({v.fed7}/7 en la última semana).</>
+                    : <>Solo <b>{v.documentados}/14</b> días con registro{v.falt > 0 ? <> (faltan {v.falt})</> : ''}.</>)}
+                </div>
+                <div style={{ background: 'white', border: '0.5px solid #ecd9b4', borderRadius: '9px', padding: '11px 13px', marginTop: '10px', fontSize: '12px', color: '#6b5a3a', lineHeight: 1.6 }}>
+                  No puedo estimar una biomasa confiable con tan pocos registros. Completa el balanceado de la ventana o <b>valida la biomasa a mano</b> abajo. Mientras tanto, los sacos de abajo son solo <b>simulación</b>.
+                </div>
+              </div>
+            </div>
+          </div>
+          )
         ) : (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#e7f6ef', border: '0.5px solid #bfe6d2', borderRadius: '12px', padding: '13px 16px', marginBottom: '14px' }}>
             <span style={{ width: '26px', height: '26px', borderRadius: '50%', background: VERDE, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flex: '0 0 auto' }}>✓</span>
@@ -309,9 +383,9 @@ export default function Estimacion({ finca, esJefe }) {
               <div style={{ fontSize: '14.5px', fontWeight: 500, color: VERDE }}>{est.lectura.txt}</div>
               <div style={{ fontSize: '12.5px', color: '#3d7a63' }}>
                 Llegaría a {num1(est.metaUsa)} g en <b>{num1(diasRest)} días</b> (día {num1(est.diasProyectados)} de cultivo)
-                {!vald && bm && bm.nivel === 'precaución' && <span style={{ color: AMBAR }}> · ojo: biomasa con {Math.round(bm.difPct * 100)}% de diferencia</span>}
+                {!valdOk && bm && bm.nivel === 'precaución' && <span style={{ color: AMBAR }}> · ojo: biomasa con {Math.round(bm.difPct * 100)}% de diferencia</span>}
               </div>
-              {vald && <div style={{ fontSize: '12px', color: difGrande ? AMBAR : '#3d7a63', marginTop: '3px' }}>
+              {valdOk && <div style={{ fontSize: '12px', color: difGrande ? AMBAR : '#3d7a63', marginTop: '3px' }}>
                 Biomasa validada manualmente{difGrande && <> · <b>ojo:</b> consumo y densidad aún difieren {Math.round(bm.difPct * 100)}% — revisa si la validación sigue vigente</>}
               </div>}
             </div>
@@ -326,7 +400,7 @@ export default function Estimacion({ finca, esJefe }) {
           <Kpi k="Gramaje hoy" v={num1(fila.gramaje)} u="g" />
           <Kpi k="Días de cultivo" v={String(fila.dias)} />
           <Kpi k="Días restantes" v={num1(diasRest)} color={AZUL} nota={`llegaría en el día ${num1(est.diasProyectados)}`} />
-          <Kpi k="Biomasa seleccionada" v={miles(biomasaSel)} u="lb" nota={notaBio} notaColor={vald ? (difGrande ? AMBAR : AZUL) : (confianza === 'alta' ? VERDE : AMBAR)} />
+          <Kpi k="Biomasa seleccionada" v={miles(biomasaSel)} u="lb" nota={notaBio} notaColor={valdOk ? (difGrande ? AMBAR : AZUL) : (confianza === 'alta' ? VERDE : AMBAR)} />
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '14px', marginBottom: '14px' }}>
@@ -356,7 +430,7 @@ export default function Estimacion({ finca, esJefe }) {
             </div>
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
-              <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b>{vald && esJefe && <span onClick={quitarValidacion} style={{ color: AZUL, cursor: 'pointer' }}> · cambiar</span>}</span>
+              <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b>{valdOk && esJefe && <span onClick={quitarValidacion} style={{ color: AZUL, cursor: 'pointer' }}> · cambiar</span>}</span>
             </div>
             {!bloqueado && bm && (
               <div style={{ fontSize: '11.5px', color: bm.color, marginTop: '8px' }}>
@@ -365,7 +439,7 @@ export default function Estimacion({ finca, esJefe }) {
             )}
 
             {/* Selector de biomasa (jefe) cuando hay que validar o no está validada */}
-            {esJefe && !vald && (
+            {esJefe && !valdOk && (
               <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '13px' }}>
                 <div style={{ fontSize: '12.5px', fontWeight: 500, marginBottom: '9px' }}>¿Cuál biomasa usamos para el plan?</div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
@@ -387,7 +461,7 @@ export default function Estimacion({ finca, esJefe }) {
           <Caja>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
               <Titulo sinMargen>Plan de alimentación · esta semana</Titulo>
-              {!bloqueado && <span style={{ fontSize: '11.5px', fontWeight: 500, color: VERDE, background: VERDE + '18', padding: '3px 10px', borderRadius: '20px' }}>✓ Plan sugerido: {cap(est.escenario)}</span>}
+              {!bloqueado && est && <span style={{ fontSize: '11.5px', fontWeight: 500, color: estadoPlan.color, background: estadoPlan.color + '18', padding: '3px 10px', borderRadius: '20px' }}>{estadoPlan.k === 'aplicable' ? '✓' : estadoPlan.k === 'simulacion' ? '◐' : '⚠'} Plan: {cap(estadoPlan.k === 'simulacion' ? 'simulación' : estadoPlan.k)} · {cap(est.escenario)}</span>}
             </div>
             {bloqueado ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '11px', background: '#f6f9fb', borderRadius: '9px', padding: '13px 15px' }}>
@@ -395,24 +469,33 @@ export default function Estimacion({ finca, esJefe }) {
                 <div style={{ fontSize: '12.5px', color: GRIS }}>Elige y <b>valida la biomasa</b> arriba para desbloquear el plan. Mientras tanto, los sacos de abajo son solo <b>simulación</b>.</div>
               </div>
             ) : (<>
+              {estadoPlan.k !== 'aplicable' && (
+                <div style={{ background: estadoPlan.color + '14', border: '0.5px solid ' + estadoPlan.color + '44', borderRadius: '9px', padding: '10px 13px', marginBottom: '12px', fontSize: '12px', color: estadoPlan.color, lineHeight: 1.5 }}>
+                  <b>{estadoPlan.txt}.</b> {estadoPlan.detalle}{estadoPlan.k === 'simulacion' ? ' — la dosis es referencial hasta revisar.' : ''}
+                </div>
+              )}
               <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px', marginBottom: '13px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.6 }}>
                 <b style={{ color: NAVY, fontWeight: 500 }}>¿Por qué {cap(est.escenario)}?</b> {porQueTxt}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '13px', marginBottom: '13px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '13px', marginBottom: '11px' }}>
                 <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
-                  <div style={titMini}>Cómo sale la dosis</div>
-                  <Row k={`Tasa base (${num1(fila.gramaje)} g)`} v={num2(tasaBase) + '%'} />
-                  <Row k={`Ajuste intensidad ${cap(est.escenario)}`} v={(escFactor >= 1 ? '+' : '') + Math.round((escFactor - 1) * 100) + '%'} />
+                  <div style={titMini}>Cómo sale la dosis · hoy</div>
+                  <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num2(tasaBase) + '%'} />
+                  <Row k={`Ajuste intensidad ${cap(est.escenario)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
                   <Row k="Tasa aplicada" v={num2(tasaApl) + '%'} fuerte top />
                   <Row k={`${miles(biomasaSel)} lb × ${num2(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
                 </div>
                 <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px' }}>
                   <div style={titMini}>Sacos a pedir</div>
                   <Row k="Por día" v={num1(sacosDiaSel) + ' sacos'} fuerte />
-                  <Row k="Semana calculada" v={num1(sacosSemSel) + ' sacos'} />
-                  <Row k="Pedir (redondeado)" v={pedir + ' sacos'} fuerte top azul />
+                  <Row k={`Semana calculada (${PARAM.pesoSaco} lb)`} v={num1(sacosSemCalc) + ' sacos'} />
+                  <Row k="Requerimiento operativo" v={pedir + ' sacos'} fuerte top azul />
                   <Row k="Costo semana" v={dinero(usdSemSel)} />
                 </div>
+              </div>
+              <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '13px', display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap' }}>
+                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Proyección próxima semana</span>
+                pedido anticipado <b style={{ color: NAVY, fontWeight: 500 }}>{sacosProxPedir} sacos</b> — no afecta la dosis de esta semana.
               </div>
             </>)}
             <div style={{ fontSize: '12.5px', color: GRIS, margin: bloqueado ? '12px 0 0' : '0 0 12px' }}>Alimento: <b style={{ color: NAVY, fontWeight: 500 }}>{est.alimento.nombre}</b> · {dinero(est.alimento.usdSaco)} el saco</div>
@@ -420,9 +503,9 @@ export default function Estimacion({ finca, esJefe }) {
               <span style={{ color: '#9fb0bf', fontSize: '11px' }}>Intensidad</span>
               {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: (!bloqueado && est.escenario === e) ? VERDE : GRIS, fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400 }}>{cap(e)}</span>)}
               <span style={{ color: GRIS }}>Tasa aplicada</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <b key={e} style={{ textAlign: 'right', fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400, color: NAVY }}>{num2(est.plan[e].pctDia)}%</b>)}
+              {['BAJO', 'MEDIO', 'ALTO'].map(e => <b key={e} style={{ textAlign: 'right', fontWeight: (!bloqueado && est.escenario === e) ? 500 : 400, color: NAVY }}>{num2(est.plan[e].tasaDia)}%</b>)}
               <span style={{ color: GRIS }}>Pedir sacos/semana</span>
-              {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: GRIS }}>{Math.round(est.plan[e].sacosSem * factorBio)}</span>)}
+              {['BAJO', 'MEDIO', 'ALTO'].map(e => <span key={e} style={{ textAlign: 'right', color: GRIS }}>{Math.ceil(biomasaSel * est.plan[e].tasaDia / 100 * 7 / PARAM.pesoSaco)}</span>)}
             </div>
           </Caja>
 
