@@ -371,7 +371,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar el patrón') }); return }
     const nuevo = {}; filasPat.forEach(r => { nuevo[r.dia] = r.alimenta })
     setPatFinca(nuevo); setEditPat(false)
-    setAviso({ tipo: 'ok', texto: 'Patrón de finca guardado.' })
+    const ayunoDias = [1, 2, 3, 4, 5, 6, 7].filter(d => patTmp[d] === false).map(d => DIA_LBL[d - 1])
+    setAviso({ tipo: 'ok', texto: `Patrón guardado por ${nombre || 'ti'} · ${ayunoDias.length ? 'ayuno ' + ayunoDias.join(', ') : 'todos los días'} · vigente desde ${corta(hoyISO())}` })
   }
   // Abre el panel masivo preseleccionando las piscinas confirmables (sin días sin registro).
   function abrirMasivo() {
@@ -526,38 +527,58 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         </div>
       )}
 
-      {masivo && (
+      {masivo && (() => {
+        const datos = ciclos.map(f => {
+          const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
+          return { f, dias, da: dias.filter(d => d.alimenta).length, sinReg: dias.some(d => d.tipo === 'sin'), conf: !!(planSemana[f.cicloId] && planSemana[f.cicloId].confirmada) }
+        })
+        const confirmables = datos.filter(m => !m.sinReg).map(m => m.f.cicloId)
+        const bloqueadas = datos.filter(m => m.sinReg)
+        const nSel = masSel ? masSel.size : 0
+        const diasSel = datos.filter(m => masSel && masSel.has(m.f.cicloId)).reduce((t, m) => t + m.da, 0)
+        return (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
             <div style={{ fontSize: '14px', fontWeight: 500 }}>Preparar semana · {corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</div>
-            <span onClick={() => { setMasivo(false); setMasSel(null) }} style={{ color: GRIS, cursor: 'pointer', fontSize: '12px' }}>Cerrar</span>
+            <button onClick={() => { setMasivo(false); setMasSel(null) }} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
           </div>
-          <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>Revisa y destilda las que no quieras. Para cambiar días puntuales de una piscina, confírmala y ajústala en su calendario.</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '320px', overflowY: 'auto' }}>
-            {ciclos.map(f => {
-              const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
-              const da = dias.filter(d => d.alimenta).length
-              const sinReg = dias.some(d => d.tipo === 'sin')
-              const ayunos = dias.filter(d => !d.cerrado && !d.alimenta).map(d => DIA_LBL[d.i]).join(', ')
-              const conf = planSemana[f.cicloId] && planSemana[f.cicloId].confirmada
+          <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '8px' }}>Revisa o ajusta el borrador y luego confirma. Días cerrados = ejecución real (borde sólido); futuros = patrón (borde punteado).</div>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px', fontSize: '11.5px' }}>
+            <span onClick={() => setMasSel(new Set(confirmables))} style={{ color: AZUL, cursor: 'pointer' }}>Seleccionar confirmables</span>
+            <span onClick={() => setMasSel(new Set())} style={{ color: AZUL, cursor: 'pointer' }}>Ninguna</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '340px', overflowY: 'auto' }}>
+            {datos.map(({ f, dias, da, sinReg, conf }) => {
               const checked = !!(masSel && masSel.has(f.cicloId))
               return (
-                <label key={f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '7px 9px', borderRadius: '8px', background: '#f6f9fb', fontSize: '12.5px', cursor: sinReg ? 'default' : 'pointer', opacity: sinReg ? 0.6 : 1 }}>
+                <div key={f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '7px 9px', borderRadius: '8px', background: '#f6f9fb', fontSize: '12.5px', opacity: sinReg ? 0.7 : 1 }}>
                   <input type="checkbox" disabled={sinReg} checked={checked} onChange={e => setMasSel(s => { const n = new Set(s); if (e.target.checked) n.add(f.cicloId); else n.delete(f.cicloId); return n })} />
-                  <span style={{ flex: 1, color: NAVY }}>{f.nombre}</span>
-                  <span style={{ color: GRIS }}>{da}/7 días</span>
-                  <span style={{ color: GRIS, minWidth: '120px', textAlign: 'right' }}>{sinReg ? <span style={{ color: ROJO }}>día sin registro</span> : ayunos ? 'Ayuno: ' + ayunos : 'sin ayunos'}</span>
-                  {conf && <span style={{ color: VERDE, fontSize: '10.5px' }}>✓ confirmada</span>}
-                </label>
+                  <span style={{ width: '78px', color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nombre}</span>
+                  <span style={{ display: 'flex', gap: '3px', flex: 1 }}>
+                    {dias.map((d, i) => {
+                      const col = d.tipo === 'sin' ? ROJO : d.alimenta ? '#0F6E56' : '#854F0B'
+                      const bg = d.tipo === 'sin' ? '#FBEAEA' : d.alimenta ? '#e7f6ef' : '#FBF5E9'
+                      return <span key={i} title={`${DIA_LBL[d.i]} · ${d.cerrado ? (d.tipo === 'sin' ? 'sin registro' : 'ejecutado') : 'patrón'} · ${d.alimenta ? 'alimenta' : 'ayuno'}`}
+                        style={{ fontSize: '9px', width: '17px', textAlign: 'center', padding: '2px 0', borderRadius: '3px', background: bg, color: col, border: (d.cerrado ? '1px solid ' : '1px dashed ') + col }}>{DIA_LBL[d.i][0]}</span>
+                    })}
+                  </span>
+                  <span style={{ color: GRIS, width: '52px', textAlign: 'right' }}>{da}/7</span>
+                  {sinReg ? <span style={{ color: ROJO, width: '70px', textAlign: 'right', fontSize: '11px' }}>sin registro</span>
+                    : conf ? <span style={{ color: VERDE, width: '70px', textAlign: 'right', fontSize: '10.5px' }}>✓ confirmada</span>
+                    : <span style={{ width: '70px' }} />}
+                  <button onClick={() => { setSel(f.cicloId); setMasivo(false); setMasSel(null) }} style={{ ...btnLink, fontSize: '11.5px' }}>Revisar</button>
+                </div>
               )
             })}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
-            <button onClick={confirmarMasivo} disabled={!masSel || masSel.size === 0} style={{ ...btnAzul, opacity: (!masSel || masSel.size === 0) ? 0.5 : 1, cursor: (!masSel || masSel.size === 0) ? 'default' : 'pointer' }}>Confirmar seleccionadas ({masSel ? masSel.size : 0})</button>
-            <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Las piscinas con un día pasado sin registro no se pueden confirmar hasta resolverlo.</span>
+          <div style={{ fontSize: '12px', color: NAVY, margin: '11px 0 9px' }}>
+            Confirmar <b style={{ fontWeight: 500 }}>{nSel}</b> piscina(s) · <b style={{ fontWeight: 500 }}>{diasSel}</b> días alimentados{bloqueadas.length > 0 && <span style={{ color: ROJO }}> · {bloqueadas.length} requieren registros pendientes</span>}
           </div>
+          {bloqueadas.length > 0 && <div style={{ fontSize: '11px', color: '#9a7636', marginBottom: '9px' }}>Pendientes: {bloqueadas.map(m => m.f.nombre).join(', ')}</div>}
+          <button onClick={confirmarMasivo} disabled={nSel === 0} style={{ ...btnAzul, opacity: nSel === 0 ? 0.5 : 1, cursor: nSel === 0 ? 'default' : 'pointer' }}>Confirmar seleccionadas ({nSel})</button>
         </div>
-      )}
+        )
+      })()}
 
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
@@ -979,9 +1000,11 @@ function construirDias(fila, semFechas, hoy, patFinca, patPisc, plan, overrides)
   const ov = patPisc[fila.piscinaId] || null
   return semFechas.map((f, i) => {
     const dia = i + 1
-    if (f < hoy) {
-      const e = ejec[f]
-      if (!e || !e.rec) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
+    const e = ejec[f]
+    const ejecutado = !!(e && e.rec)
+    // Cerrado = ya ejecutado (aunque sea HOY) o día pasado. La ejecución real manda.
+    if (ejecutado || f < hoy) {
+      if (!ejecutado) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
       if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb }
       return { fecha: f, i, cerrado: true, tipo: 'ayuno', alimenta: false, lb: 0 }
     }
