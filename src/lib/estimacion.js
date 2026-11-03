@@ -1,7 +1,7 @@
 // Motor de estimación (calculadora AQ1), portado del Excel de Melany.
 // La curva calibrada vive en estimacionTabla.js; aquí van los parámetros y
 // las fórmulas (proyección, biomasa, FCR, escenario y plan de alimento).
-import { TABLA_CRECIMIENTO as TABLA } from './estimacionTabla'
+import { TABLA_CRECIMIENTO as TABLA } from './estimacionTabla.js'
 
 // Parámetros generales del motor (AQ1 PARAMETROS).
 export const PARAM = {
@@ -129,17 +129,19 @@ export function estimar(inp) {
   else escenario = 'MEDIO'
 
   const gProxSem = g + gSemObj(g) / 2
-  const alimento = alimentoDe(gProxSem)
+  const alimento = alimentoDe(g)                       // alimento a la talla de HOY
+  // Factor de proyección a la próxima semana (crecimiento + ~1,5% de mortalidad).
+  // NO entra en la ración de esta semana; solo en la proyección de PEDIDO.
+  const factorProx = g > 0 ? gProxSem / g * 0.985 : 1
 
-  // Plan de alimento de la próxima semana, por escenario (según consumo). El %
-  // se toma al gramaje de la próxima semana (×ajuste B), y la biomasa se escala
-  // a esa talla (×gProx/g ×0,985), igual que el Excel.
-  const planDe = esc => {
-    const pctDia = pct(gProxSem, esc) * ajusteB
-    const lbDia = (g > 0) ? biomasaConsumo * gProxSem / g * 0.985 * pctDia / 100 : 0
-    const sacosSem = lbDia * 7 / PARAM.pesoSaco
-    return { pctDia, lbDia, sacosDia: lbDia / PARAM.pesoSaco, sacosSem, usdSem: sacosSem * alimento.usdSaco }
-  }
+  // El motor solo entrega TASAS por escenario (una sola biomasa fuente: las libras
+  // las calcula la página con biomasaSel × tasa, para que la tarjeta cierre exacto).
+  //   tasaDia: % a la talla de HOY  → ración de ESTA semana
+  //   tasaProx: % a la talla de la próxima semana → proyección de PEDIDO
+  const planDe = esc => ({
+    tasaDia: pct(g, esc) * ajusteB,
+    tasaProx: pct(gProxSem, esc) * ajusteB,
+  })
 
   return {
     meta, metaUsa, gProm,
@@ -148,7 +150,7 @@ export function estimar(inp) {
     lectura: lecturaDe(atrasoProyectado),
     biomasaConsumo, biomasaDensidad, lbHa: area > 0 ? biomasaConsumo / area : 0,
     sobrevConsumo, sobrevDensidad, fcrParcial, fcrMax, difBiomasa: biomasaDensidad > 0 ? biomasaConsumo / biomasaDensidad - 1 : 0,
-    escenario, gProxSem, alimento,
+    escenario, gProxSem, alimento, factorProx,
     plan: { BAJO: planDe('BAJO'), MEDIO: planDe('MEDIO'), ALTO: planDe('ALTO') },
     planReco: planDe(escenario),
   }
