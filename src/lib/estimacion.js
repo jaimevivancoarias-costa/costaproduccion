@@ -22,7 +22,28 @@ export const PARAM = {
 }
 
 // Config por finca (editable a futuro). Por ahora, los valores del Excel.
-export const FINCA_DEFECTO = { meta: 35, metaLbHa: 14000, costoHaDia: 33, larvaMillar: 3, tabla: 'B' }
+export const FINCA_DEFECTO = { meta: 35, metaLbHa: 14000, costoHaDia: 55, larvaMillar: 3, tabla: 'A' }
+
+// Parámetros por finca, portados del Excel (costamarket v9 + Austromar v7).
+// La clave se normaliza (mayúsculas sin espacios) para tolerar variantes.
+const FINCAS_CFG = {
+  AUSTROMAR: { meta: 35, metaLbHa: 14000, costoHaDia: 33, larvaMillar: 3, tabla: 'B' },
+  LANGISA: { meta: 35, metaLbHa: 14000, costoHaDia: 60, larvaMillar: 3, tabla: 'A' },
+  PACIMAR: { meta: 35, metaLbHa: 14000, costoHaDia: 63.89, larvaMillar: 3, tabla: 'A' },
+  REYMAR: { meta: 35, metaLbHa: 14000, costoHaDia: 60, larvaMillar: 3, tabla: 'A' },
+  NUTRIFEED: { meta: 35, metaLbHa: 14000, costoHaDia: 50, larvaMillar: 3, tabla: 'A' },
+  OCEANMARKET: { meta: 35, metaLbHa: 14000, costoHaDia: 55, larvaMillar: 6, tabla: 'A' },
+  AGRIMARINE: { meta: 35, metaLbHa: 14000, costoHaDia: 57.68, larvaMillar: 9, tabla: 'A' },
+  OCEANAZUL: { meta: 35, metaLbHa: 14000, costoHaDia: 56.74, larvaMillar: 6, tabla: 'A' },
+  LIMONVER: { meta: 35, metaLbHa: 14000, costoHaDia: 40, larvaMillar: 3, tabla: 'A' },
+  SEVILLA: { meta: 35, metaLbHa: 14000, costoHaDia: 65, larvaMillar: 3, tabla: 'A' },
+  MAREXPORT: { meta: 35, metaLbHa: 14000, costoHaDia: 55, larvaMillar: 4, tabla: 'A' },
+}
+const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z]/g, '')
+export function cfgFinca(nombre) {
+  const k = norm(nombre)
+  return FINCAS_CFG[k] || Object.entries(FINCAS_CFG).find(([n]) => k.startsWith(n) || n.startsWith(k))?.[1] || FINCA_DEFECTO
+}
 
 const G_POR_LB = 453.592
 
