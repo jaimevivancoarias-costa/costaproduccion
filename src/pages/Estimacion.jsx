@@ -698,7 +698,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const rent = (() => {
     if (!est || !fila || bloqueado || !(biomasaSel > 0)) return null
     const gHoy = fila.gramaje
-    if (gHoy < G_MIN_COMERCIAL) return { noComercial: true, gHoy }
+    const alertaDatos = est.sobrevConsumo > 1.05 ? Math.round(est.sobrevConsumo * 100) : null
+    if (gHoy < G_MIN_COMERCIAL) {
+      const eC = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
+      const eO = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno })
+      return { noComercial: true, gHoy, metaUsa: eC ? eC.metaUsa : est.metaUsa, diasCurva: eC ? eC.dias : null, diasObs: eO ? eO.dias : null, alertaDatos }
+    }
     const pHoy = precioPorGramaje(gHoy, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
     const prC = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
@@ -1234,9 +1239,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         {rent && (
           <div style={{ marginTop: '14px' }}><Caja>
             <Titulo>Rentabilidad · cosechar hoy vs esperar a meta</Titulo>
-            {rent.noComercial ? (
-              <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Aún no es cosechable ({num1(rent.gHoy)} g · mínimo comercial {G_MIN_COMERCIAL} g). Sigue en engorde hacia la meta; todavía no tiene sentido comparar contra cosechar hoy.</div>
-            ) : rent.listo ? (
+            {rent.noComercial ? (<>
+              {rent.alertaDatos && <div style={{ fontSize: '11.5px', color: ROJO, background: '#FBEAEA', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Sobrevivencia por consumo {rent.alertaDatos}% ({'>'}100%): la biomasa por consumo parece alta. Revisa los datos.</div>}
+              <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Aún no es cosechable ({num1(rent.gHoy)} g · mínimo comercial {G_MIN_COMERCIAL} g). Sigue en engorde; todavía no tiene sentido comparar contra cosechar hoy.</div>
+              <div style={{ fontSize: '12px', color: GRIS, marginTop: '8px' }}>Proyección referencial de engorde a {num1(rent.metaUsa)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{rent.diasCurva != null ? rent.diasCurva + ' días' : '—'}</b> según curva · <b style={{ color: NAVY, fontWeight: 500 }}>{rent.diasObs != null ? rent.diasObs + ' días' : '—'}</b> según ritmo observado.</div>
+              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '7px' }}>Sin comparación económica y fuera del "valor de continuar" de la finca hasta alcanzar talla comercial.</div>
+            </>) : rent.listo ? (
               <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Ya está en talla de cosecha ({num1(rent.gHoy)} g). Ingreso estimado hoy: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(rent.ingresoHoy)}</b> ({cap(rent.pHoy.conviene)} a {dinero(rent.pHoy.mejor)}/lb).</div>
             ) : (<>
               {rent.alertaDatos && <div style={{ fontSize: '11.5px', color: ROJO, background: '#FBEAEA', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Sobrevivencia por consumo {rent.alertaDatos}% ({'>'}100%): la biomasa por consumo parece alta. Revisa los datos antes de decidir; esta rentabilidad es referencial.</div>}
@@ -1249,7 +1257,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <Row k={`Bruto a meta (${rent.pMeta.conviene} ${dinero(rent.pMeta.mejor)}/lb)`} v={dinero(rent.brutoMeta)} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '10px' }}>
-                {[['Según curva biológica', rent.curva], ['Según ritmo observado', rent.obs]].map(([lbl, e]) => (
+                {[['Según curva biológica', rent.curva], ['Ritmo observado (curva diaria)', rent.obs]].map(([lbl, e]) => (
                   <div key={lbl} style={{ background: e.valor >= 0 ? '#e7f6ef' : '#FBF5E9', border: '0.5px solid ' + (e.valor >= 0 ? '#bfe6d2' : '#ecd9b4'), borderRadius: '9px', padding: '11px 13px' }}>
                     <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '5px' }}>{lbl} · {e.dias} días</div>
                     <div style={{ fontSize: '14px', fontWeight: 500, color: e.valor >= 0 ? VERDE : AMBAR }}>{e.valor >= 0 ? 'Esperar · +' : 'Cosechar · '}{dinero(e.valor)}</div>
@@ -1266,7 +1274,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <span>FCR acumulado a meta: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(rent.fcrAcum)}</b></span>
                 <span>Mortalidad de referencia (densidad): <b style={{ color: NAVY, fontWeight: 500 }}>{pct0(rent.sHoyRef)} → {pct0(rent.sMetaRef)}</b></span>
               </div>
-              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Alimento futuro proyectado día a día con la curva del motor. Dos horizontes: "curva biológica" (ritmo objetivo) y "ritmo observado" (tu desempeño reciente, igual que los días de arriba). La biomasa parte de la <b>oficial</b> ({cap(fuenteUsada)}); la mortalidad a futuro es una <b>curva de referencia por densidad</b>, no la sobrevivencia por consumo. Larva = costo hundido. Precios: lista AQUAGOLD · CV {Math.round((precioOpts.cv ?? CV_DEF) * 100)}% · rend. entero {Math.round((precioOpts.rendEntero ?? REND_ENTERO_DEF) * 100)}% · cola {Math.round((precioOpts.rendCola ?? REND_COLA_DEF) * 100)}%. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
+              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Alimento futuro proyectado día a día con la curva del motor. Dos horizontes: "curva biológica" (ritmo objetivo) y "ritmo observado" (tu desempeño reciente aplicado a la curva diaria). Puede diferir unos días del "días restantes" de arriba, que es un estimado lineal; aquí se acumula día a día. La biomasa parte de la <b>oficial</b> ({cap(fuenteUsada)}); la mortalidad a futuro es una <b>curva de referencia por densidad</b>, no la sobrevivencia por consumo. Larva = costo hundido. Precios: lista AQUAGOLD · CV {Math.round((precioOpts.cv ?? CV_DEF) * 100)}% · rend. entero {Math.round((precioOpts.rendEntero ?? REND_ENTERO_DEF) * 100)}% · cola {Math.round((precioOpts.rendCola ?? REND_COLA_DEF) * 100)}%. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
             </>)}
           </Caja></div>
         )}
