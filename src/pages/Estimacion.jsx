@@ -477,6 +477,23 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const nivelCambio = deltaDosis == null ? null : Math.abs(deltaDosis) <= 0.10 ? 'normal' : Math.abs(deltaDosis) <= 0.20 ? 'confirmar' : 'fuerte'
   const faltaMotivo = requiereMotivo && (!motivoCod || (motivoCod === 'otro' && !motivoTxt.trim()))
   const faltaConfirmCambio = nivelCambio === 'fuerte' && !confirmaCambio
+  // Planificado vs ejecutado: compara el plan aplicado+confirmado con la alimentación
+  // real de la semana. Se muestra cuando ya hay días cerrados que comparar.
+  const planConfirmado = !!(planSel && planSel.confirmada)
+  const cerradosN = calDias.filter(d => d.cerrado).length
+  const ejecLbSem = calDias.filter(d => d.tipo === 'fed').reduce((t, d) => t + d.lb, 0)
+  const planLbSem = apRec ? Number(apRec.sacos_calc) * PARAM.pesoSaco : null
+  const semanaCompleta = semFechas.length === 7 && semFechas[6] < hoy
+  let ayPlan = 0, ayNoPlan = 0, fedExtra = 0
+  if (planConfirmado) for (const d of calDias) {
+    if (!d.cerrado) continue
+    const previsto = planSel.dias[d.fecha]           // true=alimentar / false=ayuno planificado
+    if (previsto === false) { if (d.tipo === 'fed') fedExtra++; else ayPlan++ }
+    else if (d.tipo !== 'fed') ayNoPlan++            // se esperaba alimentar pero ayuno/sin registro
+  }
+  const cumplimiento = (planLbSem && planLbSem > 0) ? ejecLbSem / planLbSem : null
+  const difSacosPvE = (planLbSem != null) ? (ejecLbSem - planLbSem) / PARAM.pesoSaco : null
+  const mostrarPvE = !!(apRec && planConfirmado && cerradosN > 0)
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
   const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
@@ -902,6 +919,27 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
           <div style={{ fontSize: '12.5px', color: GRIS, marginTop: '13px' }}>Alimento: <b style={{ color: NAVY, fontWeight: 500 }}>{est.alimento.nombre}</b> · {dinero(est.alimento.usdSaco)} el saco</div>
         </Caja>
+
+        {mostrarPvE && (
+          <div style={{ marginTop: '14px' }}><Caja>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+              <Titulo sinMargen>Planificado vs ejecutado{semanaCompleta ? '' : ' · a la fecha'}</Titulo>
+              {cumplimiento != null && <span style={{ fontSize: '11.5px', fontWeight: 500, color: cumplimiento >= 0.95 && cumplimiento <= 1.05 ? VERDE : AMBAR, background: (cumplimiento >= 0.95 && cumplimiento <= 1.05 ? VERDE : AMBAR) + '18', borderRadius: '20px', padding: '3px 10px' }}>Cumplimiento {Math.round(cumplimiento * 100)}%</span>}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px,1fr))', gap: '11px' }}>
+              <Mini k="Planificado (semana)" v={`${miles(planLbSem)} lb`} />
+              <Mini k={semanaCompleta ? 'Alimentado' : 'Alimentado a la fecha'} v={`${miles(ejecLbSem)} lb`} />
+              <Mini k="Diferencia" v={`${difSacosPvE >= 0 ? '+' : ''}${num1(difSacosPvE)} sacos`} />
+              <Mini k="Diferencia costo" v={dinero(difSacosPvE * est.alimento.usdSaco)} />
+            </div>
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '12px', fontSize: '12px', color: GRIS }}>
+              <span>Ayunos planificados: <b style={{ color: NAVY, fontWeight: 500 }}>{ayPlan}</b></span>
+              <span>Ayunos NO planificados: <b style={{ color: ayNoPlan > 0 ? AMBAR : NAVY, fontWeight: 500 }}>{ayNoPlan}</b></span>
+              {fedExtra > 0 && <span>Alimentó en día de ayuno: <b style={{ color: AMBAR, fontWeight: 500 }}>{fedExtra}</b></span>}
+              {apRec.aplicado_nombre && <span>Plan aplicado por <b style={{ color: NAVY, fontWeight: 500 }}>{apRec.aplicado_nombre}</b></span>}
+            </div>
+          </Caja></div>
+        )}
       </>
       )}
 
