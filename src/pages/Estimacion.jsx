@@ -596,9 +596,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         </div>
         <div style={{ display: 'flex', gap: '9px', alignItems: 'center', flexWrap: 'wrap' }}>
           {ciclos.length > 0 && (
-            <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
+            <span role="tablist" aria-label="Vista" style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
               {['piscina', 'tablero'].map(x => (
-                <button key={x} onClick={() => setVista(x)} style={{ padding: '7px 13px', fontSize: '12.5px', fontFamily: 'inherit', border: 'none', cursor: 'pointer', fontWeight: vista === x ? 500 : 400, background: vista === x ? AZUL : 'white', color: vista === x ? 'white' : GRIS }}>{x === 'piscina' ? 'Por piscina' : 'Tablero'}</button>
+                <button key={x} type="button" role="tab" aria-selected={vista === x} onClick={() => setVista(x)} style={{ padding: '7px 13px', fontSize: '12.5px', fontFamily: 'inherit', border: 'none', cursor: 'pointer', fontWeight: vista === x ? 500 : 400, background: vista === x ? AZUL : 'white', color: vista === x ? 'white' : GRIS }}>{x === 'piscina' ? 'Por piscina' : 'Tablero'}</button>
               ))}
             </span>
           )}
@@ -1137,14 +1137,14 @@ function TableroView({ tablero, totales, filtro, setFiltro, hasta, onVer }) {
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '10px' }}>
       <div style={{ ...titMini, marginBottom: '9px' }}>Total del plan semanal confirmado · {totales.nConf} piscinas</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: '11px' }}>
-        <Mini k="Biomasa confiable" v={miles(totales.bioConf) + ' lb'} />
+        <Mini k="Biomasa en planes confirmados" v={miles(totales.bioConf) + ' lb'} />
         <Mini k="Sacos calculados" v={num1(totales.sacCalc)} />
         <Mini k="Sacos operativos (Σ ceil)" v={String(totales.sacOper)} />
         <Mini k="Costo de consumo" v={dinero(totales.costoCons)} />
         <Mini k="Desembolso operativo" v={dinero(totales.desembolso)} />
       </div>
       {(totales.sinEsc - totales.bloq) > 0 && <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '11px', paddingTop: '9px', fontSize: '12px', color: '#4a5a67' }}>
-        <b style={{ fontWeight: 500, color: AZUL }}>Proyección completa:</b> si se aceptan las {totales.sinEsc - totales.bloq} recomendaciones pendientes → +{totales.extraSacos} sacos · +{dinero(totales.extraCosto)}.
+        <b style={{ fontWeight: 500, color: AZUL }}>Proyección completa:</b> si se aceptan las {totales.sinEsc - totales.bloq} recomendaciones pendientes → +{totales.extraSacos} sacos · desembolso +{dinero(totales.extraCosto)}.
       </div>}
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '9px', marginBottom: '12px' }}>
@@ -1154,7 +1154,7 @@ function TableroView({ tablero, totales, filtro, setFiltro, hasta, onVer }) {
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Con desviación</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.desv ? AMBAR : NAVY }}>{totales.desv}</div></div>
     </div>
     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '9px' }}>
-      {FILTROS.map(([k, l]) => <button key={k} onClick={() => setFiltro(k)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 11px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (filtro === k ? AZUL : BORDE), background: filtro === k ? '#e8f1fb' : 'white', color: filtro === k ? AZUL : NAVY, fontWeight: filtro === k ? 500 : 400 }}>{l}</button>)}
+      {FILTROS.map(([k, l]) => <button key={k} type="button" aria-pressed={filtro === k} onClick={() => setFiltro(k)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 11px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (filtro === k ? AZUL : BORDE), background: filtro === k ? '#e8f1fb' : 'white', color: filtro === k ? AZUL : NAVY, fontWeight: filtro === k ? 500 : 400 }}>{l}</button>)}
     </div>
     <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
@@ -1181,7 +1181,7 @@ function TableroView({ tablero, totales, filtro, setFiltro, hasta, onVer }) {
                 <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.ap ? <b style={{ fontWeight: 500 }}>{r.ap.fila_pct}% · {cap(intenLbl(r.ap.intensidad))}</b> : <span style={{ color: '#c9d3dc' }}>—</span>}</td>
                 <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.sacosShow == null ? <span style={{ color: '#c9d3dc' }}>sim.</span> : r.sugerido ? <span style={{ color: GRIS }}>{r.sacosShow} <span style={{ fontSize: '9px' }}>sug.</span></span> : <b style={{ fontWeight: 500 }}>{r.sacosShow}</b>}</td>
                 <td style={{ padding: '9px 6px', textAlign: 'left', color: r.alertas.length ? ((r.bloqueado || r.estadoPlan.k === 'simulacion') ? ROJO : AMBAR) : '#c9d3dc' }}>{r.alertas[0] || '—'}{r.alertas.length > 1 && <span style={{ color: GRIS, fontSize: '10px' }}> +{r.alertas.length - 1}</span>}</td>
-                <td style={{ padding: '9px 12px 9px 6px', textAlign: 'right' }}><span onClick={() => setExp(abierto ? null : r.f.cicloId)} style={{ color: AZUL, cursor: 'pointer' }}>{abierto ? 'Ocultar' : 'Ver'} ›</span></td>
+                <td style={{ padding: '9px 12px 9px 6px', textAlign: 'right' }}><button type="button" aria-expanded={abierto} onClick={() => setExp(abierto ? null : r.f.cicloId)} style={{ background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '11.5px', color: AZUL, cursor: 'pointer', padding: '2px 4px', fontWeight: 500 }}>{abierto ? 'Ocultar' : 'Ver'} ›</button></td>
               </tr>
               {abierto && <tr style={{ background: '#f6f9fb' }}><td colSpan={8} style={{ padding: '10px 12px' }}>
                 <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px', color: GRIS }}>
