@@ -210,13 +210,16 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     let vivo = true
     ;(async () => {
       if (todasFincas) { setDslR({ total: 0, tipos: [] }); setPorLoteDsl({}); return }
-      const [{ data: tp }, { data: co }, { data: lot }] = await Promise.all([
+      const [{ data: tp }, { data: co }, { data: lot }, { data: dp }] = await Promise.all([
         supabase.schema('produccion').from('diesel_tipo').select('id, nombre').eq('activo', true).order('nombre'),
         supabase.schema('produccion').from('diesel_consumo').select('tipo_id, galones').eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta),
         supabase.schema('produccion').rpc('fn_reporte_diesel_lotes_todos', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+        supabase.schema('produccion').from('diesel_precio').select('tipo_id, finca_id, precio_galon').is('vigente_hasta', null).or(`finca_id.is.null,finca_id.eq.${finca.id}`),
       ])
       if (!vivo) return
       const gal = {}; (co || []).forEach(r => { gal[r.tipo_id] = (gal[r.tipo_id] || 0) + Number(r.galones) })
+      // Precio vigente del galón por tipo (la fila con finca gana), como respaldo.
+      const precioVig = {}; (dp || []).forEach(r => { if (precioVig[r.tipo_id] == null || r.finca_id) precioVig[r.tipo_id] = Number(r.precio_galon) })
       // Costo FIFO por lote: cada galón al precio del lote del que salió (no catálogo).
       const m = {}; const gastoDe = {}
       ;(lot || []).forEach(r => {
@@ -227,7 +230,14 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       Object.values(m).forEach(arr => arr.sort((a, b) =>
         String(a.fecha || '').localeCompare(String(b.fecha || '')) || a.precio - b.precio))
       setPorLoteDsl(m)
-      const tipos = (tp || []).map(t => ({ tipo_id: t.id, nombre: t.nombre, galones: gal[t.id] || 0, gasto: gastoDe[t.id] || 0 }))
+      // Si el FIFO por lote no pudo costear (lotes sin precio), se usa el precio
+      // vigente × galones consumidos para no mostrar $0.
+      const tipos = (tp || []).map(t => {
+        const g = gal[t.id] || 0
+        const fifo = gastoDe[t.id] || 0
+        const gasto = fifo > 0.001 ? fifo : g * (precioVig[t.id] || 0)
+        return { tipo_id: t.id, nombre: t.nombre, galones: g, gasto }
+      })
       setDslR({ total: tipos.reduce((s, t) => s + t.gasto, 0), tipos })
     })()
     return () => { vivo = false }
