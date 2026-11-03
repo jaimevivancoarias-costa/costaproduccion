@@ -24,31 +24,58 @@ function nivelBiomasa(difPct) {
 // registro). Devuelve el promedio plano actual (simple) y el ponderado nuevo.
 function ventana14(rows, hasta) {
   const desde = sumarDias(hasta, -13)
+  // Agrupa por día: suma libras de registros múltiples del mismo ciclo+fecha,
+  // y marca conflicto (alimentó + ayuno el mismo día) y posible duplicado (dos
+  // cifras idénticas). No deduplica: cada fila es un registro.
   const porDia = {}
   for (const r of (rows || [])) {
     if (r.fecha < desde || r.fecha > hasta) continue
-    const d = (porDia[r.fecha] ||= { lb: 0, fed: false, ayuno: false })
+    const d = (porDia[r.fecha] ||= { lb: 0, fed: false, ayuno: false, n: 0, vals: [] })
+    d.n++
     if (r.ayuno) d.ayuno = true
-    else { d.lb += r.lb; d.fed = true }
+    else { d.lb += r.lb; d.fed = true; d.vals.push(r.lb) }
   }
-  let sum7 = 0, n7 = 0, sumP = 0, nP = 0, alim = 0, ayuno = 0, falt = 0
+  let sum7 = 0, fed7 = 0, sumP = 0, fedP = 0, alim = 0, ayuno = 0, falt = 0
+  let doc7 = 0, docP = 0, conflicto = 0, duplicado = 0, multi = 0
   for (let i = 0; i < 14; i++) {
     const d = porDia[sumarDias(hasta, -i)]
-    if (d && d.fed) { alim++; if (i < 7) { sum7 += d.lb; n7++ } else { sumP += d.lb; nP++ } }
-    else if (d && d.ayuno) ayuno++
-    else falt++
+    const rec = i < 7
+    if (!d) { falt++; continue }             // sin fila = faltante
+    if (d.n > 1) multi++
+    if (d.fed && d.ayuno) conflicto++
+    if (d.vals.length > 1 && new Set(d.vals).size < d.vals.length) duplicado++
+    if (d.fed) { alim++; if (rec) { sum7 += d.lb; fed7++; doc7++ } else { sumP += d.lb; fedP++; docP++ } }
+    else if (d.ayuno) { ayuno++; if (rec) doc7++; else docP++ }
   }
-  const d7 = n7 > 0 ? sum7 / n7 : null
-  const dPrev = nP > 0 ? sumP / nP : null
+  const d7 = fed7 > 0 ? sum7 / fed7 : null
+  const dPrev = fedP > 0 ? sumP / fedP : null
   const tend = (d7 != null && dPrev != null && dPrev > 0) ? d7 / dPrev - 1 : null
   const simple = (sum7 + sumP) / 14   // método actual: faltantes y ayunos cuentan como 0
   // Ponderado = suma reciente doble peso sobre suma anterior, dividido por los
-  // días válidos ponderados (NO el atajo /3, que falla si las semanas tienen
+  // días ALIMENTADOS ponderados (NO el atajo /3, que falla si las semanas tienen
   // distinto número de días válidos).
-  const denom = 2 * n7 + nP
+  const denom = 2 * fed7 + fedP
   const ponder = denom > 0 ? (2 * sum7 + sumP) / denom : 0
-  const valido = n7 >= 6 && (n7 + nP) >= 12
-  return { d7, dPrev, tend, simple, ponder, alim, ayuno, falt, validos: n7 + nP, valido }
+  const documentados = doc7 + docP
+  // Dos validaciones separadas: cobertura (días documentados = alim + ayuno) y
+  // muestra biológica (días alimentados, el ayuno no es muestra).
+  const coberturaOk = doc7 >= 6 && documentados >= 12
+  const muestraOk = fed7 >= 4 && alim >= 8
+  const valido = coberturaOk && muestraOk
+  return { d7, dPrev, tend, simple, ponder, alim, ayuno, falt, documentados, doc7,
+    fed7, conflicto, duplicado, multi, coberturaOk, muestraOk, valido }
+}
+// Estado de confiabilidad a partir de la ventana (cobertura, muestra y avisos).
+function confiabilidadDe(v) {
+  if (!v.coberturaOk) return { txt: `Faltan registros · ${v.documentados}/14 documentados`, color: ROJO }
+  if (!v.muestraOk) return { txt: `Pocos días alimentados · ${v.alim}/14 (${v.fed7}/7)`, color: ROJO }
+  const avisos = []
+  if (v.ayuno >= 3) avisos.push('revisar ayunos')
+  if (v.tend != null && (v.tend > 0.20 || v.tend < -0.15)) avisos.push(`revisar tendencia ${(v.tend >= 0 ? '+' : '') + Math.round(v.tend * 100)}%`)
+  if (v.conflicto) avisos.push('conflicto alimentó+ayuno')
+  if (v.duplicado) avisos.push('posible duplicado')
+  if (!avisos.length) return { txt: 'Ok', color: VERDE }
+  return { txt: avisos.map(cap).join(' · '), color: AMBAR }
 }
 const difBio = e => { const mx = Math.max(e.biomasaConsumo, e.biomasaDensidad), mn = Math.min(e.biomasaConsumo, e.biomasaDensidad); return mx > 0 ? (mx - mn) / mx : 0 }
 
@@ -150,11 +177,7 @@ export default function Estimacion({ finca, esJefe }) {
       const eB = estimar({ ...base, consumoVentana: v.ponder * 7 })
       const difA = difBio(eA), difB = difBio(eB)
       const nb = nivelBiomasa(difB)
-      let conf
-      if (!v.valido) conf = { txt: `Insuficiente · ${v.validos}/14`, color: ROJO }
-      else if (v.tend != null && v.tend > 0.20) conf = { txt: `Revisar · tend. +${Math.round(v.tend * 100)}%`, color: AMBAR }
-      else if (v.tend != null && v.tend < -0.15) conf = { txt: `Alerta · caída ${Math.round(Math.abs(v.tend) * 100)}%`, color: ROJO }
-      else conf = { txt: 'Ok', color: VERDE }
+      const conf = confiabilidadDe(v)
       return { f, v, bA: eA.biomasaConsumo, bB: eB.biomasaConsumo, difA, difB, nb, conf }
     })
   }, [diag, ciclos, hasta, meta, cfg])
@@ -460,8 +483,8 @@ function TablaDiagnostico({ filas, hasta }) {
                 <td style={td}>{dp(v)}</td>
                 <td style={{ ...td, color: tndCol(v) }}>{tnd(v)}</td>
                 <td style={{ ...td, color: GRIS }}>{miles(v.simple)}</td>
-                <td style={{ ...td, color: v.valido ? NAVY : GRIS }} title={v.valido ? '' : 'Simulación — no cumple 12/14 días válidos'}>{miles(v.ponder)}{!v.valido && <span style={{ fontSize: '10px', color: GRIS }}> simul.</span>}</td>
-                <td style={{ ...td, color: GRIS }}>{v.alim} / {v.ayuno} / <span style={{ color: v.falt > 0 ? AMBAR : GRIS }}>{v.falt}</span></td>
+                <td style={{ ...td, color: v.valido ? NAVY : GRIS }} title={v.valido ? '' : 'Simulación — no cumple cobertura (12/14 documentados) o muestra (8/14 alimentados)'}>{miles(v.ponder)}{!v.valido && <span style={{ fontSize: '10px', color: GRIS }}> simul.</span>}</td>
+                <td style={{ ...td, color: GRIS }} title={v.multi > 0 ? `${v.multi} día(s) con 2+ registros (se suman)` : ''}>{v.alim} / {v.ayuno} / <span style={{ color: v.falt > 0 ? AMBAR : GRIS }}>{v.falt}</span>{v.multi > 0 && <span style={{ fontSize: '10px', color: AMBAR }}> · {v.multi}×2+</span>}</td>
                 <td style={td}>{v.valido ? <><span style={{ color: GRIS }}>{miles(bA)}</span> → {miles(bB)}</> : <span style={{ color: GRIS }}>—</span>}</td>
                 <td style={td}>{v.valido ? <><span style={{ color: GRIS }}>{Math.round(difA * 100)}%</span> → {Math.round(difB * 100)}%</> : <span style={{ color: GRIS }}>—</span>}</td>
                 <td style={{ ...td, textAlign: 'left', color: v.valido ? nb.color : GRIS }}>{v.valido ? cap(nb.nivel) : '—'}</td>
