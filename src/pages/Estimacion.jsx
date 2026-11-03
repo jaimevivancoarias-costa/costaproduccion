@@ -133,6 +133,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [valida, setValida] = useState({})     // cicloId -> { fuente, valor_lb }
   const [aplicado, setAplicado] = useState({}) // cicloId -> registro de escenario_aplicado (activo, de esta semana)
   const [fincaRac, setFincaRac] = useState(null) // raciones/día configuradas en la finca (null = sin confirmar)
+  const [patFinca, setPatFinca] = useState({}) // dia(1-7) -> alimenta (patrón de la finca)
+  const [patPisc, setPatPisc] = useState({})   // piscinaId -> { dia -> alimenta } (override)
+  const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
+  const [cal, setCal] = useState(null)         // calendario en edición: [{ fecha, alimenta }] (null = propuesta)
   const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
   const [motivoTxt, setMotivoTxt] = useState('')
   const [pidiendoMotivo, setPidiendoMotivo] = useState(false)
@@ -160,13 +164,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       .eq('finca_id', finca.id).is('fecha_cierre', null).lte('fecha_siembra', hasta)
     const lista = (cic || []).filter(c => c.piscina)
     const ids = lista.map(c => c.id)
+    const piscIds = lista.map(c => c.piscina.id)
     if (!ids.length) { setCiclos([]); setSel(''); setCargando(false); return }
-    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }] = await Promise.all([
+    const [{ data: mu }, { data: al }, { data: bv }, { data: ap }, { data: fr }, { data: pf }, { data: pp }, { data: sp }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
       supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).eq('estado', 'activo'),
       supabase.schema('produccion').from('finca').select('raciones').eq('id', finca.id).maybeSingle(),
+      supabase.schema('produccion').from('finca_patron_dia').select('dia, alimenta').eq('finca_id', finca.id),
+      supabase.schema('produccion').from('piscina_patron_dia').select('piscina_id, dia, alimenta').in('piscina_id', piscIds),
+      supabase.schema('produccion').from('semana_plan').select('ciclo_id, confirmada, confirmada_en, confirmada_por, dias:semana_plan_dia(fecha, alimenta)').in('ciclo_id', ids).eq('semana_ref', hasta),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
@@ -180,7 +188,15 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       const nomDe = {}; (us || []).forEach(u => { nomDe[u.id] = u.nombre })
       Object.values(apDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
     }
+    // Patrones de alimentación (finca y override por piscina) y plan semanal confirmado.
+    const patF = {}; (pf || []).forEach(r => { patF[r.dia] = r.alimenta })
+    const patP = {}; (pp || []).forEach(r => { (patP[r.piscina_id] ||= {})[r.dia] = r.alimenta })
+    const planDe = {}; (sp || []).forEach(r => {
+      const dias = {}; (r.dias || []).forEach(d => { dias[d.fecha] = d.alimenta })
+      planDe[r.ciclo_id] = { confirmada: r.confirmada, confirmada_en: r.confirmada_en, confirmada_por: r.confirmada_por, dias }
+    })
     setValida(bvDe); setAplicado(apDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
+    setPatFinca(patF); setPatPisc(patP); setPlanSemana(planDe)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
       const ms = muDe[c.id] || []
@@ -212,7 +228,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
   useEffect(() => { cargar() }, [cargar])
   // Al cambiar de piscina o semana, la vista previa vuelve a la recomendada/aplicada.
-  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt('') }, [sel, hasta])
+  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setCal(null) }, [sel, hasta])
 
   const fila = ciclos.find(c => c.cicloId === sel)
   const est = useMemo(() => fila ? estimar({
@@ -307,7 +323,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       gramaje: fila.gramaje, dias: fila.dias, biomasaOficial: biomasaSel, fuente: fuenteUsada,
       escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
       usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
-      tolvas: fila.tolvas, sacosProxPedir,
+      tolvas: fila.tolvas, sacosProxPedir, diasAlim, costoCompra,
+      calendario: calAct.map(d => ({ fecha: d.fecha, alimenta: d.alimenta })),
       ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
     }
     const { data, error } = await supabase.schema('produccion').rpc('aplicar_escenario', {
@@ -325,6 +342,22 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   }
   // Fecha y hora legible de la aplicación.
   const fechaHora = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
+  // Marca/desmarca un día del calendario de la semana (vista previa local).
+  function toggleDia(fecha) {
+    if (!calEditable) return
+    setCal((cal || propuesta).map(d => d.fecha === fecha ? { ...d, alimenta: !d.alimenta } : d))
+  }
+  // Confirma la semana: congela las 7 fechas vía la función confirmar_semana.
+  async function confirmarSemana() {
+    if (!calEditable) return
+    const dias = calAct.map(d => ({ fecha: d.fecha, alimenta: d.alimenta }))
+    const { data, error } = await supabase.schema('produccion').rpc('confirmar_semana', { p_ciclo_id: sel, p_semana_ref: hasta, p_dias: dias })
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'confirmar la semana') }); return }
+    const diasMap = {}; dias.forEach(d => { diasMap[d.fecha] = d.alimenta })
+    setPlanSemana(p => ({ ...p, [sel]: { confirmada: true, confirmada_en: (data && data.confirmada_en) || new Date().toISOString(), confirmada_por: userId, dias: diasMap } }))
+    setCal(null)
+    setAviso({ tipo: 'ok', texto: 'Semana confirmada.' })
+  }
 
   const diasRest = est ? Math.max(0, est.diasProyectados - fila.dias) : 0
   const estadoPlan = planEstadoDe({ est, v, bm, bloqueado, vig })
@@ -338,6 +371,31 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const apRec = aplicado[sel] || null
   const celdaAct = celda || (apRec ? { fila: apRec.fila_pct, inten: apRec.intensidad } : { fila: recoFila, inten: recoInten })
   const esReco = hayReco && celdaAct.fila === recoFila && celdaAct.inten === recoInten
+  // Calendario de la semana (L–D): propuesta desde el plan confirmado, si no del
+  // override de la piscina, si no del patrón de la finca, si no todos los días.
+  const semFechas = (est && fila) ? Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i)) : []
+  const planSel = planSemana[sel] || null
+  const propuesta = semFechas.map((f, i) => {
+    const dia = i + 1
+    let alim
+    if (planSel && planSel.dias[f] !== undefined) alim = planSel.dias[f]
+    else if (fila && patPisc[fila.piscinaId] && patPisc[fila.piscinaId][dia] !== undefined) alim = patPisc[fila.piscinaId][dia]
+    else if (patFinca[dia] !== undefined) alim = patFinca[dia]
+    else alim = true
+    return { fecha: f, alimenta: alim }
+  })
+  const calAct = cal || propuesta
+  const diasAlim = calAct.filter(d => d.alimenta).length
+  const semanaPasada = domingoDe(hasta) < domingoDe(hoyISO())
+  const semanaConfirmada = !!(planSel && planSel.confirmada) && cal === null
+  const calEditable = !semanaPasada && finca.rol === 'jefe'
+  // Días de alimentación del PATRÓN efectivo (para la proyección de próxima semana).
+  let patDiasAlim = 0
+  for (let d = 1; d <= 7; d++) {
+    const a = (fila && patPisc[fila.piscinaId] && patPisc[fila.piscinaId][d] !== undefined) ? patPisc[fila.piscinaId][d] : (patFinca[d] !== undefined ? patFinca[d] : true)
+    if (a) patDiasAlim++
+  }
+
   // RACIÓN de la celda activa: una sola biomasa fuente × tasa a la talla de HOY.
   // biomasaAsumida = oficial × supuesto%. lbDía = biomasaAsumida × tasa (cierre exacto).
   const biomasaAsumida = biomasaSel * celdaAct.fila / 100
@@ -346,12 +404,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const ajusteInt = tasaBase > 0 ? tasaApl / tasaBase - 1 : 0
   const lbDiaSel = biomasaAsumida * tasaApl / 100
   const sacosDiaSel = lbDiaSel / PARAM.pesoSaco
-  const sacosSemCalc = lbDiaSel * 7 / PARAM.pesoSaco          // sacos calculados (sin redondear)
+  // La semana = dosis por día alimentado × días ALIMENTADOS (no ×7: el ponderado
+  // ya excluye ayunos). Redondeo solo al comprar.
+  const sacosSemCalc = lbDiaSel * diasAlim / PARAM.pesoSaco   // consumo estimado (sin redondear)
   const pedir = Math.ceil(sacosSemCalc)                       // requerimiento operativo (hacia arriba)
-  const usdSemSel = sacosSemCalc * (est ? est.alimento.usdSaco : 0)
-  // PEDIDO para la próxima semana: proyección aparte, sobre la biomasa oficial.
+  const costoConsumo = sacosSemCalc * (est ? est.alimento.usdSaco : 0)  // consumo estimado × precio
+  const costoCompra = pedir * (est ? est.alimento.usdSaco : 0)          // desembolso de compra
+  const usdSemSel = costoConsumo
+  // PEDIDO para la próxima semana: proyección aparte, sobre la biomasa oficial,
+  // con los días de alimentación del patrón (estimación, no pedido operativo).
   const lbDiaProx = est ? biomasaSel * est.factorProx * est.planReco.tasaProx / 100 : 0
-  const sacosProxPedir = Math.ceil(lbDiaProx * 7 / PARAM.pesoSaco)
+  const sacosProxPedir = Math.ceil(lbDiaProx * patDiasAlim / PARAM.pesoSaco)
   // Reparto por tolva: solo operativo si hay tolvas Y raciones confirmadas.
   const racConf = (fila && fila.raciones != null) ? fila.raciones : fincaRac
   const racSinConfirmar = racConf == null
@@ -360,7 +423,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const lbTolvaRacion = (fila && fila.tolvas > 0) ? lbDiaSel / fila.tolvas / racValor : null
   // Aplicar: solo jefe; deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
   const puedeAplicar = finca.rol === 'jefe'
-  const aplicarOk = !!(puedeAplicar && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
+  const aplicarOk = !!(puedeAplicar && semanaConfirmada && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
   const requiereMotivo = !esReco
   const yaAplicada = !!(apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten)
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
@@ -557,7 +620,23 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             </div>
           )}
 
-          <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => setCelda({ fila: f, inten: k })} />
+          {/* Calendario de la semana: define los días alimentados (el pedido usa esos días, no 7) */}
+          <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', marginBottom: '13px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '9px' }}>
+              <div style={{ ...titMini, marginBottom: 0 }}>Calendario · {diasAlim} de 7 días de alimentación</div>
+              <span style={{ fontSize: '10.5px', fontWeight: 500, color: semanaConfirmada ? VERDE : AMBAR, background: (semanaConfirmada ? VERDE : AMBAR) + '18', borderRadius: '20px', padding: '2px 9px' }}>{semanaConfirmada ? '✓ Confirmada' : 'Pendiente de confirmar'}</span>
+            </div>
+            {!semanaConfirmada && <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '9px' }}>Patrón sugerido de {finca.nombre}{calEditable ? ' — toca un día para cambiarlo y confirma la semana.' : '.'}</div>}
+            <Calendario dias={calAct} editable={calEditable} onToggle={toggleDia} />
+            {calEditable && !semanaConfirmada && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
+                <button onClick={confirmarSemana} style={btnAzul}>Confirmar semana</button>
+              </div>
+            )}
+            {semanaPasada && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Semana pasada · solo lectura.</div>}
+          </div>
+
+          <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} dias={diasAlim} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => setCelda({ fila: f, inten: k })} />
           <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 2px 14px', lineHeight: 1.5 }}>
             ✓ Recomendada {hayReco ? `(100% · ${intenLbl(recoInten)})` : '— sin recomendación hasta validar'} · ● tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
           </div>
@@ -574,12 +653,18 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
               <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
               <div style={{ borderTop: '0.5px solid #e3ecf2', marginTop: '7px', paddingTop: '6px' }}>
-                <Row k="Sacos calculados" v={num1(sacosSemCalc) + ' sacos'} />
+                <Row k={`Consumo estimado (${diasAlim} días)`} v={num1(sacosSemCalc) + ' sacos'} />
                 <Row k="Requerimiento operativo" v={pedir + ' sacos'} fuerte azul />
-                <Row k="Costo semana" v={dinero(usdSemSel)} />
+                <Row k="Costo de consumo" v={dinero(costoConsumo)} />
+                <Row k={`Desembolso de compra (${pedir})`} v={dinero(costoCompra)} />
               </div>
+              {!semanaConfirmada && (
+                <div style={{ fontSize: '11px', color: AMBAR, marginTop: '9px', background: '#FBF5E9', borderRadius: '8px', padding: '7px 10px' }}>
+                  Estimación preliminar con {diasAlim} días · <b>calendario sin confirmar</b>. Confirma la semana para poder aplicar.
+                </div>
+              )}
               <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Pedido próx. semana</span> {sacosProxPedir} sacos — no afecta hoy.
+                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Pedido próx. semana</span> {sacosProxPedir} sacos ({patDiasAlim} días patrón) — estimación, no afecta hoy.
               </div>
             </div>
 
@@ -654,7 +739,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   {apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
                 </button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
-                  {!aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
+                  {!semanaConfirmada ? 'Confirma el calendario de la semana para poder aplicar.' : !aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
                 </span>
               </div>
             </div>
@@ -779,9 +864,25 @@ function Mini({ k, v }) {
 }
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
+const DIA_LBL = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom']
+// Calendario semanal: 7 chips L–D; verde alimenta, ámbar ayuno. Clic alterna (si editable).
+function Calendario({ dias, editable, onToggle }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '6px' }}>
+      {dias.map((d, i) => (
+        <div key={d.fecha} onClick={() => editable && onToggle(d.fecha)}
+          style={{ textAlign: 'center', padding: '7px 0', borderRadius: '8px', cursor: editable ? 'pointer' : 'default', background: d.alimenta ? '#e7f6ef' : '#FBF5E9', border: '1px solid ' + (d.alimenta ? '#bfe6d2' : '#ecd9b4') }}>
+          <div style={{ fontSize: '10.5px', color: GRIS }}>{DIA_LBL[i]}</div>
+          <div style={{ fontSize: '12px', fontWeight: 500 }}>{Number(d.fecha.slice(8, 10))}</div>
+          <div style={{ fontSize: '9.5px', color: d.alimenta ? '#0F6E56' : '#854F0B' }}>{d.alimenta ? 'alimenta' : 'ayuno'}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
 // Matriz de escenarios: filas = supuesto de biomasa (% de la oficial), columnas =
 // intensidad. Marca la recomendada (verde ✓) y la elegida (azul ●). Clic = vista previa.
-function Matriz({ oficial, plan, pesoSaco, recoFila, recoInten, hayReco, sel, onSel }) {
+function Matriz({ oficial, plan, pesoSaco, dias, recoFila, recoInten, hayReco, sel, onSel }) {
   const FILAS = [100, 90, 80, 70]
   const COLS = [['BAJO', 'Baja'], ['MEDIO', 'Media'], ['ALTO', 'Alta']]
   return (
@@ -802,7 +903,7 @@ function Matriz({ oficial, plan, pesoSaco, recoFila, recoInten, hayReco, sel, on
               </div>
               {COLS.map(([k]) => {
                 const lb = oficial * f / 100 * plan[k].tasaDia / 100
-                const sacos = Math.ceil(lb * 7 / pesoSaco)
+                const sacos = Math.ceil(lb * dias / pesoSaco)
                 const esR = hayReco && f === recoFila && k === recoInten
                 const esS = sel.fila === f && sel.inten === k
                 const borde = esR ? '2px solid ' + VERDE : esS ? '2px solid ' + AZUL : '0.5px solid transparent'
