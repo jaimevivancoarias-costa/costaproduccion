@@ -15,6 +15,7 @@ import Presupuesto from './pages/Presupuesto'
 import PresupuestoDiesel from './pages/PresupuestoDiesel'
 import Diesel from './pages/Diesel'
 import Historial from './pages/Historial'
+import Estimacion from './pages/Estimacion'
 import Catalogo from './pages/Catalogo'
 import EnConstruccion from './pages/EnConstruccion'
 
@@ -40,6 +41,7 @@ const GRUPOS = [
   { titulo: 'Planeación', items: [
     { id: 'presupuesto', nombre: 'Presupuesto',   icono: 'moneda' },
     { id: 'catalogo',   nombre: 'Catálogo',       icono: 'etiqueta', soloJefe: true },
+    { id: 'estimacion', nombre: 'Estimación',     icono: 'diana', soloJefe: true },
   ] },
   { titulo: 'Análisis', items: [
     { id: 'resumen',    nombre: 'Resumen',        icono: 'grid', soloJefe: true },
@@ -59,6 +61,7 @@ function Icono({ tipo }) {
   const p = { width: 15, height: 15, viewBox: '0 0 16 16', fill: 'none',
               stroke: 'currentColor', strokeWidth: 1.5 }
   if (tipo === 'grid') return <svg {...p}><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>
+  if (tipo === 'diana') return <svg {...p}><circle cx="8" cy="8" r="6"/><circle cx="8" cy="8" r="3"/><circle cx="8" cy="8" r="0.5" fill="currentColor"/></svg>
   if (tipo === 'calendario') return <svg {...p}><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/></svg>
   if (tipo === 'barras') return <svg {...p}><path d="M3 13V7M8 13V3M13 13v-4"/></svg>
   if (tipo === 'caja') return <svg {...p}><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3 6-3M8 8v6"/></svg>
@@ -518,6 +521,8 @@ export default function App() {
             <Reportes key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} enfoqueInsumos={verInsumos} />
           ) : tabId === 'historial' ? (
             <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
+          ) : tabId === 'estimacion' ? (
+            <Estimacion key={finca.id} finca={finca} esJefe={esJefe} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === tabId)} />
           )}
