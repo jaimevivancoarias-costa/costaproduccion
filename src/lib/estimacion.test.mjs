@@ -2,7 +2,7 @@
 // Regla: la RACIÓN de esta semana = biomasa seleccionada × tasa a la talla de HOY,
 // con una sola biomasa fuente (sin el factor de proyección a próxima semana, que
 // solo vive en el pedido anticipado). Redondeos únicamente al presentar/pedir.
-import { estimar, cfgFinca, PARAM } from './estimacion.js'
+import { estimar, cfgFinca, PARAM, proyectarAMeta, sobrevDe } from './estimacion.js'
 
 let fallos = 0
 const ok = (cond, msg) => { if (cond) console.log('✓', msg); else { fallos++; console.error('✗', msg) } }
@@ -47,6 +47,17 @@ cerca(lb, 1232.35, 0.5, '42.642 × 2,89% ≈ 1.232 lb/día')
 const sc = lb * 7 / 55
 cerca(sc, 156.8, 0.5, 'semana calculada ≈ 156,8 sacos (55 lb)')
 ok(Math.ceil(sc) === 157, 'requerimiento operativo = 157 sacos')
+
+// --- Proyección a meta (alimento futuro real, no plano) ---
+const pr = proyectarAMeta({ gHoy: 24.5, meta: 35, biomasaActual: 52054, finca: cfg })
+ok(pr && pr.metaUsa === 35, 'proyectarAMeta: meta usada = 35')
+ok(pr.alimentoLb > 0 && pr.dias > 0, 'proyectarAMeta: alimento y días > 0')
+ok(pr.biomasaMeta > 52054, 'biomasa a meta > biomasa actual (crece de talla)')
+ok(sobrevDe(35) < sobrevDe(24.5), 'sobrevivencia a meta < actual (no puede aumentar)')
+ok(pr.sobrevMeta < pr.sobrevHoy, 'proyección: sobrev meta < sobrev hoy')
+const fcrMarg = pr.alimentoLb / (pr.biomasaMeta - 52054)
+ok(fcrMarg > (52054 / 1) * 0 && fcrMarg > 1.5 && fcrMarg < 4, `FCR marginal razonable (${fcrMarg.toFixed(2)})`)
+ok(proyectarAMeta({ gHoy: 40, meta: 35, biomasaActual: 50000, finca: cfg }) === null || proyectarAMeta({ gHoy: 40, meta: 35, biomasaActual: 50000, finca: cfg }).metaUsa > 40, 'si ya pasó la meta, sube de escalón o null')
 
 if (fallos) { console.error(`\n${fallos} prueba(s) fallaron.`); process.exit(1) }
 console.log('\nTodas las pruebas de estimación pasaron.')
