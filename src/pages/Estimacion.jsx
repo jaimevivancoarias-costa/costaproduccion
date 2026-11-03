@@ -19,6 +19,35 @@ function nivelBiomasa(difPct) {
   return { nivel: 'conflicto crítico', confianza: 'baja', bloquea: true, color: ROJO }
 }
 
+// Ventana de consumo de 14 días. Separa últimos 7 y 7 anteriores, EXCLUYE los
+// ayunos del promedio (no son 0 de biomasa) y cuenta los días faltantes (sin
+// registro). Devuelve el promedio plano actual (simple) y el ponderado nuevo.
+function ventana14(rows, hasta) {
+  const desde = sumarDias(hasta, -13)
+  const porDia = {}
+  for (const r of (rows || [])) {
+    if (r.fecha < desde || r.fecha > hasta) continue
+    const d = (porDia[r.fecha] ||= { lb: 0, fed: false, ayuno: false })
+    if (r.ayuno) d.ayuno = true
+    else { d.lb += r.lb; d.fed = true }
+  }
+  let sum7 = 0, n7 = 0, sumP = 0, nP = 0, alim = 0, ayuno = 0, falt = 0
+  for (let i = 0; i < 14; i++) {
+    const d = porDia[sumarDias(hasta, -i)]
+    if (d && d.fed) { alim++; if (i < 7) { sum7 += d.lb; n7++ } else { sumP += d.lb; nP++ } }
+    else if (d && d.ayuno) ayuno++
+    else falt++
+  }
+  const d7 = n7 > 0 ? sum7 / n7 : null
+  const dPrev = nP > 0 ? sumP / nP : null
+  const tend = (d7 != null && dPrev != null && dPrev > 0) ? d7 / dPrev - 1 : null
+  const simple = (sum7 + sumP) / 14   // método actual: faltantes y ayunos cuentan como 0
+  const ponder = (d7 != null && dPrev != null) ? (2 * d7 + dPrev) / 3 : (d7 != null ? d7 : (dPrev != null ? dPrev : 0))
+  const valido = n7 >= 6 && (n7 + nP) >= 12
+  return { d7, dPrev, tend, simple, ponder, alim, ayuno, falt, validos: n7 + nP, valido }
+}
+const difBio = e => { const mx = Math.max(e.biomasaConsumo, e.biomasaDensidad), mn = Math.min(e.biomasaConsumo, e.biomasaDensidad); return mx > 0 ? (mx - mn) / mx : 0 }
+
 // Estimación por piscina. Toma gramaje (muestreo), consumo de balanceado y los
 // datos del ciclo, corre el motor y aplica el control de calidad de biomasa.
 export default function Estimacion({ finca, esJefe }) {
@@ -37,6 +66,8 @@ export default function Estimacion({ finca, esJefe }) {
   // Tolvas
   const [editTolvas, setEditTolvas] = useState(false)
   const [tolvasTxt, setTolvasTxt] = useState('')
+  // Modo diagnóstico de la ventana de consumo (solo lectura)
+  const [diag, setDiag] = useState(false)
 
   useEffect(() => { try { localStorage.setItem('metaEst|' + finca.id, String(meta)) } catch (e) { /* sin storage */ } }, [meta, finca.id])
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
@@ -56,6 +87,7 @@ export default function Estimacion({ finca, esJefe }) {
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
+    const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion }) })
     const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb) } })
     setValida(bvDe)
     const ini14 = sumarDias(hasta, -14)
@@ -73,6 +105,7 @@ export default function Estimacion({ finca, esJefe }) {
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
         consumoAcum: als.reduce((t, r) => t + r.lb, 0),
         consumoVentana: als.filter(r => r.fecha > ini14).reduce((t, r) => t + r.lb, 0) / 2,
+        alsRaw: alRawDe[c.id] || [],
         dias: diasEntre(siembra, hasta),
       }
     }).filter(f => f.gramaje > 0).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre), 'es', { numeric: true }))
@@ -98,6 +131,29 @@ export default function Estimacion({ finca, esJefe }) {
     const difPct = mayor > 0 ? (mayor - menor) / mayor : 0
     return { bc, bd, difPct, menorQue: bc < bd, relacion: menor > 0 ? mayor / menor : 0, ...nivelBiomasa(difPct) }
   }, [est])
+
+  // Diagnóstico de la ventana de consumo: compara el promedio plano actual con
+  // el ponderado nuevo para cada piscina, y el efecto en la biomasa. Solo lectura.
+  const diagnostico = useMemo(() => {
+    if (!diag) return []
+    return ciclos.map(f => {
+      const v = ventana14(f.alsRaw, hasta)
+      const base = {
+        area: f.area, dias: f.dias, pl: f.pl, gramajeHoy: f.gramaje, consumoAcum: f.consumoAcum,
+        larva: f.larva, gInicio: f.gIni, diasInicio: f.diasIni, meta, finca: cfg,
+      }
+      const eA = estimar({ ...base, consumoVentana: v.simple * 7 })
+      const eB = estimar({ ...base, consumoVentana: v.ponder * 7 })
+      const difA = difBio(eA), difB = difBio(eB)
+      const nb = nivelBiomasa(difB)
+      let conf
+      if (!v.valido) conf = { txt: `Insuficiente · ${v.validos}/14`, color: ROJO }
+      else if (v.tend != null && v.tend > 0.20) conf = { txt: `Revisar · tend. +${Math.round(v.tend * 100)}%`, color: AMBAR }
+      else if (v.tend != null && v.tend < -0.15) conf = { txt: `Alerta · caída ${Math.round(Math.abs(v.tend) * 100)}%`, color: ROJO }
+      else conf = { txt: 'Ok', color: VERDE }
+      return { f, v, bA: eA.biomasaConsumo, bB: eB.biomasaConsumo, difA, difB, nb, conf }
+    })
+  }, [diag, ciclos, hasta, meta, cfg])
 
   // Biomasa seleccionada: la validada si existe, si no la de consumo.
   const vald = valida[sel]
@@ -167,6 +223,11 @@ export default function Estimacion({ finca, esJefe }) {
             <span style={{ color: NAVY, minWidth: '118px', textAlign: 'center' }}>{corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</span>
             <button onClick={() => setHasta(h => { const n = sumarDias(h, 7); return n > hoyISO() ? h : n })} style={{ ...flecha, opacity: domingoDe(hasta) >= hoyISO() ? 0.35 : 1 }} title="Semana siguiente">›</button>
           </span>
+          {esJefe && ciclos.length > 0 && (
+            <button onClick={() => setDiag(d => !d)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: diag ? AZUL : GRIS, borderColor: diag ? AZUL : BORDE }} title="Compara la ventana de consumo actual con la ponderada">
+              {diag ? 'Ocultar diagnóstico' : 'Diagnóstico'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -350,6 +411,67 @@ export default function Estimacion({ finca, esJefe }) {
         </div>
       </>
       )}
+
+      {diag && !cargando && ciclos.length > 0 && <TablaDiagnostico filas={diagnostico} hasta={hasta} />}
+    </div>
+  )
+}
+
+// Tabla de diagnóstico de la ventana de consumo (solo lectura, no guarda nada).
+function TablaDiagnostico({ filas, hasta }) {
+  const d7 = v => v.d7 != null ? miles(v.d7) : '—'
+  const dp = v => v.dPrev != null ? miles(v.dPrev) : '—'
+  const tnd = v => v.tend == null ? '—' : (v.tend >= 0 ? '+' : '') + Math.round(v.tend * 100) + '%'
+  const tndCol = v => v.tend == null ? GRIS : (v.tend > 0.20 || v.tend < -0.15) ? (v.tend < -0.15 ? ROJO : AMBAR) : VERDE
+  const th = { padding: '9px 7px', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }
+  const td = { padding: '9px 7px', textAlign: 'right', whiteSpace: 'nowrap' }
+  return (
+    <div style={{ marginTop: '18px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '0 2px 10px' }}>
+        <span style={{ fontSize: '11px', letterSpacing: '0.04em', textTransform: 'uppercase', color: '#9fb0bf' }}>Diagnóstico · ventana de consumo</span>
+        <span style={{ background: '#FAEEDA', color: AMBAR, fontSize: '11px', padding: '3px 9px', borderRadius: '6px' }}>Solo lectura · no guarda nada</span>
+      </div>
+      <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', minWidth: '940px' }}>
+          <thead>
+            <tr style={{ color: GRIS }}>
+              <th style={{ ...th, textAlign: 'left', paddingLeft: '12px' }}>Piscina</th>
+              <th style={th}>7d</th>
+              <th style={th}>Sem. ant.</th>
+              <th style={th}>Tend.</th>
+              <th style={th}>14d simple</th>
+              <th style={th}>14d ponder.</th>
+              <th style={th}>Alim / ayuno / falt.</th>
+              <th style={th}>Biomasa (antes→desp.)</th>
+              <th style={th}>Dif. vs dens.</th>
+              <th style={{ ...th, textAlign: 'left' }}>Biomasa</th>
+              <th style={{ ...th, textAlign: 'left', paddingRight: '12px' }}>Confiabilidad</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filas.map(({ f, v, bA, bB, difA, difB, nb, conf }) => (
+              <tr key={f.cicloId} style={{ borderTop: '0.5px solid ' + BORDE }}>
+                <td style={{ ...td, textAlign: 'left', paddingLeft: '12px', color: NAVY }}>{f.nombre}</td>
+                <td style={td}>{d7(v)}</td>
+                <td style={td}>{dp(v)}</td>
+                <td style={{ ...td, color: tndCol(v) }}>{tnd(v)}</td>
+                <td style={{ ...td, color: GRIS }}>{miles(v.simple)}</td>
+                <td style={{ ...td, color: NAVY }}>{v.valido ? miles(v.ponder) : '—'}</td>
+                <td style={{ ...td, color: GRIS }}>{v.alim} / {v.ayuno} / <span style={{ color: v.falt > 0 ? AMBAR : GRIS }}>{v.falt}</span></td>
+                <td style={td}>{v.valido ? <><span style={{ color: GRIS }}>{miles(bA)}</span> → {miles(bB)}</> : <span style={{ color: GRIS }}>—</span>}</td>
+                <td style={td}>{v.valido ? <><span style={{ color: GRIS }}>{Math.round(difA * 100)}%</span> → {Math.round(difB * 100)}%</> : <span style={{ color: GRIS }}>—</span>}</td>
+                <td style={{ ...td, textAlign: 'left', color: v.valido ? nb.color : GRIS }}>{v.valido ? cap(nb.nivel) : '—'}</td>
+                <td style={{ ...td, textAlign: 'left', paddingRight: '12px', color: conf.color }}>{conf.txt}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', margin: '12px 2px 0', fontSize: '11.5px', color: GRIS }}>
+        <span><b style={{ fontWeight: 500, color: NAVY }}>Ponderado</b> = (2 · prom. 7d + prom. sem. anterior) ÷ 3 — sin proyección por tendencia</span>
+        <span><b style={{ fontWeight: 500, color: NAVY }}>Ayuno</b> se excluye del promedio (no cuenta como 0)</span>
+        <span><b style={{ fontWeight: 500, color: NAVY }}>Confiabilidad</b> exige 6/7 y 12/14 días alimentados válidos</span>
+      </div>
     </div>
   )
 }
