@@ -65,17 +65,23 @@ function ventana14(rows, hasta) {
   return { d7, dPrev, tend, simple, ponder, alim, ayuno, falt, documentados, doc7,
     fed7, conflicto, duplicado, multi, coberturaOk, muestraOk, valido }
 }
-// Estado de confiabilidad a partir de la ventana (cobertura, muestra y avisos).
+// Estado de confiabilidad a partir de la ventana. Separa la ESTIMACIÓN (si se
+// puede calcular biomasa) del PLAN (si esa dosis se puede aplicar): los ayunos
+// no bloquean el cálculo, pero sí condicionan aplicar la dosis.
+//   0-2 ayunos: aplicable si lo demás pasa · 3-4: confirmar motivo antes de aplicar
+//   5+: solo simulación, revisión obligatoria · <4/7 alimentados o 0/7: no estima.
 function confiabilidadDe(v) {
-  if (!v.coberturaOk) return { txt: `Faltan registros · ${v.documentados}/14 documentados`, color: ROJO }
-  if (!v.muestraOk) return { txt: `Pocos días alimentados · ${v.alim}/14 (${v.fed7}/7)`, color: ROJO }
+  if (!v.coberturaOk) return { txt: `Faltan registros · ${v.documentados}/14 documentados`, color: ROJO, plan: 'bloqueado' }
+  if (!v.muestraOk) return { txt: `Pocos días alimentados · ${v.alim}/14 (${v.fed7}/7)`, color: ROJO, plan: 'bloqueado' }
   const avisos = []
-  if (v.ayuno >= 3) avisos.push('revisar ayunos')
+  let plan = 'aplicable'
+  if (v.ayuno >= 5) { avisos.push(`simulación · revisión obligatoria (${v.ayuno} ayunos)`); plan = 'simulacion' }
+  else if (v.ayuno >= 3) { avisos.push(`confirmar motivo de ayunos (${v.ayuno})`); plan = 'confirmar' }
   if (v.tend != null && (v.tend > 0.20 || v.tend < -0.15)) avisos.push(`revisar tendencia ${(v.tend >= 0 ? '+' : '') + Math.round(v.tend * 100)}%`)
   if (v.conflicto) avisos.push('conflicto alimentó+ayuno')
   if (v.duplicado) avisos.push('posible duplicado')
-  if (!avisos.length) return { txt: 'Ok', color: VERDE }
-  return { txt: avisos.map(cap).join(' · '), color: AMBAR }
+  if (!avisos.length) return { txt: 'Consumo confiable', color: VERDE, plan }
+  return { txt: avisos.map(cap).join(' · '), color: plan === 'simulacion' || v.conflicto ? ROJO : AMBAR, plan }
 }
 const difBio = e => { const mx = Math.max(e.biomasaConsumo, e.biomasaDensidad), mn = Math.min(e.biomasaConsumo, e.biomasaDensidad); return mx > 0 ? (mx - mn) / mx : 0 }
 
@@ -114,12 +120,12 @@ export default function Estimacion({ finca, esJefe }) {
     const [{ data: mu }, { data: al }, { data: bv }] = await Promise.all([
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion').in('ciclo_id', ids).lte('fecha', hasta),
-      supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
+      supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
     ])
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
     const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion }) })
-    const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb) } })
+    const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
     setValida(bvDe)
     const ini14 = sumarDias(hasta, -14)
     const filas = lista.map(c => {
@@ -185,9 +191,16 @@ export default function Estimacion({ finca, esJefe }) {
   // Biomasa seleccionada: la validada si existe, si no la de consumo.
   const vald = valida[sel]
   const biomasaSel = vald ? vald.valor_lb : (est ? est.biomasaConsumo : 0)
-  const fuenteUsada = vald ? vald.fuente : 'consumo'
+  const fuenteUsada = vald ? 'validada manualmente' : 'por consumo'
+  // Etiqueta de procedencia: validada (usuario + fecha) o el nivel de confianza por consumo.
+  const notaBio = vald
+    ? `Validada manualmente · ${vald.fecha_ref ? corta(vald.fecha_ref) : (vald.validada_en ? corta(vald.validada_en) : '—')}`
+    : `Por consumo · confianza ${bm ? bm.confianza : 'alta'}`
   const confianza = vald ? 'alta' : (bm ? bm.confianza : 'alta')
   const bloqueado = bm && bm.bloquea && !vald
+  // Aunque esté validada, si consumo y densidad siguen difiriendo >25% hay que avisar
+  // (una validación no vuelve "consistente" una diferencia grande).
+  const difGrande = bm && bm.difPct > 0.25
   const factorBio = (est && est.biomasaConsumo > 0) ? biomasaSel / est.biomasaConsumo : 1
 
   async function validarBiomasa() {
@@ -196,7 +209,7 @@ export default function Estimacion({ finca, esJefe }) {
     const { error } = await supabase.schema('produccion').from('biomasa_validada')
       .insert({ ciclo_id: sel, fecha_ref: hasta, fuente: fuenteSel, valor_lb: valor, validada_por: userId })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'validar la biomasa') }); return }
-    setValida(v => ({ ...v, [sel]: { fuente: fuenteSel, valor_lb: valor } }))
+    setValida(v => ({ ...v, [sel]: { fuente: fuenteSel, valor_lb: valor, fecha_ref: hasta, validada_en: new Date().toISOString() } }))
     setAviso({ tipo: 'ok', texto: 'Biomasa validada.' })
   }
   async function quitarValidacion() {
@@ -224,7 +237,8 @@ export default function Estimacion({ finca, esJefe }) {
   const sacosDiaSel = lbDiaSel / 55
   const pedir = Math.round(sacosSemSel)
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
-  const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, la biomasa es consistente (dif. ${bm ? Math.round(bm.difPct * 100) : 0}%), y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
+  const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
+  const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
 
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem', background: '#eef2f6', minHeight: '100%' }}>
@@ -295,8 +309,11 @@ export default function Estimacion({ finca, esJefe }) {
               <div style={{ fontSize: '14.5px', fontWeight: 500, color: VERDE }}>{est.lectura.txt}</div>
               <div style={{ fontSize: '12.5px', color: '#3d7a63' }}>
                 Llegaría a {num1(est.metaUsa)} g en <b>{num1(diasRest)} días</b> (día {num1(est.diasProyectados)} de cultivo)
-                {bm && bm.nivel === 'precaución' && <span style={{ color: AMBAR }}> · ojo: biomasa con {Math.round(bm.difPct * 100)}% de diferencia</span>}
+                {!vald && bm && bm.nivel === 'precaución' && <span style={{ color: AMBAR }}> · ojo: biomasa con {Math.round(bm.difPct * 100)}% de diferencia</span>}
               </div>
+              {vald && <div style={{ fontSize: '12px', color: difGrande ? AMBAR : '#3d7a63', marginTop: '3px' }}>
+                Biomasa validada manualmente{difGrande && <> · <b>ojo:</b> consumo y densidad aún difieren {Math.round(bm.difPct * 100)}% — revisa si la validación sigue vigente</>}
+              </div>}
             </div>
           </div>
         )}
@@ -309,7 +326,7 @@ export default function Estimacion({ finca, esJefe }) {
           <Kpi k="Gramaje hoy" v={num1(fila.gramaje)} u="g" />
           <Kpi k="Días de cultivo" v={String(fila.dias)} />
           <Kpi k="Días restantes" v={num1(diasRest)} color={AZUL} nota={`llegaría en el día ${num1(est.diasProyectados)}`} />
-          <Kpi k="Biomasa seleccionada" v={miles(biomasaSel)} u="lb" nota={`${cap(fuenteUsada)} · confianza ${confianza}`} notaColor={confianza === 'alta' ? VERDE : confianza === 'media' ? AMBAR : AMBAR} />
+          <Kpi k="Biomasa seleccionada" v={miles(biomasaSel)} u="lb" nota={notaBio} notaColor={vald ? (difGrande ? AMBAR : AZUL) : (confianza === 'alta' ? VERDE : AMBAR)} />
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '14px', marginBottom: '14px' }}>
@@ -454,9 +471,12 @@ function TablaDiagnostico({ filas, hasta }) {
   const td = { padding: '9px 7px', textAlign: 'right', whiteSpace: 'nowrap' }
   return (
     <div style={{ marginTop: '18px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '0 2px 10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', margin: '0 2px 6px' }}>
         <span style={{ fontSize: '11px', letterSpacing: '0.04em', textTransform: 'uppercase', color: '#9fb0bf' }}>Diagnóstico · ventana de consumo</span>
         <span style={{ background: '#FAEEDA', color: AMBAR, fontSize: '11px', padding: '3px 9px', borderRadius: '6px' }}>Solo lectura · no guarda nada</span>
+      </div>
+      <div style={{ fontSize: '12px', color: GRIS, margin: '0 2px 10px' }}>
+        Ventana analizada: <b style={{ color: NAVY, fontWeight: 500 }}>{corta(sumarDias(hasta, -13))} – {corta(hasta)}</b> · Datos registrados hasta: <b style={{ color: NAVY, fontWeight: 500 }}>{corta(hasta)}</b>
       </div>
       <div style={{ overflowX: 'auto', border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', minWidth: '940px' }}>
@@ -494,10 +514,11 @@ function TablaDiagnostico({ filas, hasta }) {
           </tbody>
         </table>
       </div>
-      <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', margin: '12px 2px 0', fontSize: '11.5px', color: GRIS }}>
-        <span><b style={{ fontWeight: 500, color: NAVY }}>Ponderado</b> = (2 · prom. 7d + prom. sem. anterior) ÷ 3 — sin proyección por tendencia</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', margin: '12px 2px 0', fontSize: '11.5px', color: GRIS, lineHeight: 1.5 }}>
+        <span><b style={{ fontWeight: 500, color: NAVY }}>Ponderado</b> = (2·Σreciente + Σanterior) ÷ (2·n reciente + n anterior) — con sumas y días alimentados, sin proyección por tendencia</span>
         <span><b style={{ fontWeight: 500, color: NAVY }}>Ayuno</b> se excluye del promedio (no cuenta como 0)</span>
-        <span><b style={{ fontWeight: 500, color: NAVY }}>Confiabilidad</b> exige 6/7 y 12/14 días alimentados válidos</span>
+        <span><b style={{ fontWeight: 500, color: NAVY }}>Cobertura</b>: ≥6/7 y ≥12/14 días documentados (alimentado o ayuno; faltante = día sin fila)</span>
+        <span><b style={{ fontWeight: 500, color: NAVY }}>Muestra biológica</b>: ≥4/7 y ≥8/14 días alimentados</span>
       </div>
     </div>
   )
