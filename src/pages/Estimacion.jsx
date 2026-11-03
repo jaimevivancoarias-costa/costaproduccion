@@ -143,6 +143,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [masSel, setMasSel] = useState(null)    // Set de cicloId seleccionados en el panel masivo
   const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
   const [motivoTxt, setMotivoTxt] = useState('')
+  const [motivoCod, setMotivoCod] = useState('')
+  const [confirmaCambio, setConfirmaCambio] = useState(false)
   const [pidiendoMotivo, setPidiendoMotivo] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [userId, setUserId] = useState(null)
@@ -232,7 +234,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
   useEffect(() => { cargar() }, [cargar])
   // Al cambiar de piscina o semana, la vista previa vuelve a la recomendada/aplicada.
-  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setCal(null) }, [sel, hasta])
+  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setConfirmaCambio(false); setCal(null) }, [sel, hasta])
 
   const fila = ciclos.find(c => c.cicloId === sel)
   const est = useMemo(() => fila ? estimar({
@@ -322,12 +324,14 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // valida rol+finca+motivo, marca el activo como reemplazado e inserta el nuevo).
   async function aplicarEscenario() {
     if (!est || !fila || !aplicarOk) return
-    if (requiereMotivo && !motivoTxt.trim()) { setPidiendoMotivo(true); return }
+    if (faltaMotivo) { setPidiendoMotivo(true); return }
+    if (faltaConfirmCambio) { setAviso({ tipo: 'error', texto: 'Marca la confirmación del cambio de dosis para continuar.' }); return }
     const datos = {
       gramaje: fila.gramaje, dias: fila.dias, biomasaOficial: biomasaSel, fuente: fuenteUsada,
       escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
       usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
       tolvas: fila.tolvas, sacosProxPedir, diasAlim, costoCompra,
+      dosisAnterior, deltaDosis, cambioFuerte: nivelCambio === 'fuerte',
       calendario: calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta, cerrado: d.cerrado, tipo: d.tipo })),
       ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
     }
@@ -336,12 +340,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       p_biomasa_lb: biomasaAsumida, p_tasa_pct: tasaApl, p_lb_dia: lbDiaSel,
       p_sacos_calc: sacosSemCalc, p_sacos_operativos: pedir, p_costo_usd: usdSemSel,
       p_raciones: racSinConfirmar ? null : racValor, p_es_recomendada: esReco,
-      p_motivo: requiereMotivo ? motivoTxt.trim() : null, p_datos: datos,
+      p_motivo: requiereMotivo ? (motivoTxt.trim() || null) : null, p_motivo_codigo: requiereMotivo ? motivoCod : null, p_datos: datos,
     })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
     const reg = Array.isArray(data) ? data[0] : data
     setAplicado(a => ({ ...a, [sel]: { ...reg, aplicado_nombre: nombre || null } }))
-    setPidiendoMotivo(false); setMotivoTxt(''); setCelda(null)
+    setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setConfirmaCambio(false); setCelda(null)
     setAviso({ tipo: 'ok', texto: esReco ? 'Escenario recomendado aplicado.' : 'Escenario aplicado con motivo.' })
   }
   // Fecha y hora legible de la aplicación.
@@ -460,6 +464,13 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const aplicarOk = !!(puedeAplicar && semanaConfirmada && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
   const requiereMotivo = !esReco
   const yaAplicada = !!(apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten)
+  // Alerta de cambio de dosis vs el escenario activo: ≤10% normal · 10–20% confirmar
+  // · >20% confirmación fuerte. El delta queda en el snapshot.
+  const dosisAnterior = apRec ? Number(apRec.lb_dia) : null
+  const deltaDosis = (dosisAnterior && dosisAnterior > 0) ? (lbDiaSel - dosisAnterior) / dosisAnterior : null
+  const nivelCambio = deltaDosis == null ? null : Math.abs(deltaDosis) <= 0.10 ? 'normal' : Math.abs(deltaDosis) <= 0.20 ? 'confirmar' : 'fuerte'
+  const faltaMotivo = requiereMotivo && (!motivoCod || (motivoCod === 'otro' && !motivoTxt.trim()))
+  const faltaConfirmCambio = nivelCambio === 'fuerte' && !confirmaCambio
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
   const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
@@ -841,25 +852,42 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <span style={{ color: VERDE, fontSize: '15px', lineHeight: 1.3 }}>✓</span>
                 <div style={{ fontSize: '12px', color: '#2f6b55', lineHeight: 1.55 }}>
                   <b style={{ fontWeight: 500 }}>Aplicado{apRec.aplicado_nombre ? ' por ' + apRec.aplicado_nombre : ''}</b> · {fechaHora(apRec.aplicado_en)} · {apRec.fila_pct}% × {cap(intenLbl(apRec.intensidad))}
-                  <div style={{ color: GRIS }}>Motivo: {apRec.motivo_eleccion || 'combinación recomendada'}</div>
+                  <div style={{ color: GRIS }}>Motivo: {apRec.motivo_codigo ? cap((MOTIVOS.find(m => m[0] === apRec.motivo_codigo) || [])[1] || apRec.motivo_codigo) + (apRec.motivo_eleccion ? ' · ' + apRec.motivo_eleccion : '') : (apRec.motivo_eleccion || 'combinación recomendada')}</div>
                   {puedeAplicar && <div style={{ color: '#9fb0bf', marginTop: '2px' }}>Elige otra celda para reemplazarlo.</div>}
                 </div>
               </div>
             </div>
           ) : puedeAplicar ? (
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
+              {nivelCambio && nivelCambio !== 'normal' && (
+                <div style={{ marginBottom: '10px', background: (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '14', border: '0.5px solid ' + (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '44', borderRadius: '9px', padding: '10px 13px', fontSize: '12px', color: nivelCambio === 'fuerte' ? ROJO : AMBAR }}>
+                  <b>Cambio de dosis {deltaDosis >= 0 ? '+' : ''}{Math.round(deltaDosis * 100)}%.</b> Nueva {miles(lbDiaSel)} lb/día vs plan anterior {miles(dosisAnterior)} lb/día.
+                  {nivelCambio === 'fuerte' && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '7px', marginTop: '7px', color: ROJO, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={confirmaCambio} onChange={e => setConfirmaCambio(e.target.checked)} />
+                      Confirmo un cambio de dosis mayor al 20%.
+                    </label>
+                  )}
+                </div>
+              )}
               {requiereMotivo && (
                 <div style={{ marginBottom: '10px' }}>
-                  <div style={{ fontSize: '11.5px', color: AMBAR, marginBottom: '5px' }}>Elegiste un escenario distinto al recomendado{pidiendoMotivo && !motivoTxt.trim() ? ' — anota el motivo para continuar' : ''}. Queda en el historial:</div>
-                  <input value={motivoTxt} onChange={e => setMotivoTxt(e.target.value)} placeholder="Mortalidad, raleo, transferencia, muestreo…" style={{ ...inp, width: '100%', borderColor: pidiendoMotivo && !motivoTxt.trim() ? AMBAR : BORDE }} />
+                  <div style={{ fontSize: '11.5px', color: AMBAR, marginBottom: '6px' }}>Elegiste un escenario distinto al recomendado{pidiendoMotivo && faltaMotivo ? ' — elige el motivo para continuar' : ''}. Queda en el historial:</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {MOTIVOS.map(([cod, lbl]) => (
+                      <button key={cod} type="button" aria-pressed={motivoCod === cod} onClick={() => setMotivoCod(cod)}
+                        style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 10px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (motivoCod === cod ? AZUL : BORDE), background: motivoCod === cod ? '#e8f1fb' : 'white', color: motivoCod === cod ? AZUL : NAVY, fontWeight: motivoCod === cod ? 500 : 400 }}>{lbl}</button>
+                    ))}
+                  </div>
+                  <input value={motivoTxt} onChange={e => setMotivoTxt(e.target.value)} placeholder={motivoCod === 'otro' ? 'Describe el motivo (obligatorio)' : 'Comentario o evidencia (opcional)'} style={{ ...inp, width: '100%', borderColor: pidiendoMotivo && faltaMotivo ? AMBAR : BORDE }} />
                 </div>
               )}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <button onClick={aplicarEscenario} disabled={!aplicarOk} style={{ ...btnAzul, opacity: !aplicarOk ? 0.5 : 1, cursor: !aplicarOk ? 'default' : 'pointer' }}>
+                <button onClick={aplicarEscenario} disabled={!aplicarOk || faltaMotivo || faltaConfirmCambio} style={{ ...btnAzul, opacity: (!aplicarOk || faltaMotivo || faltaConfirmCambio) ? 0.5 : 1, cursor: (!aplicarOk || faltaMotivo || faltaConfirmCambio) ? 'default' : 'pointer' }}>
                   {apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
                 </button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
-                  {!semanaConfirmada ? 'Confirma el calendario de la semana para poder aplicar.' : !aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
+                  {!semanaConfirmada ? 'Confirma el calendario de la semana para poder aplicar.' : !aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaConfirmCambio ? 'Marca la confirmación del cambio de dosis.' : faltaMotivo ? 'Elige el motivo del cambio.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
                 </span>
               </div>
             </div>
@@ -984,6 +1012,12 @@ function Mini({ k, v }) {
 }
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
+// Motivos estructurados para apartarse de la recomendación (código + etiqueta).
+const MOTIVOS = [
+  ['mortalidad', 'Mortalidad'], ['raleo', 'Raleo'], ['transferencia', 'Transferencia'],
+  ['muestreo', 'Muestreo'], ['consumo', 'Consumo observado'], ['agua', 'Calidad de agua'],
+  ['ayuno', 'Ayuno programado'], ['comercial', 'Decisión comercial'], ['otro', 'Otro'],
+]
 const DIA_LBL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
 // Construye los 7 días de la semana de una piscina: pasados desde la ejecución real
 // (alsRaw), futuros desde overrides → plan confirmado → patrón de piscina → patrón de
