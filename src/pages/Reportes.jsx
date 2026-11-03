@@ -89,25 +89,22 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    try {
-      const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
-      const [{ data: cons, error: e1 }, { data: cos, error: e2 }, { data: proc, error: e3 }] = await Promise.all([
-        supabase.schema('produccion').rpc('fn_reporte_consumo', p),
-        supabase.schema('produccion').rpc('fn_reporte_cosechas', p),
-        supabase.schema('produccion').rpc('fn_reporte_en_proceso',
-          { p_finca: todasFincas ? null : finca.id, p_hasta: hasta }),
-      ])
-      if (e1) throw e1
-      if (e2) throw e2
-      if (e3) throw e3
-      setFilas(cons || [])
-      setCosechas(cos || [])
-      setProceso(proc || [])
-    } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
-    } finally {
-      setCargando(false)
-    }
+    // Cada reporte carga por su cuenta: si uno se cuelga (timeout), los demás
+    // igual se muestran, y el aviso dice cuál falló.
+    const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
+    const pp = { p_finca: todasFincas ? null : finca.id, p_hasta: hasta }
+    const run = (fn, params, set, label) =>
+      supabase.schema('produccion').rpc(fn, params)
+        .then(({ data, error }) => { if (error) throw error; set(data || []); return null })
+        .catch(err => { set([]); return `${label} (${err.message || 'error'})` })
+    const fails = await Promise.all([
+      run('fn_reporte_consumo', p, setFilas, 'Consumo'),
+      run('fn_reporte_cosechas', p, setCosechas, 'Cosechas'),
+      run('fn_reporte_en_proceso', pp, setProceso, 'En proceso'),
+    ])
+    const malos = fails.filter(Boolean)
+    if (malos.length) setAviso({ tipo: 'error', texto: 'No se pudo cargar: ' + malos.join(' · ') })
+    setCargando(false)
   }, [finca.id, desde, hasta, todasFincas])
 
   useEffect(() => { cargar() }, [cargar])
