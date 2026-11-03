@@ -170,7 +170,9 @@ function resumenPiscina(f, ctx) {
   const precioAplicado = ap && Number(ap.sacos_calc) > 0 ? Number(ap.costo_usd) / Number(ap.sacos_calc) : est.alimento.usdSaco
   // Rentabilidad: valor de continuar (cosechar hoy vs esperar a meta).
   let rent = null
-  if (!bloqueado && biomasaSel > 0) {
+  if (!bloqueado && biomasaSel > 0 && f.gramaje < G_MIN_COMERCIAL) {
+    rent = { noComercial: true, gHoy: f.gramaje }
+  } else if (!bloqueado && biomasaSel > 0) {
     const pHoy = precioPorGramaje(f.gramaje, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
     const pr = proyectarAMeta({ gHoy: f.gramaje, meta, biomasaActual: biomasaSel, finca: cfg })
@@ -397,9 +399,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // proyección completa (+ recomendaciones pendientes).
   const totales = useMemo(() => {
     let bioConf = 0, sacCalc = 0, sacOper = 0, costoCons = 0, desembolso = 0, cob = 0, nConf = 0
-    let extraSacos = 0, extraCosto = 0, bloq = 0, sinEsc = 0, desv = 0, valorCont = 0
+    let extraSacos = 0, extraCosto = 0, bloq = 0, sinEsc = 0, desv = 0, valorCont = 0, esperarN = 0, cosecharN = 0, sinCalc = 0
     for (const r of tablero) {
-      if (r.rent && !r.rent.listo) valorCont += r.rent.valor
+      if (r.rent && !r.rent.listo && !r.rent.noComercial) { valorCont += r.rent.valor; if (r.rent.valor >= 0) esperarN++; else cosecharN++ } else sinCalc++
       if (r.ap) cob++
       if (r.ap && r.confirmado) {
         nConf++
@@ -416,7 +418,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       if (!r.ap) sinEsc++
       if (r.delta != null && Math.abs(r.delta) > 0.10) desv++
     }
-    return { bioConf, sacCalc, sacOper, costoCons, desembolso, cob, nConf, total: tablero.length, extraSacos, extraCosto, bloq, sinEsc, desv, valorCont }
+    return { bioConf, sacCalc, sacOper, costoCons, desembolso, cob, nConf, total: tablero.length, extraSacos, extraCosto, bloq, sinEsc, desv, valorCont, esperarN, cosecharN, sinCalc }
   }, [tablero])
 
   // Pedido neto por producto = requerimiento (sacos operativos del plan confirmado)
@@ -696,6 +698,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const rent = (() => {
     if (!est || !fila || bloqueado || !(biomasaSel > 0)) return null
     const gHoy = fila.gramaje
+    if (gHoy < G_MIN_COMERCIAL) return { noComercial: true, gHoy }
     const pHoy = precioPorGramaje(gHoy, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
     const pr = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg })
@@ -805,13 +808,13 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <div>
               <div style={titMini}>Entero · $/kg por pz/kg</div>
               {ENT_TALLAS.map((et, i) => (
-                <div key={et} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: '12px' }}><span style={{ color: GRIS }}>{et}</span><input type="number" step="0.01" value={precioTmp.enteroLista[i]} onChange={e => setArr('enteroLista', i, e.target.value)} style={miniInp} /></div>
+                <div key={et} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: '12px' }}><span style={{ color: GRIS }}>{et}</span><input type="number" step="0.01" aria-label={`Precio entero ${et} en dólares por kg`} value={precioTmp.enteroLista[i]} onChange={e => setArr('enteroLista', i, e.target.value)} style={miniInp} /></div>
               ))}
             </div>
             <div>
               <div style={titMini}>Cola · $/lb por pz/lb</div>
               {COLA_TALLAS.map((et, i) => (
-                <div key={et} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: '12px' }}><span style={{ color: GRIS }}>{et}</span><input type="number" step="0.01" value={precioTmp.colaLista[i]} onChange={e => setArr('colaLista', i, e.target.value)} style={miniInp} /></div>
+                <div key={et} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0', fontSize: '12px' }}><span style={{ color: GRIS }}>{et}</span><input type="number" step="0.01" aria-label={`Precio cola ${et} en dólares por libra`} value={precioTmp.colaLista[i]} onChange={e => setArr('colaLista', i, e.target.value)} style={miniInp} /></div>
               ))}
             </div>
           </div>
@@ -1221,7 +1224,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         {rent && (
           <div style={{ marginTop: '14px' }}><Caja>
             <Titulo>Rentabilidad · cosechar hoy vs esperar a meta</Titulo>
-            {rent.listo ? (
+            {rent.noComercial ? (
+              <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Aún no es cosechable ({num1(rent.gHoy)} g · mínimo comercial {G_MIN_COMERCIAL} g). Sigue en engorde hacia la meta; todavía no tiene sentido comparar contra cosechar hoy.</div>
+            ) : rent.listo ? (
               <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Ya está en talla de cosecha ({num1(rent.gHoy)} g). Ingreso estimado hoy: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(rent.ingresoHoy)}</b> ({cap(rent.pHoy.conviene)} a {dinero(rent.pHoy.mejor)}/lb).</div>
             ) : (<>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
@@ -1365,6 +1370,7 @@ function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filt
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Con desviación</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.desv ? AMBAR : NAVY }}>{totales.desv}</div></div>
       <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Valor de continuar</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.valorCont >= 0 ? VERDE : AMBAR }}>{totales.valorCont >= 0 ? '+' : ''}{dinero(totales.valorCont)}</div></div>
     </div>
+    <div style={{ fontSize: '11.5px', color: GRIS, margin: '0 2px 12px' }}><b style={{ color: VERDE, fontWeight: 500 }}>{totales.esperarN}</b> conviene esperar · <b style={{ color: AMBAR, fontWeight: 500 }}>{totales.cosecharN}</b> conviene cosechar · <b style={{ fontWeight: 500 }}>{totales.sinCalc}</b> sin cálculo</div>
     {pedidoNeto.length > 0 && (
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
@@ -1447,7 +1453,7 @@ function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filt
                   <span>Δ vs semana anterior: <b style={{ color: NAVY, fontWeight: 500 }}>{r.deltaEstado === 'pendiente' ? 'Pendiente' : r.deltaEstado === 'sin-comparable' ? 'Sin semana comparable' : `${r.delta >= 0 ? '+' : ''}${Math.round(r.delta * 100)}%`}</b></span>
                   <span>Plan / ejecutado: <b style={{ color: NAVY, fontWeight: 500 }}>{r.cumplimiento != null ? Math.round(r.cumplimiento * 100) + '%' : '—'}</b></span>
                   <span>Muestreo: <b style={{ color: NAVY, fontWeight: 500 }}>{r.muDias != null ? `hace ${r.muDias} d` : '—'}</b></span>
-                  {r.rent && <span>Rentabilidad: <b style={{ color: r.rent.listo ? NAVY : (r.rent.valor >= 0 ? VERDE : AMBAR), fontWeight: 500 }}>{r.rent.listo ? 'listo para cosechar' : `${r.rent.valor >= 0 ? 'esperar' : 'cosechar'} · ${r.rent.valor >= 0 ? '+' : ''}${dinero(r.rent.valor)} (${dinero(r.rent.valorDia)}/día)`}</b></span>}
+                  {r.rent && <span>Rentabilidad: <b style={{ color: (r.rent.listo || r.rent.noComercial) ? NAVY : (r.rent.valor >= 0 ? VERDE : AMBAR), fontWeight: 500 }}>{r.rent.noComercial ? 'aún no cosechable' : r.rent.listo ? 'listo para cosechar' : `${r.rent.valor >= 0 ? 'esperar' : 'cosechar'} · ${r.rent.valor >= 0 ? '+' : ''}${dinero(r.rent.valor)} (${dinero(r.rent.valorDia)}/día)`}</b></span>}
                 </div>
                 {r.alertas.length > 0 && <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Alertas: {r.alertas.join(' · ')}</div>}
                 <button onClick={() => onVer(r.f.cicloId)} style={{ ...btnAzul, marginTop: '10px' }}>Abrir piscina ›</button>
@@ -1507,6 +1513,7 @@ function Mini({ k, v }) {
 }
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
+const G_MIN_COMERCIAL = 10   // gramaje comercial mínimo; por debajo no se evalúa cosechar
 // Motivos estructurados para apartarse de la recomendación (código + etiqueta).
 const MOTIVOS = [
   ['mortalidad', 'Mortalidad'], ['raleo', 'Raleo'], ['transferencia', 'Transferencia'],
