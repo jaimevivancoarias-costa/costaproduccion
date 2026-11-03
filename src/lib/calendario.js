@@ -31,3 +31,33 @@ export function construirDias(fila, semFechas, hoy, patFinca, patPisc, plan, ove
     return { fecha: f, i, cerrado: false, tipo: 'plan', alimenta: a, lb: 0 }
   })
 }
+
+// Nivel de cambio de dosis según |delta|: ≤10% normal · ≤20% confirmar · >20% fuerte.
+export function nivelCambio(delta) {
+  if (delta == null) return null
+  const a = Math.abs(delta)
+  if (a <= 0.10) return 'normal'
+  if (a <= 0.20) return 'confirmar'
+  return 'fuerte'
+}
+
+// Planificado vs ejecutado SOLO sobre días cerrados y desde que el plan rige
+// (vigenteDesde). Separa ayuno planificado, ayuno no planificado, día sin registro
+// (problema de datos) y alimentó pese a ayuno planificado. Los días abiertos no cuentan.
+export function planVsEjecutado({ calDias, planDias, lbDia, vigenteDesde }) {
+  let planLb = 0, ejecLb = 0, ayPlan = 0, ayNoPlan = 0, sinReg = 0, fedExtra = 0, dias = 0
+  for (const d of (calDias || [])) {
+    if (!d.cerrado) continue
+    if (vigenteDesde && d.fecha < vigenteDesde) continue
+    dias++
+    const previsto = planDias ? planDias[d.fecha] : undefined   // true=alimentar, false=ayuno
+    if (d.tipo === 'sin') { sinReg++; if (previsto !== false) planLb += lbDia; continue }
+    if (previsto === false) {
+      if (d.tipo === 'fed') { fedExtra++; ejecLb += d.lb } else ayPlan++
+    } else {
+      planLb += lbDia
+      if (d.tipo === 'fed') ejecLb += d.lb; else ayNoPlan++
+    }
+  }
+  return { planLb, ejecLb, ayPlan, ayNoPlan, sinReg, fedExtra, dias }
+}

@@ -2,13 +2,15 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
 import { estimar, cfgFinca, PARAM } from '../lib/estimacion'
-import { construirDias } from '../lib/calendario'
+import { construirDias, nivelCambio as nivelCambioDe, planVsEjecutado } from '../lib/calendario'
 
 const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0'
 const VERDE = '#0F6E56', AMBAR = '#854F0B', ROJO = '#8A2F2E'
 const num1 = n => Number(n || 0).toLocaleString('es-EC', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 const num2 = n => Number(n || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const num3 = n => Number(n || 0).toLocaleString('es-EC', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+// Semáforo de cumplimiento: 90–110% verde · 80–90 o 110–120 ámbar · <80 o >120 rojo.
+const cumColor = r => r == null ? GRIS : (r >= 0.90 && r <= 1.10) ? VERDE : (r >= 0.80 && r <= 1.20) ? AMBAR : ROJO
 const pct0 = n => Math.round(Number(n || 0) * 100) + '%'
 const diasEntre = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000)
 const domingoDe = iso => sumarDias(lunesDe(iso), 6)
@@ -336,7 +338,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
       usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
       tolvas: fila.tolvas, sacosProxPedir, diasAlim, costoCompra,
-      dosisAnterior, deltaDosis, cambioFuerte: nivelCambio === 'fuerte',
+      dosisAnterior, sacosAnterior, deltaDia, deltaSem, cambioFuerte: nivelCambio === 'fuerte',
       calendario: calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta, cerrado: d.cerrado, tipo: d.tipo })),
       ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
     }
@@ -470,30 +472,26 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const aplicarOk = !!(puedeAplicar && semanaConfirmada && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
   const requiereMotivo = !esReco
   const yaAplicada = !!(apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten)
-  // Alerta de cambio de dosis vs el escenario activo: ≤10% normal · 10–20% confirmar
-  // · >20% confirmación fuerte. El delta queda en el snapshot.
+  // Alerta de cambio vs el escenario activo: por DÍA (dosis) y por SEMANA (sacos, que
+  // captura también cambios de calendario). El nivel sale del cambio mayor. ≤10% normal
+  // · 10–20% confirmar · >20% fuerte. Los deltas quedan en el snapshot.
   const dosisAnterior = apRec ? Number(apRec.lb_dia) : null
-  const deltaDosis = (dosisAnterior && dosisAnterior > 0) ? (lbDiaSel - dosisAnterior) / dosisAnterior : null
-  const nivelCambio = deltaDosis == null ? null : Math.abs(deltaDosis) <= 0.10 ? 'normal' : Math.abs(deltaDosis) <= 0.20 ? 'confirmar' : 'fuerte'
+  const sacosAnterior = apRec ? Number(apRec.sacos_calc) : null
+  const deltaDia = (dosisAnterior && dosisAnterior > 0) ? (lbDiaSel - dosisAnterior) / dosisAnterior : null
+  const deltaSem = (sacosAnterior && sacosAnterior > 0) ? (sacosSemCalc - sacosAnterior) / sacosAnterior : null
+  const deltaDosis = [deltaDia, deltaSem].filter(d => d != null).reduce((a, b) => (a == null || Math.abs(b) > Math.abs(a) ? b : a), null)
+  const nivelCambio = nivelCambioDe(deltaDosis)
   const faltaMotivo = requiereMotivo && (!motivoCod || (motivoCod === 'otro' && !motivoTxt.trim()))
   const faltaConfirmCambio = nivelCambio === 'fuerte' && !confirmaCambio
-  // Planificado vs ejecutado: compara el plan aplicado+confirmado con la alimentación
-  // real de la semana. Se muestra cuando ya hay días cerrados que comparar.
+  // Planificado vs ejecutado: solo días cerrados y desde que el plan rige (vigenteDesde
+  // = fecha de aplicación). Separa ayuno planificado / no planificado / sin registro.
   const planConfirmado = !!(planSel && planSel.confirmada)
-  const cerradosN = calDias.filter(d => d.cerrado).length
-  const ejecLbSem = calDias.filter(d => d.tipo === 'fed').reduce((t, d) => t + d.lb, 0)
-  const planLbSem = apRec ? Number(apRec.sacos_calc) * PARAM.pesoSaco : null
+  const vigenteDesde = apRec ? String(apRec.aplicado_en).slice(0, 10) : null
+  const pve = (apRec && planConfirmado) ? planVsEjecutado({ calDias, planDias: planSel.dias, lbDia: Number(apRec.lb_dia), vigenteDesde }) : null
+  const cumplimiento = (pve && pve.planLb > 0) ? pve.ejecLb / pve.planLb : null
+  const difSacosPvE = pve ? (pve.ejecLb - pve.planLb) / PARAM.pesoSaco : null
   const semanaCompleta = semFechas.length === 7 && semFechas[6] < hoy
-  let ayPlan = 0, ayNoPlan = 0, fedExtra = 0
-  if (planConfirmado) for (const d of calDias) {
-    if (!d.cerrado) continue
-    const previsto = planSel.dias[d.fecha]           // true=alimentar / false=ayuno planificado
-    if (previsto === false) { if (d.tipo === 'fed') fedExtra++; else ayPlan++ }
-    else if (d.tipo !== 'fed') ayNoPlan++            // se esperaba alimentar pero ayuno/sin registro
-  }
-  const cumplimiento = (planLbSem && planLbSem > 0) ? ejecLbSem / planLbSem : null
-  const difSacosPvE = (planLbSem != null) ? (ejecLbSem - planLbSem) / PARAM.pesoSaco : null
-  const mostrarPvE = !!(apRec && planConfirmado && cerradosN > 0)
+  const mostrarPvE = !!(pve && pve.dias > 0)
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
   const bioTxt = bm ? (bm.difPct <= 0.15 ? `la biomasa es consistente (dif. ${Math.round(bm.difPct * 100)}%)` : `la biomasa difiere ${Math.round(bm.difPct * 100)}% entre consumo y densidad`) : ''
   const porQueTxt = est ? `Está ${est.atrasoProyectado <= 0 ? num1(Math.abs(est.atrasoProyectado)) + ' días adelantada' : num1(est.atrasoProyectado) + ' días atrasada'}, ${bioTxt}, y el FCR ${num2(est.fcrParcial)} ${est.fcrParcial <= est.fcrMax ? 'está por debajo del' : 'supera el'} máximo ${num2(est.fcrMax)}.` : ''
@@ -885,27 +883,34 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
               {nivelCambio && nivelCambio !== 'normal' && (
                 <div style={{ marginBottom: '10px', background: (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '14', border: '0.5px solid ' + (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '44', borderRadius: '9px', padding: '10px 13px', fontSize: '12px', color: nivelCambio === 'fuerte' ? ROJO : AMBAR }}>
-                  <b>Cambio de dosis {deltaDosis >= 0 ? '+' : ''}{Math.round(deltaDosis * 100)}%.</b> Nueva {miles(lbDiaSel)} lb/día vs plan anterior {miles(dosisAnterior)} lb/día.
+                  <b>Cambio vs el plan anterior.</b>
+                  {deltaDia != null && <> Dosis {deltaDia >= 0 ? '+' : ''}{Math.round(deltaDia * 100)}% ({miles(lbDiaSel)} vs {miles(dosisAnterior)} lb/día).</>}
+                  {deltaSem != null && <> Semana {deltaSem >= 0 ? '+' : ''}{Math.round(deltaSem * 100)}% ({num1(sacosSemCalc)} vs {num1(sacosAnterior)} sacos).</>}
                   {nivelCambio === 'fuerte' && (
                     <label style={{ display: 'flex', alignItems: 'center', gap: '7px', marginTop: '7px', color: ROJO, cursor: 'pointer' }}>
                       <input type="checkbox" checked={confirmaCambio} onChange={e => setConfirmaCambio(e.target.checked)} />
-                      Confirmo un cambio de dosis mayor al 20%.
+                      Confirmo un cambio mayor al 20%.
                     </label>
                   )}
                 </div>
               )}
-              {requiereMotivo && (
+              {requiereMotivo && (() => {
+                const otroVacio = motivoCod === 'otro' && !motivoTxt.trim()
+                return (
                 <div style={{ marginBottom: '10px' }}>
                   <div style={{ fontSize: '11.5px', color: AMBAR, marginBottom: '6px' }}>Elegiste un escenario distinto al recomendado{pidiendoMotivo && faltaMotivo ? ' — elige el motivo para continuar' : ''}. Queda en el historial:</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                  <div role="radiogroup" aria-label="Motivo del cambio" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
                     {MOTIVOS.map(([cod, lbl]) => (
-                      <button key={cod} type="button" aria-pressed={motivoCod === cod} onClick={() => setMotivoCod(cod)}
+                      <button key={cod} type="button" role="radio" aria-checked={motivoCod === cod} onClick={() => setMotivoCod(cod)}
                         style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 10px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (motivoCod === cod ? AZUL : BORDE), background: motivoCod === cod ? '#e8f1fb' : 'white', color: motivoCod === cod ? AZUL : NAVY, fontWeight: motivoCod === cod ? 500 : 400 }}>{lbl}</button>
                     ))}
                   </div>
-                  <input value={motivoTxt} onChange={e => setMotivoTxt(e.target.value)} placeholder={motivoCod === 'otro' ? 'Describe el motivo (obligatorio)' : 'Comentario o evidencia (opcional)'} style={{ ...inp, width: '100%', borderColor: pidiendoMotivo && faltaMotivo ? AMBAR : BORDE }} />
+                  <div style={{ fontSize: '11px', color: motivoCod === 'otro' ? (otroVacio ? ROJO : NAVY) : GRIS, marginBottom: '3px' }}>{motivoCod === 'otro' ? 'Comentario obligatorio' : 'Comentario opcional'}</div>
+                  <input value={motivoTxt} onChange={e => setMotivoTxt(e.target.value)} placeholder={motivoCod === 'otro' ? 'Describe el motivo' : 'Comentario o evidencia'} style={{ ...inp, width: '100%', borderColor: otroVacio && pidiendoMotivo ? ROJO : BORDE }} />
+                  {otroVacio && pidiendoMotivo && <div style={{ fontSize: '11px', color: ROJO, marginTop: '4px' }}>Escribe el motivo para "Otro".</div>}
                 </div>
-              )}
+                )
+              })()}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                 <button onClick={aplicarEscenario} disabled={!aplicarOk || faltaMotivo || faltaConfirmCambio} style={{ ...btnAzul, opacity: (!aplicarOk || faltaMotivo || faltaConfirmCambio) ? 0.5 : 1, cursor: (!aplicarOk || faltaMotivo || faltaConfirmCambio) ? 'default' : 'pointer' }}>
                   {apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
@@ -924,19 +929,22 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           <div style={{ marginTop: '14px' }}><Caja>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
               <Titulo sinMargen>Planificado vs ejecutado{semanaCompleta ? '' : ' · a la fecha'}</Titulo>
-              {cumplimiento != null && <span style={{ fontSize: '11.5px', fontWeight: 500, color: cumplimiento >= 0.95 && cumplimiento <= 1.05 ? VERDE : AMBAR, background: (cumplimiento >= 0.95 && cumplimiento <= 1.05 ? VERDE : AMBAR) + '18', borderRadius: '20px', padding: '3px 10px' }}>Cumplimiento {Math.round(cumplimiento * 100)}%</span>}
+              {cumplimiento != null && <span style={{ fontSize: '11.5px', fontWeight: 500, color: cumColor(cumplimiento), background: cumColor(cumplimiento) + '18', borderRadius: '20px', padding: '3px 10px' }}>Cumplimiento {Math.round(cumplimiento * 100)}% · {cumplimiento >= 1 ? 'exceso' : 'déficit'}</span>}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px,1fr))', gap: '11px' }}>
-              <Mini k="Planificado (semana)" v={`${miles(planLbSem)} lb`} />
-              <Mini k={semanaCompleta ? 'Alimentado' : 'Alimentado a la fecha'} v={`${miles(ejecLbSem)} lb`} />
+              <Mini k="Planificado a la fecha" v={`${miles(pve.planLb)} lb`} />
+              <Mini k="Alimentado a la fecha" v={`${miles(pve.ejecLb)} lb`} />
               <Mini k="Diferencia" v={`${difSacosPvE >= 0 ? '+' : ''}${num1(difSacosPvE)} sacos`} />
               <Mini k="Diferencia costo" v={dinero(difSacosPvE * est.alimento.usdSaco)} />
             </div>
             <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '12px', fontSize: '12px', color: GRIS }}>
-              <span>Ayunos planificados: <b style={{ color: NAVY, fontWeight: 500 }}>{ayPlan}</b></span>
-              <span>Ayunos NO planificados: <b style={{ color: ayNoPlan > 0 ? AMBAR : NAVY, fontWeight: 500 }}>{ayNoPlan}</b></span>
-              {fedExtra > 0 && <span>Alimentó en día de ayuno: <b style={{ color: AMBAR, fontWeight: 500 }}>{fedExtra}</b></span>}
-              {apRec.aplicado_nombre && <span>Plan aplicado por <b style={{ color: NAVY, fontWeight: 500 }}>{apRec.aplicado_nombre}</b></span>}
+              <span>Ayunos no planificados: <b style={{ color: pve.ayNoPlan > 0 ? AMBAR : NAVY, fontWeight: 500 }}>{pve.ayNoPlan}</b></span>
+              <span>Días sin registro: <b style={{ color: pve.sinReg > 0 ? ROJO : NAVY, fontWeight: 500 }}>{pve.sinReg}</b></span>
+              <span>Alimentó pese a ayuno planificado: <b style={{ color: pve.fedExtra > 0 ? AMBAR : NAVY, fontWeight: 500 }}>{pve.fedExtra}</b></span>
+              <span>Ayunos planificados: <b style={{ color: NAVY, fontWeight: 500 }}>{pve.ayPlan}</b></span>
+            </div>
+            <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>
+              Plan vigente desde {corta(vigenteDesde)}{apRec.aplicado_nombre ? ', aplicado por ' + apRec.aplicado_nombre : ''} · {pve.dias} día(s) comparados. Diferencia de costo aproximada (precio del alimento planificado); el costo real por producto está pendiente.
             </div>
           </Caja></div>
         )}
