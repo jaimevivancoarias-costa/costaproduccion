@@ -136,7 +136,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [patFinca, setPatFinca] = useState({}) // dia(1-7) -> alimenta (patrón de la finca)
   const [patPisc, setPatPisc] = useState({})   // piscinaId -> { dia -> alimenta } (override)
   const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
-  const [cal, setCal] = useState(null)         // calendario en edición: [{ fecha, alimenta }] (null = propuesta)
+  const [cal, setCal] = useState(null)         // overrides de días futuros: { fecha -> alimenta } (null = propuesta)
   const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
   const [motivoTxt, setMotivoTxt] = useState('')
   const [pidiendoMotivo, setPidiendoMotivo] = useState(false)
@@ -324,7 +324,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
       usdSaco: est.alimento.usdSaco, alimento: est.alimento.nombre, pesoSaco: PARAM.pesoSaco,
       tolvas: fila.tolvas, sacosProxPedir, diasAlim, costoCompra,
-      calendario: calAct.map(d => ({ fecha: d.fecha, alimenta: d.alimenta })),
+      calendario: calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta, cerrado: d.cerrado, tipo: d.tipo })),
       ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
     }
     const { data, error } = await supabase.schema('produccion').rpc('aplicar_escenario', {
@@ -342,15 +342,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   }
   // Fecha y hora legible de la aplicación.
   const fechaHora = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
-  // Marca/desmarca un día del calendario de la semana (vista previa local).
-  function toggleDia(fecha) {
+  // Marca/desmarca un día FUTURO del calendario (vista previa local). Los días
+  // cerrados no se tocan (reflejan la ejecución real).
+  function toggleDia(fecha, actual) {
     if (!calEditable) return
-    setCal((cal || propuesta).map(d => d.fecha === fecha ? { ...d, alimenta: !d.alimenta } : d))
+    setCal({ ...(cal || {}), [fecha]: !actual })
   }
   // Confirma la semana: congela las 7 fechas vía la función confirmar_semana.
+  // Los días transcurridos van con su ejecución real; solo se planifica el futuro.
   async function confirmarSemana() {
-    if (!calEditable) return
-    const dias = calAct.map(d => ({ fecha: d.fecha, alimenta: d.alimenta }))
+    if (!calEditable || haySinRegistro) return
+    const dias = calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta }))
     const { data, error } = await supabase.schema('produccion').rpc('confirmar_semana', { p_ciclo_id: sel, p_semana_ref: hasta, p_dias: dias })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'confirmar la semana') }); return }
     const diasMap = {}; dias.forEach(d => { diasMap[d.fecha] = d.alimenta })
@@ -371,23 +373,41 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const apRec = aplicado[sel] || null
   const celdaAct = celda || (apRec ? { fila: apRec.fila_pct, inten: apRec.intensidad } : { fila: recoFila, inten: recoInten })
   const esReco = hayReco && celdaAct.fila === recoFila && celdaAct.inten === recoInten
-  // Calendario de la semana (L–D): propuesta desde el plan confirmado, si no del
-  // override de la piscina, si no del patrón de la finca, si no todos los días.
+  // Calendario de la semana (L–D). Los días CERRADOS (anteriores a hoy) son solo
+  // lectura y reflejan la ejecución real (alimentó / ayuno / sin registro); solo
+  // los días de hoy en adelante se planifican. La propuesta futura sale del plan
+  // confirmado → override de piscina → patrón de finca → todos.
+  const hoy = hoyISO()
   const semFechas = (est && fila) ? Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i)) : []
   const planSel = planSemana[sel] || null
-  const propuesta = semFechas.map((f, i) => {
+  const ejecSem = {}
+  if (fila) for (const r of fila.alsRaw) {
+    if (!semFechas.length || r.fecha < semFechas[0] || r.fecha > semFechas[6]) continue
+    const e = (ejecSem[r.fecha] ||= { lb: 0, fed: false, ayuno: false, rec: false })
+    e.rec = true
+    if (r.ayuno) e.ayuno = true; else { e.lb += r.lb; e.fed = true }
+  }
+  const calDias = semFechas.map((f, i) => {
     const dia = i + 1
-    let alim
-    if (planSel && planSel.dias[f] !== undefined) alim = planSel.dias[f]
+    if (f < hoy) {                                   // día cerrado → ejecución real
+      const e = ejecSem[f]
+      if (!e || !e.rec) return { fecha: f, i, cerrado: true, tipo: 'sin', alimenta: false, lb: 0 }
+      if (e.fed) return { fecha: f, i, cerrado: true, tipo: 'fed', alimenta: true, lb: e.lb }
+      return { fecha: f, i, cerrado: true, tipo: 'ayuno', alimenta: false, lb: 0 }
+    }
+    let alim                                         // día futuro → planificable
+    if (cal && cal[f] !== undefined) alim = cal[f]
+    else if (planSel && planSel.dias[f] !== undefined) alim = planSel.dias[f]
     else if (fila && patPisc[fila.piscinaId] && patPisc[fila.piscinaId][dia] !== undefined) alim = patPisc[fila.piscinaId][dia]
     else if (patFinca[dia] !== undefined) alim = patFinca[dia]
     else alim = true
-    return { fecha: f, alimenta: alim }
+    return { fecha: f, i, cerrado: false, tipo: 'plan', alimenta: alim, lb: 0 }
   })
-  const calAct = cal || propuesta
-  const diasAlim = calAct.filter(d => d.alimenta).length
-  const semanaPasada = domingoDe(hasta) < domingoDe(hoyISO())
-  const semanaConfirmada = !!(planSel && planSel.confirmada) && cal === null
+  const diasAlim = calDias.filter(d => d.alimenta).length
+  const haySinRegistro = calDias.some(d => d.tipo === 'sin')
+  const hayEdit = !!(cal && Object.keys(cal).length)
+  const semanaPasada = domingoDe(hasta) < domingoDe(hoy)
+  const semanaConfirmada = !!(planSel && planSel.confirmada) && !hayEdit
   const calEditable = !semanaPasada && finca.rol === 'jefe'
   // Días de alimentación del PATRÓN efectivo (para la proyección de próxima semana).
   let patDiasAlim = 0
@@ -626,11 +646,15 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <div style={{ ...titMini, marginBottom: 0 }}>Calendario · {diasAlim} de 7 días de alimentación</div>
               <span style={{ fontSize: '10.5px', fontWeight: 500, color: semanaConfirmada ? VERDE : AMBAR, background: (semanaConfirmada ? VERDE : AMBAR) + '18', borderRadius: '20px', padding: '2px 9px' }}>{semanaConfirmada ? '✓ Confirmada' : 'Pendiente de confirmar'}</span>
             </div>
-            {!semanaConfirmada && <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '9px' }}>Patrón sugerido de {finca.nombre}{calEditable ? ' — toca un día para cambiarlo y confirma la semana.' : '.'}</div>}
-            <Calendario dias={calAct} editable={calEditable} onToggle={toggleDia} />
+            {!semanaConfirmada && <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '9px' }}>Patrón sugerido de {finca.nombre}{calEditable ? ' — los días pasados se toman de lo ejecutado; toca un día futuro para cambiarlo.' : '.'}</div>}
+            <Calendario dias={calDias} editable={calEditable} onToggle={toggleDia} />
+            {fila.ventana && fila.ventana.ayuno >= 3 && (
+              <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>{fila.ventana.ayuno} ayunos detectados en la ventana histórica; el calendario futuro aún no tiene ayunos confirmados.</div>
+            )}
+            {haySinRegistro && <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '8px', background: '#FBEAEA', borderRadius: '8px', padding: '7px 10px' }}>Hay días pasados sin registro — resuélvelos en Registro diario antes de confirmar la semana.</div>}
             {calEditable && !semanaConfirmada && (
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
-                <button onClick={confirmarSemana} style={btnAzul}>Confirmar semana</button>
+                <button onClick={confirmarSemana} disabled={haySinRegistro} style={{ ...btnAzul, opacity: haySinRegistro ? 0.5 : 1, cursor: haySinRegistro ? 'default' : 'pointer' }}>Confirmar semana</button>
               </div>
             )}
             {semanaPasada && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Semana pasada · solo lectura.</div>}
@@ -664,7 +688,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 </div>
               )}
               <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Pedido próx. semana</span> {sacosProxPedir} sacos ({patDiasAlim} días patrón) — estimación, no afecta hoy.
+                <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Próxima semana</span> requerimiento estimado {sacosProxPedir} sacos · patrón de {patDiasAlim} días sin confirmar.
               </div>
             </div>
 
@@ -864,19 +888,31 @@ function Mini({ k, v }) {
 }
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
-const DIA_LBL = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom']
-// Calendario semanal: 7 chips L–D; verde alimenta, ámbar ayuno. Clic alterna (si editable).
+const DIA_LBL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom']
+// Calendario semanal: 7 celdas L–D. Días cerrados = ejecución real (solo lectura);
+// días futuros = planificables (botón con aria-pressed). Verde alimenta, ámbar ayuno,
+// rojo sin registro.
 function Calendario({ dias, editable, onToggle }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '6px' }}>
-      {dias.map((d, i) => (
-        <div key={d.fecha} onClick={() => editable && onToggle(d.fecha)}
-          style={{ textAlign: 'center', padding: '7px 0', borderRadius: '8px', cursor: editable ? 'pointer' : 'default', background: d.alimenta ? '#e7f6ef' : '#FBF5E9', border: '1px solid ' + (d.alimenta ? '#bfe6d2' : '#ecd9b4') }}>
-          <div style={{ fontSize: '10.5px', color: GRIS }}>{DIA_LBL[i]}</div>
-          <div style={{ fontSize: '12px', fontWeight: 500 }}>{Number(d.fecha.slice(8, 10))}</div>
-          <div style={{ fontSize: '9.5px', color: d.alimenta ? '#0F6E56' : '#854F0B' }}>{d.alimenta ? 'alimenta' : 'ayuno'}</div>
-        </div>
-      ))}
+      {dias.map((d, i) => {
+        const interactivo = editable && !d.cerrado
+        const col = d.tipo === 'sin' ? ROJO : d.alimenta ? '#0F6E56' : '#854F0B'
+        const bg = d.tipo === 'sin' ? '#FBEAEA' : d.alimenta ? '#e7f6ef' : '#FBF5E9'
+        const bd = d.tipo === 'sin' ? '#e7cccb' : d.alimenta ? '#bfe6d2' : '#ecd9b4'
+        const txt = d.cerrado ? (d.tipo === 'fed' ? 'Alimentó' : d.tipo === 'ayuno' ? 'Ayuno' : 'Sin registro') : (d.alimenta ? 'Alimenta' : 'Ayuno')
+        const sub = d.tipo === 'fed' ? miles(d.lb) + ' lb' : d.tipo === 'ayuno' ? 'Registrado' : d.tipo === 'sin' ? 'Resolver' : null
+        const base = { textAlign: 'center', padding: '6px 2px', borderRadius: '8px', background: bg, border: '1px solid ' + bd, width: '100%', fontFamily: 'inherit', boxSizing: 'border-box' }
+        const inner = (<>
+          <div style={{ fontSize: '10.5px', color: GRIS }}>{DIA_LBL[d.i ?? i]}</div>
+          <div style={{ fontSize: '12px', fontWeight: 500, color: NAVY }}>{Number(d.fecha.slice(8, 10))}</div>
+          <div style={{ fontSize: '9.5px', color: col }}>{txt}</div>
+          {sub && <div style={{ fontSize: '9px', color: GRIS }}>{sub}</div>}
+        </>)
+        return interactivo
+          ? <button key={d.fecha} type="button" aria-pressed={d.alimenta} aria-label={`${DIA_LBL[d.i ?? i]} ${Number(d.fecha.slice(8, 10))}: ${d.alimenta ? 'alimenta' : 'ayuno'}`} onClick={() => onToggle(d.fecha, d.alimenta)} style={{ ...base, cursor: 'pointer' }}>{inner}</button>
+          : <div key={d.fecha} style={{ ...base, opacity: d.cerrado ? 0.92 : 1 }}>{inner}</div>
+      })}
     </div>
   )
 }
