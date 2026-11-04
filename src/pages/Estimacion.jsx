@@ -259,8 +259,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // Tolvas
   const [editTolvas, setEditTolvas] = useState(false)
   const [tolvasTxt, setTolvasTxt] = useState('')
-  const [editRac, setEditRac] = useState(false)
-  const [racTxt, setRacTxt] = useState('')
   // Modo diagnóstico de la ventana de consumo (solo lectura)
   const [diag, setDiag] = useState(false)
   const [ventanaDias, setVentanaDias] = useState(14) // ventana de consumo oficial: 7 | 14 | 21 (plano, incluye ayunos)
@@ -556,14 +554,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     setCiclos(cs => cs.map(c => c.cicloId === sel ? { ...c, tolvas: n } : c))
     setEditTolvas(false)
   }
-  async function guardarRaciones() {
-    const n = parseInt(racTxt, 10)
-    if (!isFinite(n) || n < 1) { setEditRac(false); return }
-    const { error } = await supabase.schema('produccion').from('piscina').update({ raciones: n }).eq('id', fila.piscinaId)
-    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar las raciones') }); return }
-    setCiclos(cs => cs.map(c => c.cicloId === sel ? { ...c, raciones: n } : c))
-    setEditRac(false)
-  }
   // Aplica la celda activa vía la función aplicar_escenario (una sola transacción:
   // valida rol+finca+motivo, marca el activo como reemplazado e inserta el nuevo).
   async function aplicarEscenario() {
@@ -583,7 +573,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       p_ciclo_id: sel, p_semana_ref: hasta, p_fila_pct: celdaAct.fila, p_intensidad: celdaAct.inten,
       p_biomasa_lb: biomasaAsumida, p_tasa_pct: tasaApl, p_lb_dia: lbDiaSel,
       p_sacos_calc: sacosSemCalc, p_sacos_operativos: pedir, p_costo_usd: usdSemSel,
-      p_raciones: racSinConfirmar ? null : racValor, p_es_recomendada: esReco,
+      p_raciones: null, p_es_recomendada: esReco,
       p_motivo: requiereMotivo ? (motivoTxt.trim() || null) : null, p_motivo_codigo: requiereMotivo ? motivoCod : null, p_datos: datos,
       p_requiere_aprobacion: requiereAprobacion, p_base_activo_id: apRec ? apRec.id : null, p_base_cal_en: planSel ? planSel.confirmada_en : null,
       p_base_mu_fecha: fila.ultMuestreo || null, p_base_bio_lb: biomasaSel,
@@ -591,6 +581,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
     const reg = Array.isArray(data) ? data[0] : data
     reg.aplicado_nombre = nombre || null
+    // Guarda el calendario como plan de la semana (acta plan vs ejecutado), sin paso
+    // manual aparte. No bloquea el aplicar si falla o si hay días sin registro.
+    if (!haySinRegistro && !semanaConfirmada) {
+      try {
+        const ds = calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta }))
+        const { data: cs } = await supabase.schema('produccion').rpc('confirmar_semana', { p_ciclo_id: sel, p_semana_ref: hasta, p_dias: ds })
+        const dm = {}; ds.forEach(d => { dm[d.fecha] = d.alimenta })
+        setPlanSemana(p => ({ ...p, [sel]: { confirmada: true, confirmada_en: (cs && cs.confirmada_en) || new Date().toISOString(), confirmada_por: userId, dias: dm } }))
+        setCal(null)
+      } catch { /* el acta es secundaria: no interrumpe el aplicar */ }
+    }
     setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCelda(null)
     if (requiereAprobacion) {
       setPendiente(p => ({ ...p, [sel]: reg }))
@@ -739,24 +740,27 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const sacosDiaSel = lbDiaSel / PARAM.pesoSaco
   // La semana = dosis por día alimentado × días ALIMENTADOS (no ×7: el ponderado
   // ya excluye ayunos). Redondeo solo al comprar.
-  const sacosSemCalc = lbDiaSel * diasAlim / PARAM.pesoSaco   // consumo estimado (sin redondear)
-  const pedir = Math.ceil(sacosSemCalc)                       // requerimiento operativo (hacia arriba)
-  const costoConsumo = sacosSemCalc * (est ? est.alimento.usdSaco : 0)  // consumo estimado × precio
-  const costoCompra = pedir * (est ? est.alimento.usdSaco : 0)          // desembolso de compra
+  const sacosSemCalc = lbDiaSel * diasAlim / PARAM.pesoSaco   // consumo estimado de la semana (sin redondear)
+  // Ajuste a media semana: lo ya alimentado (días cerrados) no se vuelve a pedir;
+  // "por pedir" cuenta solo los días que faltan a la dosis elegida.
+  const diasAlimPend = calDias.filter(d => !d.cerrado && d.alimenta).length
+  const diasDados = calDias.filter(d => d.cerrado && d.tipo === 'fed').length
+  const lbYaAlim = calDias.reduce((t, d) => t + (d.cerrado && d.tipo === 'fed' ? d.lb : 0), 0)
+  const lbFaltan = lbDiaSel * diasAlimPend
+  const pedir = Math.ceil(lbFaltan / PARAM.pesoSaco)          // requerimiento operativo = solo los días que faltan
+  const costoConsumo = sacosSemCalc * (est ? est.alimento.usdSaco : 0)  // consumo estimado × precio (semana)
+  const costoCompra = pedir * (est ? est.alimento.usdSaco : 0)          // desembolso de compra (lo que falta)
   const usdSemSel = costoConsumo
   // PEDIDO para la próxima semana: proyección aparte, sobre la biomasa oficial,
   // con los días de alimentación del patrón (estimación, no pedido operativo).
   const lbDiaProx = est ? biomasaSel * est.factorProx * est.planReco.tasaProx / 100 : 0
   const sacosProxPedir = Math.ceil(lbDiaProx * patDiasAlim / PARAM.pesoSaco)
-  // Reparto por tolva: solo operativo si hay tolvas Y raciones confirmadas.
-  const racConf = (fila && fila.raciones != null) ? fila.raciones : fincaRac
-  const racSinConfirmar = racConf == null
-  const racValor = racConf != null ? racConf : 2
-  const repartoOk = !bloqueado && fila && fila.tolvas > 0 && !racSinConfirmar
-  const lbTolvaRacion = (fila && fila.tolvas > 0) ? lbDiaSel / fila.tolvas / racValor : null
+  // Reparto por tolva: libras por tolva = dosis del día ÷ tolvas (sin raciones).
+  const repartoOk = !bloqueado && fila && fila.tolvas > 0
+  const lbPorTolva = (fila && fila.tolvas > 0) ? lbDiaSel / fila.tolvas : null
   // Aplicar: solo jefe; deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
   const puedeAplicar = finca.rol === 'jefe'
-  const aplicarOk = !!(puedeAplicar && semanaConfirmada && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
+  const aplicarOk = !!(puedeAplicar && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
   const requiereMotivo = !esReco
   const yaAplicada = !!(apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten)
   // Alerta de cambio vs el escenario activo: por DÍA (dosis) y por SEMANA (sacos, que
@@ -1281,29 +1285,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             </div>
           )}
 
-          {/* Calendario de la semana: define los días alimentados (el pedido usa esos días, no 7) */}
-          <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', marginBottom: '13px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '9px' }}>
-              <div style={{ ...titMini, marginBottom: 0 }}>Calendario · {diasAlim} de 7 días de alimentación</div>
-              <span style={{ fontSize: '10.5px', fontWeight: 500, color: semanaConfirmada ? VERDE : AMBAR, background: (semanaConfirmada ? VERDE : AMBAR) + '18', borderRadius: '20px', padding: '2px 9px' }}>{semanaConfirmada ? '✓ Confirmada' : 'Pendiente de confirmar'}</span>
-            </div>
-            {!semanaConfirmada && <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '9px' }}>Patrón sugerido de {finca.nombre}{calEditable ? ' — los días pasados se toman de lo ejecutado; toca un día futuro para cambiarlo.' : '.'}</div>}
-            <Calendario dias={calDias} editable={calEditable} onToggle={toggleDia} />
-            {fila.ventana && fila.ventana.ayuno >= 3 && (
-              <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px' }}>{fila.ventana.ayuno} ayunos detectados en la ventana histórica; el calendario futuro aún no tiene ayunos confirmados.</div>
-            )}
-            {haySinRegistro && <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '8px', background: '#FBEAEA', borderRadius: '8px', padding: '7px 10px' }}>Hay días pasados sin registro — resuélvelos en Registro diario antes de confirmar la semana.</div>}
-            {calEditable && !semanaConfirmada && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
-                <button onClick={confirmarSemana} disabled={haySinRegistro} style={{ ...btnAzul, opacity: haySinRegistro ? 0.5 : 1, cursor: haySinRegistro ? 'default' : 'pointer' }}>Confirmar semana</button>
-              </div>
-            )}
-            {semanaPasada && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Semana pasada · solo lectura.</div>}
-          </div>
-
+          <div style={{ fontSize: '10.5px', color: '#9fb0bf', margin: '0 2px 7px' }}>1 · Elige el escenario — fila: supuesto de biomasa · columna: intensidad</div>
           <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} dias={diasAlim} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => setCelda({ fila: f, inten: k })} />
           <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 2px 14px', lineHeight: 1.5 }}>
-            ✓ Recomendada {hayReco ? `(100% · ${intenLbl(recoInten)})` : '— sin recomendación hasta validar'} · ● tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
+            Recomendada {hayReco ? `(100% · ${cap(intenLbl(recoInten))})` : '— sin recomendación hasta validar'} · ● Tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '14px' }}>
@@ -1323,11 +1308,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <Row k="Costo de consumo" v={dinero(costoConsumo)} />
                 <Row k={`Desembolso de compra (${pedir})`} v={dinero(costoCompra)} />
               </div>
-              {!semanaConfirmada && (
-                <div style={{ fontSize: '11px', color: AMBAR, marginTop: '9px', background: '#FBF5E9', borderRadius: '8px', padding: '7px 10px' }}>
-                  Estimación preliminar con {diasAlim} días · <b>calendario sin confirmar</b>. Confirma la semana para poder aplicar.
-                </div>
-              )}
               <div style={{ fontSize: '11px', color: GRIS, marginTop: '9px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                 <span style={{ background: '#eef2f6', borderRadius: '6px', padding: '2px 8px' }}>Próxima semana</span> requerimiento estimado {sacosProxPedir} sacos · patrón de {patDiasAlim} días sin confirmar.
               </div>
@@ -1350,33 +1330,38 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   </span>
                 )}
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', padding: '3px 0' }}>
-                <span style={{ color: GRIS }}>Raciones por día</span>
-                {editRac ? (
-                  <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                    <input autoFocus type="number" min="1" value={racTxt} onChange={e => setRacTxt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') guardarRaciones() }} style={{ ...inp, width: '56px' }} />
-                    <button onClick={guardarRaciones} style={btnAzul}>Ok</button>
-                  </span>
-                ) : (
-                  <span style={{ display: 'inline-flex', gap: '8px', alignItems: 'center' }}>
-                    <b style={{ fontWeight: 500, color: racSinConfirmar ? AMBAR : NAVY }}>{racSinConfirmar ? '2 · sin confirmar' : racConf}</b>
-                    {esJefe && <span onClick={() => { setRacTxt(racConf != null ? String(racConf) : '2'); setEditRac(true) }} style={{ color: AZUL, cursor: 'pointer', fontSize: '11.5px' }}>{racSinConfirmar ? 'confirmar' : 'editar'}</span>}
-                  </span>
-                )}
-              </div>
               {repartoOk ? (
                 <div style={{ background: '#e8f1fb', borderRadius: '9px', padding: '11px 13px', textAlign: 'center', marginTop: '8px' }}>
-                  <div style={{ fontSize: '11px', color: '#185FA5' }}>Balanceado por tolva y ración</div>
-                  <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{miles(lbTolvaRacion)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span></div>
+                  <div style={{ fontSize: '11px', color: '#185FA5' }}>Libras por tolva</div>
+                  <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{miles(lbPorTolva)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span></div>
+                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel)} lb/día ÷ {fila.tolvas} tolvas</div>
                 </div>
               ) : (
                 <div style={{ background: '#FBF5E9', borderRadius: '9px', padding: '11px 13px', marginTop: '8px' }}>
                   <div style={{ fontSize: '12px', color: '#854F0B', fontWeight: 500 }}>Reparto no disponible</div>
-                  <div style={{ fontSize: '11.5px', color: '#9a7636', marginTop: '2px' }}>{bloqueado ? 'Valida la biomasa' : !fila.tolvas ? 'Configura el número de tolvas' : 'Confirma las raciones por día'} para el reparto operativo.</div>
-                  {fila.tolvas > 0 && lbTolvaRacion != null && <div style={{ fontSize: '11px', color: GRIS, marginTop: '6px' }}>Estimación preliminar ({racValor} raciones sugeridas): {miles(lbTolvaRacion)} lb por tolva.</div>}
+                  <div style={{ fontSize: '11.5px', color: '#9a7636', marginTop: '2px' }}>{bloqueado ? 'Valida la biomasa' : 'Configura el número de tolvas'} para ver las libras por tolva.</div>
                 </div>
               )}
             </div>
+          </div>
+
+          {/* 2 · Así se alimentaría la semana (libras por día). Lo pasado = ejecución real
+              (candado); lo futuro, la dosis elegida. El pedido cuenta solo lo que falta. */}
+          <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', margin: '14px 0 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+              <div style={{ ...titMini, marginBottom: 0 }}>2 · Así se alimentaría la semana</div>
+              <span style={{ fontSize: '11px', color: GRIS }}>{diasAlim} de 7 días · {miles(lbDiaSel)} lb/día{calEditable ? ' · toca un día futuro para ponerlo en ayuno' : ''}</span>
+            </div>
+            <Calendario dias={calDias} editable={calEditable} onToggle={toggleDia} lbDia={lbDiaSel} hoy={hoy} />
+            {haySinRegistro && <div style={{ fontSize: '11.5px', color: ROJO, marginTop: '8px', background: '#FBEAEA', borderRadius: '8px', padding: '7px 10px' }}>Hay días pasados sin registro — resuélvelos en Registro diario.</div>}
+            {diasDados > 0 && (
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginTop: '11px', fontSize: '11.5px', color: GRIS }}>
+                <span>Ya alimentado: <b style={{ fontWeight: 500, color: NAVY }}>{miles(lbYaAlim)} lb</b> ({diasDados} día{diasDados === 1 ? '' : 's'})</span>
+                <span>Falta: <b style={{ fontWeight: 500, color: NAVY }}>{miles(lbFaltan)} lb</b> ({diasAlimPend} día{diasAlimPend === 1 ? '' : 's'})</span>
+                <span>Por pedir: <b style={{ fontWeight: 500, color: AZUL }}>{pedir} sacos</b></span>
+              </div>
+            )}
+            {semanaPasada && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Semana pasada · solo lectura.</div>}
           </div>
 
           {/* Escenario aplicado (trazabilidad) o controles para aplicar/reemplazar */}
@@ -1423,7 +1408,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   {requiereAprobacion ? 'Enviar a aprobación' : apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
                 </button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
-                  {!semanaConfirmada ? 'Confirma el calendario de la semana para poder aplicar.' : !aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaMotivo ? 'Elige el motivo del cambio.' : requiereAprobacion ? 'Cambio >20%: lo revisa y aprueba un segundo jefe.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
+                  {!aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaMotivo ? 'Elige el motivo del cambio.' : requiereAprobacion ? 'Cambio >20%: lo revisa y aprueba un segundo jefe.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Al aplicar se guarda la decisión, el motivo, quién la aplicó y el calendario de la semana.'}
                 </span>
               </div>
             </div>
@@ -1793,22 +1778,26 @@ function diaDescripcion(d) {
 // Calendario semanal: 7 celdas L–D. Días cerrados = ejecución real (solo lectura);
 // días futuros = planificables (botón con aria-pressed). Verde alimenta, ámbar ayuno,
 // rojo sin registro.
-function Calendario({ dias, editable, onToggle }) {
+function Calendario({ dias, editable, onToggle, lbDia = 0, hoy = null }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '6px' }}>
       {dias.map((d, i) => {
         const interactivo = editable && !d.cerrado
-        const col = d.tipo === 'sin' ? ROJO : d.alimenta ? '#0F6E56' : '#854F0B'
-        const bg = d.tipo === 'sin' ? '#FBEAEA' : d.alimenta ? '#e7f6ef' : '#FBF5E9'
-        const bd = d.tipo === 'sin' ? '#e7cccb' : d.alimenta ? '#bfe6d2' : '#ecd9b4'
-        const txt = d.cerrado ? (d.tipo === 'fed' ? 'Alimentó' : d.tipo === 'ayuno' ? 'Ayuno' : 'Sin registro') : (d.alimenta ? 'Alimenta' : 'Ayuno')
-        const sub = d.tipo === 'fed' ? miles(d.lb) + ' lb' : d.tipo === 'ayuno' ? 'Registrado' : d.tipo === 'sin' ? 'Resolver' : null
-        const base = { textAlign: 'center', padding: '6px 2px', borderRadius: '8px', background: bg, border: '1px solid ' + bd, width: '100%', fontFamily: 'inherit', boxSizing: 'border-box' }
+        const esHoy = hoy && d.fecha === hoy
+        // Libras del día: lo cerrado = ejecución real; lo futuro alimentado = dosis elegida.
+        const lbMostrar = d.tipo === 'fed' ? d.lb : (!d.cerrado && d.alimenta ? lbDia : null)
+        // Estado con mayúscula inicial: Dado (ya alimentó) · Hoy · Plan · Ayuno · Sin registro.
+        const estado = d.tipo === 'sin' ? 'Sin registro'
+          : d.cerrado ? (d.tipo === 'fed' ? 'Dado' : 'Ayuno')
+          : !d.alimenta ? 'Ayuno' : esHoy ? 'Hoy' : 'Plan'
+        const col = d.tipo === 'sin' ? ROJO : (d.alimenta || d.tipo === 'fed') ? '#0F6E56' : '#854F0B'
+        const bg = d.tipo === 'sin' ? '#FBEAEA' : (d.alimenta || d.tipo === 'fed') ? '#e7f6ef' : '#FBF5E9'
+        const bd = esHoy ? AZUL : d.tipo === 'sin' ? '#e7cccb' : (d.alimenta || d.tipo === 'fed') ? '#bfe6d2' : '#ecd9b4'
+        const base = { textAlign: 'center', padding: '7px 2px', borderRadius: '8px', background: bg, border: (esHoy ? '2px' : '1px') + ' solid ' + bd, width: '100%', fontFamily: 'inherit', boxSizing: 'border-box' }
         const inner = (<>
           <div style={{ fontSize: '10.5px', color: GRIS }}>{DIA_LBL[d.i ?? i]}</div>
-          <div style={{ fontSize: '12px', fontWeight: 500, color: NAVY }}>{Number(d.fecha.slice(8, 10))}</div>
-          <div style={{ fontSize: '9.5px', color: col }}>{txt}</div>
-          {sub && <div style={{ fontSize: '9px', color: GRIS }}>{sub}</div>}
+          <div style={{ fontSize: '12.5px', fontWeight: 500, color: lbMostrar != null ? NAVY : col }}>{lbMostrar != null ? miles(lbMostrar) : (d.tipo === 'sin' ? '—' : 'Ayuno')}</div>
+          <div style={{ fontSize: '9.5px', color: d.cerrado && d.tipo === 'fed' ? GRIS : col }}>{estado}</div>
         </>)
         return interactivo
           ? <button key={d.fecha} type="button" aria-pressed={d.alimenta} aria-label={diaDescripcion(d)} onClick={() => onToggle(d.fecha, d.alimenta)} style={{ ...base, cursor: 'pointer' }}>{inner}</button>
@@ -1843,14 +1832,15 @@ function Matriz({ oficial, plan, pesoSaco, dias, recoFila, recoInten, hayReco, s
                 const sacos = Math.ceil(lb * dias / pesoSaco)
                 const esR = hayReco && f === recoFila && k === recoInten
                 const esS = sel.fila === f && sel.inten === k
-                const borde = esR ? '2px solid ' + VERDE : esS ? '2px solid ' + AZUL : '0.5px solid transparent'
-                const bg = esR ? '#e7f6ef' : esS ? '#e8f1fb' : 'transparent'
+                // Solo la elección (azul) se resalta; la recomendada va como texto, sin relleno.
+                const borde = esS ? '2px solid ' + AZUL : '0.5px solid transparent'
+                const bg = esS ? '#e8f1fb' : 'transparent'
                 const activa = esOf || esS || esR
                 return (
                   <div key={k} onClick={() => onSel(f, k)} style={{ cursor: 'pointer', textAlign: 'center', margin: '3px', padding: '7px 4px', border: borde, borderRadius: '9px', background: bg }}>
-                    {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esR ? VERDE : AZUL }}>{esR ? '✓ Recomendada' : '● Tu elección'}</div>}
+                    {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esS ? AZUL : '#9fb0bf' }}>{esS ? '● Tu elección' : 'Recomendada'}</div>}
                     <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: activa ? NAVY : GRIS }}>{miles(lb)}</div>
-                    <div style={{ fontSize: '10px', color: activa ? '#3d7a63' : '#9fb0bf' }}>{sacos} sacos</div>
+                    <div style={{ fontSize: '10px', color: activa ? GRIS : '#9fb0bf' }}>{sacos} sacos</div>
                   </div>
                 )
               })}
