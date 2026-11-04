@@ -816,6 +816,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const rent = (() => {
     if (!est || !fila || bloqueado || !(biomasaSel > 0)) return null
     const gHoy = fila.gramaje
+    const area = fila.area
+    const consumoAcumLb = est.consumoAcum
     const alertaDatos = est.sobrevConsumo > 1.05 ? Math.round(est.sobrevConsumo * 100) : null
     if (gHoy < G_MIN_COMERCIAL) {
       const eC = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
@@ -824,25 +826,45 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     }
     const pHoy = precioPorGramaje(gHoy, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
-    const prC = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
-    if (!prC) return { listo: true, gHoy, pHoy, ingresoHoy }
-    const prO = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno }) || prC
-    const pMeta = precioPorGramaje(prC.metaUsa, precioOpts)
-    const brutoMeta = prC.biomasaMeta * pMeta.mejor
-    const escen = pr => {
-      const costoAlim = pr.alimentoLb / PARAM.pesoSaco * est.alimento.usdSaco
-      const costoOper = (cfg.costoHaDia || 0) * fila.area * pr.dias
-      const netoMeta = brutoMeta - costoAlim - costoOper
-      const valor = netoMeta - ingresoHoy
-      return { dias: pr.dias, alimentoSacos: Math.ceil(pr.alimentoLb / PARAM.pesoSaco), costoAlim, costoOper, netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, fcrMarg: (pr.biomasaMeta - biomasaSel) > 0 ? pr.alimentoLb / (pr.biomasaMeta - biomasaSel) : 0 }
+    // Proyección a meta con el ritmo OBSERVADO reciente (si falla, cae a la curva).
+    const prO = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno })
+      || proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
+    if (!prO) return { listo: true, gHoy, pHoy, ingresoHoy }
+    // Costos comunes (larva = hundido; alimento consumido = lb ÷ saco × precio actual).
+    const costoLarva = (cfg.larvaMillar || 0) * fila.larva / 1000
+    const alimConsumido = consumoAcumLb / PARAM.pesoSaco * est.alimento.usdSaco
+    // Una columna de P&L. Raleo = 0 por ahora (100% nadando).
+    const col = ({ dias, g, libras, precio, alimFaltaLb, consumoTotalLb }) => {
+      const alimFalta = (alimFaltaLb || 0) / PARAM.pesoSaco * est.alimento.usdSaco
+      const costoOper = (cfg.costoHaDia || 0) * area * dias
+      const costoTotal = costoLarva + costoOper + alimConsumido + alimFalta
+      const ingEnt = libras * precio.entero, ingCol = libras * precio.cola, ingRaleo = 0
+      const utilEnt = ingEnt + ingRaleo - costoTotal, utilCol = ingCol + ingRaleo - costoTotal
+      const mejorUtil = Math.max(utilEnt, utilCol), mejorIng = Math.max(ingEnt, ingCol) + ingRaleo
+      return {
+        dias, g, libras, lbHa: area > 0 ? libras / area : 0, precio, ingEnt, ingCol, ingRaleo,
+        costoLarva, costoOper, alimConsumido, alimFalta, costoTotal,
+        costoLb: libras > 0 ? costoTotal / libras : 0, utilEnt, utilCol, mejorUtil,
+        conviene: ingCol > ingEnt ? 'cola' : 'entero',
+        utilHa: area > 0 ? mejorUtil / area : 0, utilHaDia: (area > 0 && dias > 0) ? mejorUtil / area / dias : 0,
+        margen: mejorIng > 0 ? mejorUtil / mejorIng : 0, fcr: libras > 0 ? consumoTotalLb / libras : 0,
+      }
     }
-    const curva = escen(prC), obs = escen(prO)
+    const pMeta = precioPorGramaje(prO.metaUsa, precioOpts)
+    const hoyCol = col({ dias: fila.dias, g: gHoy, libras: biomasaSel, precio: pHoy, alimFaltaLb: 0, consumoTotalLb: consumoAcumLb })
+    const metaCol = col({ dias: fila.dias + prO.dias, g: prO.metaUsa, libras: prO.biomasaMeta, precio: pMeta, alimFaltaLb: prO.alimentoLb, consumoTotalLb: consumoAcumLb + prO.alimentoLb })
+    const valor = metaCol.mejorUtil - hoyCol.mejorUtil
+    const panel = {
+      biomasa: biomasaSel, pctNadando: 100, dias: prO.dias, alimLb: prO.alimentoLb,
+      alimSacos: Math.ceil(prO.alimentoLb / PARAM.pesoSaco),
+      promLbDia: prO.dias > 0 ? prO.alimentoLb / prO.dias : 0,
+      promSacosDia: prO.dias > 0 ? prO.alimentoLb / prO.dias / PARAM.pesoSaco : 0,
+      costo: metaCol.alimFalta,
+    }
     return {
-      listo: false, gHoy, metaUsa: prC.metaUsa, subeEscalon: prC.metaUsa !== Number(meta),
-      pHoy, pMeta, ingresoHoy, biomasaMeta: prC.biomasaMeta, brutoMeta,
-      curva, obs, mismaDir: (curva.valor >= 0) === (obs.valor >= 0),
-      sMetaRef: prC.sobrevMeta, sHoyRef: prC.sobrevHoy, fcrAcum: est.fcrProyectado,
-      alertaDatos: est.sobrevConsumo > 1.05 ? Math.round(est.sobrevConsumo * 100) : null,
+      listo: false, gHoy, metaUsa: prO.metaUsa, subeEscalon: prO.metaUsa !== Number(meta),
+      hoy: hoyCol, meta: metaCol, panel, valor, esperar: valor >= 0,
+      sMetaRef: prO.sobrevMeta, sHoyRef: prO.sobrevHoy, alertaDatos,
     }
   })()
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
@@ -1499,36 +1521,55 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '7px' }}>Sin comparación económica y fuera del "valor de continuar" de la finca hasta alcanzar talla comercial.</div>
             </>) : rent.listo ? (
               <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Ya está en talla de cosecha ({num1(rent.gHoy)} g). Ingreso estimado hoy: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(rent.ingresoHoy)}</b> ({cap(rent.pHoy.conviene)} a {dinero(rent.pHoy.mejor)}/lb).</div>
-            ) : (<>
+            ) : (() => { const h = rent.hoy, m = rent.meta, p = rent.panel; return (<>
               {rent.alertaDatos && <div style={{ fontSize: '11.5px', color: ROJO, background: '#FBEAEA', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Sobrevivencia por consumo {rent.alertaDatos}% ({'>'}100%): la biomasa por consumo parece alta. Revisa los datos antes de decidir; esta rentabilidad es referencial.</div>}
               {rent.subeEscalon && <div style={{ fontSize: '11.5px', color: AMBAR, margin: '0 0 10px' }}>Meta de {num1(meta)} g ya alcanzada ({num1(rent.gHoy)} g); se evalúa el siguiente escalón de {num1(rent.metaUsa)} g.</div>}
-              <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '12px 14px', fontSize: '12.5px', marginBottom: '12px' }}>
-                <div style={titMini}>Cosechar hoy · {num1(rent.gHoy)} g</div>
-                <Row k="Biomasa oficial" v={miles(biomasaSel) + ' lb (' + cap(fuenteUsada) + ')'} />
-                <Row k={`Precio ${rent.pHoy.conviene} · ingreso hoy`} v={dinero(rent.ingresoHoy)} fuerte />
-                <Row k={`Esperar a meta ${num1(rent.metaUsa)} g · biomasa proyectada`} v={miles(rent.biomasaMeta) + ' lb'} top />
-                <Row k={`Bruto a meta (${rent.pMeta.conviene} ${dinero(rent.pMeta.mejor)}/lb)`} v={dinero(rent.brutoMeta)} />
+              <div style={{ background: rent.esperar ? '#e7f6ef' : '#FBF5E9', borderRadius: '9px', padding: '10px 13px', marginBottom: '13px', fontSize: '12.5px', color: rent.esperar ? '#2f6b55' : '#854F0B' }}>
+                <b style={{ fontWeight: 500 }}>{rent.esperar ? 'Conviene esperar a la meta' : 'Conviene cosechar hoy'}:</b> {rent.esperar ? '+' : ''}{dinero(rent.valor)} de {rent.esperar ? 'mejor utilidad' : 'diferencia'} ({dinero(rent.esperar ? m.utilHaDia : h.utilHaDia)}/ha·día). Faltan {p.dias} días hasta {num1(rent.metaUsa)} g.
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '10px' }}>
-                {[['Según curva biológica', rent.curva], ['Ritmo observado (curva diaria)', rent.obs]].map(([lbl, e]) => (
-                  <div key={lbl} style={{ background: e.valor >= 0 ? '#e7f6ef' : '#FBF5E9', border: '0.5px solid ' + (e.valor >= 0 ? '#bfe6d2' : '#ecd9b4'), borderRadius: '9px', padding: '11px 13px' }}>
-                    <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '5px' }}>{lbl} · {e.dias} días</div>
-                    <div style={{ fontSize: '14px', fontWeight: 500, color: e.valor >= 0 ? VERDE : AMBAR }}>{e.valor >= 0 ? 'Esperar · +' : 'Cosechar · '}{dinero(e.valor)}</div>
-                    <div style={{ fontSize: '11.5px', color: GRIS }}>{dinero(e.valorDia)}/día · alimento {e.alimentoSacos} sacos · FCR marg. {num2(e.fcrMarg)}</div>
-                  </div>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1fr', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
+                <span style={{ padding: '7px 9px', background: '#f6f9fb' }} />
+                <span style={{ padding: '7px 9px', textAlign: 'right', fontWeight: 500, color: GRIS, background: '#f6f9fb' }}>Cosechar hoy</span>
+                <span style={{ padding: '7px 9px', textAlign: 'right', fontWeight: 500, color: AZUL, background: '#f6f9fb' }}>Llegar a la meta</span>
+                <RentRow head k="Producción" />
+                <RentRow k="Días de cultivo" a={h.dias} b={m.dias} />
+                <RentRow k="Gramaje (g)" a={num2(h.g)} b={num2(m.g)} />
+                <RentRow k="Libras a cosechar" a={miles(h.libras)} b={miles(m.libras)} />
+                <RentRow k="Libras por hectárea" a={miles(h.lbHa)} b={miles(m.lbHa)} />
+                <RentRow head k="Precio y venta" />
+                <RentRow k="Precio entero ($/lb)" a={num3(h.precio.entero)} b={num3(m.precio.entero)} />
+                <RentRow k="Precio cola equiv. ($/lb)" a={num3(h.precio.cola)} b={num3(m.precio.cola)} />
+                <RentRow k="Qué conviene vender" a={cap(h.conviene)} b={cap(m.conviene)} azul />
+                <RentRow k="Ingreso vendiendo entero" a={dinero(h.ingEnt)} b={dinero(m.ingEnt)} />
+                <RentRow k="Ingreso vendiendo cola" a={dinero(h.ingCol)} b={dinero(m.ingCol)} />
+                <RentRow k="Ingreso por raleos" a={dinero(h.ingRaleo)} b={dinero(m.ingRaleo)} />
+                <RentRow head k="Costos" />
+                <RentRow k="Costo de la larva" a={dinero(h.costoLarva)} b={dinero(m.costoLarva)} />
+                <RentRow k="Costo operativo" a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
+                <RentRow k="Alimento consumido hasta hoy" a={dinero(h.alimConsumido)} b={dinero(m.alimConsumido)} />
+                <RentRow k="Alimento que falta hasta meta" a="—" b={dinero(m.alimFalta)} />
+                <RentRow fuerte k="Costo total" a={dinero(h.costoTotal)} b={dinero(m.costoTotal)} />
+                <RentRow k="Costo por libra ($/lb)" a={num3(h.costoLb)} b={num3(m.costoLb)} />
+                <RentRow head k="Resultado" />
+                <RentRow k="Utilidad vendiendo entero" a={dinero(h.utilEnt)} b={dinero(m.utilEnt)} />
+                <RentRow k="Utilidad vendiendo cola" a={dinero(h.utilCol)} b={dinero(m.utilCol)} />
+                <RentRow fuerte bg="#e7f6ef" k="Mejor utilidad" a={dinero(h.mejorUtil)} b={dinero(m.mejorUtil)} />
+                <RentRow k="Utilidad por hectárea" a={dinero(h.utilHa)} b={dinero(m.utilHa)} />
+                <RentRow k="Utilidad por ha · día" a={dinero(h.utilHaDia)} b={dinero(m.utilHaDia)} />
+                <RentRow k="Margen sobre la venta" a={pct0(h.margen)} b={pct0(m.margen)} />
+                <RentRow k="FCR del ciclo" a={num2(h.fcr)} b={num2(m.fcr)} />
               </div>
-              <div style={{ fontSize: '12px', color: rent.mismaDir ? (rent.curva.valor >= 0 ? VERDE : AMBAR) : AMBAR, marginBottom: '8px' }}>
-                {rent.mismaDir
-                  ? `En ambos escenarios ${rent.curva.valor >= 0 ? 'conviene esperar' : 'conviene cosechar'}.`
-                  : 'Depende del ritmo: la curva biológica favorece esperar, pero al ritmo observado conviene cosechar. Decidir según qué tan real sea el crecimiento reciente.'}
+              <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em', margin: '14px 2px 8px' }}>Alimento que falta hasta la meta</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '10px' }}>
+                <Mini k="Biomasa que queda" v={`${miles(p.biomasa)} lb`} />
+                <Mini k="Días que faltan" v={`${p.dias}`} />
+                <Mini k="Alimento que falta" v={`${miles(p.alimLb)} lb`} />
+                <Mini k="Sacos que faltan" v={`${p.alimSacos}`} />
+                <Mini k="Promedio por día" v={`${num1(p.promSacosDia)} sacos`} />
+                <Mini k="Costo de ese alimento" v={dinero(p.costo)} />
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: '9px', marginTop: '6px', fontSize: '12px', color: GRIS }}>
-                <span>FCR acumulado a meta: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(rent.fcrAcum)}</b></span>
-                <span>Mortalidad de referencia (densidad): <b style={{ color: NAVY, fontWeight: 500 }}>{pct0(rent.sHoyRef)} → {pct0(rent.sMetaRef)}</b></span>
-              </div>
-              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Alimento futuro proyectado día a día con la curva del motor. Dos horizontes: "curva biológica" (ritmo objetivo) y "ritmo observado" (tu desempeño reciente aplicado a la curva diaria). Puede diferir unos días del "días restantes" de arriba, que es un estimado lineal; aquí se acumula día a día. La biomasa parte de la <b>oficial</b> ({cap(fuenteUsada)}); la mortalidad a futuro es una <b>curva de referencia por densidad</b>, no la sobrevivencia por consumo. Larva = costo hundido. Precios: lista AQUAGOLD · CV {Math.round((precioOpts.cv ?? CV_DEF) * 100)}% · rend. entero {Math.round((precioOpts.rendEntero ?? REND_ENTERO_DEF) * 100)}% · cola {Math.round((precioOpts.rendCola ?? REND_COLA_DEF) * 100)}%. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
-            </>)}
+              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>Cosechar hoy usa la biomasa, el precio y los costos de hoy. Llegar a la meta proyecta con el <b>ritmo observado reciente</b> hasta {num1(rent.metaUsa)} g, sumando el alimento que faltaría. Biomasa oficial: {cap(fuenteUsada)}. Larva = costo hundido. Raleo en 0 (100% nadando). Alimento consumido valorado al precio actual del saco. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
+            </>) })()}
           </Caja></div>
         )}
       </>
@@ -1909,4 +1950,14 @@ function Row({ k, v, fuerte, top, azul }) {
 }
 function Linea({ k, v, fuerte, color }) {
   return <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: GRIS }}>{k}</span><span style={{ fontWeight: fuerte ? 500 : 400, color: color || NAVY }}>{v}</span></div>
+}
+// Fila de la tabla de rentabilidad (etiqueta + hoy + meta). head = encabezado de sección.
+function RentRow({ k, a, b, fuerte, head, bg, azul }) {
+  if (head) return <span style={{ gridColumn: '1 / -1', fontSize: '10px', color: '#9fb0bf', background: '#f6f9fb', padding: '5px 9px', textTransform: 'uppercase', letterSpacing: '.04em' }}>{k}</span>
+  const base = { padding: fuerte ? '7px 9px' : '5px 9px', ...(bg ? { background: bg } : {}), ...(fuerte ? { fontWeight: 500, borderTop: '0.5px solid #e3ecf2' } : {}) }
+  return (<>
+    <span style={{ ...base, color: fuerte ? NAVY : GRIS }}>{k}</span>
+    <span style={{ ...base, textAlign: 'right', color: azul ? AZUL : NAVY }}>{a}</span>
+    <span style={{ ...base, textAlign: 'right', color: azul ? AZUL : NAVY }}>{b}</span>
+  </>)
 }
