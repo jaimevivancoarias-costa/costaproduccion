@@ -527,6 +527,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       p_raciones: racSinConfirmar ? null : racValor, p_es_recomendada: esReco,
       p_motivo: requiereMotivo ? (motivoTxt.trim() || null) : null, p_motivo_codigo: requiereMotivo ? motivoCod : null, p_datos: datos,
       p_requiere_aprobacion: requiereAprobacion, p_base_activo_id: apRec ? apRec.id : null, p_base_cal_en: planSel ? planSel.confirmada_en : null,
+      p_base_mu_fecha: fila.ultMuestreo || null, p_base_bio_lb: biomasaSel,
     })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
     const reg = Array.isArray(data) ? data[0] : data
