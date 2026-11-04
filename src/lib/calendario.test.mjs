@@ -45,6 +45,10 @@ ok(nivelCambio(-0.10) === 'normal', '−10,00% → normal')
 ok(nivelCambio(-0.1001) === 'confirmar', '−10,01% → confirmar (ámbar)')
 ok(nivelCambio(-0.2001) === 'fuerte', '−20,01% → fuerte (rojo)')
 ok(nivelCambio(null) === null, 'sin dosis anterior → null')
+// Disparador de doble aprobación (5.6): requiereAprobacion = (nivel === 'fuerte').
+ok(nivelCambio(0.20) !== 'fuerte', '20,00% → directo (sin aprobación)')
+ok(nivelCambio(0.2001) === 'fuerte', '20,01% → requiere aprobación')
+ok(nivelCambio(-0.2001) === 'fuerte', '−20,01% → requiere aprobación')
 
 // --- Planificado vs ejecutado: aplicación a mitad de semana, ayuno, sin registro, extra ---
 // Semana lun..dom; plan rige desde el miércoles (vigenteDesde = sem[2]).
