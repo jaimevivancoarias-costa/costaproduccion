@@ -1873,7 +1873,6 @@ function Matriz({ oficial, plan, pesoSaco, dias, recoFila, recoInten, hayReco, s
               </div>
               {COLS.map(([k]) => {
                 const lb = oficial * f / 100 * plan[k].tasaDia / 100
-                const sacos = Math.ceil(lb * dias / pesoSaco)
                 const esR = hayReco && f === recoFila && k === recoInten
                 const esS = sel.fila === f && sel.inten === k
                 // Solo la elección (azul) se resalta; la recomendada va como texto, sin relleno.
@@ -1884,7 +1883,7 @@ function Matriz({ oficial, plan, pesoSaco, dias, recoFila, recoInten, hayReco, s
                   <div key={k} onClick={() => onSel(f, k)} style={{ cursor: 'pointer', textAlign: 'center', margin: '3px', padding: '7px 4px', border: borde, borderRadius: '9px', background: bg }}>
                     {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esS ? AZUL : VERDE }}>{esS ? '● Tu elección' : 'Recomendada'}</div>}
                     <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: activa ? NAVY : GRIS }}>{miles(lb)}</div>
-                    <div style={{ fontSize: '10px', color: activa ? GRIS : '#9fb0bf' }}>{sacos} sacos</div>
+                    <div style={{ fontSize: '10px', color: activa ? GRIS : '#9fb0bf' }}>lb/día · {num1(lb / pesoSaco)} sac</div>
                   </div>
                 )
               })}
