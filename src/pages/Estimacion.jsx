@@ -363,7 +363,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         productoId: (prodCic[c.id] || {}).pid || null,
         larva: Number(c.cantidad_larva) || 0, pl: Number(c.gramaje_precria) || 0.5, siembra,
         gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
-        muestreos: ms.map(m => ({ dia: diasEntre(siembra, m.fecha), g: m.peso })).filter(p => p.dia >= 0 && p.g > 0),
+        muestreos: ms.map(m => ({ dia: diasEntre(siembra, m.fecha), g: m.peso, fecha: m.fecha })).filter(p => p.dia >= 0 && p.g > 0),
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
         consumoAcum: als.reduce((t, r) => t + r.lb, 0),
         // Consumo oficial (lb/semana) = promedio PLANO de la ventana elegida (14 por
@@ -1200,11 +1200,13 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <Titulo sinMargen>Velocidad de crecimiento</Titulo>
               <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Observado vs Objetivo</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-              <div><div style={{ fontSize: '10.5px', color: GRIS }}>Gramaje hoy</div><div style={{ fontSize: '20px', fontWeight: 500, color: NAVY }}>{num1(fila.gramaje)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g</span></div></div>
-              <div><div style={{ fontSize: '10.5px', color: GRIS }}>Observado</div><div style={{ fontSize: '20px', fontWeight: 500, color: NAVY }}>{num2(est.gDiaObs)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g/día</span></div></div>
-              <div style={{ width: '0.5px', alignSelf: 'stretch', background: BORDE, minHeight: '42px' }} />
-              <div style={{ flex: 1, minWidth: '230px' }}><Curva puntos={fila.muestreos || []} gramaje={fila.gramaje} /></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '22px', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '22px', flex: '0 0 auto' }}>
+                <div style={{ minWidth: '74px' }}><div style={{ fontSize: '11px', color: GRIS }}>Gramaje hoy</div><div style={{ fontSize: '22px', fontWeight: 500, color: NAVY }}>{num1(fila.gramaje)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g</span></div></div>
+                <div style={{ minWidth: '74px' }}><div style={{ fontSize: '11px', color: GRIS }}>Observado</div><div style={{ fontSize: '22px', fontWeight: 500, color: NAVY }}>{num2(est.gDiaObs)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g/día</span></div></div>
+              </div>
+              <div style={{ width: '0.5px', alignSelf: 'stretch', background: BORDE, minHeight: '46px' }} />
+              <div style={{ flex: '0 1 54%', minWidth: '200px' }}><Curva puntos={fila.muestreos || []} gramaje={fila.gramaje} /></div>
             </div>
             <div style={{ display: 'flex', gap: '14px', marginTop: '10px', fontSize: '11px', color: GRIS, flexWrap: 'wrap', alignItems: 'center' }}>
               <span><span style={{ display: 'inline-block', width: '14px', borderTop: '2px solid ' + AZUL, marginRight: '5px', verticalAlign: 'middle' }} />Observado</span>
@@ -1999,6 +2001,7 @@ function Linea({ k, v, fuerte, color }) {
 // Curva de crecimiento: gramaje observado (muestreos reales) vs curva objetivo (tabla
 // calibrada, diaEq). Misma escala; la distancia entre líneas = atraso/adelanto.
 function Curva({ puntos, gramaje }) {
+  const [hi, setHi] = useState(null)
   const obj = TABLA_CRECIMIENTO.filter(r => r.g <= gramaje * 1.08).map(r => ({ dia: r.diaEq, g: r.g }))
   const obs = [...puntos].sort((a, b) => a.dia - b.dia)
   if (obs.length < 2) return <div style={{ fontSize: '11.5px', color: '#9fb0bf', padding: '18px 0', textAlign: 'center' }}>Aún no hay suficientes muestreos para dibujar la curva.</div>
@@ -2008,15 +2011,28 @@ function Curva({ puntos, gramaje }) {
   const maxG = Math.max(...todos.map(p => p.g), 1)
   const sx = d => padL + (d / maxDia) * (W - padL - padR)
   const sy = g => padT + (1 - g / maxG) * (H - padT - padB)
+  const fx = d => (sx(d) / W) * 100
+  const fy = g => (sy(g) / H) * 100
   const linea = arr => arr.map((p, i) => `${i ? 'L' : 'M'}${sx(p.dia).toFixed(1)} ${sy(p.g).toFixed(1)}`).join(' ')
   const ult = obs[obs.length - 1]
+  const h = hi != null ? obs[hi] : null
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="120" preserveAspectRatio="none" role="img" aria-label="Curva de crecimiento observado vs objetivo">
-      {obj.length > 1 && <path d={linea(obj)} fill="none" stroke="#B4B2A9" strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />}
-      <path d={linea(obs)} fill="none" stroke={AZUL} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-      {obs.map((p, i) => <circle key={i} cx={sx(p.dia)} cy={sy(p.g)} r="2.5" fill={AZUL} />)}
-      <circle cx={sx(ult.dia)} cy={sy(ult.g)} r="4" fill={AZUL} />
-    </svg>
+    <div style={{ position: 'relative' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="120" preserveAspectRatio="none" role="img" aria-label="Curva de crecimiento observado vs objetivo">
+        {obj.length > 1 && <path d={linea(obj)} fill="none" stroke="#B4B2A9" strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />}
+        {h && <line x1={sx(h.dia)} y1={padT - 2} x2={sx(h.dia)} y2={H - padB} stroke={BORDE} strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+        <path d={linea(obs)} fill="none" stroke={AZUL} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+        {obs.map((p, i) => <circle key={i} cx={sx(p.dia)} cy={sy(p.g)} r={i === hi ? 4.5 : 2.5} fill={AZUL} />)}
+        <circle cx={sx(ult.dia)} cy={sy(ult.g)} r="4" fill={AZUL} />
+        {obs.map((p, i) => <circle key={'h' + i} cx={sx(p.dia)} cy={sy(p.g)} r="12" fill="transparent" style={{ cursor: 'pointer' }}
+          onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)} />)}
+      </svg>
+      {h && (
+        <div style={{ position: 'absolute', left: `${fx(h.dia)}%`, top: `${fy(h.g)}%`, transform: `translate(${fx(h.dia) > 70 ? '-100%' : fx(h.dia) < 15 ? '0' : '-50%'}, -125%)`, background: NAVY, color: '#fff', fontSize: '10.5px', fontWeight: 500, padding: '4px 8px', borderRadius: '6px', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 2 }}>
+          {num1(h.g)} g · {corta(h.fecha)}
+        </div>
+      )}
+    </div>
   )
 }
 // Fila de la tabla de rentabilidad (etiqueta + hoy + meta). head = encabezado de sección.
