@@ -24,6 +24,8 @@ function nivelBiomasa(difPct) {
   return { nivel: 'conflicto crítico', confianza: 'baja', bloquea: true, color: ROJO }
 }
 
+// Capacidad de biomasa por tolva (fija): cada tolva soporta 10.000 lb de biomasa.
+const CAP_TOLVA_LB = 10000
 // Ventana de consumo de 14 días. Separa últimos 7 y 7 anteriores, EXCLUYE los
 // ayunos del promedio (no son 0 de biomasa) y cuenta los días faltantes (sin
 // registro). Devuelve el promedio plano actual (simple) y el ponderado nuevo.
@@ -768,9 +770,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // con los días de alimentación del patrón (estimación, no pedido operativo).
   const lbDiaProx = est ? biomasaSel * est.factorProx * est.planReco.tasaProx / 100 : 0
   const sacosProxPedir = Math.ceil(lbDiaProx * patDiasAlim / PARAM.pesoSaco)
-  // Reparto por tolva: libras por tolva = dosis del día ÷ tolvas (sin raciones).
-  const repartoOk = !bloqueado && fila && fila.tolvas > 0
-  const lbPorTolva = (fila && fila.tolvas > 0) ? lbDiaSel / fila.tolvas : null
+  // Tolvas · capacidad: la biomasa escogida ÷ 10.000 lb por tolva dice cuántas tolvas
+  // se necesitan (para agregar o quitar). Cada tolva soporta 10.000 lb de biomasa.
+  const tolvasNec = biomasaAsumida > 0 ? Math.ceil(biomasaAsumida / CAP_TOLVA_LB) : 0
+  const tolvasAct = (fila && fila.tolvas != null) ? fila.tolvas : null
+  const bioPorTolva = (tolvasAct > 0) ? biomasaAsumida / tolvasAct : null
+  const faltanTolvas = tolvasAct != null ? tolvasNec - tolvasAct : null
   // Aplicar: solo jefe; deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
   const puedeAplicar = finca.rol === 'jefe'
   const aplicarOk = !!(puedeAplicar && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
@@ -1314,10 +1319,21 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num3(tasaBase) + '%'} />
               <Row k={`Ajuste intensidad ${intenLbl(celdaAct.inten)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
               <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
-              <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={`${miles(lbDiaSel)} lb/día · ${num1(lbDiaSel / PARAM.pesoSaco)} sacos`} fuerte />
-              <div style={{ borderTop: '0.5px solid #e3ecf2', marginTop: '7px', paddingTop: '6px' }}>
-                <Row k={`Consumo estimado (${diasAlim} días)`} v={num1(sacosSemCalc) + ' sacos'} />
-                <Row k="Requerimiento operativo" v={pedir + ' sacos'} fuerte azul />
+              <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', borderTop: '0.5px solid #e3ecf2', marginTop: '7px', paddingTop: '8px' }}>
+                <div style={{ background: '#eef2f6', borderRadius: '9px', padding: '9px 11px' }}>
+                  <div style={{ fontSize: '10.5px', color: GRIS }}>Por día</div>
+                  <div style={{ fontSize: '18px', fontWeight: 500, color: NAVY }}>{num1(lbDiaSel / PARAM.pesoSaco)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></div>
+                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel)} lb</div>
+                </div>
+                <div style={{ background: '#eef2f6', borderRadius: '9px', padding: '9px 11px' }}>
+                  <div style={{ fontSize: '10.5px', color: GRIS }}>Semana · {diasAlim} días</div>
+                  <div style={{ fontSize: '18px', fontWeight: 500, color: NAVY }}>{num1(sacosSemCalc)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></div>
+                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel * diasAlim)} lb</div>
+                </div>
+              </div>
+              <div style={{ borderTop: '0.5px solid #e3ecf2', marginTop: '8px', paddingTop: '6px' }}>
+                <Row k="Por pedir (lo que falta)" v={pedir + ' sacos'} fuerte azul />
                 <Row k="Costo de consumo" v={dinero(costoConsumo)} />
                 <Row k={`Desembolso de compra (${pedir})`} v={dinero(costoCompra)} />
               </div>
@@ -1326,11 +1342,19 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               </div>
             </div>
 
-            {/* Reparto por tolva: operativo solo con tolvas Y raciones confirmadas */}
+            {/* Tolvas · capacidad: biomasa escogida ÷ 10.000 lb por tolva → cuántas tolvas */}
             <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '13px 15px' }}>
-              <div style={titMini}>Reparto por tolva</div>
+              <div style={titMini}>Tolvas · capacidad</div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', padding: '3px 0' }}>
-                <span style={{ color: GRIS }}>Tolvas</span>
+                <span style={{ color: GRIS }}>Biomasa escogida ({celdaAct.fila}%)</span>
+                <b style={{ fontWeight: 500 }}>{miles(biomasaAsumida)} lb</b>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', padding: '3px 0' }}>
+                <span style={{ color: GRIS }}>Capacidad por tolva</span>
+                <span>{miles(CAP_TOLVA_LB)} lb</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12.5px', padding: '3px 0' }}>
+                <span style={{ color: GRIS }}>Tolvas actuales</span>
                 {editTolvas ? (
                   <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
                     <input autoFocus type="number" min="0" value={tolvasTxt} onChange={e => setTolvasTxt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') guardarTolvas() }} style={{ ...inp, width: '56px' }} />
@@ -1338,23 +1362,29 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   </span>
                 ) : (
                   <span style={{ display: 'inline-flex', gap: '8px', alignItems: 'center' }}>
-                    <b style={{ fontWeight: 500 }}>{fila.tolvas != null ? fila.tolvas : '—'}</b>
-                    {esJefe && <span onClick={() => { setTolvasTxt(fila.tolvas != null ? String(fila.tolvas) : ''); setEditTolvas(true) }} style={{ color: AZUL, cursor: 'pointer', fontSize: '11.5px' }}>{fila.tolvas != null ? 'editar' : 'configurar'}</span>}
+                    <b style={{ fontWeight: 500 }}>{tolvasAct != null ? tolvasAct : '—'}</b>
+                    {esJefe && <span onClick={() => { setTolvasTxt(tolvasAct != null ? String(tolvasAct) : ''); setEditTolvas(true) }} style={{ color: AZUL, cursor: 'pointer', fontSize: '11.5px' }}>{tolvasAct != null ? 'editar' : 'configurar'}</span>}
                   </span>
                 )}
               </div>
-              {repartoOk ? (
-                <div style={{ background: '#e8f1fb', borderRadius: '9px', padding: '11px 13px', textAlign: 'center', marginTop: '8px' }}>
-                  <div style={{ fontSize: '11px', color: '#185FA5' }}>Libras por tolva</div>
-                  <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{miles(lbPorTolva)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span> <span style={{ fontSize: '13px', color: '#9fb0bf' }}>· {num1(lbPorTolva / PARAM.pesoSaco)} sacos</span></div>
-                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel)} lb/día ÷ {fila.tolvas} tolvas</div>
-                </div>
-              ) : (
-                <div style={{ background: '#FBF5E9', borderRadius: '9px', padding: '11px 13px', marginTop: '8px' }}>
-                  <div style={{ fontSize: '12px', color: '#854F0B', fontWeight: 500 }}>Reparto no disponible</div>
-                  <div style={{ fontSize: '11.5px', color: '#9a7636', marginTop: '2px' }}>{bloqueado ? 'Valida la biomasa' : 'Configura el número de tolvas'} para ver las libras por tolva.</div>
-                </div>
-              )}
+              {bloqueado ? (
+                <div style={{ background: '#FBF5E9', borderRadius: '9px', padding: '11px 13px', marginTop: '8px', fontSize: '11.5px', color: '#9a7636' }}>Valida la biomasa para ver la capacidad.</div>
+              ) : (() => {
+                const falta = faltanTolvas != null && faltanTolvas > 0
+                const bgc = tolvasAct == null ? '#eef2f6' : falta ? '#FBF5E9' : '#e7f6ef'
+                const txtc = tolvasAct == null ? GRIS : falta ? '#854F0B' : '#2f6b55'
+                const estado = tolvasAct == null ? 'Configura las tolvas actuales'
+                  : falta ? `Agrega ${faltanTolvas} tolva${faltanTolvas > 1 ? 's' : ''}`
+                  : faltanTolvas < 0 ? `OK · te sobran ${-faltanTolvas}` : `OK · tienes ${tolvasAct}`
+                return (
+                  <div style={{ background: bgc, borderRadius: '9px', padding: '11px 13px', textAlign: 'center', marginTop: '8px' }}>
+                    <div style={{ fontSize: '11px', color: txtc }}>Necesitas</div>
+                    <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{tolvasNec} <span style={{ fontSize: '12px', color: GRIS }}>tolvas</span></div>
+                    <div style={{ fontSize: '11.5px', color: txtc, fontWeight: 500 }}>{estado}</div>
+                    {bioPorTolva != null && <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '2px' }}>hoy: {miles(bioPorTolva)} lb por tolva ({bioPorTolva > CAP_TOLVA_LB ? 'sobre' : 'bajo'} {miles(CAP_TOLVA_LB)})</div>}
+                  </div>
+                )
+              })()}
             </div>
           </div>
 
