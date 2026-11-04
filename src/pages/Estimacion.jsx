@@ -959,7 +959,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
       ) : vista === 'tablero' ? (
-        <TableroView tablero={tablero} totales={totales} pedidoNeto={pedidoNeto} invCorte={invCorte} reservaDias={reservaDias} filtro={filtro} setFiltro={setFiltro} hasta={hasta}
+        <TableroView tablero={tablero} totales={totales} pedidoNeto={pedidoNeto} invCorte={invCorte} reservaDias={reservaDias} filtro={filtro} setFiltro={setFiltro} hasta={hasta} finca={finca} pendientes={Object.keys(pendiente).length}
           onVer={id => { setSel(id); setVista('piscina'); setDesdeTablero(true) }} />
       ) : !fila ? (
         <Caja><Centro>No hay piscinas con muestreo de gramaje en esta finca a la fecha.<br />
@@ -1442,11 +1442,27 @@ function TablaDiagnostico({ filas, hasta }) {
 const cardMini = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 12px' }
 // Vista Tablero: todas las piscinas + totales en dos niveles + filtros. Solo lectura
 // (las acciones se hacen al abrir la piscina).
-function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filtro, setFiltro, hasta, onVer }) {
+function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filtro, setFiltro, hasta, finca, pendientes, onVer }) {
   const [exp, setExp] = useState(null)
   const [expP, setExpP] = useState(null)
   const netoTotal = pedidoNeto.reduce((t, p) => t + p.neto, 0)
   const desembolsoNeto = pedidoNeto.reduce((t, p) => t + p.desembolso, 0)
+  // Asistente (5.7): resumen en lenguaje natural a partir de las reglas (no decide).
+  const nombres = (arr, n = 4) => arr.length <= n ? arr.join(', ') : arr.slice(0, n).join(', ') + ` y ${arr.length - n} más`
+  const bloqNom = tablero.filter(r => r.bloqueado).map(r => r.f.nombre)
+  const sinEscNom = tablero.filter(r => !r.ap && !r.bloqueado).map(r => r.f.nombre)
+  const cosecharNom = tablero.filter(r => r.rent && !r.rent.listo && !r.rent.noComercial && r.rent.valor < 0).map(r => r.f.nombre)
+  const resumen = []
+  resumen.push(`${totales.nConf} de ${totales.total} piscinas con plan confirmado${totales.sinEsc ? ` · ${totales.sinEsc} sin escenario aplicado` : ''}.`)
+  if (netoTotal > 0) resumen.push(`Pedido neto de la semana: ${netoTotal} sacos (desembolso ${dinero(desembolsoNeto)}).`)
+  else resumen.push('Pedido neto cubierto con inventario esta semana.')
+  resumen.push(`Rentabilidad: ${totales.esperarN} conviene esperar, ${totales.cosecharN} conviene cosechar · valor de continuar ${totales.valorCont >= 0 ? '+' : ''}${dinero(totales.valorCont)}.`)
+  if (totales.bloq || totales.desv) resumen.push(`Atención: ${totales.bloq} bloqueada(s)${totales.desv ? ` · ${totales.desv} con desviación >10%` : ''}.`)
+  if (pendientes) resumen.push(`${pendientes} solicitud(es) de cambio >20% pendiente(s) de aprobación.`)
+  const acciones = []
+  if (bloqNom.length) acciones.push(`Validar biomasa: ${nombres(bloqNom)}.`)
+  if (cosecharNom.length) acciones.push(`Evaluar cosecha: ${nombres(cosecharNom)}.`)
+  if (sinEscNom.length) acciones.push(`Aplicar escenario: ${nombres(sinEscNom)}.`)
   const fechaHoraCorta = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
   const estProd = { pedir: ['Pedir', AZUL], cubierto: ['Cubierto', VERDE], falta: ['Dato faltante', AMBAR] }
   const FILTROS = [['todas', 'Todas'], ['pendientes', 'Pendientes'], ['confirmar', 'Confirmar'], ['simbloq', 'Simulación / bloqueadas'], ['desv', 'Con desviación']]
@@ -1455,6 +1471,15 @@ function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filt
   const estPill = k => k === 'aplicable' ? ['Aplicable', VERDE] : k === 'confirmar' ? ['Confirmar', AMBAR] : k === 'simulacion' ? ['Simulación', ROJO] : ['Bloqueado', ROJO]
   const th = { padding: '9px 6px', fontWeight: 500, textAlign: 'right', color: GRIS }
   return (<>
+    <div style={{ background: '#f3f7fb', border: '0.5px solid #d8e6f2', borderRadius: '12px', padding: '13px 15px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '7px' }}>
+        <span style={{ fontSize: '13px', color: AZUL }}>✦</span>
+        <div style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>Resumen de la semana · {finca.nombre}</div>
+      </div>
+      <div style={{ fontSize: '12.5px', color: '#4a5a67', lineHeight: 1.6 }}>{resumen.join(' ')}</div>
+      {acciones.length > 0 && <ul style={{ margin: '8px 0 0', paddingLeft: '18px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.55 }}>{acciones.map((a, i) => <li key={i}>{a}</li>)}</ul>}
+      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '8px' }}>Resumen automático a partir de las reglas; orienta, no decide por ti.</div>
+    </div>
     <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '10px' }}>
       <div style={{ ...titMini, marginBottom: '9px' }}>Total del plan semanal confirmado · {totales.nConf} piscinas</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: '11px' }}>
