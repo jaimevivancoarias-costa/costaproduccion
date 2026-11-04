@@ -833,9 +833,19 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const prO = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: est.desempeno })
       || proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: 1 })
     if (!prO) return { listo: true, gHoy, pHoy, ingresoHoy }
-    // Costos comunes (larva = hundido; alimento consumido = lb ÷ saco × precio actual).
+    // Costos comunes (larva = hundido).
     const costoLarva = (cfg.larvaMillar || 0) * fila.larva / 1000
-    const alimConsumido = consumoAcumLb / PARAM.pesoSaco * est.alimento.usdSaco
+    // Alimento consumido hasta hoy = Σ(libras × precio_saco REGISTRADO) ÷ 55.
+    // Cada día se valora al precio que de verdad se registró; los días sin precio
+    // se valoran al precio de referencia de la talla (est.alimento.usdSaco).
+    let costoBaseReal = 0, lbSinPrecio = 0
+    for (const r of (fila.alsRaw || [])) {
+      if (r.ayuno) continue
+      if (r.precio > 0) costoBaseReal += r.lb * r.precio
+      else lbSinPrecio += r.lb
+    }
+    const alimConsumido = (costoBaseReal + lbSinPrecio * est.alimento.usdSaco) / PARAM.pesoSaco
+    const lbSinPrecioPct = consumoAcumLb > 0 ? lbSinPrecio / consumoAcumLb : 0
     // Una columna de P&L. Raleo = 0 por ahora (100% nadando).
     const col = ({ dias, g, libras, precio, alimFaltaLb, consumoTotalLb }) => {
       const alimFalta = (alimFaltaLb || 0) / PARAM.pesoSaco * est.alimento.usdSaco
@@ -868,6 +878,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       listo: false, gHoy, metaUsa: prO.metaUsa, subeEscalon: prO.metaUsa !== Number(meta),
       hoy: hoyCol, meta: metaCol, panel, valor, esperar: valor >= 0,
       sMetaRef: prO.sobrevMeta, sHoyRef: prO.sobrevHoy, alertaDatos, supuesto,
+      sinPrecioPct: lbSinPrecioPct,
     }
   })()
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
@@ -1574,7 +1585,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <Mini k="Promedio por día" v={`${num1(p.promSacosDia)} sacos`} />
                 <Mini k="Costo de ese alimento" v={dinero(p.costo)} />
               </div>
-              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>Cosechar hoy usa la biomasa, el precio y los costos de hoy. Llegar a la meta proyecta con el <b>ritmo observado reciente</b> hasta {num1(rent.metaUsa)} g, sumando el alimento que faltaría. Biomasa = escenario elegido ({rent.supuesto}% de la oficial · fuente {cap(fuenteUsada)}). Larva = costo hundido. Raleo en 0 (100% nadando). Alimento consumido valorado al precio actual del saco. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
+              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>Cosechar hoy usa la biomasa, el precio y los costos de hoy. Llegar a la meta proyecta con el <b>ritmo observado reciente</b> hasta {num1(rent.metaUsa)} g, sumando el alimento que faltaría. Biomasa = escenario elegido ({rent.supuesto}% de la oficial · fuente {cap(fuenteUsada)}). Larva = costo hundido. Raleo en 0 (100% nadando). Alimento consumido valorado al <b>precio realmente registrado</b> de cada día{rent.sinPrecioPct > 0.001 ? ` (${num1(rent.sinPrecioPct * 100)}% de las libras sin precio registrado se valoró al de referencia)` : ''}. El alimento que falta usa el precio de referencia de la talla. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
             </>) })()}
           </Caja></div>
         )}
