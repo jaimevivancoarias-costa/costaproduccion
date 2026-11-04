@@ -378,8 +378,14 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   }, [finca.id, hasta])
 
   useEffect(() => { cargar() }, [cargar])
-  // Al cambiar de piscina o semana, la vista previa vuelve a la recomendada/aplicada.
-  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCal(null) }, [sel, hasta])
+  // Al cambiar de piscina o semana: restaura la selección guardada de esa piscina/semana
+  // (persiste en recargas y al salir/entrar); si no hay, usa recomendada/aplicada.
+  useEffect(() => {
+    setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCal(null)
+    let saved = null
+    try { const r = localStorage.getItem(`escSel|${sel}|${hasta}`); if (r) saved = JSON.parse(r) } catch { /* sin storage */ }
+    setCelda(saved && typeof saved.fila === 'number' && saved.inten ? saved : null)
+  }, [sel, hasta])
 
   const fila = ciclos.find(c => c.cicloId === sel)
   // Consumo oficial (lb/semana) de la ventana elegida: plano, incluye ayunos.
@@ -593,6 +599,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       } catch { /* el acta es secundaria: no interrumpe el aplicar */ }
     }
     setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCelda(null)
+    try { localStorage.removeItem(`escSel|${sel}|${hasta}`) } catch { /* sin storage */ }
     if (requiereAprobacion) {
       setPendiente(p => ({ ...p, [sel]: reg }))
       setAviso({ tipo: 'ok', texto: 'Enviado a aprobación de un segundo jefe. El plan anterior sigue vigente.' })
@@ -620,6 +627,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   }
   // Fecha y hora legible de la aplicación.
   const fechaHora = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
+  // Selecciona una celda del escenario y la guarda (persiste en recargas / salir).
+  function elegirCelda(fila, inten) {
+    const c = { fila, inten }
+    setCelda(c)
+    try { localStorage.setItem(`escSel|${sel}|${hasta}`, JSON.stringify(c)) } catch { /* sin storage */ }
+  }
   // Marca/desmarca un día FUTURO del calendario (vista previa local). Los días
   // cerrados no se tocan (reflejan la ejecución real).
   function toggleDia(fecha, actual) {
@@ -1177,7 +1190,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   {ventanas.map(w => {
                     const on = w.n === ventanaDias
                     return (
-                      <button key={w.n} onClick={() => { if (!celda) setCelda({ fila: celdaAct.fila, inten: celdaAct.inten }); setVentanaDias(w.n) }} title={`Usar la ventana de ${w.n} días como oficial`}
+                      <button key={w.n} onClick={() => { if (!celda) elegirCelda(celdaAct.fila, celdaAct.inten); setVentanaDias(w.n) }} title={`Usar la ventana de ${w.n} días como oficial`}
                         style={{ ...celComp, textAlign: 'center', cursor: 'pointer', fontWeight: on ? 600 : 500, color: on ? AZUL : NAVY, background: on ? '#e8f1fb' : '#f6f9fb', border: 'none', borderLeft: '0.5px solid ' + BORDE, fontFamily: 'inherit', fontSize: '12.5px' }}>
                         {w.n}d{on && ' ✓'}
                       </button>
@@ -1207,7 +1220,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   {supuestos.map(s => {
                     const on = s.p === celdaAct.fila
                     return (
-                      <button key={s.p} onClick={() => setCelda({ fila: s.p, inten: celdaAct.inten })} title={`Usar el supuesto de ${s.p}% en la dosis`}
+                      <button key={s.p} onClick={() => elegirCelda(s.p, celdaAct.inten)} title={`Usar el supuesto de ${s.p}% en la dosis`}
                         style={{ ...celComp, textAlign: 'center', cursor: 'pointer', border: 'none', borderLeft: '0.5px solid ' + BORDE, background: on ? '#e8f1fb' : '#f6f9fb', fontFamily: 'inherit' }}>
                         <span style={{ fontWeight: on ? 600 : 500, fontSize: '12.5px', color: on ? AZUL : NAVY }}>{s.p}%</span>
                         <span style={{ display: 'block', fontSize: '10px', color: on ? AZUL : '#9fb0bf' }}>{s.p === 100 ? 'oficial' : 'conservador'}</span>
@@ -1286,7 +1299,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           )}
 
           <div style={{ fontSize: '10.5px', color: '#9fb0bf', margin: '0 2px 7px' }}>1 · Elige el escenario — fila: supuesto de biomasa · columna: intensidad</div>
-          <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} dias={diasAlim} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => setCelda({ fila: f, inten: k })} />
+          <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} dias={diasAlim} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => elegirCelda(f, k)} />
           <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 2px 14px', lineHeight: 1.5 }}>
             Recomendada {hayReco ? `(100% · ${cap(intenLbl(recoInten))})` : '— sin recomendación hasta validar'} · ● Tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
           </div>
@@ -1839,7 +1852,7 @@ function Matriz({ oficial, plan, pesoSaco, dias, recoFila, recoInten, hayReco, s
                 const activa = esOf || esS || esR
                 return (
                   <div key={k} onClick={() => onSel(f, k)} style={{ cursor: 'pointer', textAlign: 'center', margin: '3px', padding: '7px 4px', border: borde, borderRadius: '9px', background: bg }}>
-                    {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esS ? AZUL : '#9fb0bf' }}>{esS ? '● Tu elección' : 'Recomendada'}</div>}
+                    {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esS ? AZUL : VERDE }}>{esS ? '● Tu elección' : 'Recomendada'}</div>}
                     <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: activa ? NAVY : GRIS }}>{miles(lb)}</div>
                     <div style={{ fontSize: '10px', color: activa ? GRIS : '#9fb0bf' }}>{sacos} sacos</div>
                   </div>
