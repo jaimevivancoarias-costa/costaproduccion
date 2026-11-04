@@ -225,7 +225,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
   const [motivoTxt, setMotivoTxt] = useState('')
   const [motivoCod, setMotivoCod] = useState('')
-  const [confirmaCambio, setConfirmaCambio] = useState(false)
   const [pidiendoMotivo, setPidiendoMotivo] = useState(false)
   const [cargando, setCargando] = useState(true)
   const [userId, setUserId] = useState(null)
@@ -354,7 +353,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
   useEffect(() => { cargar() }, [cargar])
   // Al cambiar de piscina o semana, la vista previa vuelve a la recomendada/aplicada.
-  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setConfirmaCambio(false); setCal(null) }, [sel, hasta])
+  useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCal(null) }, [sel, hasta])
 
   const fila = ciclos.find(c => c.cicloId === sel)
   const est = useMemo(() => fila ? estimar({
@@ -509,7 +508,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   async function aplicarEscenario() {
     if (!est || !fila || !aplicarOk) return
     if (faltaMotivo) { setPidiendoMotivo(true); return }
-    if (faltaConfirmCambio) { setAviso({ tipo: 'error', texto: 'Marca la confirmación del cambio de dosis para continuar.' }); return }
     const datos = {
       gramaje: fila.gramaje, dias: fila.dias, biomasaOficial: biomasaSel, fuente: fuenteUsada,
       escenarioMotor: est.escenario, tasaProx: est.planReco.tasaProx, factorProx: est.factorProx,
@@ -532,7 +530,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
     const reg = Array.isArray(data) ? data[0] : data
     reg.aplicado_nombre = nombre || null
-    setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setConfirmaCambio(false); setCelda(null)
+    setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCelda(null)
     if (requiereAprobacion) {
       setPendiente(p => ({ ...p, [sel]: reg }))
       setAviso({ tipo: 'ok', texto: 'Enviado a aprobación de un segundo jefe. El plan anterior sigue vigente.' })
@@ -715,7 +713,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const nivelCambio = nivelCambioDe(deltaDosis)
   const requiereAprobacion = nivelCambio === 'fuerte'     // >20% → doble aprobación (5.6)
   const faltaMotivo = requiereMotivo && (!motivoCod || (motivoCod === 'otro' && !motivoTxt.trim()))
-  const faltaConfirmCambio = false   // >20% ya no se autoconfirma: va a aprobación de un 2º jefe
   const pendSel = pendiente[sel] || null                  // solicitud pendiente de esta piscina/semana
   const soyRemitente = pendSel && pendSel.aplicado_por === userId
   // Planificado vs ejecutado: solo días cerrados y desde que el plan rige (vigenteDesde
