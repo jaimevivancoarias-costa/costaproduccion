@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
 import { estimar, cfgFinca, PARAM, sobrevDe, proyectarAMeta } from '../lib/estimacion'
+import { TABLA_CRECIMIENTO } from '../lib/estimacionTabla'
 import { construirDias, nivelCambio as nivelCambioDe, planVsEjecutado } from '../lib/calendario'
 import { precioPorGramaje, ENT_TALLAS, COLA_TALLAS, ENT_LISTA_DEF, COLA_LISTA_DEF, REND_ENTERO_DEF, REND_COLA_DEF, CV_DEF } from '../lib/precios'
 
@@ -362,6 +363,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         productoId: (prodCic[c.id] || {}).pid || null,
         larva: Number(c.cantidad_larva) || 0, pl: Number(c.gramaje_precria) || 0.5, siembra,
         gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
+        muestreos: ms.map(m => ({ dia: diasEntre(siembra, m.fecha), g: m.peso })).filter(p => p.dia >= 0 && p.g > 0),
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
         consumoAcum: als.reduce((t, r) => t + r.lb, 0),
         // Consumo oficial (lb/semana) = promedio PLANO de la ventana elegida (14 por
@@ -1191,101 +1193,127 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           <Kpi k="Biomasa seleccionada" v={miles(biomasaSel)} u="lb" nota={notaBio} notaColor={valdOk ? (difGrande ? AMBAR : AZUL) : (confianza === 'alta' ? VERDE : AMBAR)} />
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '14px', marginBottom: '14px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '14px' }}>
+          {/* Banda 1 — Velocidad de crecimiento con curva observado vs objetivo */}
           <Caja>
-            <Titulo>Velocidad de crecimiento</Titulo>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
-              <Linea k="Crecimiento observado · reciente (g/día)" v={num2(est.gDiaObs)} fuerte />
-              <Linea k="Crecimiento lineal · desde siembra (g/día)" v={num2(fila.dias > 0 ? fila.gramaje / fila.dias : 0)} />
-              <Linea k="Crecimiento objetivo (g/día)" v={num2(est.gDiaObjetivo)} />
-              <Linea k="Desempeño" v={pct0(est.desempeno)} color={est.desempeno >= 1 ? VERDE : AMBAR} fuerte />
-              <div style={{ borderTop: '0.5px solid #eef3f7', paddingTop: '14px' }}>
-                <Linea k="Atraso / adelanto" fuerte color={est.atrasoProyectado <= 0 ? VERDE : AMBAR}
-                  v={est.atrasoProyectado <= 0 ? `${num1(Math.abs(est.atrasoProyectado))} días (adelantado)` : `${num1(est.atrasoProyectado)} días (atrasado)`} />
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px', flexWrap: 'wrap', gap: '6px' }}>
+              <Titulo sinMargen>Velocidad de crecimiento</Titulo>
+              <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Observado vs Objetivo</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+              <div><div style={{ fontSize: '10.5px', color: GRIS }}>Gramaje hoy</div><div style={{ fontSize: '20px', fontWeight: 500, color: NAVY }}>{num1(fila.gramaje)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g</span></div></div>
+              <div><div style={{ fontSize: '10.5px', color: GRIS }}>Observado</div><div style={{ fontSize: '20px', fontWeight: 500, color: NAVY }}>{num2(est.gDiaObs)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g/día</span></div></div>
+              <div style={{ width: '0.5px', alignSelf: 'stretch', background: BORDE, minHeight: '42px' }} />
+              <div style={{ flex: 1, minWidth: '230px' }}><Curva puntos={fila.muestreos || []} gramaje={fila.gramaje} /></div>
+            </div>
+            <div style={{ display: 'flex', gap: '14px', marginTop: '10px', fontSize: '11px', color: GRIS, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span><span style={{ display: 'inline-block', width: '14px', borderTop: '2px solid ' + AZUL, marginRight: '5px', verticalAlign: 'middle' }} />Observado</span>
+              <span><span style={{ display: 'inline-block', width: '14px', borderTop: '2px dashed #B4B2A9', marginRight: '5px', verticalAlign: 'middle' }} />Objetivo</span>
+              <span style={{ marginLeft: 'auto', color: est.atrasoProyectado <= 0 ? VERDE : AMBAR, fontWeight: 500 }}>
+                {est.atrasoProyectado <= 0 ? `▲ ${num1(Math.abs(est.atrasoProyectado))} días adelantado` : `▼ ${num1(est.atrasoProyectado)} días atrasado`} · Desempeño {pct0(est.desempeno)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '9px', marginTop: '12px' }}>
+              {[['Lineal desde siembra', num2(fila.dias > 0 ? fila.gramaje / fila.dias : 0) + ' g/día', NAVY],
+                ['Objetivo', num2(est.gDiaObjetivo) + ' g/día', NAVY],
+                ['Desempeño', pct0(est.desempeno), est.desempeno >= 1 ? VERDE : AMBAR]].map(([l, v, c]) => (
+                  <div key={l} style={{ background: '#f6f9fb', borderRadius: '8px', padding: '8px 11px', flex: 1 }}>
+                    <div style={{ fontSize: '10px', color: GRIS }}>{l}</div>
+                    <div style={{ fontSize: '15px', fontWeight: 500, color: c }}>{v}</div>
+                  </div>
+                ))}
             </div>
           </Caja>
-          <Caja>
-            <Titulo>Biomasa y sobrevivencia</Titulo>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr 0.8fr', gap: '12px 10px', fontSize: '12.5px', alignItems: 'center' }}>
-              <span style={{ color: '#9fb0bf', fontSize: '11px' }}>Indicador</span>
-              <span style={{ color: GRIS, textAlign: 'right', fontSize: '11px' }}>Consumo</span>
-              <span style={{ color: GRIS, textAlign: 'right', fontSize: '11px' }}>Densidad</span>
-              <span style={{ color: GRIS, textAlign: 'right', fontSize: '11px' }}>Dif.</span>
-              <FilaBio k="Biomasa (lb)" a={miles(est.biomasaConsumo)} b={miles(est.biomasaDensidad)} dif={`${Math.round(bm.difPct * 100) * (bm.menorQue ? -1 : 1)}%`} col={bm.color} />
-              <FilaBio k="Sobrevivencia" a={pct0(est.sobrevConsumo)} b={pct0(est.sobrevDensidad)} dif={`${Math.round((est.sobrevConsumo - est.sobrevDensidad) * 100)}pp`} col={bm.color} />
-              <FilaBio k="Biomasa por hectárea" a={miles(est.lbHa)} b={miles(fila.area > 0 ? est.biomasaDensidad / fila.area : 0)} dif="—" col={GRIS} />
-              <FilaBio k="FCR parcial" a={est.fcrParcial > 0 ? num2(est.fcrParcial) : '—'} b={est.biomasaDensidad > 0 ? num2(est.consumoAcum / est.biomasaDensidad) : '—'} dif="—" col={GRIS} />
-            </div>
 
-            {/* Comparador de ventana de consumo: 7 / 14 / 21 días, plano (incluye ayunos),
-                como el Excel. La columna elegida es la oficial que alimenta dosis y sacos. */}
-            {ventanas.length > 0 && (
-              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '9px', flexWrap: 'wrap', gap: '6px' }}>
-                  <span style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>Ventana de consumo</span>
-                  <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Promedio plano, incluye ayunos · elige la oficial</span>
+          {/* Banda 2 — Biomasa y sobrevivencia: consumo vs densidad en tiles */}
+          <Caja>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px', flexWrap: 'wrap', gap: '6px' }}>
+              <Titulo sinMargen>Biomasa y sobrevivencia</Titulo>
+              <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Consumo vs densidad</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+              {[
+                { l: 'Biomasa (lb)', a: miles(est.biomasaConsumo), d: 'Dens. ' + miles(est.biomasaDensidad), dif: `${bm.menorQue ? '-' : '+'}${Math.round(bm.difPct * 100)}%`, dc: bm.color },
+                { l: 'Sobrevivencia', a: pct0(est.sobrevConsumo), d: 'Dens. ' + pct0(est.sobrevDensidad), dif: `${Math.round((est.sobrevConsumo - est.sobrevDensidad) * 100)}pp`, dc: bm.color },
+                { l: 'Lb / Hectárea', a: miles(est.lbHa), d: 'Dens. ' + miles(fila.area > 0 ? est.biomasaDensidad / fila.area : 0), dif: '—', dc: GRIS },
+                { l: 'FCR parcial', a: est.fcrParcial > 0 ? num2(est.fcrParcial) : '—', d: 'Dens. ' + (est.biomasaDensidad > 0 ? num2(est.consumoAcum / est.biomasaDensidad) : '—'), dif: '—', dc: GRIS },
+              ].map(t => (
+                <div key={t.l} style={{ background: '#f6f9fb', borderRadius: '9px', padding: '10px 12px' }}>
+                  <div style={{ fontSize: '10.5px', color: GRIS }}>{t.l}</div>
+                  <div style={{ fontSize: '18px', fontWeight: 500, color: NAVY }}>{t.a}</div>
+                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{t.d}</div>
+                  <div style={{ fontSize: '10.5px', color: t.dc }}>{t.dif}</div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr repeat(3, 1fr)', gap: '0', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
-                  <span style={{ ...celComp, color: '#9fb0bf', fontSize: '11px', background: '#f6f9fb' }}>Días</span>
-                  {ventanas.map(w => {
-                    const on = w.n === ventanaDias
-                    return (
-                      <button key={w.n} onClick={() => { if (!celda) elegirCelda(celdaAct.fila, celdaAct.inten); setVentanaDias(w.n) }} title={`Usar la ventana de ${w.n} días como oficial`}
-                        style={{ ...celComp, textAlign: 'center', cursor: 'pointer', fontWeight: on ? 600 : 500, color: on ? AZUL : NAVY, background: on ? '#e8f1fb' : '#f6f9fb', border: 'none', borderLeft: '0.5px solid ' + BORDE, fontFamily: 'inherit', fontSize: '12.5px' }}>
-                        {w.n}d{on && ' ✓'}
-                      </button>
-                    )
-                  })}
-                  <span style={{ ...celComp, color: GRIS }}>Consumo (lb/día)</span>
-                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? NAVY : GRIS }}>{miles(w.dia)}</span>)}
-                  <span style={{ ...celComp, color: GRIS }}>Biomasa por consumo</span>
-                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? AZUL : GRIS }}>{miles(w.bio)}</span>)}
-                  <span style={{ ...celComp, color: GRIS }}>Sobrevivencia</span>
-                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? NAVY : GRIS }}>{pct0(w.sobrev)}</span>)}
-                  <span style={{ ...celComp, color: '#9fb0bf', fontSize: '10.5px' }}>Ayunos / sin dato</span>
-                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontSize: '10.5px', color: '#9fb0bf' }}>{w.ayuno} / {w.falt}</span>)}
-                </div>
+              ))}
+            </div>
+          </Caja>
+
+          {/* Banda 3 — Ventana de consumo: 7 / 14 / 21 días, plano (incluye ayunos). */}
+          {ventanas.length > 0 && (
+            <Caja>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '11px', flexWrap: 'wrap', gap: '6px' }}>
+                <Titulo sinMargen>Ventana de consumo</Titulo>
+                <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Promedio plano, incluye ayunos · elige la oficial</span>
               </div>
-            )}
-            {/* Supuesto de biomasa 100/90/80/70: indicadores por supuesto. La columna
-                elegida enlaza con la fila de la matriz de dosis (misma vista previa). */}
-            {supuestos.length > 0 && (
-              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '9px', flexWrap: 'wrap', gap: '6px' }}>
-                  <span style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>Supuesto de biomasa</span>
-                  <span style={{ fontSize: '11px', color: '#9fb0bf' }}>% de la oficial · la columna elegida manda en la dosis</span>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(4, 1fr)', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12px' }}>
-                  <span style={{ ...celComp, background: '#f6f9fb', color: '#9fb0bf', fontSize: '10.5px' }}>Indicador</span>
-                  {supuestos.map(s => {
-                    const on = s.p === celdaAct.fila
-                    return (
-                      <button key={s.p} onClick={() => elegirCelda(s.p, celdaAct.inten)} title={`Usar el supuesto de ${s.p}% en la dosis`}
-                        style={{ ...celComp, textAlign: 'center', cursor: 'pointer', border: 'none', borderLeft: '0.5px solid ' + BORDE, background: on ? '#e8f1fb' : '#f6f9fb', fontFamily: 'inherit' }}>
-                        <span style={{ fontWeight: on ? 600 : 500, fontSize: '12.5px', color: on ? AZUL : NAVY }}>{s.p}%</span>
-                        <span style={{ display: 'block', fontSize: '10px', color: on ? AZUL : '#9fb0bf' }}>{s.p === 100 ? 'oficial' : 'conservador'}</span>
-                      </button>
-                    )
-                  })}
-                  {[['Biomasa (lb)', s => miles(s.bio)], ['Sobrevivencia', s => pct0(s.sob)], ['Biomasa por hectárea', s => miles(s.ha)], ['FCR parcial', s => s.fcr > 0 ? num2(s.fcr) : '—']].map(([lbl, fn]) => (
-                    <Fragment key={lbl}>
-                      <span style={{ ...celComp, color: GRIS, borderTop: '0.5px solid #eef3f7' }}>{lbl}</span>
-                      {supuestos.map(s => {
-                        const on = s.p === celdaAct.fila
-                        return <span key={s.p} style={{ ...celComp, textAlign: 'center', borderTop: '0.5px solid #eef3f7', borderLeft: '0.5px solid #eef3f7', fontWeight: on ? 600 : 400, color: on ? NAVY : GRIS }}>{fn(s)}</span>
-                      })}
-                    </Fragment>
-                  ))}
-                </div>
-                {densRef && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', padding: '9px 11px', background: '#fff8ec', borderRadius: '9px', fontSize: '11.5px', color: '#8a6d2f', flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: 500 }}>Densidad (tabla):</span>
-                    <span>{miles(densRef.bio)} lb · {miles(densRef.ha)} lb/ha · sobrev. {pct0(densRef.sob)} · FCR {densRef.fcr > 0 ? num2(densRef.fcr) : '—'} — {Math.round(densRef.pctDeConsumo * 100)}% de la de consumo</span>
-                  </div>
-                )}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.3fr repeat(3, 1fr)', gap: '0', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
+                <span style={{ ...celComp, color: '#9fb0bf', fontSize: '11px', background: '#f6f9fb' }}>Días</span>
+                {ventanas.map(w => {
+                  const on = w.n === ventanaDias
+                  return (
+                    <button key={w.n} onClick={() => { if (!celda) elegirCelda(celdaAct.fila, celdaAct.inten); setVentanaDias(w.n) }} title={`Usar la ventana de ${w.n} días como oficial`}
+                      style={{ ...celComp, textAlign: 'center', cursor: 'pointer', fontWeight: on ? 600 : 500, color: on ? AZUL : NAVY, background: on ? '#e8f1fb' : '#f6f9fb', border: 'none', borderLeft: '0.5px solid ' + BORDE, fontFamily: 'inherit', fontSize: '12.5px' }}>
+                      {w.n}d{on && ' ✓'}
+                    </button>
+                  )
+                })}
+                <span style={{ ...celComp, color: GRIS }}>Consumo (lb/día)</span>
+                {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? NAVY : GRIS }}>{miles(w.dia)}</span>)}
+                <span style={{ ...celComp, color: GRIS }}>Biomasa por consumo</span>
+                {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? AZUL : GRIS }}>{miles(w.bio)}</span>)}
+                <span style={{ ...celComp, color: GRIS }}>Sobrevivencia</span>
+                {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? NAVY : GRIS }}>{pct0(w.sobrev)}</span>)}
+                <span style={{ ...celComp, color: '#9fb0bf', fontSize: '10.5px' }}>Ayunos / sin dato</span>
+                {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontSize: '10.5px', color: '#9fb0bf' }}>{w.ayuno} / {w.falt}</span>)}
               </div>
-            )}
+            </Caja>
+          )}
+
+          {/* Banda 4 — Supuesto de biomasa + densidad + fuente + validación */}
+          <Caja>
+            {supuestos.length > 0 && (<>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '11px', flexWrap: 'wrap', gap: '6px' }}>
+                <Titulo sinMargen>Supuesto de biomasa</Titulo>
+                <span style={{ fontSize: '11px', color: '#9fb0bf' }}>% de la oficial · la columna elegida manda en la dosis</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.3fr repeat(4, 1fr)', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12px' }}>
+                <span style={{ ...celComp, background: '#f6f9fb', color: '#9fb0bf', fontSize: '10.5px' }}>Indicador</span>
+                {supuestos.map(s => {
+                  const on = s.p === celdaAct.fila
+                  return (
+                    <button key={s.p} onClick={() => elegirCelda(s.p, celdaAct.inten)} title={`Usar el supuesto de ${s.p}% en la dosis`}
+                      style={{ ...celComp, textAlign: 'center', cursor: 'pointer', border: 'none', borderLeft: '0.5px solid ' + BORDE, background: on ? '#e8f1fb' : '#f6f9fb', fontFamily: 'inherit' }}>
+                      <span style={{ fontWeight: on ? 600 : 500, fontSize: '12.5px', color: on ? AZUL : NAVY }}>{s.p}%</span>
+                      <span style={{ display: 'block', fontSize: '10px', color: on ? AZUL : '#9fb0bf' }}>{s.p === 100 ? 'oficial' : 'conservador'}</span>
+                    </button>
+                  )
+                })}
+                {[['Biomasa (lb)', s => miles(s.bio)], ['Sobrevivencia', s => pct0(s.sob)], ['Lb / Hectárea', s => miles(s.ha)], ['FCR parcial', s => s.fcr > 0 ? num2(s.fcr) : '—']].map(([lbl, fn]) => (
+                  <Fragment key={lbl}>
+                    <span style={{ ...celComp, color: GRIS, borderTop: '0.5px solid #eef3f7' }}>{lbl}</span>
+                    {supuestos.map(s => {
+                      const on = s.p === celdaAct.fila
+                      return <span key={s.p} style={{ ...celComp, textAlign: 'center', borderTop: '0.5px solid #eef3f7', borderLeft: '0.5px solid #eef3f7', fontWeight: on ? 600 : 400, color: on ? NAVY : GRIS }}>{fn(s)}</span>
+                    })}
+                  </Fragment>
+                ))}
+              </div>
+              {densRef && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', padding: '9px 11px', background: '#fff8ec', borderRadius: '9px', fontSize: '11.5px', color: '#8a6d2f', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 500 }}>Densidad (tabla):</span>
+                  <span>{miles(densRef.bio)} lb · {miles(densRef.ha)} lb/ha · sobrev. {pct0(densRef.sob)} · FCR {densRef.fcr > 0 ? num2(densRef.fcr) : '—'} — {Math.round(densRef.pctDeConsumo * 100)}% de la de consumo</span>
+                </div>
+              )}
+            </>)}
 
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
@@ -1967,6 +1995,29 @@ function Row({ k, v, fuerte, top, azul }) {
 }
 function Linea({ k, v, fuerte, color }) {
   return <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: GRIS }}>{k}</span><span style={{ fontWeight: fuerte ? 500 : 400, color: color || NAVY }}>{v}</span></div>
+}
+// Curva de crecimiento: gramaje observado (muestreos reales) vs curva objetivo (tabla
+// calibrada, diaEq). Misma escala; la distancia entre líneas = atraso/adelanto.
+function Curva({ puntos, gramaje }) {
+  const obj = TABLA_CRECIMIENTO.filter(r => r.g <= gramaje * 1.08).map(r => ({ dia: r.diaEq, g: r.g }))
+  const obs = [...puntos].sort((a, b) => a.dia - b.dia)
+  if (obs.length < 2) return <div style={{ fontSize: '11.5px', color: '#9fb0bf', padding: '18px 0', textAlign: 'center' }}>Aún no hay suficientes muestreos para dibujar la curva.</div>
+  const W = 640, H = 118, padL = 6, padR = 10, padT = 10, padB = 8
+  const todos = [...obs, ...obj]
+  const maxDia = Math.max(...todos.map(p => p.dia), 1)
+  const maxG = Math.max(...todos.map(p => p.g), 1)
+  const sx = d => padL + (d / maxDia) * (W - padL - padR)
+  const sy = g => padT + (1 - g / maxG) * (H - padT - padB)
+  const linea = arr => arr.map((p, i) => `${i ? 'L' : 'M'}${sx(p.dia).toFixed(1)} ${sy(p.g).toFixed(1)}`).join(' ')
+  const ult = obs[obs.length - 1]
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="120" preserveAspectRatio="none" role="img" aria-label="Curva de crecimiento observado vs objetivo">
+      {obj.length > 1 && <path d={linea(obj)} fill="none" stroke="#B4B2A9" strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />}
+      <path d={linea(obs)} fill="none" stroke={AZUL} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+      {obs.map((p, i) => <circle key={i} cx={sx(p.dia)} cy={sy(p.g)} r="2.5" fill={AZUL} />)}
+      <circle cx={sx(ult.dia)} cy={sy(ult.g)} r="4" fill={AZUL} />
+    </svg>
+  )
 }
 // Fila de la tabla de rentabilidad (etiqueta + hoy + meta). head = encabezado de sección.
 function RentRow({ k, a, b, fuerte, head, bg, azul }) {
