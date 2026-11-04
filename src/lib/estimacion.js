@@ -177,6 +177,7 @@ export function estimar(inp) {
     gDiaObs, gDiaObjetivo, desempeno, diasProyectados, atrasoProyectado, fcrProyectado,
     lectura: lecturaDe(atrasoProyectado),
     biomasaConsumo, biomasaDensidad, lbHa: area > 0 ? biomasaConsumo / area : 0,
+    consumoAcum,
     sobrevConsumo, sobrevDensidad, fcrParcial, fcrMax, difBiomasa: biomasaDensidad > 0 ? biomasaConsumo / biomasaDensidad - 1 : 0,
     escenario, gProxSem, alimento, factorProx,
     plan: { BAJO: planDe('BAJO'), MEDIO: planDe('MEDIO'), ALTO: planDe('ALTO') },
