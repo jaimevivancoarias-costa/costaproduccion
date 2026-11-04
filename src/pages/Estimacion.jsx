@@ -1177,7 +1177,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   {ventanas.map(w => {
                     const on = w.n === ventanaDias
                     return (
-                      <button key={w.n} onClick={() => setVentanaDias(w.n)} title={`Usar la ventana de ${w.n} días como oficial`}
+                      <button key={w.n} onClick={() => { if (!celda) setCelda({ fila: celdaAct.fila, inten: celdaAct.inten }); setVentanaDias(w.n) }} title={`Usar la ventana de ${w.n} días como oficial`}
                         style={{ ...celComp, textAlign: 'center', cursor: 'pointer', fontWeight: on ? 600 : 500, color: on ? AZUL : NAVY, background: on ? '#e8f1fb' : '#f6f9fb', border: 'none', borderLeft: '0.5px solid ' + BORDE, fontFamily: 'inherit', fontSize: '12.5px' }}>
                         {w.n}d{on && ' ✓'}
                       </button>
@@ -1301,7 +1301,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num3(tasaBase) + '%'} />
               <Row k={`Ajuste intensidad ${intenLbl(celdaAct.inten)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
               <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
-              <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
+              <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={`${miles(lbDiaSel)} lb/día · ${num1(lbDiaSel / PARAM.pesoSaco)} sacos`} fuerte />
               <div style={{ borderTop: '0.5px solid #e3ecf2', marginTop: '7px', paddingTop: '6px' }}>
                 <Row k={`Consumo estimado (${diasAlim} días)`} v={num1(sacosSemCalc) + ' sacos'} />
                 <Row k="Requerimiento operativo" v={pedir + ' sacos'} fuerte azul />
@@ -1333,7 +1333,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               {repartoOk ? (
                 <div style={{ background: '#e8f1fb', borderRadius: '9px', padding: '11px 13px', textAlign: 'center', marginTop: '8px' }}>
                   <div style={{ fontSize: '11px', color: '#185FA5' }}>Libras por tolva</div>
-                  <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{miles(lbPorTolva)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span></div>
+                  <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{miles(lbPorTolva)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span> <span style={{ fontSize: '13px', color: '#9fb0bf' }}>· {num1(lbPorTolva / PARAM.pesoSaco)} sacos</span></div>
                   <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel)} lb/día ÷ {fila.tolvas} tolvas</div>
                 </div>
               ) : (
@@ -1797,6 +1797,7 @@ function Calendario({ dias, editable, onToggle, lbDia = 0, hoy = null }) {
         const inner = (<>
           <div style={{ fontSize: '10.5px', color: GRIS }}>{DIA_LBL[d.i ?? i]}</div>
           <div style={{ fontSize: '12.5px', fontWeight: 500, color: lbMostrar != null ? NAVY : col }}>{lbMostrar != null ? miles(lbMostrar) : (d.tipo === 'sin' ? '—' : 'Ayuno')}</div>
+          {lbMostrar != null && <div style={{ fontSize: '9px', color: '#9fb0bf' }}>{num1(lbMostrar / PARAM.pesoSaco)} sacos</div>}
           <div style={{ fontSize: '9.5px', color: d.cerrado && d.tipo === 'fed' ? GRIS : col }}>{estado}</div>
         </>)
         return interactivo
