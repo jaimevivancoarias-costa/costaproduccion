@@ -70,6 +70,30 @@ function ventana14(rows, hasta) {
   return { d7, dPrev, tend, simple, ponder, alim, ayuno, falt, documentados, doc7,
     fed7, conflicto, duplicado, multi, coberturaOk, muestraOk, valido }
 }
+// Promedio PLANO de consumo, como el Excel: suma de libras de los últimos n días
+// dividida entre n. Los ayunos y los días sin registro cuentan como 0 (diluyen el
+// promedio, igual que el "consumo semanal" del Excel). Devuelve lb/día por cada
+// ventana (7, 14 y 21 días) para poder comparar escenarios lado a lado. Es la
+// fuente de consumo oficial del motor (la ventana elegida; por defecto 14).
+function ventanaFlat(rows, hasta) {
+  const porDia = {}
+  for (const r of (rows || [])) {
+    const d = (porDia[r.fecha] ||= { lb: 0, fed: false, ayuno: false })
+    if (r.ayuno) d.ayuno = true
+    else { d.lb += r.lb; d.fed = true }
+  }
+  const quiere = new Set([7, 14, 21])
+  const out = {}
+  let sum = 0, alim = 0, ayuno = 0, doc = 0, falt = 0
+  for (let i = 0; i < 21; i++) {
+    const d = porDia[sumarDias(hasta, -i)]
+    if (d) { if (d.fed) { sum += d.lb; alim++; doc++ } else if (d.ayuno) { ayuno++; doc++ } }
+    else falt++
+    const n = i + 1
+    if (quiere.has(n)) out[n] = { n, dia: sum / n, sum, alim, ayuno, doc, falt }
+  }
+  return out
+}
 // Estado de confiabilidad a partir de la ventana. Separa la ESTIMACIÓN (si se
 // puede calcular biomasa) del PLAN (si esa dosis se puede aplicar): los ayunos
 // no bloquean el cálculo, pero sí condicionan aplicar la dosis.
@@ -239,6 +263,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [racTxt, setRacTxt] = useState('')
   // Modo diagnóstico de la ventana de consumo (solo lectura)
   const [diag, setDiag] = useState(false)
+  const [ventanaDias, setVentanaDias] = useState(14) // ventana de consumo oficial: 7 | 14 | 21 (plano, incluye ayunos)
   const [pendiente, setPendiente] = useState({}) // cicloId -> solicitud pendiente de aprobación (esta semana)
   const [bandeja, setBandeja] = useState(false)   // panel de aprobaciones pendientes
   const [rechazando, setRechazando] = useState(null) // id de solicitud en rechazo
@@ -329,6 +354,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       const siembra = c.fecha_ocupacion || c.fecha_siembra
       const als = alDe[c.id] || []
       const v = ventana14(alRawDe[c.id] || [], hasta)
+      const fl = ventanaFlat(alRawDe[c.id] || [], hasta)
       return {
         cicloId: c.id, piscinaId: c.piscina.id, nombre: c.piscina.nombre,
         area: Number(c.piscina.hectareas) || 0, tolvas: c.piscina.tolvas != null ? Number(c.piscina.tolvas) : null,
@@ -338,10 +364,12 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         gramaje, ultMuestreo: ms.length ? ms[ms.length - 1].fecha : null,
         gIni: prev ? prev.peso : 0, diasIni: prev ? diasEntre(siembra, prev.fecha) : 0,
         consumoAcum: als.reduce((t, r) => t + r.lb, 0),
-        // Ventana ponderada (lb/semana): fuente de consumo del motor. Si no cumple
-        // cobertura+muestra, el plan queda bloqueado (obliga validar a mano).
-        consumoVentana: v.ponder * 7,
-        ventana: v,
+        // Consumo oficial (lb/semana) = promedio PLANO de la ventana elegida (14 por
+        // defecto), incluyendo ayunos como el Excel. consVentDe() lo recalcula según
+        // la ventana seleccionada. Si la ventana no cumple cobertura+muestra, el plan
+        // queda bloqueado (obliga validar a mano).
+        consumoVentana: (fl[14] ? fl[14].dia : 0) * 7,
+        ventana: v, fl,
         alsRaw: alRawDe[c.id] || [],
         dias: diasEntre(siembra, hasta),
       }
@@ -356,11 +384,13 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   useEffect(() => { setCelda(null); setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setCal(null) }, [sel, hasta])
 
   const fila = ciclos.find(c => c.cicloId === sel)
+  // Consumo oficial (lb/semana) de la ventana elegida: plano, incluye ayunos.
+  const consVentDe = f => ((f && f.fl && f.fl[ventanaDias]) ? f.fl[ventanaDias].dia : 0) * 7
   const est = useMemo(() => fila ? estimar({
     area: fila.area, dias: fila.dias, pl: fila.pl, gramajeHoy: fila.gramaje,
     consumoAcum: fila.consumoAcum, larva: fila.larva, gInicio: fila.gIni,
-    diasInicio: fila.diasIni, consumoVentana: fila.consumoVentana, meta, finca: cfg,
-  }) : null, [fila, meta, cfg])
+    diasInicio: fila.diasIni, consumoVentana: consVentDe(fila), meta, finca: cfg,
+  }) : null, [fila, meta, cfg, ventanaDias])
 
   // Diferencia entre métodos y nivel de confianza.
   const bm = useMemo(() => {
@@ -370,6 +400,21 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const difPct = mayor > 0 ? (mayor - menor) / mayor : 0
     return { bc, bd, difPct, menorQue: bc < bd, relacion: menor > 0 ? mayor / menor : 0, ...nivelBiomasa(difPct) }
   }, [est])
+
+  // Biomasa por consumo a 7 / 14 / 21 días (plano, incluye ayunos), para comparar
+  // escenarios lado a lado. La columna elegida (ventanaDias) es la oficial.
+  const ventanas = useMemo(() => {
+    if (!fila || !fila.fl) return []
+    return [7, 14, 21].map(n => {
+      const w = fila.fl[n] || { dia: 0, ayuno: 0, falt: 0 }
+      const e = estimar({
+        area: fila.area, dias: fila.dias, pl: fila.pl, gramajeHoy: fila.gramaje,
+        consumoAcum: fila.consumoAcum, larva: fila.larva, gInicio: fila.gIni,
+        diasInicio: fila.diasIni, consumoVentana: w.dia * 7, meta, finca: cfg,
+      })
+      return { n, dia: w.dia, ayuno: w.ayuno, falt: w.falt, bio: e.biomasaConsumo, sobrev: e.sobrevConsumo }
+    })
+  }, [fila, meta, cfg])
 
   // Diagnóstico de la ventana de consumo: compara el promedio plano actual con
   // el ponderado nuevo para cada piscina, y el efecto en la biomasa. Solo lectura.
@@ -396,8 +441,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const hoy = hoyISO()
     const semFechas = Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i))
     const ctx = { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas, precioOpts }
-    return ciclos.map(f => resumenPiscina(f, ctx))
-  }, [vista, ciclos, hasta, meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, precioOpts])
+    return ciclos.map(f => resumenPiscina({ ...f, consumoVentana: consVentDe(f) }, ctx))
+  }, [vista, ciclos, hasta, meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, precioOpts, ventanaDias])
 
   // Totales en dos niveles: plan confirmado (aplicado + calendario confirmado) y
   // proyección completa (+ recomendaciones pendientes).
@@ -515,7 +560,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       tolvas: fila.tolvas, sacosProxPedir, diasAlim, costoCompra,
       dosisAnterior, sacosAnterior, deltaDia, deltaSem, cambioFuerte: nivelCambio === 'fuerte',
       calendario: calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta, cerrado: d.cerrado, tipo: d.tipo })),
-      ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
+      ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido, ventanaDias, consDia: consVentDe(fila) / 7 } : null,
     }
     datos.deltaDia = deltaDia; datos.deltaSem = deltaSem; datos.baseTipo = baseTipo
     const { data, error } = await supabase.schema('produccion').rpc('aplicar_escenario', {
@@ -1097,6 +1142,37 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <FilaBio k="Biomasa por hectárea" a={miles(est.lbHa)} b={miles(fila.area > 0 ? est.biomasaDensidad / fila.area : 0)} dif="—" col={GRIS} />
               <FilaBio k="FCR parcial" a={est.fcrParcial > 0 ? num2(est.fcrParcial) : '—'} b={est.biomasaDensidad > 0 ? num2(est.consumoAcum / est.biomasaDensidad) : '—'} dif="—" col={GRIS} />
             </div>
+
+            {/* Comparador de ventana de consumo: 7 / 14 / 21 días, plano (incluye ayunos),
+                como el Excel. La columna elegida es la oficial que alimenta dosis y sacos. */}
+            {ventanas.length > 0 && (
+              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '9px', flexWrap: 'wrap', gap: '6px' }}>
+                  <span style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>Ventana de consumo</span>
+                  <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Promedio plano, incluye ayunos · elige la oficial</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr repeat(3, 1fr)', gap: '0', fontSize: '12px', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden' }}>
+                  <span style={{ ...celComp, color: '#9fb0bf', fontSize: '11px', background: '#f6f9fb' }}>Días</span>
+                  {ventanas.map(w => {
+                    const on = w.n === ventanaDias
+                    return (
+                      <button key={w.n} onClick={() => setVentanaDias(w.n)} title={`Usar la ventana de ${w.n} días como oficial`}
+                        style={{ ...celComp, textAlign: 'center', cursor: 'pointer', fontWeight: on ? 600 : 500, color: on ? AZUL : NAVY, background: on ? '#e8f1fb' : '#f6f9fb', border: 'none', borderLeft: '0.5px solid ' + BORDE, fontFamily: 'inherit', fontSize: '12.5px' }}>
+                        {w.n}d{on && ' ✓'}
+                      </button>
+                    )
+                  })}
+                  <span style={{ ...celComp, color: GRIS }}>Consumo (lb/día)</span>
+                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? NAVY : GRIS }}>{miles(w.dia)}</span>)}
+                  <span style={{ ...celComp, color: GRIS }}>Biomasa por consumo</span>
+                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? AZUL : GRIS }}>{miles(w.bio)}</span>)}
+                  <span style={{ ...celComp, color: GRIS }}>Sobrevivencia</span>
+                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontWeight: w.n === ventanaDias ? 600 : 400, color: w.n === ventanaDias ? NAVY : GRIS }}>{pct0(w.sobrev)}</span>)}
+                  <span style={{ ...celComp, color: '#9fb0bf', fontSize: '10.5px' }}>Ayunos / sin dato</span>
+                  {ventanas.map(w => <span key={w.n} style={{ ...celComp, textAlign: 'center', borderLeft: '0.5px solid #eef3f7', fontSize: '10.5px', color: '#9fb0bf' }}>{w.ayuno} / {w.falt}</span>)}
+                </div>
+              </div>
+            )}
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
               <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b>{valdOk && esJefe && <span onClick={quitarValidacion} style={{ color: AZUL, cursor: 'pointer' }}> · cambiar</span>}</span>
@@ -1640,6 +1716,7 @@ function Mini({ k, v }) {
   return <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px' }}><div style={{ fontSize: '11px', color: GRIS }}>{k}</div><div style={{ fontSize: '19px', fontWeight: 500, color: NAVY }}>{v}</div></div>
 }
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
+const celComp = { padding: '7px 10px' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
 const G_MIN_COMERCIAL = 10   // gramaje comercial mínimo; por debajo no se evalúa cosechar
 const MOTIVOS_RECHAZO = [['riesgo', 'Riesgo biológico'], ['biomasa', 'Biomasa no confiable'], ['excesivo', 'Cambio excesivo'], ['presupuesto', 'Presupuesto/inventario'], ['calendario', 'Calendario incorrecto'], ['otro', 'Otro']]
