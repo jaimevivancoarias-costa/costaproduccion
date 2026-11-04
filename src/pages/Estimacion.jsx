@@ -240,6 +240,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [racTxt, setRacTxt] = useState('')
   // Modo diagnóstico de la ventana de consumo (solo lectura)
   const [diag, setDiag] = useState(false)
+  const [pendiente, setPendiente] = useState({}) // cicloId -> solicitud pendiente de aprobación (esta semana)
+  const [bandeja, setBandeja] = useState(false)   // panel de aprobaciones pendientes
+  const [rechazando, setRechazando] = useState(null) // id de solicitud en rechazo
+  const [rechCod, setRechCod] = useState(''); const [rechTxt, setRechTxt] = useState('')
 
   useEffect(() => { try { localStorage.setItem('metaEst|' + finca.id, String(meta)) } catch (e) { /* sin storage */ } }, [meta, finca.id])
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
@@ -257,7 +261,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       supabase.schema('produccion').from('muestreo').select('ciclo_id, fecha, peso_gramos').in('ciclo_id', ids).lte('fecha', hasta).order('fecha'),
       supabase.schema('produccion').from('alimentacion').select('ciclo_id, fecha, libras, sin_alimentacion, precio_saco, producto_id').in('ciclo_id', ids).lte('fecha', hasta),
       supabase.schema('produccion').from('biomasa_validada').select('ciclo_id, fuente, valor_lb, fecha_ref, validada_por, validada_en').in('ciclo_id', ids).lte('fecha_ref', hasta).order('validada_en', { ascending: false }),
-      supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).eq('estado', 'activo'),
+      supabase.schema('produccion').from('escenario_aplicado').select('*').in('ciclo_id', ids).eq('semana_ref', hasta).in('estado', ['activo', 'pendiente']),
       supabase.schema('produccion').from('finca').select('raciones').eq('id', finca.id).maybeSingle(),
       supabase.schema('produccion').from('finca_patron_dia').select('dia, alimenta, actualizado_por, actualizado_en').eq('finca_id', finca.id),
       supabase.schema('produccion').from('piscina_patron_dia').select('piscina_id, dia, alimenta').in('piscina_id', piscIds),
@@ -273,7 +277,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
     const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion, precio: Number(r.precio_saco) || 0 }) })
     const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
-    const apDe = {}; (ap || []).forEach(r => { apDe[r.ciclo_id] = r })
+    const apDe = {}, pendDe = {}; (ap || []).forEach(r => { if (r.estado === 'pendiente') pendDe[r.ciclo_id] = r; else apDe[r.ciclo_id] = r })
     // Patrón de finca + su auditoría (quién lo editó por última vez y cuándo).
     const patF = {}; let patPor = null, patEn = null
     ;(pf || []).forEach(r => { patF[r.dia] = r.alimenta; if (r.actualizado_en && (!patEn || r.actualizado_en > patEn)) { patEn = r.actualizado_en; patPor = r.actualizado_por } })
@@ -284,13 +288,14 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       const { data: us } = await supabase.from('usuarios').select('id, nombre').in('id', quienes)
       ;(us || []).forEach(u => { nomDe[u.id] = u.nombre })
       Object.values(apDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
+      Object.values(pendDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
     }
     const patP = {}; (pp || []).forEach(r => { (patP[r.piscina_id] ||= {})[r.dia] = r.alimenta })
     const planDe = {}; (sp || []).forEach(r => {
       const dias = {}; (r.dias || []).forEach(d => { dias[d.fecha] = d.alimenta })
       planDe[r.ciclo_id] = { confirmada: r.confirmada, confirmada_en: r.confirmada_en, confirmada_por: r.confirmada_por, dias }
     })
-    setValida(bvDe); setAplicado(apDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
+    setValida(bvDe); setAplicado(apDe); setPendiente(pendDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
     setPatFinca(patF); setPatPisc(patP); setPlanSemana(planDe)
     setPatronAudit(patEn ? { nombre: nomDe[patPor] || null, en: patEn } : null)
     const apPrevDe = {}; (apPrev || []).forEach(r => { apPrevDe[r.ciclo_id] = r })
@@ -514,18 +519,43 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       calendario: calDias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta, cerrado: d.cerrado, tipo: d.tipo })),
       ventana: fila.ventana ? { ponder: fila.ventana.ponder, ayuno: fila.ventana.ayuno, falt: fila.ventana.falt, valido: fila.ventana.valido } : null,
     }
+    datos.deltaDia = deltaDia; datos.deltaSem = deltaSem; datos.baseTipo = baseTipo
     const { data, error } = await supabase.schema('produccion').rpc('aplicar_escenario', {
       p_ciclo_id: sel, p_semana_ref: hasta, p_fila_pct: celdaAct.fila, p_intensidad: celdaAct.inten,
       p_biomasa_lb: biomasaAsumida, p_tasa_pct: tasaApl, p_lb_dia: lbDiaSel,
       p_sacos_calc: sacosSemCalc, p_sacos_operativos: pedir, p_costo_usd: usdSemSel,
       p_raciones: racSinConfirmar ? null : racValor, p_es_recomendada: esReco,
       p_motivo: requiereMotivo ? (motivoTxt.trim() || null) : null, p_motivo_codigo: requiereMotivo ? motivoCod : null, p_datos: datos,
+      p_requiere_aprobacion: requiereAprobacion, p_base_activo_id: apRec ? apRec.id : null, p_base_cal_en: planSel ? planSel.confirmada_en : null,
     })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aplicar el escenario') }); return }
     const reg = Array.isArray(data) ? data[0] : data
-    setAplicado(a => ({ ...a, [sel]: { ...reg, aplicado_nombre: nombre || null } }))
+    reg.aplicado_nombre = nombre || null
     setPidiendoMotivo(false); setMotivoTxt(''); setMotivoCod(''); setConfirmaCambio(false); setCelda(null)
-    setAviso({ tipo: 'ok', texto: esReco ? 'Escenario recomendado aplicado.' : 'Escenario aplicado con motivo.' })
+    if (requiereAprobacion) {
+      setPendiente(p => ({ ...p, [sel]: reg }))
+      setAviso({ tipo: 'ok', texto: 'Enviado a aprobación de un segundo jefe. El plan anterior sigue vigente.' })
+    } else {
+      setAplicado(a => ({ ...a, [sel]: reg }))
+      setAviso({ tipo: 'ok', texto: esReco ? 'Escenario recomendado aplicado.' : 'Escenario aplicado con motivo.' })
+    }
+  }
+  // Aprobar / rechazar una solicitud pendiente (segundo jefe).
+  async function aprobarPendiente(reg) {
+    const { data, error } = await supabase.schema('produccion').rpc('aprobar_escenario', { p_id: reg.id })
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'aprobar la solicitud') }); return }
+    const row = Array.isArray(data) ? data[0] : data
+    setAplicado(a => ({ ...a, [reg.ciclo_id]: { ...row, aplicado_nombre: reg.aplicado_nombre } }))
+    setPendiente(p => { const n = { ...p }; delete n[reg.ciclo_id]; return n })
+    setAviso({ tipo: 'ok', texto: 'Escenario aprobado y activado.' })
+  }
+  async function rechazarPendiente(reg) {
+    if (!rechCod) { setAviso({ tipo: 'error', texto: 'Elige el motivo del rechazo.' }); return }
+    const { error } = await supabase.schema('produccion').rpc('rechazar_escenario', { p_id: reg.id, p_codigo: rechCod, p_motivo: rechTxt.trim() || null })
+    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'rechazar la solicitud') }); return }
+    setPendiente(p => { const n = { ...p }; delete n[reg.ciclo_id]; return n })
+    setRechazando(null); setRechCod(''); setRechTxt('')
+    setAviso({ tipo: 'ok', texto: 'Solicitud rechazada.' })
   }
   // Fecha y hora legible de la aplicación.
   const fechaHora = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
@@ -672,14 +702,21 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // Alerta de cambio vs el escenario activo: por DÍA (dosis) y por SEMANA (sacos, que
   // captura también cambios de calendario). El nivel sale del cambio mayor. ≤10% normal
   // · 10–20% confirmar · >20% fuerte. Los deltas quedan en el snapshot.
-  const dosisAnterior = apRec ? Number(apRec.lb_dia) : null
-  const sacosAnterior = apRec ? Number(apRec.sacos_calc) : null
-  const deltaDia = (dosisAnterior && dosisAnterior > 0) ? (lbDiaSel - dosisAnterior) / dosisAnterior : null
-  const deltaSem = (sacosAnterior && sacosAnterior > 0) ? (sacosSemCalc - sacosAnterior) / sacosAnterior : null
+  // Base de comparación: el plan ACTIVO si existe; si no, la recomendación oficial del motor.
+  const recoLbDia = est ? biomasaSel * est.planReco.tasaDia / 100 : 0
+  const recoSacosCalc = est ? recoLbDia * diasAlim / PARAM.pesoSaco : 0
+  const baseTipo = apRec ? 'plan anterior' : 'recomendación'
+  const dosisAnterior = apRec ? Number(apRec.lb_dia) : recoLbDia
+  const sacosAnterior = apRec ? Number(apRec.sacos_calc) : recoSacosCalc
+  const deltaDia = (dosisAnterior > 0) ? (lbDiaSel - dosisAnterior) / dosisAnterior : null
+  const deltaSem = (sacosAnterior > 0) ? (sacosSemCalc - sacosAnterior) / sacosAnterior : null
   const deltaDosis = [deltaDia, deltaSem].filter(d => d != null).reduce((a, b) => (a == null || Math.abs(b) > Math.abs(a) ? b : a), null)
   const nivelCambio = nivelCambioDe(deltaDosis)
+  const requiereAprobacion = nivelCambio === 'fuerte'     // >20% → doble aprobación (5.6)
   const faltaMotivo = requiereMotivo && (!motivoCod || (motivoCod === 'otro' && !motivoTxt.trim()))
-  const faltaConfirmCambio = nivelCambio === 'fuerte' && !confirmaCambio
+  const faltaConfirmCambio = false   // >20% ya no se autoconfirma: va a aprobación de un 2º jefe
+  const pendSel = pendiente[sel] || null                  // solicitud pendiente de esta piscina/semana
+  const soyRemitente = pendSel && pendSel.aplicado_por === userId
   // Planificado vs ejecutado: solo días cerrados y desde que el plan rige (vigenteDesde
   // = fecha de aplicación). Separa ayuno planificado / no planificado / sin registro.
   const planConfirmado = !!(planSel && planSel.confirmada)
@@ -766,6 +803,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <button onClick={() => { setPatTmp(Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map(d => [d, patFinca[d] !== false]))); setEditPat(true) }} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Define qué días alimenta la finca por defecto">Patrón de finca</button>
             <button onClick={abrirMasivo} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Prepara y confirma la semana para varias piscinas">Preparar semana</button>
             <button onClick={abrirPrecios} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Edita la lista de precios de venta (entero/cola)">Precios</button>
+            {Object.keys(pendiente).length > 0 && <button onClick={() => setBandeja(b => !b)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: bandeja ? AZUL : AMBAR, borderColor: bandeja ? AZUL : '#ecd9b4' }} title="Solicitudes de cambio >20% pendientes de aprobar">Aprobaciones ({Object.keys(pendiente).length})</button>}
           </>)}
           {esJefe && ciclos.length > 0 && (
             <button onClick={() => setDiag(d => !d)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: diag ? AZUL : GRIS, borderColor: diag ? AZUL : BORDE }} title="Compara la ventana de consumo actual con la ponderada">
@@ -841,6 +879,30 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         )
       })()}
 
+      {bandeja && Object.keys(pendiente).length > 0 && (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 500 }}>Aprobaciones pendientes · {corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</div>
+            <button onClick={() => setBandeja(false)} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {ciclos.filter(c => pendiente[c.cicloId]).map(c => {
+              const r = pendiente[c.cicloId]; const mio = r.aplicado_por === userId
+              return (
+                <div key={c.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 10px', borderRadius: '8px', background: '#f6f9fb', fontSize: '12px' }}>
+                  <span style={{ width: '70px', color: NAVY, fontWeight: 500 }}>{c.nombre}</span>
+                  <span style={{ flex: 1, color: GRIS }}>{r.fila_pct}% × {cap(intenLbl(r.intensidad))} · {r.sacos_operativos} sacos{r.datos && r.datos.deltaSem != null ? ` · ${r.datos.deltaSem >= 0 ? '+' : ''}${Math.round(r.datos.deltaSem * 100)}% sem` : ''} · {r.aplicado_nombre || '—'}</span>
+                  {mio ? <span style={{ color: '#9fb0bf', fontSize: '11px' }}>enviada por ti</span>
+                    : <button onClick={() => aprobarPendiente(r)} style={{ ...btnAzul, background: VERDE, padding: '5px 12px' }}>Aprobar</button>}
+                  <button onClick={() => { setSel(c.cicloId); setBandeja(false) }} style={{ ...btnLink, fontSize: '11.5px' }}>Ver</button>
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px' }}>Para rechazar con motivo, abre la piscina ("Ver"). No puedes aprobar una solicitud que enviaste tú.</div>
+        </div>
+      )}
+
       {masivo && (() => {
         const datos = ciclos.map(f => {
           const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
@@ -911,6 +973,39 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         {vald && !valdOk && vig && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '9px', background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '10px', padding: '10px 14px', marginBottom: '10px', fontSize: '12.5px', color: AMBAR }}>
             <span>⏱</span><span>La validación manual venció: <b>{vig.motivos.join(' · ')}</b>. Se usa la biomasa por consumo; vuelve a validar si corresponde.</span>
+          </div>
+        )}
+        {pendSel && (
+          <div style={{ background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '10px', padding: '11px 14px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '9px' }}>
+              <span style={{ color: AMBAR, fontSize: '15px', lineHeight: 1.3 }}>⏳</span>
+              <div style={{ flex: 1, fontSize: '12.5px', color: '#854F0B', lineHeight: 1.55 }}>
+                <b style={{ fontWeight: 500 }}>Solicitud pendiente de aprobación</b> · {pendSel.fila_pct}% × {cap(intenLbl(pendSel.intensidad))} · {miles(Number(pendSel.lb_dia))} lb/día · {pendSel.sacos_operativos} sacos · enviada por {pendSel.aplicado_nombre || '—'} {fechaHora(pendSel.aplicado_en)}.
+                {pendSel.datos && (pendSel.datos.deltaDia != null || pendSel.datos.deltaSem != null) && <span> Cambio {pendSel.datos.deltaDia != null ? (pendSel.datos.deltaDia >= 0 ? '+' : '') + Math.round(pendSel.datos.deltaDia * 100) + '% dosis' : ''}{pendSel.datos.deltaSem != null ? ' · ' + (pendSel.datos.deltaSem >= 0 ? '+' : '') + Math.round(pendSel.datos.deltaSem * 100) + '% semana' : ''}.</span>}
+                {pendSel.motivo_codigo && <div style={{ color: '#9a7636' }}>Motivo: {cap((MOTIVOS.find(m => m[0] === pendSel.motivo_codigo) || [])[1] || pendSel.motivo_codigo)}{pendSel.motivo_eleccion ? ' · ' + pendSel.motivo_eleccion : ''}</div>}
+                {soyRemitente ? (
+                  <div style={{ color: '#9fb0bf', marginTop: '4px' }}>Enviada por ti · esperando a un segundo jefe. El plan anterior sigue vigente; los botones de decisión están bloqueados para quien la envió.</div>
+                ) : puedeAplicar ? (
+                  rechazando === pendSel.id ? (
+                    <div style={{ marginTop: '8px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }} role="radiogroup" aria-label="Motivo del rechazo">
+                        {MOTIVOS_RECHAZO.map(([c, l]) => <button key={c} type="button" role="radio" aria-checked={rechCod === c} onClick={() => setRechCod(c)} style={{ fontFamily: 'inherit', fontSize: '11px', padding: '4px 9px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (rechCod === c ? ROJO : BORDE), background: rechCod === c ? '#FBEAEA' : 'white', color: rechCod === c ? ROJO : NAVY }}>{l}</button>)}
+                      </div>
+                      <input value={rechTxt} onChange={e => setRechTxt(e.target.value)} placeholder="Comentario (opcional)" style={{ ...inp, width: '100%', marginBottom: '6px' }} />
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button onClick={() => rechazarPendiente(pendSel)} style={{ ...btnAzul, background: ROJO }}>Confirmar rechazo</button>
+                        <button onClick={() => { setRechazando(null); setRechCod('') }} style={{ ...inp, cursor: 'pointer', color: GRIS }}>Cancelar</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                      <button onClick={() => aprobarPendiente(pendSel)} style={{ ...btnAzul, background: VERDE }}>Aprobar</button>
+                      <button onClick={() => { setRechazando(pendSel.id); setRechCod(''); setRechTxt('') }} style={{ ...inp, cursor: 'pointer', color: ROJO, borderColor: '#e7cccb' }}>Rechazar</button>
+                    </div>
+                  )
+                ) : null}
+              </div>
+            </div>
           </div>
         )}
         {/* Veredicto: verde si datos consistentes; ámbar/rojo si hay que validar la biomasa */}
@@ -1170,15 +1265,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
               {nivelCambio && nivelCambio !== 'normal' && (
                 <div style={{ marginBottom: '10px', background: (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '14', border: '0.5px solid ' + (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '44', borderRadius: '9px', padding: '10px 13px', fontSize: '12px', color: nivelCambio === 'fuerte' ? ROJO : AMBAR }}>
-                  <b>Cambio vs el plan anterior.</b>
+                  <b>Cambio vs la {baseTipo}.</b>
                   {deltaDia != null && <> Dosis {deltaDia >= 0 ? '+' : ''}{Math.round(deltaDia * 100)}% ({miles(lbDiaSel)} vs {miles(dosisAnterior)} lb/día).</>}
                   {deltaSem != null && <> Semana {deltaSem >= 0 ? '+' : ''}{Math.round(deltaSem * 100)}% ({num1(sacosSemCalc)} vs {num1(sacosAnterior)} sacos).</>}
-                  {nivelCambio === 'fuerte' && (
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '7px', marginTop: '7px', color: ROJO, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={confirmaCambio} onChange={e => setConfirmaCambio(e.target.checked)} />
-                      Confirmo un cambio mayor al 20%.
-                    </label>
-                  )}
+                  {nivelCambio === 'fuerte' && <div style={{ marginTop: '5px' }}>Mayor al 20%: requiere <b>aprobación de un segundo jefe</b> antes de activarse.</div>}
                 </div>
               )}
               {requiereMotivo && (() => {
@@ -1199,11 +1289,11 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 )
               })()}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <button onClick={aplicarEscenario} disabled={!aplicarOk || faltaMotivo || faltaConfirmCambio} style={{ ...btnAzul, opacity: (!aplicarOk || faltaMotivo || faltaConfirmCambio) ? 0.5 : 1, cursor: (!aplicarOk || faltaMotivo || faltaConfirmCambio) ? 'default' : 'pointer' }}>
-                  {apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
+                <button onClick={aplicarEscenario} disabled={!aplicarOk || faltaMotivo} style={{ ...btnAzul, opacity: (!aplicarOk || faltaMotivo) ? 0.5 : 1, cursor: (!aplicarOk || faltaMotivo) ? 'default' : 'pointer' }}>
+                  {requiereAprobacion ? 'Enviar a aprobación' : apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
                 </button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
-                  {!semanaConfirmada ? 'Confirma el calendario de la semana para poder aplicar.' : !aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaConfirmCambio ? 'Marca la confirmación del cambio de dosis.' : faltaMotivo ? 'Elige el motivo del cambio.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
+                  {!semanaConfirmada ? 'Confirma el calendario de la semana para poder aplicar.' : !aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaMotivo ? 'Elige el motivo del cambio.' : requiereAprobacion ? 'Cambio >20%: lo revisa y aprueba un segundo jefe.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Se guarda la decisión, el motivo y quién la aplicó.'}
                 </span>
               </div>
             </div>
@@ -1529,6 +1619,7 @@ function Mini({ k, v }) {
 const titMini = { fontSize: '11px', color: '#9fb0bf', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }
 const intenLbl = k => k === 'BAJO' ? 'baja' : k === 'ALTO' ? 'alta' : 'media'
 const G_MIN_COMERCIAL = 10   // gramaje comercial mínimo; por debajo no se evalúa cosechar
+const MOTIVOS_RECHAZO = [['riesgo', 'Riesgo biológico'], ['biomasa', 'Biomasa no confiable'], ['excesivo', 'Cambio excesivo'], ['presupuesto', 'Presupuesto/inventario'], ['calendario', 'Calendario incorrecto'], ['otro', 'Otro']]
 // Motivos estructurados para apartarse de la recomendación (código + etiqueta).
 const MOTIVOS = [
   ['mortalidad', 'Mortalidad'], ['raleo', 'Raleo'], ['transferencia', 'Transferencia'],
