@@ -1377,11 +1377,16 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   : falta ? `Agrega ${faltanTolvas} tolva${faltanTolvas > 1 ? 's' : ''}`
                   : faltanTolvas < 0 ? `OK · te sobran ${-faltanTolvas}` : `OK · tienes ${tolvasAct}`
                 return (
-                  <div style={{ background: bgc, borderRadius: '9px', padding: '11px 13px', textAlign: 'center', marginTop: '8px' }}>
-                    <div style={{ fontSize: '11px', color: txtc }}>Necesitas</div>
-                    <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{tolvasNec} <span style={{ fontSize: '12px', color: GRIS }}>tolvas</span></div>
-                    <div style={{ fontSize: '11.5px', color: txtc, fontWeight: 500 }}>{estado}</div>
-                    {bioPorTolva != null && <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '2px' }}>hoy: {miles(bioPorTolva)} lb por tolva ({bioPorTolva > CAP_TOLVA_LB ? 'sobre' : 'bajo'} {miles(CAP_TOLVA_LB)})</div>}
+                  <div style={{ background: bgc, borderRadius: '9px', padding: '12px 13px', textAlign: 'center', marginTop: '8px' }}>
+                    {bioPorTolva != null ? (<>
+                      <div style={{ fontSize: '11px', color: txtc }}>Carga por tolva</div>
+                      <div style={{ fontSize: '26px', fontWeight: 500, color: NAVY }}>{miles(bioPorTolva)} <span style={{ fontSize: '12px', color: GRIS }}>lb</span></div>
+                      <div style={{ fontSize: '11.5px', color: txtc, fontWeight: 500 }}>{bioPorTolva > CAP_TOLVA_LB ? 'Sobre' : 'Bajo'} {miles(CAP_TOLVA_LB)} · necesitas {tolvasNec} · {faltanTolvas > 0 ? `agrega ${faltanTolvas}` : faltanTolvas < 0 ? `te sobran ${-faltanTolvas}` : 'OK'}</div>
+                    </>) : (<>
+                      <div style={{ fontSize: '11px', color: txtc }}>Necesitas</div>
+                      <div style={{ fontSize: '24px', fontWeight: 500, color: NAVY }}>{tolvasNec} <span style={{ fontSize: '12px', color: GRIS }}>tolvas</span></div>
+                      <div style={{ fontSize: '11.5px', color: txtc, fontWeight: 500 }}>{estado}</div>
+                    </>)}
                   </div>
                 )
               })()}
@@ -1883,7 +1888,7 @@ function Matriz({ oficial, plan, pesoSaco, dias, recoFila, recoInten, hayReco, s
                   <div key={k} onClick={() => onSel(f, k)} style={{ cursor: 'pointer', textAlign: 'center', margin: '3px', padding: '7px 4px', border: borde, borderRadius: '9px', background: bg }}>
                     {(esR || esS) && <div style={{ fontSize: '9px', fontWeight: 500, color: esS ? AZUL : VERDE }}>{esS ? '● Tu elección' : 'Recomendada'}</div>}
                     <div style={{ fontSize: esOf ? '16px' : '14px', fontWeight: 500, color: activa ? NAVY : GRIS }}>{miles(lb)}</div>
-                    <div style={{ fontSize: '10px', color: activa ? GRIS : '#9fb0bf' }}>lb/día · {num1(lb / pesoSaco)} sac</div>
+                    <div style={{ fontSize: '10px', color: activa ? GRIS : '#9fb0bf' }}>{num1(lb / pesoSaco)} sacos/día</div>
                   </div>
                 )
               })}
