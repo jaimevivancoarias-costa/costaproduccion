@@ -819,16 +819,19 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const area = fila.area
     const consumoAcumLb = est.consumoAcum
     const alertaDatos = est.sobrevConsumo > 1.05 ? Math.round(est.sobrevConsumo * 100) : null
+    // Biomasa del ESCENARIO elegido (oficial × supuesto %). Con 100% == oficial.
+    const bio = biomasaAsumida > 0 ? biomasaAsumida : biomasaSel
+    const supuesto = celdaAct.fila
     if (gHoy < G_MIN_COMERCIAL) {
-      const eC = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
-      const eO = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno })
+      const eC = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: 1 })
+      const eO = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: est.desempeno })
       return { noComercial: true, gHoy, metaUsa: eC ? eC.metaUsa : est.metaUsa, diasCurva: eC ? eC.dias : null, diasObs: eO ? eO.dias : null, alertaDatos }
     }
     const pHoy = precioPorGramaje(gHoy, precioOpts)
-    const ingresoHoy = biomasaSel * pHoy.mejor
+    const ingresoHoy = bio * pHoy.mejor
     // Proyección a meta con el ritmo OBSERVADO reciente (si falla, cae a la curva).
-    const prO = proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno })
-      || proyectarAMeta({ gHoy, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: 1 })
+    const prO = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: est.desempeno })
+      || proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: 1 })
     if (!prO) return { listo: true, gHoy, pHoy, ingresoHoy }
     // Costos comunes (larva = hundido; alimento consumido = lb ÷ saco × precio actual).
     const costoLarva = (cfg.larvaMillar || 0) * fila.larva / 1000
@@ -851,11 +854,11 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       }
     }
     const pMeta = precioPorGramaje(prO.metaUsa, precioOpts)
-    const hoyCol = col({ dias: fila.dias, g: gHoy, libras: biomasaSel, precio: pHoy, alimFaltaLb: 0, consumoTotalLb: consumoAcumLb })
+    const hoyCol = col({ dias: fila.dias, g: gHoy, libras: bio, precio: pHoy, alimFaltaLb: 0, consumoTotalLb: consumoAcumLb })
     const metaCol = col({ dias: fila.dias + prO.dias, g: prO.metaUsa, libras: prO.biomasaMeta, precio: pMeta, alimFaltaLb: prO.alimentoLb, consumoTotalLb: consumoAcumLb + prO.alimentoLb })
     const valor = metaCol.mejorUtil - hoyCol.mejorUtil
     const panel = {
-      biomasa: biomasaSel, pctNadando: 100, dias: prO.dias, alimLb: prO.alimentoLb,
+      biomasa: bio, pctNadando: 100, dias: prO.dias, alimLb: prO.alimentoLb,
       alimSacos: Math.ceil(prO.alimentoLb / PARAM.pesoSaco),
       promLbDia: prO.dias > 0 ? prO.alimentoLb / prO.dias : 0,
       promSacosDia: prO.dias > 0 ? prO.alimentoLb / prO.dias / PARAM.pesoSaco : 0,
@@ -864,7 +867,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     return {
       listo: false, gHoy, metaUsa: prO.metaUsa, subeEscalon: prO.metaUsa !== Number(meta),
       hoy: hoyCol, meta: metaCol, panel, valor, esperar: valor >= 0,
-      sMetaRef: prO.sobrevMeta, sHoyRef: prO.sobrevHoy, alertaDatos,
+      sMetaRef: prO.sobrevMeta, sHoyRef: prO.sobrevHoy, alertaDatos, supuesto,
     }
   })()
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
@@ -1514,6 +1517,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         {rent && (
           <div style={{ marginTop: '14px' }}><Caja>
             <Titulo>Rentabilidad · cosechar hoy vs esperar a meta</Titulo>
+            {!rent.noComercial && rent.supuesto != null && (
+              <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>Sobre el escenario elegido: <b style={{ color: NAVY, fontWeight: 500 }}>{rent.supuesto}% de la biomasa oficial</b>{rent.supuesto === 100 ? ' (oficial)' : ''}{rent.hoy ? ` · ${miles(rent.hoy.libras)} lb` : ''}.</div>
+            )}
             {rent.noComercial ? (<>
               {rent.alertaDatos && <div style={{ fontSize: '11.5px', color: ROJO, background: '#FBEAEA', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Sobrevivencia por consumo {rent.alertaDatos}% ({'>'}100%): la biomasa por consumo parece alta. Revisa los datos.</div>}
               <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Aún no es cosechable ({num1(rent.gHoy)} g · mínimo comercial {G_MIN_COMERCIAL} g). Sigue en engorde; todavía no tiene sentido comparar contra cosechar hoy.</div>
@@ -1568,7 +1574,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <Mini k="Promedio por día" v={`${num1(p.promSacosDia)} sacos`} />
                 <Mini k="Costo de ese alimento" v={dinero(p.costo)} />
               </div>
-              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>Cosechar hoy usa la biomasa, el precio y los costos de hoy. Llegar a la meta proyecta con el <b>ritmo observado reciente</b> hasta {num1(rent.metaUsa)} g, sumando el alimento que faltaría. Biomasa oficial: {cap(fuenteUsada)}. Larva = costo hundido. Raleo en 0 (100% nadando). Alimento consumido valorado al precio actual del saco. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
+              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '10px', lineHeight: 1.5 }}>Cosechar hoy usa la biomasa, el precio y los costos de hoy. Llegar a la meta proyecta con el <b>ritmo observado reciente</b> hasta {num1(rent.metaUsa)} g, sumando el alimento que faltaría. Biomasa = escenario elegido ({rent.supuesto}% de la oficial · fuente {cap(fuenteUsada)}). Larva = costo hundido. Raleo en 0 (100% nadando). Alimento consumido valorado al precio actual del saco. No incluye variación de precio, mortalidad extraordinaria ni costos de cosecha/transporte.</div>
             </>) })()}
           </Caja></div>
         )}
