@@ -518,6 +518,22 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // Aunque esté validada, si consumo y densidad siguen difiriendo >25% hay que avisar
   // (una validación no vuelve "consistente" una diferencia grande).
   const difGrande = bm && bm.difPct > 0.25
+  // Supuestos de biomasa (100/90/80/70 % de la oficial, que en el caso normal es la
+  // de consumo). Por cada supuesto, los indicadores biológicos resultantes. El 100%
+  // es la oficial; los demás son recortes conservadores. Enlaza con la matriz de dosis.
+  const G_LB = 453.592
+  const supuestos = (est && fila) ? [100, 90, 80, 70].map(p => {
+    const bio = biomasaSel * p / 100
+    const sob = (fila.gramaje > 0 && fila.larva > 0) ? bio * G_LB / (fila.gramaje * fila.larva) : 0
+    return { p, bio, sob, ha: fila.area > 0 ? bio / fila.area : 0, fcr: bio > 0 ? est.consumoAcum / bio : 0 }
+  }) : []
+  // Densidad como referencia: dónde cae la biomasa teórica de tabla frente a la de consumo.
+  const densRef = (est && fila) ? {
+    bio: est.biomasaDensidad, sob: est.sobrevDensidad,
+    ha: fila.area > 0 ? est.biomasaDensidad / fila.area : 0,
+    fcr: est.biomasaDensidad > 0 ? est.consumoAcum / est.biomasaDensidad : 0,
+    pctDeConsumo: est.biomasaConsumo > 0 ? est.biomasaDensidad / est.biomasaConsumo : 0,
+  } : null
 
   async function validarBiomasa() {
     let valor = fuenteSel === 'consumo' ? est.biomasaConsumo : fuenteSel === 'densidad' ? est.biomasaDensidad : Number(String(aprobTxt).replace(',', '.'))
@@ -1121,7 +1137,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           <Caja>
             <Titulo>Velocidad de crecimiento</Titulo>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
-              <Linea k="Crecimiento observado (g/día)" v={num2(est.gDiaObs)} fuerte />
+              <Linea k="Crecimiento observado · reciente (g/día)" v={num2(est.gDiaObs)} fuerte />
+              <Linea k="Crecimiento lineal · desde siembra (g/día)" v={num2(fila.dias > 0 ? fila.gramaje / fila.dias : 0)} />
               <Linea k="Crecimiento objetivo (g/día)" v={num2(est.gDiaObjetivo)} />
               <Linea k="Desempeño" v={pct0(est.desempeno)} color={est.desempeno >= 1 ? VERDE : AMBAR} fuerte />
               <div style={{ borderTop: '0.5px solid #eef3f7', paddingTop: '14px' }}>
@@ -1173,6 +1190,45 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 </div>
               </div>
             )}
+            {/* Supuesto de biomasa 100/90/80/70: indicadores por supuesto. La columna
+                elegida enlaza con la fila de la matriz de dosis (misma vista previa). */}
+            {supuestos.length > 0 && (
+              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '9px', flexWrap: 'wrap', gap: '6px' }}>
+                  <span style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>Supuesto de biomasa</span>
+                  <span style={{ fontSize: '11px', color: '#9fb0bf' }}>% de la oficial · la columna elegida manda en la dosis</span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1.35fr repeat(4, 1fr)', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12px' }}>
+                  <span style={{ ...celComp, background: '#f6f9fb', color: '#9fb0bf', fontSize: '10.5px' }}>Indicador</span>
+                  {supuestos.map(s => {
+                    const on = s.p === celdaAct.fila
+                    return (
+                      <button key={s.p} onClick={() => setCelda({ fila: s.p, inten: celdaAct.inten })} title={`Usar el supuesto de ${s.p}% en la dosis`}
+                        style={{ ...celComp, textAlign: 'center', cursor: 'pointer', border: 'none', borderLeft: '0.5px solid ' + BORDE, background: on ? '#e8f1fb' : '#f6f9fb', fontFamily: 'inherit' }}>
+                        <span style={{ fontWeight: on ? 600 : 500, fontSize: '12.5px', color: on ? AZUL : NAVY }}>{s.p}%</span>
+                        <span style={{ display: 'block', fontSize: '10px', color: on ? AZUL : '#9fb0bf' }}>{s.p === 100 ? 'oficial' : 'conservador'}</span>
+                      </button>
+                    )
+                  })}
+                  {[['Biomasa (lb)', s => miles(s.bio)], ['Sobrevivencia', s => pct0(s.sob)], ['Biomasa por hectárea', s => miles(s.ha)], ['FCR parcial', s => s.fcr > 0 ? num2(s.fcr) : '—']].map(([lbl, fn]) => (
+                    <Fragment key={lbl}>
+                      <span style={{ ...celComp, color: GRIS, borderTop: '0.5px solid #eef3f7' }}>{lbl}</span>
+                      {supuestos.map(s => {
+                        const on = s.p === celdaAct.fila
+                        return <span key={s.p} style={{ ...celComp, textAlign: 'center', borderTop: '0.5px solid #eef3f7', borderLeft: '0.5px solid #eef3f7', fontWeight: on ? 600 : 400, color: on ? NAVY : GRIS }}>{fn(s)}</span>
+                      })}
+                    </Fragment>
+                  ))}
+                </div>
+                {densRef && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', padding: '9px 11px', background: '#fff8ec', borderRadius: '9px', fontSize: '11.5px', color: '#8a6d2f', flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 500 }}>Densidad (tabla):</span>
+                    <span>{miles(densRef.bio)} lb · {miles(densRef.ha)} lb/ha · sobrev. {pct0(densRef.sob)} · FCR {densRef.fcr > 0 ? num2(densRef.fcr) : '—'} — {Math.round(densRef.pctDeConsumo * 100)}% de la de consumo</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
               <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b>{valdOk && esJefe && <span onClick={quitarValidacion} style={{ color: AZUL, cursor: 'pointer' }}> · cambiar</span>}</span>
