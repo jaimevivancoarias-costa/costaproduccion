@@ -2016,6 +2016,19 @@ function Curva({ puntos, gramaje }) {
   const linea = arr => arr.map((p, i) => `${i ? 'L' : 'M'}${sx(p.dia).toFixed(1)} ${sy(p.g).toFixed(1)}`).join(' ')
   const ult = obs[obs.length - 1]
   const h = hi != null ? obs[hi] : null
+  const objEn = d => {
+    if (obj.length < 2) return null
+    if (d <= obj[0].dia) return obj[0].g
+    if (d >= obj[obj.length - 1].dia) return obj[obj.length - 1].g
+    for (let i = 1; i < obj.length; i++) {
+      if (d <= obj[i].dia) {
+        const a = obj[i - 1], b = obj[i]
+        return a.g + (d - a.dia) / ((b.dia - a.dia) || 1) * (b.g - a.g)
+      }
+    }
+    return obj[obj.length - 1].g
+  }
+  const objG = h ? objEn(h.dia) : null
   return (
     <div style={{ position: 'relative' }}>
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="120" preserveAspectRatio="none" role="img" aria-label="Curva de crecimiento observado vs objetivo">
@@ -2028,8 +2041,13 @@ function Curva({ puntos, gramaje }) {
           onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)} />)}
       </svg>
       {h && (
-        <div style={{ position: 'absolute', left: `${fx(h.dia)}%`, top: `${fy(h.g)}%`, transform: `translate(${fx(h.dia) > 70 ? '-100%' : fx(h.dia) < 15 ? '0' : '-50%'}, -125%)`, background: NAVY, color: '#fff', fontSize: '10.5px', fontWeight: 500, padding: '4px 8px', borderRadius: '6px', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 2 }}>
-          {num1(h.g)} g · {corta(h.fecha)}
+        <div style={{ position: 'absolute', left: `${fx(h.dia)}%`, top: `${fy(h.g)}%`, transform: `translate(${fx(h.dia) > 70 ? '-100%' : fx(h.dia) < 15 ? '0' : '-50%'}, -125%)`, background: NAVY, color: '#fff', fontSize: '10.5px', fontWeight: 500, padding: '4px 8px', borderRadius: '6px', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 2, textAlign: 'center' }}>
+          <div>{num1(h.g)} g · {corta(h.fecha)}</div>
+          {objG != null && (
+            <div style={{ opacity: 0.78, fontSize: '9.5px', marginTop: '1px' }}>
+              Objetivo {num1(objG)} g · {h.g >= objG ? '+' : ''}{num1(h.g - objG)} g
+            </div>
+          )}
         </div>
       )}
     </div>
