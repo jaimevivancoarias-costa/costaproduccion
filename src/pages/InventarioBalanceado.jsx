@@ -260,10 +260,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       ;(data || []).forEach(r => { if (r.producto_id) m[r.producto_id] = (m[r.producto_id] || 0) + Number(r.libras || 0) / f })
       const sac = {}; Object.entries(m).forEach(([id, v]) => { sac[id] = String(Math.round(v * 1e6) / 1e6) })
       setConsDiaRef(sac)
-      // Conteo nuevo: arranca del registrado. Al EDITAR: usa el CONGELADO donde
-      // exista (cargado en editarConteo); donde no haya (conteos viejos) cae al vivo.
+      // Conteo nuevo: arranca del registrado. Al EDITAR: NO re-leer lo vivo; el
+      // consumo del día quedó CONGELADO en editarToma. (Antes se mezclaba el vivo
+      // y volvía a sumar los consumos de los productos alimentados ese día.)
       if (!editToma) setConsumoDia(sac)
-      else setConsumoDia(prev => ({ ...sac, ...prev }))
     })()
     return () => { vivo = false }
   }, [contando, fecha, finca.id, primeraVez, lps, editToma])
@@ -686,8 +686,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const { data } = await supabase.schema('produccion').from('toma_balanceado_linea')
       .select('producto_id, cantidad_contada, cantidad_sistema, consumo_dia, motivo_descuadre').eq('toma_id', t.id)
     const mapa = {}, md = {}, mo = {}, cd = {}, sis = {}
+    const despues = !!t.conto_despues_ui
     ;(data || []).forEach(l => {
-      mapa[l.producto_id] = String(l.cantidad_contada)
+      const contada = Number(l.cantidad_contada)              // lo GUARDADO = el "había" al inicio del día
+      const consumo = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+      // Mostrar lo que FÍSICAMENTE contó ese día, no el "había" reconstruido:
+      //  "después" → quedó = había − consumo del día (solo productos alimentados ese día)
+      //  "antes"   → el había tal cual.
+      // Las filas vuelven a reconstruir el "había" (quedó + consumo), así que al
+      // guardar queda idéntico y ya no hay que corregir producto por producto.
+      mapa[l.producto_id] = String(despues && consumo > 0.0001 ? Math.round((contada - consumo) * 1e6) / 1e6 : contada)
       if (l.consumo_dia != null) cd[l.producto_id] = String(l.consumo_dia)
       if (l.cantidad_sistema != null) sis[l.producto_id] = Number(l.cantidad_sistema)
       if (l.motivo_descuadre) {
@@ -695,11 +703,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         else { md[l.producto_id] = 'Otro'; mo[l.producto_id] = l.motivo_descuadre }
       }
     })
-    // El campo "Contó" guarda el HABÍA → se interpreta tal cual (contoDespues
-    // false). La decisión antes/después se conserva aparte.
     setConsumoDia(cd); setSistemaEdit(sis)
     setContado(mapa); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
-    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(false)
+    setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(despues)
     setEditToma(t); setContando(true); setAviso(null)
   }
 

@@ -554,8 +554,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           <Chip pequeno onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()); setCicloSel('') }}>
             Este mes
           </Chip>
-          <Chip pequeno onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()); setCicloSel('') }}>
-            Este año
+          <Chip pequeno onClick={() => { const finAnt = sumarDias(primeroDelMes(hoyISO()), -1); setDesde(primeroDelMes(finAnt)); setHasta(finAnt); setCicloSel('') }}>
+            Mes pasado
           </Chip>
         </div>
         {!todasFincas && ciclos.length > 0 && (

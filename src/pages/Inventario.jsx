@@ -756,11 +756,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       Object.entries(m).forEach(([id, v]) => { const fa = factores[id]?.factor || 1; sac[id] = String(Math.round((v / fa) * 1e6) / 1e6) })
       setConsDiaRef(sac)   // referencia: lo registrado hasta ahora
       // Conteo nuevo: el consumo editable arranca del registrado.
-      // Al EDITAR: se usa el CONGELADO donde exista (ya cargado en editarConteo);
-      // donde NO haya congelado (conteos viejos con consumo_dia NULL) cae al
-      // valor en vivo, para que el conteo viejo se vea igual que siempre.
+      // Al EDITAR: NO re-leer lo vivo; el consumo del día quedó CONGELADO en
+      // editarConteo. (Antes se mezclaba el vivo y volvía a sumar los consumos de
+      // los insumos aplicados ese día, obligando a corregir uno por uno.)
       if (!editToma) setConsumoDia(sac)
-      else setConsumoDia(prev => ({ ...sac, ...prev }))
     })()
     return () => { vivo = false }
   }, [contando, fecha, finca.id, primeraVez, factores, editToma])
@@ -1196,8 +1195,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
       .select('insumo_id, cantidad_contada, cantidad_sistema, consumo_dia, motivo_descuadre').eq('toma_id', c.id)
     const mapa = {}, md = {}, mo = {}, cd = {}, sis = {}
+    const despues = !!c.conto_despues
     ;(data || []).forEach(l => {
-      mapa[l.insumo_id] = String(l.cantidad_contada)
+      const contada = Number(l.cantidad_contada)              // lo GUARDADO = el "había" al inicio del día
+      const consumo = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+      // Mostrar lo que FÍSICAMENTE contó ese día, no el "había" reconstruido:
+      //  "después" → quedó = había − consumo del día (solo insumos aplicados ese día)
+      //  "antes"   → el había tal cual.
+      // Las filas vuelven a reconstruir el "había" (quedó + consumo), así que al
+      // guardar queda idéntico y ya no hay que corregir insumo por insumo.
+      mapa[l.insumo_id] = String(despues && consumo > 0.0001 ? Math.round((contada - consumo) * 1e6) / 1e6 : contada)
       if (l.consumo_dia != null) cd[l.insumo_id] = String(l.consumo_dia)
       if (l.cantidad_sistema != null) sis[l.insumo_id] = Number(l.cantidad_sistema)
       if (l.motivo_descuadre) {
@@ -1205,13 +1212,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         else { md[l.insumo_id] = 'Otro'; mo[l.insumo_id] = l.motivo_descuadre }
       }
     })
-    // El campo "Contó" guarda el HABÍA (inicio del día). Al editar se interpreta
-    // tal cual (no se le vuelve a sumar el consumo) → contoDespues = false aquí.
-    // La decisión antes/después se mantiene aparte (toggle de Conteos anteriores).
     setConsumoDia(cd); setSistemaEdit(sis)
     setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
-    setContoDespues(false); setEditToma(c); setContando(true); setAviso(null)
+    setContoDespues(despues); setEditToma(c); setContando(true); setAviso(null)
   }
 
   // Corregir la decisión "antes/después" de un conteo ya guardado, sin reabrir el
