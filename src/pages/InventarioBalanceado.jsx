@@ -2655,6 +2655,7 @@ const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding
 function ModalBajaBal({ finca, productos, precioFifoDe, onCerrar, onHecho }) {
   const [filas, setFilas] = useState([{ prod: '', cant: '' }])
   const [motivo, setMotivo] = useState('Robo')
+  const [motivoOtro, setMotivoOtro] = useState('')
   const [fecha, setFecha] = useState(hoyISO())
   const [guardando, setGuardando] = useState(false)
   const [err, setErr] = useState('')
@@ -2673,12 +2674,14 @@ function ModalBajaBal({ finca, productos, precioFifoDe, onCerrar, onHecho }) {
       if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.producto}: solo hay ${miles(p.saldo)} sacos.`); return }
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
+    const motivoFinal = motivo === 'Otro' ? motivoOtro.trim() : motivo
+    if (motivo === 'Otro' && !motivoFinal) { setErr('Escribe el motivo.'); return }
     setGuardando(true)
-    const rows = validas.map(f => ({ finca_id: finca.id, fecha, producto_id: f.prod, cantidad: -numDec(f.cant), motivo, precio_unitario: precioFifoDe(f.prod) }))
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, producto_id: f.prod, cantidad: -numDec(f.cant), motivo: motivoFinal, precio_unitario: precioFifoDe(f.prod) }))
     const { error } = await supabase.schema('produccion').from('ajuste_balanceado').insert(rows)
     setGuardando(false)
     if (error) { setErr(error.message); return }
-    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'producto' : 'productos'} · ${motivo} · ${dinero(total)}`)
+    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'producto' : 'productos'} · ${motivoFinal} · ${dinero(total)}`)
   }
   const lbl = { fontSize: '12px', color: GRIS, marginBottom: '4px', display: 'block' }
   return (
@@ -2699,6 +2702,13 @@ function ModalBajaBal({ finca, productos, precioFifoDe, onCerrar, onHecho }) {
             <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={{ ...inp, width: '100%' }} />
           </div>
         </div>
+
+        {motivo === 'Otro' && (
+          <div style={{ marginBottom: '14px' }}>
+            <label style={lbl}>¿Cuál es el motivo?</label>
+            <input autoFocus value={motivoOtro} onChange={e => setMotivoOtro(e.target.value)} placeholder="Escribe el motivo de la baja" style={{ ...inp, width: '100%' }} />
+          </div>
+        )}
 
         <label style={lbl}>Productos</label>
         {filas.map((f, i) => {

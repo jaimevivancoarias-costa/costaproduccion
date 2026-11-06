@@ -2478,6 +2478,7 @@ const btnLink = { background: 'none', border: 'none', cursor: 'pointer', padding
 function ModalBajaIns({ finca, insumos, precioFifoDe, onCerrar, onHecho }) {
   const [filas, setFilas] = useState([{ item: '', cant: '' }])
   const [motivo, setMotivo] = useState('Robo')
+  const [motivoOtro, setMotivoOtro] = useState('')
   const [fecha, setFecha] = useState(hoyISO())
   const [guardando, setGuardando] = useState(false)
   const [err, setErr] = useState('')
@@ -2495,12 +2496,14 @@ function ModalBajaIns({ finca, insumos, precioFifoDe, onCerrar, onHecho }) {
     if (!validas.length) { setErr('Agrega al menos un insumo con cantidad.'); return }
     for (const f of validas) { const p = itemDe(f.item), n = numDec(f.cant); if (p && n > Number(p.saldo) + 0.001) { setErr(`${p.insumo}: solo hay ${fmt(p.saldo)} ${uDe(f.item)}.`); return } }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { setErr('Pon la fecha.'); return }
+    const motivoFinal = motivo === 'Otro' ? motivoOtro.trim() : motivo
+    if (motivo === 'Otro' && !motivoFinal) { setErr('Escribe el motivo.'); return }
     setGuardando(true)
-    const rows = validas.map(f => ({ finca_id: finca.id, fecha, insumo_id: f.item, cantidad: -numDec(f.cant), motivo, precio_unitario: precioFifoDe(f.item) }))
+    const rows = validas.map(f => ({ finca_id: finca.id, fecha, insumo_id: f.item, cantidad: -numDec(f.cant), motivo: motivoFinal, precio_unitario: precioFifoDe(f.item) }))
     const { error } = await supabase.schema('produccion').from('ajuste_insumo').insert(rows)
     setGuardando(false)
     if (error) { setErr(error.message); return }
-    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'insumo' : 'insumos'} · ${motivo} · ${dinero(total)}`)
+    onHecho(`Baja: ${rows.length} ${rows.length === 1 ? 'insumo' : 'insumos'} · ${motivoFinal} · ${dinero(total)}`)
   }
   const inp = { padding: '8px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid #dce6ef', borderRadius: '9px', boxSizing: 'border-box', background: 'white' }
   const btn = { padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid #dce6ef', borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
@@ -2523,6 +2526,12 @@ function ModalBajaIns({ finca, insumos, precioFifoDe, onCerrar, onHecho }) {
             <input type="date" value={fecha} max={hoyISO()} onChange={e => setFecha(e.target.value)} style={{ ...inp, width: '100%' }} />
           </div>
         </div>
+        {motivo === 'Otro' && (
+          <div style={{ marginBottom: '14px' }}>
+            <label style={lbl}>¿Cuál es el motivo?</label>
+            <input autoFocus value={motivoOtro} onChange={e => setMotivoOtro(e.target.value)} placeholder="Escribe el motivo de la baja" style={{ ...inp, width: '100%' }} />
+          </div>
+        )}
         <label style={lbl}>Insumos</label>
         {filas.map((f, i) => {
           const usados = new Set(filas.map((x, k) => k !== i ? x.item : null).filter(Boolean))
