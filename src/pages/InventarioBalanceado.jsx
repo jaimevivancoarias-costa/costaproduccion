@@ -1572,7 +1572,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         ? Math.max(0, numDec(m.consumo) - tCons) : 0
                       const preCosto = Math.max(0, numDec(m.consumo_dolares) - tCosto)
                       const hayPre = preSacos > 0.01
-                      const preAvg = hayPre && preSacos > 0 ? preCosto / preSacos : 0
                       const totEntro = tEntro + (hayPre ? preSacos : 0)
                       const totCons = tCons + (hayPre ? preSacos : 0)
                       const totCosto = tCosto + (hayPre ? preCosto : 0)
@@ -1592,7 +1591,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               <Fragment>
                                 <div style={{ textAlign: 'left', lineHeight: 1.45, borderLeft: '2px solid ' + VERDE, borderRadius: 0, paddingLeft: '8px' }}>
                                   <div style={{ fontWeight: 600, fontSize: '12.5px' }}>Antes del conteo {corta(conteoRow.fecha)}</div>
-                                  <div style={{ color: GRIS, fontSize: '11px' }}>Consumo del saldo anterior{esJefe && preAvg > 0 ? ` · ≈ ${dineroExacto(preAvg)} /saco` : ''}</div>
+                                  <div style={{ color: GRIS, fontSize: '11px' }}>Consumo del saldo anterior (lotes previos al conteo)</div>
                                 </div>
                                 <div style={{ ...cel, color: GRIS }}>{limpio(preSacos)}</div>
                                 <div style={{ ...cel, color: ROJO }}>{limpio(preSacos)}</div>
