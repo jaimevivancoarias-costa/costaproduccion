@@ -137,7 +137,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       ts.forEach(t => (lins || []).filter(l => l.toma_id === t.id).forEach(l => {
         const conto = Number(l.cantidad_contada)
         const antes = antesPorFecha[t.fecha]?.[l.producto_id]
-        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes })
+        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes, esInicial: !!t.es_inicial })
       }))
       setConteosRango(porProd)
       setSaldoAntes(antesPorFecha[ts[ts.length - 1].fecha] || {})
@@ -1671,8 +1671,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '10px' }}>Qué pasó en cada conteo · en sacos</div>
                           {cs.map((c, i) => (
                             <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none', fontSize: '12.5px' }}>
-                              <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.antes == null ? '' : `sistema ${limpio(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
-                              {c.dif == null ? <span /> : (
+                              <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.esInicial ? 'cargó' : (c.antes == null ? 'contó' : `sistema ${limpio(c.antes)} → contó`)} <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
+                              {c.esInicial ? (
+                                <span style={{ fontWeight: 600, whiteSpace: 'nowrap', fontSize: '11px', color: AZUL, background: '#eaf2fb', borderRadius: '20px', padding: '2px 9px' }}>Inicial</span>
+                              ) : c.dif == null ? <span /> : (
                                 <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
                                   {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(c.dif))}
                                 </span>
