@@ -153,7 +153,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }] = await Promise.all([
+      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }, { data: rcl }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
@@ -168,6 +168,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         // Plazo que rige por producto (para verificar QUÉ precio se aplica).
         supabase.schema('produccion').from('plazo_producto')
           .select('producto_id, plazo, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
+        // Consumo $ FIFO por lote (mismo costeo que el detalle), para que el
+        // Consumo $ del renglón cuadre con el Total del detalle por lote.
+        esJefe ? supabase.schema('produccion').rpc('fn_reporte_consumo_lotes_todos', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }) : Promise.resolve({ data: [] }),
       ])
       if (e) throw e
       // Precios por plazo (con su "desde") + plazo que rige. Con esto sabemos
@@ -198,9 +201,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
+      // Consumo $ FIFO por lote por producto = Σ(precio × sacos) del desglose de
+      // consumo. Se usa como Consumo $ del renglón para que cuadre con el detalle.
+      const fifoUsd = {}; (rcl || []).forEach(x => { fifoUsd[x.producto_id] = (fifoUsd[x.producto_id] || 0) + Number(x.precio || 0) * Number(x.sacos || 0) })
+      const movFifo = (m || []).map(x => fifoUsd[x.producto_id] != null ? { ...x, consumo_dolares: fifoUsd[x.producto_id] } : x)
       // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
       // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
-      setSaldos(s || []); setValorFifo(vfm); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(m || []); setIniRango({})
+      setSaldos(s || []); setValorFifo(vfm); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo); setIniRango({})
       setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
