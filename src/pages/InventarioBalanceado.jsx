@@ -47,7 +47,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
-  useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
+  useEffect(() => { setLotesMov({}); setLotesPre({}); setMovDet(null) }, [hasta, finca.id])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -112,6 +112,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [verSinInv, setVerSinInv] = useState(false)    // mostrar también los productos sin inventario
   const [movDet, setMovDet] = useState(null)           // producto_id con el detalle por lote abierto en "Qué se movió"
   const [lotesMov, setLotesMov] = useState({})         // producto_id -> [{fecha, costo_unitario, plazo, entro, consumio, queda, es_conteo}]
+  const [lotesPre, setLotesPre] = useState({})         // producto_id -> [{fecha, precio, sacos}] lotes consumidos ANTES del conteo del rango
   const [movAbierto, setMovAbierto] = useState({})     // 'productoId|entro'|'productoId|aplico' -> true
   const [entroDet, setEntroDet] = useState({})         // producto_id -> [{fecha, cant}] ingresos del rango (sacos)
   const [aplicoDet, setAplicoDet] = useState({})       // producto_id -> [{fecha, cant}] consumos del rango (sacos)
@@ -878,7 +879,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (!lotesMov[productoId]) {
       const { data, error } = await supabase.schema('produccion')
         .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta })
-      setLotesMov(m => ({ ...m, [productoId]: error ? [] : (data || []) }))
+      const lotes = error ? [] : (data || [])
+      setLotesMov(m => ({ ...m, [productoId]: lotes }))
+      // Tramo pre-conteo: si el último conteo del rango cae DESPUÉS de 'desde',
+      // trae los lotes consumidos ANTES de ese conteo (FIFO real por lote), para
+      // que el detalle muestre esos lotes con su precio real y el Total cuadre
+      // con el consumo del renglón.
+      const cRow = lotes.find(r => r.es_conteo)
+      if (cRow && cRow.fecha && desde && cRow.fecha > desde) {
+        const { data: pre } = await supabase.schema('produccion')
+          .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: sumarDias(cRow.fecha, -1) })
+        setLotesPre(m => ({ ...m, [productoId]: pre || [] }))
+      } else {
+        setLotesPre(m => ({ ...m, [productoId]: [] }))
+      }
     }
   }
 
@@ -926,7 +940,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     // Refrescar el detalle por lote en pantalla (sin recargar la página).
     const { data } = await supabase.schema('produccion')
       .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: pid, p_hasta: hasta })
-    setLotesMov(m => ({ ...m, [pid]: data || [] }))
+    const lotes = data || []
+    setLotesMov(m => ({ ...m, [pid]: lotes }))
+    const cRow = lotes.find(r => r.es_conteo)
+    if (cRow && cRow.fecha && desde && cRow.fecha > desde) {
+      const { data: pre } = await supabase.schema('produccion')
+        .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: pid, p_desde: desde, p_hasta: sumarDias(cRow.fecha, -1) })
+      setLotesPre(m => ({ ...m, [pid]: pre || [] }))
+    }
     setGuardandoCorr(false)
     setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
   }
@@ -1567,15 +1588,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       // conteo del rango, así que no incluye lo consumido antes.
                       // Se deriva por diferencia con el renglón (consumo del rango),
                       // así el Total siempre cuadra y se auto-corrige con los precios.
+                      // Tramo ANTES del conteo: lotes reales consumidos antes del
+                      // conteo del rango (fn_reporte_consumo_lotes), cada uno a su
+                      // precio. Así el Total cuadra con el consumo del renglón.
                       const conteoRow = rows.find(r => r.es_conteo)
-                      const preSacos = (conteoRow && desde && conteoRow.fecha && conteoRow.fecha > desde)
-                        ? Math.max(0, numDec(m.consumo) - tCons) : 0
-                      // Precio del tramo pre-conteo = el precio de catálogo vigente en
-                      // ese período = el costo del lote del conteo (mismo período de
-                      // precio). Así el costo es real, no un promedio derivado.
-                      const prePrecio = conteoRow ? Number(conteoRow.costo_unitario || 0) : 0
-                      const preCosto = preSacos * prePrecio
-                      const hayPre = preSacos > 0.01
+                      const pre = lotesPre[m.producto_id] || []
+                      const preSacos = pre.reduce((s, x) => s + Number(x.sacos || 0), 0)
+                      const preCosto = pre.reduce((s, x) => s + Number(x.sacos || 0) * Number(x.precio || 0), 0)
+                      const hayPre = pre.length > 0 && preSacos > 0.01
                       const totEntro = tEntro + (hayPre ? preSacos : 0)
                       const totCons = tCons + (hayPre ? preSacos : 0)
                       const totCosto = tCosto + (hayPre ? preCosto : 0)
@@ -1593,15 +1613,21 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             {esJefe && <div style={cab}>Costo consumido</div>}
                             {hayPre && (
                               <Fragment>
-                                <div style={{ textAlign: 'left', lineHeight: 1.45, borderLeft: '2px solid ' + VERDE, borderRadius: 0, paddingLeft: '8px' }}>
-                                  <div style={{ fontWeight: 600, fontSize: '12.5px' }}>Antes del conteo {corta(conteoRow.fecha)}</div>
-                                  {esJefe && prePrecio > 0 && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(prePrecio)} /saco</div>}
-                                  <div style={{ color: GRIS, fontSize: '10px' }}>Consumo del saldo anterior</div>
+                                <div style={{ gridColumn: '1 / -1', fontSize: '10px', fontWeight: 600, color: VERDE, textTransform: 'uppercase', letterSpacing: '.03em', marginTop: '2px' }}>
+                                  Antes del conteo {conteoRow?.fecha ? corta(conteoRow.fecha) : ''}
                                 </div>
-                                <div style={{ ...cel, color: GRIS }}>{limpio(preSacos)}</div>
-                                <div style={{ ...cel, color: ROJO }}>{limpio(preSacos)}</div>
-                                <div style={cel}>0</div>
-                                {esJefe && <div style={cel}>{dinero(preCosto)}</div>}
+                                {pre.map((x, k) => (
+                                  <Fragment key={'pre' + k}>
+                                    <div style={{ textAlign: 'left', lineHeight: 1.45, borderLeft: '2px solid ' + VERDE, borderRadius: 0, paddingLeft: '8px' }}>
+                                      <div style={{ fontWeight: 600, fontSize: '12.5px' }}>{x.fecha ? corta(x.fecha) : 'Inicial'}</div>
+                                      {esJefe && x.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(x.precio)} /saco</div>}
+                                    </div>
+                                    <div style={{ ...cel, color: GRIS }}>{limpio(x.sacos)}</div>
+                                    <div style={{ ...cel, color: ROJO }}>{limpio(x.sacos)}</div>
+                                    <div style={cel}>0</div>
+                                    {esJefe && <div style={cel}>{dinero(Number(x.sacos) * Number(x.precio || 0))}</div>}
+                                  </Fragment>
+                                ))}
                               </Fragment>
                             )}
                             {rows.map((r, i) => (
