@@ -65,6 +65,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [fecha, setFecha] = useState(hoyISO())
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})        // sacos completos
+  const [contadoExacto, setContadoExacto] = useState({})  // al editar: valor exacto guardado (el input muestra 2 decimales)
   const [sueltas, setSueltas] = useState({})         // libras sueltas
   const [contoDespues, setContoDespues] = useState(false) // conteo hecho DESPUÉS de alimentar ese día
   const [consumoDia, setConsumoDia] = useState({})   // producto_id -> sacos consumidos el día del conteo (editable)
@@ -482,7 +483,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const filas = useMemo(() => saldos.map(s => {
     const txt = contado[s.producto_id]; const hayS = txt !== undefined && txt !== ''
     const lib = sueltas[s.producto_id]; const hayL = lib !== undefined && lib !== '' && Number(lib) !== 0
-    const c = (hayS || hayL) ? (hayS ? Number(txt) : 0) + (hayL ? Number(String(lib).replace(',', '.')) / (lps || LIBRAS_POR_SACO) : 0) : null
+    // Al editar: si el input sigue mostrando el redondeo del valor exacto guardado
+    // (no se tocó), se usa el EXACTO para no perder precisión; si se editó, lo tecleado.
+    const exo = editToma ? contadoExacto[s.producto_id] : undefined
+    const mainVal = (exo != null && hayS && Math.round(exo * 100) === Math.round(Number(txt) * 100)) ? exo : Number(txt)
+    const c = (hayS || hayL) ? (hayS ? mainVal : 0) + (hayL ? Number(String(lib).replace(',', '.')) / (lps || LIBRAS_POR_SACO) : 0) : null
     // Modelo "había": el conteo guarda lo que había al INICIO del día.
     // s.saldo ya tiene restado el consumo de hoy, así que había = s.saldo + hoy.
     // Si contó DESPUÉS, escribió lo que quedó → se le suma lo de hoy para
@@ -507,7 +512,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
              // Redondeada a 2 decimales: así una diferencia minúscula por la
              // conversión (ej. 0.002) cuenta como "Cuadra", no "Sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sueltas, lps, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit])
+  }), [saldos, precios, contado, contadoExacto, sueltas, lps, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit])
   const llenadas = filas.filter(f => f.contado !== null).length
   // Editar un inventario inicial: se muestra como la carga inicial (solo las
   // cantidades, sin Sistema ni Diferencia), porque el inicial ES el punto de partida.
@@ -690,7 +695,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   async function editarToma(t) {
     const { data } = await supabase.schema('produccion').from('toma_balanceado_linea')
       .select('producto_id, cantidad_contada, cantidad_sistema, consumo_dia, motivo_descuadre').eq('toma_id', t.id)
-    const mapa = {}, md = {}, mo = {}, cd = {}, sis = {}
+    const mapa = {}, mapaExacto = {}, md = {}, mo = {}, cd = {}, sis = {}
     const despues = !!t.conto_despues_ui
     ;(data || []).forEach(l => {
       const contada = Number(l.cantidad_contada)              // lo GUARDADO = el "había" al inicio del día
@@ -700,7 +705,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       //  "antes"   → el había tal cual.
       // Las filas vuelven a reconstruir el "había" (quedó + consumo), así que al
       // guardar queda idéntico y ya no hay que corregir producto por producto.
-      mapa[l.producto_id] = String(despues && consumo > 0.0001 ? Math.round((contada - consumo) * 1e6) / 1e6 : contada)
+      const valExacto = despues && consumo > 0.0001 ? contada - consumo : contada
+      // El input muestra 2 decimales; el EXACTO se guarda aparte (ver filas/contadoExacto).
+      mapaExacto[l.producto_id] = valExacto
+      mapa[l.producto_id] = String(Math.round(valExacto * 100) / 100)
       if (l.consumo_dia != null) cd[l.producto_id] = String(l.consumo_dia)
       if (l.cantidad_sistema != null) sis[l.producto_id] = Number(l.cantidad_sistema)
       if (l.motivo_descuadre) {
@@ -709,7 +717,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       }
     })
     setConsumoDia(cd); setSistemaEdit(sis)
-    setContado(mapa); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
+    setContado(mapa); setContadoExacto(mapaExacto); setSueltas({}); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(t.fecha); setObs(t.observacion || ''); setContoDespues(despues)
     setEditToma(t); setContando(true); setAviso(null)
   }
@@ -790,7 +798,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const { error: e2 } = await supabase.schema('produccion').from('toma_balanceado_linea').insert(lineas)
       if (e2) throw e2
       setAviso({ tipo: 'ok', texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} productos.` })
-      setContando(false); setEditToma(null); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setObs(''); setContoDespues(false); await cargar()
+      setContando(false); setEditToma(null); setContado({}); setContadoExacto({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setObs(''); setContoDespues(false); await cargar()
     } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') }) }
     finally { setGuardando(false) }
   }
@@ -1114,7 +1122,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           })()}
           <div style={{ padding: '13px 16px', borderTop: '0.5px solid ' + BORDE, background: '#fafcfd',
                         display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button onClick={() => { setContando(false); setContado({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }} style={btn}>Cancelar</button>
+            <button onClick={() => { setContando(false); setContado({}); setContadoExacto({}); setSueltas({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }} style={btn}>Cancelar</button>
             <button onClick={guardarToma} disabled={guardando || !llenadas}
               style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL,
                        opacity: (guardando || !llenadas) ? 0.5 : 1 }}>

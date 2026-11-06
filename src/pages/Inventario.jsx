@@ -565,6 +565,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [fecha, setFecha] = useState(hoyISO())
   const [obs, setObs] = useState('')
   const [contado, setContado] = useState({})
+  const [contadoExacto, setContadoExacto] = useState({})  // al editar: valor exacto guardado (el input muestra 2 decimales)
   const [noContados, setNoContados] = useState('mantiene')  // 'mantiene' | 'cero' — qué pasa con lo que no se cuenta
   const [sobrante, setSobrante] = useState({})       // insumoId -> sobrante en unidad de aplicación
   const [sobranteOn, setSobranteOn] = useState({})   // insumoId -> mostrar casilla de sobrante
@@ -821,7 +822,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const haySob = sob !== undefined && sob !== '' && Number(sob) !== 0
     // El conteo se guarda en unidad de compra (presentación). El sobrante
     // viene en unidad de aplicación → se divide por el factor para sumarlo.
-    const c = (hayMain || haySob) ? (hayMain ? Number(txt) : 0) + (haySob ? Number(String(sob).replace(',', '.')) / fac : 0) : null
+    // Al editar: si el input sigue mostrando el redondeo del valor exacto guardado
+    // (no se tocó), se usa el EXACTO para no perder precisión; si se editó, lo tecleado.
+    const exo = editToma ? contadoExacto[s.insumo_id] : undefined
+    const main = (exo != null && hayMain && Math.round(exo * 100) === Math.round(Number(txt) * 100)) ? exo : Number(txt)
+    const c = (hayMain || haySob) ? (hayMain ? main : 0) + (haySob ? Number(String(sob).replace(',', '.')) / fac : 0) : null
     // Modelo "había": el conteo guarda lo que había al INICIO del día (en unidad
     // de compra). s.saldo ya tiene restado el consumo de hoy, así que había =
     // s.saldo + lo de hoy. Si contó DESPUÉS, escribió lo que quedó → se le suma
@@ -847,7 +852,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
              // Redondeada a 2 decimales para que una diferencia minúscula por la
              // conversión cuente como "cuadra", no "sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sobrante, factores, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit])
+  }), [saldos, precios, contado, contadoExacto, sobrante, factores, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
@@ -1200,7 +1205,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   async function editarConteo(c) {
     const { data } = await supabase.schema('produccion').from('toma_inventario_linea')
       .select('insumo_id, cantidad_contada, cantidad_sistema, consumo_dia, motivo_descuadre').eq('toma_id', c.id)
-    const mapa = {}, md = {}, mo = {}, cd = {}, sis = {}
+    const mapa = {}, mapaExacto = {}, md = {}, mo = {}, cd = {}, sis = {}
     const despues = !!c.conto_despues
     ;(data || []).forEach(l => {
       const contada = Number(l.cantidad_contada)              // lo GUARDADO = el "había" al inicio del día
@@ -1210,7 +1215,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       //  "antes"   → el había tal cual.
       // Las filas vuelven a reconstruir el "había" (quedó + consumo), así que al
       // guardar queda idéntico y ya no hay que corregir insumo por insumo.
-      mapa[l.insumo_id] = String(despues && consumo > 0.0001 ? Math.round((contada - consumo) * 1e6) / 1e6 : contada)
+      const valExacto = despues && consumo > 0.0001 ? contada - consumo : contada
+      // El input muestra 2 decimales; el valor EXACTO se guarda aparte para que los
+      // cálculos y el guardado no pierdan precisión (ver filas/contadoExacto).
+      mapaExacto[l.insumo_id] = valExacto
+      mapa[l.insumo_id] = String(Math.round(valExacto * 100) / 100)
       if (l.consumo_dia != null) cd[l.insumo_id] = String(l.consumo_dia)
       if (l.cantidad_sistema != null) sis[l.insumo_id] = Number(l.cantidad_sistema)
       if (l.motivo_descuadre) {
@@ -1219,7 +1228,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       }
     })
     setConsumoDia(cd); setSistemaEdit(sis)
-    setContado(mapa); setMotivoDesc(md); setMotivoOtro(mo)
+    setContado(mapa); setContadoExacto(mapaExacto); setMotivoDesc(md); setMotivoOtro(mo)
     setFecha(c.fecha); setObs(c.observacion || '')
     setContoDespues(despues); setEditToma(c); setContando(true); setAviso(null)
   }
@@ -1391,7 +1400,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       setAviso({ tipo: 'ok',
         texto: editToma ? 'Conteo actualizado.' : primeraVez ? 'Inventario inicial cargado.' : `Conteo guardado. ${lineas.length} insumos.` })
-      setContando(false); setEditToma(null); setContado({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({}); setContoDespues(false)
+      setContando(false); setEditToma(null); setContado({}); setContadoExacto({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({}); setContoDespues(false)
       await cargar()
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
@@ -1719,7 +1728,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               {llenadas} de {saldos.length} contados
               {!primeraVez && descuadres.length > 0 && ` · ${descuadres.length} no cuadran`}
             </span>
-            <Btn onClick={() => { setContando(false); setContado({}); setSobrante({}); setSobranteOn({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }}>Cancelar</Btn>
+            <Btn onClick={() => { setContando(false); setContado({}); setContadoExacto({}); setSobrante({}); setSobranteOn({}); setMotivoDesc({}); setMotivoOtro({}); setEditToma(null); setContoDespues(false) }}>Cancelar</Btn>
             <Btn primario onClick={guardar} disabled={guardando || !llenadas}>
               {guardando ? 'Guardando...' : editToma ? 'Guardar cambios' : primeraVez ? 'Cargar inventario' : 'Guardar conteo'}
             </Btn>
