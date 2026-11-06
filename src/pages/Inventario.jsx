@@ -828,7 +828,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     // lo de hoy. "El sistema dice" muestra el había (antes) o lo de ahora (después).
     // El sistema es el saldo recalculado: en conteo nuevo = saldo a la fecha (fin
     // de día); al EDITAR = saldo de la víspera (= el "había" antes del conteo).
-    const sis = (saldoFecha[s.insumo_id] != null) ? Number(saldoFecha[s.insumo_id]) : Number(s.saldo)
+    // Al EDITAR se usa el Sistema GUARDADO (cantidad_sistema) del conteo, no un
+    // recálculo en vivo de la víspera: así la diferencia reproduce exactamente la
+    // del acta y re-guardar no la desvía. Fallback a la víspera/saldo para líneas
+    // nuevas agregadas durante la edición (sin sistema guardado).
+    const sisGuardado = editToma ? sistemaEdit[s.insumo_id] : undefined
+    const sis = (sisGuardado != null) ? Number(sisGuardado)
+      : (saldoFecha[s.insumo_id] != null) ? Number(saldoFecha[s.insumo_id]) : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.insumo_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.insumo_id] ?? ''))
     // Al editar, sis YA es la víspera (el había); no se le suma el consumo.
@@ -841,7 +847,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
              // Redondeada a 2 decimales para que una diferencia minúscula por la
              // conversión cuente como "cuadra", no "sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, sobrante, factores, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma])
+  }), [saldos, precios, contado, sobrante, factores, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit])
 
   const descuadres = filas.filter(f => f.diferencia !== null && Math.abs(f.diferencia) > 0.0001)
   const llenadas = filas.filter(f => f.contado !== null).length
