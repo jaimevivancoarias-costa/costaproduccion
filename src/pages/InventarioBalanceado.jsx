@@ -1550,6 +1550,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
                       const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
                       const primerQueda = rows.findIndex(r => Number(r.queda) > 0)
+                      // Tramo ANTES del conteo: el detalle arranca en el último
+                      // conteo del rango, así que no incluye lo consumido antes.
+                      // Se deriva por diferencia con el renglón (consumo del rango),
+                      // así el Total siempre cuadra y se auto-corrige con los precios.
+                      const conteoRow = rows.find(r => r.es_conteo)
+                      const preSacos = (conteoRow && desde && conteoRow.fecha && conteoRow.fecha > desde)
+                        ? Math.max(0, numDec(m.consumo) - tCons) : 0
+                      const preCosto = Math.max(0, numDec(m.consumo_dolares) - tCosto)
+                      const hayPre = preSacos > 0.01
+                      const preAvg = hayPre && preSacos > 0 ? preCosto / preSacos : 0
+                      const totEntro = tEntro + (hayPre ? preSacos : 0)
+                      const totCons = tCons + (hayPre ? preSacos : 0)
+                      const totCosto = tCosto + (hayPre ? preCosto : 0)
                       return (
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
@@ -1562,6 +1575,18 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             <div style={cab}>Consumió</div>
                             <div style={cab}>Queda</div>
                             {esJefe && <div style={cab}>Costo consumido</div>}
+                            {hayPre && (
+                              <Fragment>
+                                <div style={{ textAlign: 'left', lineHeight: 1.45, borderLeft: '2px solid ' + VERDE, borderRadius: 0, paddingLeft: '8px' }}>
+                                  <div style={{ fontWeight: 600, fontSize: '12.5px' }}>Antes del conteo {corta(conteoRow.fecha)}</div>
+                                  <div style={{ color: GRIS, fontSize: '11px' }}>Consumo del saldo anterior{esJefe && preAvg > 0 ? ` · ≈ ${dineroExacto(preAvg)} /saco` : ''}</div>
+                                </div>
+                                <div style={{ ...cel, color: GRIS }}>{limpio(preSacos)}</div>
+                                <div style={{ ...cel, color: ROJO }}>{limpio(preSacos)}</div>
+                                <div style={cel}>0</div>
+                                {esJefe && <div style={cel}>{dinero(preCosto)}</div>}
+                              </Fragment>
+                            )}
                             {rows.map((r, i) => (
                               <Fragment key={i}>
                                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
@@ -1581,10 +1606,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               </Fragment>
                             ))}
                             <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-                            <div style={tot}>{limpio(tEntro)}</div>
-                            <div style={tot}>{limpio(tCons)}</div>
+                            <div style={tot}>{limpio(totEntro)}</div>
+                            <div style={tot}>{limpio(totCons)}</div>
                             <div style={tot}>{limpio(tQueda)}</div>
-                            {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                            {esJefe && <div style={tot}>{dinero(totCosto)}</div>}
                           </div>
                           {esJefe && corrige && corrige.productoId === m.producto_id && (
                             <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
