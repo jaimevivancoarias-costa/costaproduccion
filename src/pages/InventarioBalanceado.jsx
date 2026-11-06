@@ -1570,7 +1570,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const conteoRow = rows.find(r => r.es_conteo)
                       const preSacos = (conteoRow && desde && conteoRow.fecha && conteoRow.fecha > desde)
                         ? Math.max(0, numDec(m.consumo) - tCons) : 0
-                      const preCosto = Math.max(0, numDec(m.consumo_dolares) - tCosto)
+                      // Precio del tramo pre-conteo = el precio de catálogo vigente en
+                      // ese período = el costo del lote del conteo (mismo período de
+                      // precio). Así el costo es real, no un promedio derivado.
+                      const prePrecio = conteoRow ? Number(conteoRow.costo_unitario || 0) : 0
+                      const preCosto = preSacos * prePrecio
                       const hayPre = preSacos > 0.01
                       const totEntro = tEntro + (hayPre ? preSacos : 0)
                       const totCons = tCons + (hayPre ? preSacos : 0)
@@ -1591,7 +1595,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               <Fragment>
                                 <div style={{ textAlign: 'left', lineHeight: 1.45, borderLeft: '2px solid ' + VERDE, borderRadius: 0, paddingLeft: '8px' }}>
                                   <div style={{ fontWeight: 600, fontSize: '12.5px' }}>Antes del conteo {corta(conteoRow.fecha)}</div>
-                                  <div style={{ color: GRIS, fontSize: '11px' }}>Consumo del saldo anterior (lotes previos al conteo)</div>
+                                  {esJefe && prePrecio > 0 && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(prePrecio)} /saco</div>}
+                                  <div style={{ color: GRIS, fontSize: '10px' }}>Consumo del saldo anterior</div>
                                 </div>
                                 <div style={{ ...cel, color: GRIS }}>{limpio(preSacos)}</div>
                                 <div style={{ ...cel, color: ROJO }}>{limpio(preSacos)}</div>
