@@ -93,6 +93,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [motivoEdit, setMotivoEdit] = useState(null)   // { tomaId, productoId } línea editando motivo
   const [motivoSel, setMotivoSel] = useState('')       // opción del dropdown
   const [motivoVal, setMotivoVal] = useState('')       // texto libre cuando es "Otro"
+  const [contEdit, setContEdit] = useState(null)       // { tomaId, productoId } línea editando la cantidad contada
+  const [contVal, setContVal] = useState('')           // valor físico tecleado
+  const [contSaving, setContSaving] = useState(false)
   const [cortesAbiertos, setCortesAbiertos] = useState({})  // toma_id -> abierto/cerrado (resumen colapsable)
   const [conteoDet, setConteoDet] = useState(null)     // producto_id con detalle abierto
   const [lotes, setLotes] = useState({})               // producto_id -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
@@ -457,6 +460,34 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar el motivo. ' + error.message }); return }
     setLineasToma(m => ({ ...m, [tomaId]: (m[tomaId] || []).map(l => l.producto_id === productoId ? { ...l, motivo_descuadre: v } : l) }))
     setMotivoEdit(null); setMotivoSel(''); setMotivoVal('')
+  }
+
+  // Edición PUNTUAL de una línea: corrige lo contado de UN solo producto sin
+  // reabrir el conteo (no borra/reinserta las demás). Se teclea lo FÍSICO; se
+  // reconstruye el "había" sumando consumo_dia CONGELADO una sola vez (igual que
+  // editarToma) y se recalcula la diferencia.
+  function abrirContB(t, l) {
+    const cons = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+    const contada = Number(l.cantidad_contada)
+    const fisico = (t.conto_despues_ui && cons > 0.0001) ? contada - cons : contada
+    setContEdit({ tomaId: t.id, productoId: l.producto_id })
+    setContVal(String(Math.round(fisico * 100) / 100))
+  }
+  async function guardarContB(t, l) {
+    const fisico = Number(String(contVal).replace(',', '.'))
+    if (!isFinite(fisico) || fisico < 0) { setAviso({ tipo: 'error', texto: 'Escribe una cantidad válida.' }); return }
+    const cons = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+    const habia = (t.conto_despues_ui && cons > 0.0001) ? fisico + cons : fisico
+    const sistema = Number(l.cantidad_sistema)
+    const diferencia = habia - sistema
+    setContSaving(true); setAviso(null)
+    const { error } = await supabase.schema('produccion').from('toma_balanceado_linea')
+      .update({ cantidad_contada: habia, diferencia }).eq('toma_id', t.id).eq('producto_id', l.producto_id)
+    setContSaving(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [t.id]: (m[t.id] || []).map(x => x.producto_id === l.producto_id ? { ...x, cantidad_contada: habia, diferencia } : x) }))
+    setContEdit(null); setContVal('')
+    setAviso({ tipo: 'ok', texto: `${nombreProducto(l.producto_id)}: corregido a ${limpio(fisico)} contado.` })
   }
 
   // Acta de un corte para imprimir (PDF), con Sistema en vivo.
@@ -1868,7 +1899,32 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
                             </>}
                           </span>
-                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{limpio(l.cantidad_contada)}</span>
+                          <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                            {(() => {
+                              const editC = contEdit && contEdit.tomaId === t.id && contEdit.productoId === l.producto_id
+                              if (editC) {
+                                const consF = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+                                const reconstruye = t.conto_despues_ui && consF > 0.0001
+                                const fisNum = Number(String(contVal).replace(',', '.'))
+                                return (
+                                  <span style={{ display: 'inline-flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-end' }}>
+                                    <span style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                                      <input autoFocus value={contVal} onChange={e => setContVal(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') guardarContB(t, l); if (e.key === 'Escape') { setContEdit(null); setContVal('') } }}
+                                        style={{ ...inp, padding: '3px 7px', fontSize: '12px', width: '66px', textAlign: 'right' }} />
+                                      <button disabled={contSaving} onClick={() => guardarContB(t, l)} style={{ ...btnLink, fontSize: '11.5px' }}>Guardar</button>
+                                      <button onClick={() => { setContEdit(null); setContVal('') }} style={{ border: 'none', background: 'none', color: GRIS, fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' }}>✕</button>
+                                    </span>
+                                    {reconstruye && isFinite(fisNum) && <span style={{ fontSize: '10px', color: '#9fb0bf', fontWeight: 400 }}>había = {limpio(fisNum)} + {limpio(consF)} = {limpio(fisNum + consF)}</span>}
+                                  </span>
+                                )
+                              }
+                              return <>
+                                {limpio(l.cantidad_contada)}
+                                {esJefe && !t.es_inicial && <button onClick={() => abrirContB(t, l)} title="Corregir lo contado" style={{ border: 'none', background: 'none', padding: 0, marginLeft: '6px', cursor: 'pointer', verticalAlign: 'middle', lineHeight: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={AZUL} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19 3 20l1-4Z"/></svg></button>}
+                              </>
+                            })()}
+                          </span>
                           <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {t.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
                             {esJefe && !t.es_inicial && (falto || sobro) && (

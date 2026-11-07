@@ -540,7 +540,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                               }
                               return <>
                                 {limpio(l.cantidad_contada)}
-                                {esJefe && !c.es_inicial && <button onClick={() => abrirContC(c, l)} title="Corregir lo contado" style={{ ...link, fontSize: '10.5px', marginLeft: '6px' }}>✏️</button>}
+                                {esJefe && !c.es_inicial && <button onClick={() => abrirContC(c, l)} title="Corregir lo contado" style={{ border: 'none', background: 'none', padding: 0, marginLeft: '6px', cursor: 'pointer', verticalAlign: 'middle', lineHeight: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={AZUL} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19 3 20l1-4Z"/></svg></button>}
                               </>
                             })()}
                           </span>
