@@ -33,6 +33,8 @@ const UNIDAD = {
 }
 
 const primerDelMes = () => { const h = hoyISO(); return h.slice(0, 8) + '01' }
+const finMesPasado = () => sumarDias(primerDelMes(), -1)
+const primerMesPasado = () => finMesPasado().slice(0, 8) + '01'
 
 export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
   const [modo, setModo] = useState('ingresos')   // 'ingresos' | 'pedidos'
@@ -235,6 +237,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
         <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
         <GhostBtn on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+        <GhostBtn on={desde === primerMesPasado() && hasta === finMesPasado()} onClick={() => { setDesde(primerMesPasado()); setHasta(finMesPasado()) }}>Mes pasado</GhostBtn>
         <select value={filtroIns} onChange={e => setFiltroIns(e.target.value)}
                 style={{ ...entrada, marginLeft: 'auto', minWidth: '210px', padding: '9px 12px' }}>
           <option value="">Todos los insumos</option>
