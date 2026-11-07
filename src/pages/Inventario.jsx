@@ -120,6 +120,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [motivoEdit, setMotivoEdit] = useState(null)  // { tomaId, insumoId } línea editando motivo
   const [motivoSel, setMotivoSel] = useState('')      // opción del dropdown
   const [motivoVal, setMotivoVal] = useState('')      // texto libre cuando es "Otro"
+  const [contEdit, setContEdit] = useState(null)      // { tomaId, insumoId } línea editando la cantidad contada
+  const [contVal, setContVal] = useState('')          // valor físico tecleado
+  const [contSaving, setContSaving] = useState(false)
   const [cortesAbiertos, setCortesAbiertos] = useState({})  // toma_id -> abierto/cerrado
   const [saldoAntes, setSaldoAntes] = useState({})    // insumo_id -> saldo víspera del último conteo del rango (Por fechas)
   const [conteosRango, setConteosRango] = useState({}) // insumo_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
@@ -323,6 +326,34 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setMotivoEdit(null); setMotivoSel(''); setMotivoVal('')
   }
 
+  // Edición PUNTUAL de una línea: corrige la cantidad contada de UN solo producto
+  // sin reabrir el conteo completo (no borra/reinserta las demás líneas). Se teclea
+  // lo que FÍSICAMENTE se contó; se reconstruye el "había" sumando el consumo_dia
+  // CONGELADO una sola vez (igual que editarConteo) y se recalcula la diferencia.
+  function abrirContC(c, l) {
+    const cons = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+    const contada = Number(l.cantidad_contada)
+    const fisico = (c.conto_despues && cons > 0.0001) ? contada - cons : contada
+    setContEdit({ tomaId: c.id, insumoId: l.insumo_id })
+    setContVal(String(Math.round(fisico * 100) / 100))
+  }
+  async function guardarContC(c, l) {
+    const fisico = Number(String(contVal).replace(',', '.'))
+    if (!isFinite(fisico) || fisico < 0) { setAviso({ tipo: 'error', texto: 'Escribe una cantidad válida.' }); return }
+    const cons = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+    const habia = (c.conto_despues && cons > 0.0001) ? fisico + cons : fisico
+    const sistema = Number(l.cantidad_sistema)
+    const diferencia = habia - sistema
+    setContSaving(true); setAviso(null)
+    const { error } = await supabase.schema('produccion').from('toma_inventario_linea')
+      .update({ cantidad_contada: habia, diferencia }).eq('toma_id', c.id).eq('insumo_id', l.insumo_id)
+    setContSaving(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [c.id]: (m[c.id] || []).map(x => x.insumo_id === l.insumo_id ? { ...x, cantidad_contada: habia, diferencia } : x) }))
+    setContEdit(null); setContVal('')
+    setAviso({ tipo: 'ok', texto: `${nombreInsumo(l.insumo_id)}: corregido a ${limpio(fisico)} contado.` })
+  }
+
   // Acta de un corte para imprimir (PDF), con Sistema en vivo.
   function imprimirCorte(c, idx, lins, cons) {
     const autor = nombresU[c.creado_por]
@@ -488,7 +519,30 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                             </>}
                           </span>
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                            {limpio(l.cantidad_contada)}
+                            {(() => {
+                              const editC = contEdit && contEdit.tomaId === c.id && contEdit.insumoId === l.insumo_id
+                              if (editC) {
+                                const consF = l.consumo_dia != null ? Number(l.consumo_dia) : 0
+                                const reconstruye = c.conto_despues && consF > 0.0001
+                                const fisNum = Number(String(contVal).replace(',', '.'))
+                                return (
+                                  <span style={{ display: 'inline-flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-end' }}>
+                                    <span style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                                      <input autoFocus value={contVal} onChange={e => setContVal(e.target.value)}
+                                        onKeyDown={e => { if (e.key === 'Enter') guardarContC(c, l); if (e.key === 'Escape') { setContEdit(null); setContVal('') } }}
+                                        style={{ ...entrada, padding: '3px 7px', fontSize: '12px', width: '66px', textAlign: 'right' }} />
+                                      <button disabled={contSaving} onClick={() => guardarContC(c, l)} style={{ ...link, fontSize: '11.5px' }}>Guardar</button>
+                                      <button onClick={() => { setContEdit(null); setContVal('') }} style={{ border: 'none', background: 'none', color: GRIS, fontSize: '12px', cursor: 'pointer', fontFamily: 'inherit' }}>✕</button>
+                                    </span>
+                                    {reconstruye && isFinite(fisNum) && <span style={{ fontSize: '10px', color: '#9fb0bf', fontWeight: 400 }}>había = {limpio(fisNum)} + {limpio(consF)} = {limpio(fisNum + consF)}</span>}
+                                  </span>
+                                )
+                              }
+                              return <>
+                                {limpio(l.cantidad_contada)}
+                                {esJefe && !c.es_inicial && <button onClick={() => abrirContC(c, l)} title="Corregir lo contado" style={{ ...link, fontSize: '10.5px', marginLeft: '6px' }}>✏️</button>}
+                              </>
+                            })()}
                           </span>
                           <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
