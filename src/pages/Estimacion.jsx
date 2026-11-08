@@ -822,7 +822,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const mostrarPvE = !!(pve && pve.dias > 0)
   // 5.4 Rentabilidad: cosechar hoy vs esperar a meta (valor de continuar). Larva = costo hundido.
   const rent = (() => {
-    if (!est || !fila || bloqueado || !(biomasaSel > 0)) return null
+    // Ya NO se oculta por estar bloqueado (la densidad no se toma en cuenta): se
+    // muestra siempre y, si la biomasa no está validada, se marca como referencial.
+    if (!est || !fila || !(biomasaSel > 0)) return null
     const gHoy = fila.gramaje
     const area = fila.area
     const consumoAcumLb = est.consumoAcum
@@ -1612,6 +1614,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         {rent && (
           <div style={{ marginTop: '14px' }}><Caja>
             <Titulo>Rentabilidad · cosechar hoy vs esperar a meta</Titulo>
+            {bloqueado && <div style={{ fontSize: '11.5px', color: '#854F0B', background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Referencial · la biomasa aún no está validada. Guárdala arriba para confirmar estos números.</div>}
             {!rent.noComercial && rent.supuesto != null && (
               <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>Sobre el escenario elegido: <b style={{ color: NAVY, fontWeight: 500 }}>{rent.supuesto}% de la biomasa oficial</b>{rent.supuesto === 100 ? ' (oficial)' : ''}{rent.hoy ? ` · ${miles(rent.hoy.libras)} lb` : ''}.</div>
             )}
