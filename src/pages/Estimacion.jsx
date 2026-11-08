@@ -268,6 +268,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [pendiente, setPendiente] = useState({}) // cicloId -> solicitud pendiente de aprobación (esta semana)
   const [bandeja, setBandeja] = useState(false)   // panel de aprobaciones pendientes
   const [herrOpen, setHerrOpen] = useState(false) // menú Herramientas del encabezado
+  const [verMatriz, setVerMatriz] = useState(false) // expandir la matriz completa de supuestos
   const semRef = useRef(null)                     // date input oculto del selector de semana
   const [rechazando, setRechazando] = useState(null) // id de solicitud en rechazo
   const [rechCod, setRechCod] = useState(''); const [rechTxt, setRechTxt] = useState('')
@@ -785,7 +786,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   // Aplicar: solo jefe; deshabilitado en simulación/bloqueado; motivo obligatorio si no es la recomendada.
   const puedeAplicar = finca.rol === 'jefe'
   const aplicarOk = !!(puedeAplicar && estadoPlan && (estadoPlan.k === 'aplicable' || estadoPlan.k === 'confirmar'))
-  const requiereMotivo = !esReco
   const yaAplicada = !!(apRec && apRec.fila_pct === celdaAct.fila && apRec.intensidad === celdaAct.inten)
   // Alerta de cambio vs el escenario activo: por DÍA (dosis) y por SEMANA (sacos, que
   // captura también cambios de calendario). El nivel sale del cambio mayor. ≤10% normal
@@ -801,6 +801,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const deltaDosis = [deltaDia, deltaSem].filter(d => d != null).reduce((a, b) => (a == null || Math.abs(b) > Math.abs(a) ? b : a), null)
   const nivelCambio = nivelCambioDe(deltaDosis)
   const requiereAprobacion = nivelCambio === 'fuerte'     // >20% → doble aprobación (5.6)
+  // El motivo solo se pide cuando el desvío es FUERTE (>20%); los desvíos chicos aplican directo.
+  const requiereMotivo = nivelCambio === 'fuerte'
   const faltaMotivo = requiereMotivo && (!motivoCod || (motivoCod === 'otro' && !motivoTxt.trim()))
   const pendSel = pendiente[sel] || null                  // solicitud pendiente de esta piscina/semana
   const soyRemitente = pendSel && pendSel.aplicado_por === userId
@@ -1405,16 +1407,43 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               <b>{estadoPlan.txt}.</b> {estadoPlan.detalle}{estadoPlan.k === 'simulacion' ? ' — los sacos son referenciales.' : ''}
             </div>
           ) : (
-            <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '11px 13px', marginBottom: '13px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.6 }}>
-              <b style={{ color: NAVY, fontWeight: 500 }}>¿Por qué {cap(est.escenario)}?</b> {porQueTxt}
+            <div style={{ background: '#f6f9fb', borderRadius: '9px', padding: '10px 13px', marginBottom: '13px' }}>
+              <div style={{ fontSize: '12.5px', color: NAVY, lineHeight: 1.45 }}>Recomendación: <b style={{ fontWeight: 500 }}>{cap(intenLbl(recoInten))}</b></div>
+              <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '3px', lineHeight: 1.5 }}>{porQueTxt}</div>
             </div>
           )}
 
-          <div style={{ fontSize: '10.5px', color: '#9fb0bf', margin: '0 2px 7px' }}>1 · Elige el escenario — fila: supuesto de biomasa · columna: intensidad</div>
-          <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} dias={diasAlim} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => elegirCelda(f, k)} />
-          <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 2px 14px', lineHeight: 1.5 }}>
-            Recomendada {hayReco ? `(100% · ${cap(intenLbl(recoInten))})` : '— sin recomendación hasta validar'} · ● Tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
+          <div style={{ fontSize: '11px', color: '#7d8fa0', margin: '0 2px 9px' }}>
+            <b style={{ fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.04em', color: '#7d8fa0' }}>1 · Elige la intensidad</b> · Supuesto {celdaAct.fila}% · guardado arriba · <span onClick={() => setVerMatriz(v => !v)} style={{ color: AZUL, cursor: 'pointer' }}>{verMatriz ? 'Ver solo intensidad' : 'Ver otros supuestos'}</span>
           </div>
+          {verMatriz ? (<>
+            <Matriz oficial={biomasaSel} plan={est.plan} pesoSaco={PARAM.pesoSaco} dias={diasAlim} recoFila={recoFila} recoInten={recoInten} hayReco={hayReco} sel={celdaAct} onSel={(f, k) => elegirCelda(f, k)} />
+            <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 2px 14px', lineHeight: 1.5 }}>
+              Recomendada {hayReco ? `(100% · ${cap(intenLbl(recoInten))})` : '— sin recomendación hasta validar'} · ● Tu elección · 100% = biomasa oficial, 90/80/70 = supuesto conservador
+            </div>
+          </>) : (() => {
+            // 3 tarjetas de intensidad para el supuesto ya elegido (celdaAct.fila).
+            const bio = biomasaSel * celdaAct.fila / 100
+            return (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginBottom: '14px' }}>
+                {[['BAJO', 'Baja'], ['MEDIO', 'Media'], ['ALTO', 'Alta']].map(([k, lbl]) => {
+                  const tasa = est.plan[k] ? est.plan[k].tasaDia : 0
+                  const lbDia = bio * tasa / 100
+                  const selC = k === celdaAct.inten
+                  const recoC = hayReco && k === recoInten
+                  return (
+                    <button key={k} type="button" onClick={() => elegirCelda(celdaAct.fila, k)}
+                      style={{ textAlign: 'center', fontFamily: 'inherit', cursor: 'pointer', borderRadius: '10px', padding: '11px 10px', background: selC ? '#f4f9ff' : '#fff', border: (selC ? '2px' : '0.5px') + ' solid ' + (selC ? AZUL : BORDE) }}>
+                      <div style={{ fontSize: '10px', fontWeight: 500, marginBottom: '3px', color: selC ? AZUL : recoC ? VERDE : 'transparent' }}>{selC ? '● Tu elección' : recoC ? 'Recomendada' : '·'}</div>
+                      <div style={{ fontSize: '12px', color: GRIS }}>{lbl}</div>
+                      <div style={{ fontSize: '20px', fontWeight: 500, color: NAVY }}>{miles(lbDia)}</div>
+                      <div style={{ fontSize: '11px', color: '#9fb0bf' }}>{num1(lbDia / PARAM.pesoSaco)} sacos/día</div>
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.25fr 1fr', gap: '14px' }}>
             {/* Detalle de la celda activa (cierra exacto: biomasa × tasa = lb/día) */}
@@ -1967,13 +1996,15 @@ function Calendario({ dias, editable, onToggle, lbDia = 0, hoy = null }) {
         const estado = d.tipo === 'sin' ? 'Sin registro'
           : d.cerrado ? (d.tipo === 'fed' ? 'Dado' : 'Ayuno')
           : !d.alimenta ? 'Ayuno' : esHoy ? 'Hoy' : 'Plan'
-        const col = d.tipo === 'sin' ? ROJO : (d.alimenta || d.tipo === 'fed') ? '#0F6E56' : '#854F0B'
-        const bg = d.tipo === 'sin' ? '#FBEAEA' : (d.alimenta || d.tipo === 'fed') ? '#e7f6ef' : '#FBF5E9'
-        const bd = esHoy ? AZUL : d.tipo === 'sin' ? '#e7cccb' : (d.alimenta || d.tipo === 'fed') ? '#bfe6d2' : '#ecd9b4'
+        // Día ya DADO (cerrado + alimentó) = gris (ya pasó); el resto conserva su color.
+        const dado = d.cerrado && d.tipo === 'fed'
+        const col = d.tipo === 'sin' ? ROJO : dado ? '#7d8fa0' : (d.alimenta || d.tipo === 'fed') ? '#0F6E56' : '#854F0B'
+        const bg = d.tipo === 'sin' ? '#FBEAEA' : dado ? '#f1f3f6' : (d.alimenta || d.tipo === 'fed') ? '#e7f6ef' : '#FBF5E9'
+        const bd = esHoy ? AZUL : d.tipo === 'sin' ? '#e7cccb' : dado ? '#e3e7ec' : (d.alimenta || d.tipo === 'fed') ? '#bfe6d2' : '#ecd9b4'
         const base = { textAlign: 'center', padding: '7px 2px', borderRadius: '8px', background: bg, border: (esHoy ? '2px' : '1px') + ' solid ' + bd, width: '100%', fontFamily: 'inherit', boxSizing: 'border-box' }
         const inner = (<>
           <div style={{ fontSize: '10.5px', color: GRIS }}>{DIA_LBL[d.i ?? i]}</div>
-          <div style={{ fontSize: '12.5px', fontWeight: 500, color: lbMostrar != null ? NAVY : col }}>{lbMostrar != null ? miles(lbMostrar) : (d.tipo === 'sin' ? '—' : 'Ayuno')}</div>
+          <div style={{ fontSize: '12.5px', fontWeight: 500, color: lbMostrar != null ? (dado ? '#7d8fa0' : NAVY) : col }}>{lbMostrar != null ? miles(lbMostrar) : (d.tipo === 'sin' ? '—' : 'Ayuno')}</div>
           {lbMostrar != null && <div style={{ fontSize: '9px', color: '#9fb0bf' }}>{num1(lbMostrar / PARAM.pesoSaco)} sacos</div>}
           <div style={{ fontSize: '9.5px', color: d.cerrado && d.tipo === 'fed' ? GRIS : col }}>{estado}</div>
         </>)
