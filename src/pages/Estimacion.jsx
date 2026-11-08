@@ -1636,7 +1636,7 @@ function TableroView({ tablero, pedidoNeto, invCorte, reservaDias, finca, onVer 
   const fechaHoraCorta = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
   const estProd = { pedir: ['Pedir', AZUL], cubierto: ['Cubierto', VERDE], falta: ['Dato faltante', AMBAR] }
   // Estado de crecimiento a partir de la lectura biológica.
-  const tonoInfo = t => t === 'malo' ? ['muy atrasado', ROJO] : t === 'alerta' ? ['atrasado', AMBAR] : ['en ritmo', VERDE]
+  const tonoInfo = t => t === 'malo' ? ['Muy atrasado', ROJO] : t === 'alerta' ? ['Atrasado', AMBAR] : ['En ritmo', VERDE]
   const gSemDe = r => (r.est && r.est.gDiaObs > 0) ? r.est.gDiaObs * 7 : null
   // Motivo de atención (orden: cosechar/bloqueada = alta, resto = media). null = al día.
   const atencionDe = r => {
@@ -1662,20 +1662,20 @@ function TableroView({ tablero, pedidoNeto, invCorte, reservaDias, finca, onVer 
         {atencion.map(({ r, a }) => {
           const gs = gSemDe(r); const [gLbl, gCol] = tonoInfo(r.est && r.est.lectura && r.est.lectura.tono)
           return (
-            <div key={r.f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + a.bd, borderLeft: '3px solid ' + a.col, borderRadius: '10px', padding: '11px 14px' }}>
-              <div style={{ minWidth: '78px' }}>
+            <div key={r.f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '28px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + a.bd, borderLeft: '3px solid ' + a.col, borderRadius: '10px', padding: '11px 18px' }}>
+              <div style={{ minWidth: '84px' }}>
                 <div style={{ fontWeight: 500, fontSize: '13px', color: NAVY }}>{r.f.nombre}</div>
-                <div style={{ fontSize: '10.5px', color: GRIS }}>día {r.f.dias} · {num1(r.f.gramaje)} g</div>
+                <div style={{ fontSize: '10.5px', color: GRIS }}>Día {r.f.dias} · {num1(r.f.gramaje)} g</div>
               </div>
-              <div style={{ minWidth: '92px' }}>
+              <div style={{ minWidth: '104px' }}>
                 <div style={{ fontSize: '10.5px', color: GRIS }}>Crecimiento</div>
                 <div style={{ fontSize: '12px' }}>{gs ? <><span style={{ color: gCol }}>+{num1(gs)} g/sem</span> <span style={{ color: '#9fb0bf' }}>·</span> <span style={{ color: gCol }}>{gLbl}</span></> : <span style={{ color: '#c9d3dc' }}>—</span>}</div>
               </div>
-              <div style={{ minWidth: '76px' }}>
+              <div style={{ minWidth: '82px' }}>
                 <div style={{ fontSize: '10.5px', color: GRIS }}>Biomasa</div>
-                <div style={{ fontSize: '12px', fontWeight: 500, color: r.bloqueado ? '#c9d3dc' : NAVY }}>{r.bloqueado ? 'sin validar' : miles(r.biomasaSel) + ' lb'}</div>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: r.bloqueado ? '#c9d3dc' : NAVY }}>{r.bloqueado ? 'Sin validar' : miles(r.biomasaSel) + ' lb'}</div>
               </div>
-              <div style={{ flex: 1, minWidth: '130px' }}>
+              <div style={{ flex: 1, minWidth: '150px' }}>
                 <div style={{ fontSize: '10.5px', color: GRIS }}>{a.label}</div>
                 <div style={{ fontSize: '12.5px', fontWeight: 500, color: a.col }}>{a.txt}</div>
               </div>
