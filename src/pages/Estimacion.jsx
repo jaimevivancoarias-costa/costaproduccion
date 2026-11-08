@@ -1262,7 +1262,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             </div>
           </Caja>
 
-          {/* Banda 2 — Biomasa y sobrevivencia: consumo vs densidad en tiles */}
+          {/* Banda 2 — Biomasa y sobrevivencia: consumo vs densidad en tiles.
+              OCULTA por ahora (pedido Melany, nov 2026): cambiar false→true para volver. */}
+          {false && (
           <Caja>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '12px', flexWrap: 'wrap', gap: '6px' }}>
               <Titulo sinMargen>Biomasa y sobrevivencia</Titulo>
@@ -1284,6 +1286,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
               ))}
             </div>
           </Caja>
+          )}
 
           {/* Banda 3 — Ventana de consumo: 7 / 14 / 21 días, plano (incluye ayunos). */}
           {ventanas.length > 0 && (
@@ -2122,7 +2125,7 @@ function BarrasSemana({ puntos }) {
                 </div>
               )}
               <div style={{ width: '100%', maxWidth: '30px', height: `${alturaPct}%`, background: neg ? ROJO : VERDE, opacity: activo ? 1 : esHoy ? 0.92 : 0.5, borderRadius: '3px 3px 0 0', transition: 'opacity .12s' }} />
-              <div style={{ fontSize: '9px', color: esHoy ? NAVY : '#9fb0bf', marginTop: '4px', fontWeight: esHoy ? 500 : 400, whiteSpace: 'nowrap' }}>{esHoy ? 'hoy' : cortita(s.lunes)}</div>
+              <div style={{ fontSize: '9px', color: esHoy ? NAVY : '#9fb0bf', marginTop: '4px', fontWeight: esHoy ? 500 : 400, whiteSpace: 'nowrap' }}>{esHoy ? 'Hoy' : cortita(s.lunes)}</div>
             </div>
           )
         })}
