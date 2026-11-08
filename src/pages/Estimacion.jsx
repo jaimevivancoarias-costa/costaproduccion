@@ -1367,7 +1367,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#e7f6ef', border: '0.5px solid #bfe6d2', borderRadius: '10px', padding: '11px 13px', flexWrap: 'wrap' }}>
                   <span style={{ width: '22px', height: '22px', borderRadius: '50%', background: VERDE, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flex: '0 0 auto', fontSize: '12px' }}>✓</span>
                   <div style={{ flex: 1, minWidth: '180px' }}>
-                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F6E56' }}>Guardado · {vald.fuente === 'consumo' ? 'Por consumo' : vald.fuente === 'densidad' ? 'Por densidad' : 'Aprobada'} · {miles(vald.valor_lb)} lb</div>
+                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F6E56' }}>Guardado · {miles(biomasaAsumida)} lb <span style={{ fontWeight: 400, fontSize: '11px' }}>({celdaAct.fila}% de la oficial)</span></div>
                     <div style={{ fontSize: '11px', color: '#3d7a63' }}>Validó {vald.validada_nombre || '—'} · {vald.validada_en ? fechaHora(vald.validada_en) : (vald.fecha_ref ? corta(vald.fecha_ref) : '—')}</div>
                   </div>
                   <button onClick={quitarValidacion} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: AZUL, borderColor: '#bcd3ec', padding: '6px 14px' }}>Editar</button>
@@ -1379,7 +1379,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 elige en la tabla de arriba, así que aquí solo se guarda. */}
             {esJefe && !valdOk && (
               <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '13px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                <button onClick={() => validarBiomasa('consumo')} style={btnAzul}>Guardar · {miles(est.biomasaConsumo)} lb</button>
+                <button onClick={() => validarBiomasa('consumo')} style={btnAzul}>Guardar · {miles(biomasaAsumida)} lb</button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Se guarda quién la validó y cuándo. Desde ahí se recalculan sacos, FCR, costos y tolvas.</span>
               </div>
             )}
