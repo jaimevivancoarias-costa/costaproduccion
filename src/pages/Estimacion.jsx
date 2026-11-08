@@ -230,7 +230,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [patFinca, setPatFinca] = useState({}) // dia(1-7) -> alimenta (patrón de la finca)
   const [patPisc, setPatPisc] = useState({})   // piscinaId -> { dia -> alimenta } (override)
   const [planSemana, setPlanSemana] = useState({}) // cicloId -> { confirmada, dias:{fecha:alimenta}, ... }
-  const [patronAudit, setPatronAudit] = useState(null) // { nombre, en } de la última edición del patrón
   const [aplicadoPrev, setAplicadoPrev] = useState({}) // cicloId -> aplicado de la semana anterior (para Δ)
   const [productos, setProductos] = useState({})       // producto_id -> nombre
   const [inventario, setInventario] = useState({})     // producto_id -> saldo_final (sacos)
@@ -242,13 +241,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [editPrecio, setEditPrecio] = useState(false)  // editor de precios de venta
   const [precioTmp, setPrecioTmp] = useState(null)     // edición en curso del editor de precios
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
-  const [filtro, setFiltro] = useState('todas')
   const [desdeTablero, setDesdeTablero] = useState(false)
   const [cal, setCal] = useState(null)         // overrides de días futuros: { fecha -> alimenta } (null = propuesta)
-  const [editPat, setEditPat] = useState(false) // editor del patrón de finca
-  const [patTmp, setPatTmp] = useState({})      // patrón en edición { dia -> alimenta }
-  const [masivo, setMasivo] = useState(false)   // panel de preparación masiva
-  const [masSel, setMasSel] = useState(null)    // Set de cicloId seleccionados en el panel masivo
   const [celda, setCelda] = useState(null)     // vista previa: { fila, inten } (null = usa la recomendada/aplicada)
   const [motivoTxt, setMotivoTxt] = useState('')
   const [motivoCod, setMotivoCod] = useState('')
@@ -326,7 +320,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     })
     setValida(bvDe); setAplicado(apDe); setPendiente(pendDe); setFincaRac(fr && fr.raciones != null ? Number(fr.raciones) : null)
     setPatFinca(patF); setPatPisc(patP); setPlanSemana(planDe)
-    setPatronAudit(patEn ? { nombre: nomDe[patPor] || null, en: patEn } : null)
     const apPrevDe = {}; (apPrev || []).forEach(r => { apPrevDe[r.ciclo_id] = r })
     setAplicadoPrev(apPrevDe)
     // Producto por piscina (el de la alimentación más reciente), inventario y tránsito.
@@ -660,17 +653,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     setCal(null)
     setAviso({ tipo: 'ok', texto: 'Semana confirmada.' })
   }
-  // Guarda el patrón de alimentación de la finca (7 días).
-  async function guardarPatron() {
-    const ahora = new Date().toISOString()
-    const filasPat = [1, 2, 3, 4, 5, 6, 7].map(d => ({ finca_id: finca.id, dia: d, alimenta: patTmp[d] !== false, actualizado_por: userId, actualizado_en: ahora }))
-    const { error } = await supabase.schema('produccion').from('finca_patron_dia').upsert(filasPat, { onConflict: 'finca_id,dia' })
-    if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'guardar el patrón') }); return }
-    const nuevo = {}; filasPat.forEach(r => { nuevo[r.dia] = r.alimenta })
-    setPatFinca(nuevo); setPatronAudit({ nombre: nombre || null, en: ahora }); setEditPat(false)
-    const ayunoDias = [1, 2, 3, 4, 5, 6, 7].filter(d => patTmp[d] === false).map(d => DIA_LBL[d - 1])
-    setAviso({ tipo: 'ok', texto: `Patrón guardado por ${nombre || 'ti'} · ${ayunoDias.length ? 'ayuno ' + ayunoDias.join(', ') : 'todos los días'} · vigente desde ${corta(hoyISO())}` })
-  }
   // Editor de precios de venta (lista entero/cola + rendimientos + dispersión).
   function abrirPrecios() {
     setPrecioTmp({
@@ -696,29 +678,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     setPrecioOpts({ enteroLista: t.enteroLista.map(Number), colaLista: t.colaLista.map(Number), rendEntero: Number(t.rendEntero), rendCola: Number(t.rendCola), cv: Number(t.cv) })
     setEditPrecio(false); setAviso({ tipo: 'ok', texto: 'Precios de venta actualizados.' })
   }
-  // Abre el panel masivo preseleccionando las piscinas confirmables (sin días sin registro).
-  function abrirMasivo() {
-    const sel0 = new Set(ciclos.filter(f => !construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null).some(d => d.tipo === 'sin')).map(f => f.cicloId))
-    setMasSel(sel0); setMasivo(true)
-  }
-  // Confirma la semana para las piscinas seleccionadas (bucle sobre confirmar_semana).
-  async function confirmarMasivo() {
-    const seleccion = masSel || new Set()
-    let ok = 0, err = 0
-    for (const f of ciclos.filter(c => seleccion.has(c.cicloId))) {
-      const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
-      if (dias.some(d => d.tipo === 'sin')) { err++; continue }
-      const payload = dias.map(d => ({ fecha: d.fecha, alimenta: d.alimenta }))
-      const { error } = await supabase.schema('produccion').rpc('confirmar_semana', { p_ciclo_id: f.cicloId, p_semana_ref: hasta, p_dias: payload })
-      if (error) { err++; continue }
-      const dm = {}; payload.forEach(d => { dm[d.fecha] = d.alimenta })
-      setPlanSemana(p => ({ ...p, [f.cicloId]: { confirmada: true, confirmada_en: new Date().toISOString(), confirmada_por: userId, dias: dm } }))
-      ok++
-    }
-    setMasivo(false); setMasSel(null)
-    setAviso({ tipo: err ? 'error' : 'ok', texto: `Confirmadas ${ok} piscina(s)${err ? ` · ${err} con días sin registro` : ''}.` })
-  }
-
   const diasRest = est ? Math.max(0, est.diasProyectados - fila.dias) : 0
   const estadoPlan = planEstadoDe({ est, v, bm, bloqueado, vig })
   // Matriz de escenarios: filas = supuesto de biomasa (% de la oficial), columnas
@@ -941,8 +900,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <div style={{ position: 'absolute', top: 'calc(100% + 5px)', right: 0, zIndex: 41, background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', boxShadow: '0 8px 24px rgba(2,40,71,.12)', padding: '5px', minWidth: '184px' }}>
                   {[
                     ...(finca.rol === 'jefe' ? [
-                      ['Patrón de finca', 'Qué días alimenta la finca por defecto', () => { setPatTmp(Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map(d => [d, patFinca[d] !== false]))); setEditPat(true) }],
-                      ['Preparar semana', 'Confirma la semana para varias piscinas', abrirMasivo],
                       ['Precios', 'Lista de precios de venta (entero/cola)', abrirPrecios],
                     ] : []),
                     ...(esJefe ? [[diag ? 'Ocultar diagnóstico' : 'Diagnóstico', 'Ventana de consumo actual vs ponderada', () => setDiag(d => !d)]] : []),
@@ -962,31 +919,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
       {aviso && <div style={{ borderRadius: '10px', padding: '11px 14px', fontSize: '13px', marginBottom: '12px', background: aviso.tipo === 'ok' ? '#E1F5EE' : '#FBEAEA', color: aviso.tipo === 'ok' ? '#0F6E56' : '#8A2F2E' }}>{aviso.texto}</div>}
 
-      {editPat && (
-        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-            <div style={{ fontSize: '14px', fontWeight: 500 }}>Patrón de alimentación · {finca.nombre}</div>
-            <button onClick={() => setEditPat(false)} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: '6px' }}>
-            {[1, 2, 3, 4, 5, 6, 7].map(d => {
-              const on = patTmp[d] !== false
-              return (
-                <button key={d} type="button" aria-pressed={on} onClick={() => setPatTmp(p => ({ ...p, [d]: !on }))}
-                  style={{ textAlign: 'center', padding: '8px 2px', borderRadius: '8px', fontFamily: 'inherit', cursor: 'pointer', background: on ? '#e7f6ef' : '#FBF5E9', border: '1px solid ' + (on ? '#bfe6d2' : '#ecd9b4') }}>
-                  <div style={{ fontSize: '11px', color: NAVY, fontWeight: 500 }}>{DIA_LBL[d - 1]}</div>
-                  <div style={{ fontSize: '9.5px', color: on ? '#0F6E56' : '#854F0B' }}>{on ? 'Alimenta' : 'Ayuno'}</div>
-                </button>
-              )
-            })}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '12px', flexWrap: 'wrap' }}>
-            <button onClick={guardarPatron} style={btnAzul}>Guardar patrón</button>
-            <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Es solo la sugerencia por defecto; cada semana se confirma y cada piscina puede cambiar días.</span>
-          </div>
-          {patronAudit && <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '8px' }}>Última edición{patronAudit.nombre ? ' por ' + patronAudit.nombre : ''} · {fechaHora(patronAudit.en)}</div>}
-        </div>
-      )}
 
       {editPrecio && precioTmp && (() => {
         const setArr = (campo, i, v) => setPrecioTmp(p => { const a = p[campo].slice(); a[i] = v; return { ...p, [campo]: a } })
@@ -1050,63 +982,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
         </div>
       )}
 
-      {masivo && (() => {
-        const datos = ciclos.map(f => {
-          const dias = construirDias(f, semFechas, hoy, patFinca, patPisc, planSemana[f.cicloId], null)
-          return { f, dias, da: dias.filter(d => d.alimenta).length, sinReg: dias.some(d => d.tipo === 'sin'), conf: !!(planSemana[f.cicloId] && planSemana[f.cicloId].confirmada) }
-        })
-        const confirmables = datos.filter(m => !m.sinReg).map(m => m.f.cicloId)
-        const bloqueadas = datos.filter(m => m.sinReg)
-        const nSel = masSel ? masSel.size : 0
-        const diasSel = datos.filter(m => masSel && masSel.has(m.f.cicloId)).reduce((t, m) => t + m.da, 0)
-        return (
-        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <div style={{ fontSize: '14px', fontWeight: 500 }}>Preparar semana · {corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</div>
-            <button onClick={() => { setMasivo(false); setMasSel(null) }} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
-          </div>
-          <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '8px' }}>Revisa o ajusta el borrador y luego confirma. Días cerrados = ejecución real (borde sólido); futuros = patrón (borde punteado).</div>
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-            <button onClick={() => setMasSel(new Set(confirmables))} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: AZUL, borderColor: AZUL }}>Seleccionar confirmables</button>
-            <button onClick={() => setMasSel(new Set())} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: GRIS }}>Ninguna</button>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '340px', overflowY: 'auto' }}>
-            {datos.map(({ f, dias, da, sinReg, conf }) => {
-              const checked = !!(masSel && masSel.has(f.cicloId))
-              return (
-                <div key={f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '9px', padding: '7px 9px', borderRadius: '8px', background: '#f6f9fb', fontSize: '12.5px', opacity: sinReg ? 0.7 : 1 }}>
-                  <input type="checkbox" disabled={sinReg} checked={checked} onChange={e => setMasSel(s => { const n = new Set(s); if (e.target.checked) n.add(f.cicloId); else n.delete(f.cicloId); return n })} />
-                  <span style={{ width: '78px', color: NAVY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nombre}</span>
-                  <span style={{ display: 'flex', gap: '3px', flex: 1 }}>
-                    {dias.map((d, i) => {
-                      const col = d.tipo === 'sin' ? ROJO : d.alimenta ? '#0F6E56' : '#854F0B'
-                      const bg = d.tipo === 'sin' ? '#FBEAEA' : d.alimenta ? '#e7f6ef' : '#FBF5E9'
-                      return <span key={i} role="img" aria-label={diaDescripcion(d)} title={diaDescripcion(d)}
-                        style={{ fontSize: '9px', width: '17px', textAlign: 'center', padding: '2px 0', borderRadius: '3px', background: bg, color: col, border: (d.cerrado ? '1px solid ' : '1px dashed ') + col }}>{DIA_LBL[d.i][0]}</span>
-                    })}
-                  </span>
-                  <span style={{ color: GRIS, width: '52px', textAlign: 'right' }}>{da}/7</span>
-                  {sinReg ? <span style={{ color: ROJO, width: '70px', textAlign: 'right', fontSize: '11px' }}>sin registro</span>
-                    : conf ? <span style={{ color: VERDE, width: '70px', textAlign: 'right', fontSize: '10.5px' }}>✓ confirmada</span>
-                    : <span style={{ width: '70px' }} />}
-                  <button onClick={() => { setSel(f.cicloId); setMasivo(false); setMasSel(null) }} style={{ ...btnLink, fontSize: '11.5px' }}>Revisar</button>
-                </div>
-              )
-            })}
-          </div>
-          <div style={{ fontSize: '12px', color: NAVY, margin: '11px 0 9px' }}>
-            Confirmar <b style={{ fontWeight: 500 }}>{nSel}</b> {nSel === 1 ? 'piscina' : 'piscinas'} · <b style={{ fontWeight: 500 }}>{diasSel}</b> días alimentados{bloqueadas.length > 0 && <span style={{ color: ROJO }}> · {bloqueadas.length} {bloqueadas.length === 1 ? 'requiere registro pendiente' : 'requieren registros pendientes'}</span>}
-          </div>
-          {bloqueadas.length > 0 && <div style={{ fontSize: '11px', color: '#9a7636', marginBottom: '9px' }}>Pendientes: {bloqueadas.map(m => m.f.nombre).join(', ')}</div>}
-          <button onClick={confirmarMasivo} disabled={nSel === 0} style={{ ...btnAzul, opacity: nSel === 0 ? 0.5 : 1, cursor: nSel === 0 ? 'default' : 'pointer' }}>{nSel === 1 ? 'Confirmar 1 piscina' : `Confirmar ${nSel} piscinas`}</button>
-        </div>
-        )
-      })()}
-
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
       ) : vista === 'tablero' ? (
-        <TableroView tablero={tablero} totales={totales} pedidoNeto={pedidoNeto} invCorte={invCorte} reservaDias={reservaDias} filtro={filtro} setFiltro={setFiltro} hasta={hasta} finca={finca} pendientes={Object.keys(pendiente).length}
+        <TableroView tablero={tablero} pedidoNeto={pedidoNeto} invCorte={invCorte} reservaDias={reservaDias} finca={finca}
           onVer={id => { setSel(id); setVista('piscina'); setDesdeTablero(true) }} />
       ) : !fila ? (
         <Caja><Centro>No hay piscinas con muestreo de gramaje en esta finca a la fecha.<br />
@@ -1747,161 +1626,151 @@ function TablaDiagnostico({ filas, hasta }) {
   )
 }
 
-const cardMini = { background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 12px' }
-// Vista Tablero: todas las piscinas + totales en dos niveles + filtros. Solo lectura
-// (las acciones se hacen al abrir la piscina).
-function TableroView({ tablero, totales, pedidoNeto, invCorte, reservaDias, filtro, setFiltro, hasta, finca, pendientes, onVer }) {
-  const [exp, setExp] = useState(null)
+// Vista Tablero: piscinas ordenadas por urgencia. Las que requieren atención van
+// arriba como tarjetas; las que están al día, abajo en tabla compacta. Solo lectura.
+function TableroView({ tablero, pedidoNeto, invCorte, reservaDias, finca, onVer }) {
+  const [verPedido, setVerPedido] = useState(false)
   const [expP, setExpP] = useState(null)
   const netoTotal = pedidoNeto.reduce((t, p) => t + p.neto, 0)
   const desembolsoNeto = pedidoNeto.reduce((t, p) => t + p.desembolso, 0)
-  // Asistente (5.7): resumen en lenguaje natural a partir de las reglas (no decide).
-  const nombres = (arr, n = 4) => arr.length <= n ? arr.join(', ') : arr.slice(0, n).join(', ') + ` y ${arr.length - n} más`
-  const bloqNom = tablero.filter(r => r.bloqueado).map(r => r.f.nombre)
-  const sinEscNom = tablero.filter(r => !r.ap && !r.bloqueado).map(r => r.f.nombre)
-  const cosecharNom = tablero.filter(r => r.rent && !r.rent.listo && !r.rent.noComercial && r.rent.valor < 0).map(r => r.f.nombre)
-  const resumen = []
-  resumen.push(`${totales.nConf} de ${totales.total} piscinas con plan confirmado${totales.sinEsc ? ` · ${totales.sinEsc} sin escenario aplicado` : ''}.`)
-  if (netoTotal > 0) resumen.push(`Pedido neto de la semana: ${netoTotal} sacos (desembolso ${dinero(desembolsoNeto)}).`)
-  else resumen.push('Pedido neto cubierto con inventario esta semana.')
-  resumen.push(`Rentabilidad: ${totales.esperarN} conviene esperar, ${totales.cosecharN} conviene cosechar · valor de continuar ${totales.valorCont >= 0 ? '+' : ''}${dinero(totales.valorCont)}.`)
-  if (totales.bloq || totales.desv) resumen.push(`Atención: ${totales.bloq} bloqueada(s)${totales.desv ? ` · ${totales.desv} con desviación >10%` : ''}.`)
-  if (pendientes) resumen.push(`${pendientes} solicitud(es) de cambio >20% pendiente(s) de aprobación.`)
-  const acciones = []
-  if (bloqNom.length) acciones.push(`Validar biomasa: ${nombres(bloqNom)}.`)
-  if (cosecharNom.length) acciones.push(`Evaluar cosecha: ${nombres(cosecharNom)}.`)
-  if (sinEscNom.length) acciones.push(`Aplicar escenario: ${nombres(sinEscNom)}.`)
   const fechaHoraCorta = iso => { try { return new Date(iso).toLocaleString('es-EC', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) } catch { return corta(iso) } }
   const estProd = { pedir: ['Pedir', AZUL], cubierto: ['Cubierto', VERDE], falta: ['Dato faltante', AMBAR] }
-  const FILTROS = [['todas', 'Todas'], ['pendientes', 'Pendientes'], ['confirmar', 'Confirmar'], ['simbloq', 'Simulación / bloqueadas'], ['desv', 'Con desviación']]
-  const pasa = r => filtro === 'todas' ? true : filtro === 'pendientes' ? !r.ap : filtro === 'confirmar' ? r.estadoPlan.k === 'confirmar' : filtro === 'simbloq' ? (r.estadoPlan.k === 'simulacion' || r.bloqueado) : filtro === 'desv' ? (r.delta != null && Math.abs(r.delta) > 0.10) : true
-  const filas = tablero.filter(pasa)
-  const estPill = k => k === 'aplicable' ? ['Aplicable', VERDE] : k === 'confirmar' ? ['Confirmar', AMBAR] : k === 'simulacion' ? ['Simulación', ROJO] : ['Bloqueado', ROJO]
-  const th = { padding: '9px 6px', fontWeight: 500, textAlign: 'right', color: GRIS }
+  // Estado de crecimiento a partir de la lectura biológica.
+  const tonoInfo = t => t === 'malo' ? ['muy atrasado', ROJO] : t === 'alerta' ? ['atrasado', AMBAR] : ['en ritmo', VERDE]
+  const gSemDe = r => (r.est && r.est.gDiaObs > 0) ? r.est.gDiaObs * 7 : null
+  // Motivo de atención (orden: cosechar/bloqueada = alta, resto = media). null = al día.
+  const atencionDe = r => {
+    if (r.bloqueado) return { sev: 3, label: 'Pendiente', txt: 'Validar biomasa para evaluar', col: ROJO, bd: '#e6c9c7' }
+    if (r.rent && !r.rent.listo && !r.rent.noComercial && r.rent.valor < 0) return { sev: 3, label: 'Cosecha', txt: `Conviene cosechar · +${dinero(Math.abs(r.rent.valor))}`, col: ROJO, bd: '#e6c9c7' }
+    if (!r.ap) return { sev: 2, label: 'Pendiente', txt: 'Falta aplicar escenario', col: AMBAR, bd: '#ecd9b4' }
+    if (r.est && r.est.lectura && r.est.lectura.tono === 'malo') return { sev: 2, label: 'Estado', txt: 'Crecimiento muy atrasado', col: AMBAR, bd: '#ecd9b4' }
+    return null
+  }
+  const conMotivo = tablero.map(r => ({ r, a: atencionDe(r) }))
+  const atencion = conMotivo.filter(x => x.a).sort((x, y) => y.a.sev - x.a.sev || (Math.abs((y.r.rent && y.r.rent.valor) || 0) - Math.abs((x.r.rent && x.r.rent.valor) || 0)))
+  const alDia = conMotivo.filter(x => !x.a)
+  // Veredicto de cosecha para la tabla "al día".
+  const cosechaTxt = r => !r.rent ? ['—', '#c9d3dc'] : r.rent.noComercial ? ['aún no', GRIS] : r.rent.listo ? ['listo', NAVY] : r.rent.valor >= 0 ? ['esperar', VERDE] : ['cosechar', ROJO]
+  const th = { padding: '8px 6px', fontWeight: 500, textAlign: 'right', color: GRIS }
   return (<>
-    <div style={{ background: '#f3f7fb', border: '0.5px solid #d8e6f2', borderRadius: '12px', padding: '13px 15px', marginBottom: '10px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '7px' }}>
-        <span style={{ fontSize: '13px', color: AZUL }}>✦</span>
-        <div style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>Resumen de la semana · {finca.nombre}</div>
+    {atencion.length > 0 && (<>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '9px' }}>
+        <span style={{ fontSize: '12px', fontWeight: 500, color: '#9a7636', textTransform: 'uppercase', letterSpacing: '.04em' }}>Requieren atención · {atencion.length}</span>
+        <span style={{ flex: 1, height: '0.5px', background: '#ecd9b4' }} />
       </div>
-      <div style={{ fontSize: '12.5px', color: '#4a5a67', lineHeight: 1.6 }}>{resumen.join(' ')}</div>
-      {acciones.length > 0 && <ul style={{ margin: '8px 0 0', paddingLeft: '18px', fontSize: '12px', color: '#4a5a67', lineHeight: 1.55 }}>{acciones.map((a, i) => <li key={i}>{a}</li>)}</ul>}
-      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '8px' }}>Resumen automático a partir de las reglas; orienta, no decide por ti.</div>
-    </div>
-    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '10px' }}>
-      <div style={{ ...titMini, marginBottom: '9px' }}>Total del plan semanal confirmado · {totales.nConf} piscinas</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(120px,1fr))', gap: '11px' }}>
-        <Mini k="Biomasa en planes confirmados" v={miles(totales.bioConf) + ' lb'} />
-        <Mini k="Sacos calculados" v={num1(totales.sacCalc)} />
-        <Mini k="Sacos operativos (Σ ceil)" v={String(totales.sacOper)} />
-        <Mini k="Costo de consumo" v={dinero(totales.costoCons)} />
-        <Mini k="Desembolso operativo" v={dinero(totales.desembolso)} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', marginBottom: '20px' }}>
+        {atencion.map(({ r, a }) => {
+          const gs = gSemDe(r); const [gLbl, gCol] = tonoInfo(r.est && r.est.lectura && r.est.lectura.tono)
+          return (
+            <div key={r.f.cicloId} style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', background: 'white', border: '0.5px solid ' + a.bd, borderLeft: '3px solid ' + a.col, borderRadius: '10px', padding: '11px 14px' }}>
+              <div style={{ minWidth: '78px' }}>
+                <div style={{ fontWeight: 500, fontSize: '13px', color: NAVY }}>{r.f.nombre}</div>
+                <div style={{ fontSize: '10.5px', color: GRIS }}>día {r.f.dias} · {num1(r.f.gramaje)} g</div>
+              </div>
+              <div style={{ minWidth: '92px' }}>
+                <div style={{ fontSize: '10.5px', color: GRIS }}>Crecimiento</div>
+                <div style={{ fontSize: '12px' }}>{gs ? <><span style={{ color: gCol }}>+{num1(gs)} g/sem</span> <span style={{ color: '#9fb0bf' }}>·</span> <span style={{ color: gCol }}>{gLbl}</span></> : <span style={{ color: '#c9d3dc' }}>—</span>}</div>
+              </div>
+              <div style={{ minWidth: '76px' }}>
+                <div style={{ fontSize: '10.5px', color: GRIS }}>Biomasa</div>
+                <div style={{ fontSize: '12px', fontWeight: 500, color: r.bloqueado ? '#c9d3dc' : NAVY }}>{r.bloqueado ? 'sin validar' : miles(r.biomasaSel) + ' lb'}</div>
+              </div>
+              <div style={{ flex: 1, minWidth: '130px' }}>
+                <div style={{ fontSize: '10.5px', color: GRIS }}>{a.label}</div>
+                <div style={{ fontSize: '12.5px', fontWeight: 500, color: a.col }}>{a.txt}</div>
+              </div>
+              <button onClick={() => onVer(r.f.cicloId)} style={{ ...btnAzul, padding: '7px 13px' }}>Abrir ›</button>
+            </div>
+          )
+        })}
       </div>
-      {(totales.sinEsc - totales.bloq) > 0 && <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '11px', paddingTop: '9px', fontSize: '12px', color: '#4a5a67' }}>
-        <b style={{ fontWeight: 500, color: AZUL }}>Proyección completa:</b> si se aceptan las {totales.sinEsc - totales.bloq} recomendaciones pendientes → +{totales.extraSacos} sacos · desembolso +{dinero(totales.extraCosto)}.
-      </div>}
+    </>)}
+    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '9px' }}>
+      <span style={{ fontSize: '12px', fontWeight: 500, color: GRIS, textTransform: 'uppercase', letterSpacing: '.04em' }}>Al día · {alDia.length}</span>
+      <span style={{ flex: 1, height: '0.5px', background: '#e6edf3' }} />
     </div>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '9px', marginBottom: '12px' }}>
-      <div style={cardMini}><div style={{ fontSize: '10.5px', color: '#185FA5' }}>Pedido neto</div><div style={{ fontSize: '18px', fontWeight: 500, color: AZUL }}>{netoTotal} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></div></div>
-      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Bloqueadas</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.bloq ? ROJO : NAVY }}>{totales.bloq}</div></div>
-      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Sin escenario</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.sinEsc ? AMBAR : NAVY }}>{totales.sinEsc}</div></div>
-      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Con desviación</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.desv ? AMBAR : NAVY }}>{totales.desv}</div></div>
-      <div style={cardMini}><div style={{ fontSize: '10.5px', color: GRIS }}>Valor de continuar</div><div style={{ fontSize: '18px', fontWeight: 500, color: totales.valorCont >= 0 ? VERDE : AMBAR }}>{totales.valorCont >= 0 ? '+' : ''}{dinero(totales.valorCont)}</div></div>
-    </div>
-    <div style={{ fontSize: '11.5px', color: GRIS, margin: '0 2px 12px' }}><b style={{ color: VERDE, fontWeight: 500 }}>{totales.esperarN}</b> conviene esperar · <b style={{ color: AMBAR, fontWeight: 500 }}>{totales.cosecharN}</b> conviene cosechar · <b style={{ fontWeight: 500 }}>{totales.sinCalc}</b> sin cálculo</div>
-    {pedidoNeto.length > 0 && (
-      <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginBottom: '12px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px', marginBottom: '4px' }}>
-          <div style={{ ...titMini, marginBottom: 0 }}>Pedido neto por producto</div>
-          <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>= requerimiento − inventario − tránsito + reserva ({reservaDias} días)</span>
-        </div>
-        <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginBottom: '8px' }}>Inventario al corte: {invCorte ? fechaHoraCorta(invCorte) : '—'}</div>
-        <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', minWidth: '560px' }}>
-          <thead><tr style={{ color: GRIS }}>
-            <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Producto</th>
-            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Requerim.</th>
-            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Inventario</th>
-            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Tránsito a tiempo</th>
-            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Reserva</th>
-            <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Neto</th>
-            <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Estado</th>
-            <th style={{ padding: '6px 6px' }}></th>
-          </tr></thead>
-          <tbody>
-            {pedidoNeto.map(p => {
-              const [et, ec] = estProd[p.estado]
-              const abierto = expP === p.pid
-              return (<Fragment key={p.pid}>
-                <tr style={{ borderTop: '0.5px solid #eef3f7' }}>
-                  <td style={{ padding: '7px 6px', color: NAVY }}>{p.nombre}</td>
-                  <td style={{ padding: '7px 6px', textAlign: 'right' }}>{p.req}</td>
-                  <td style={{ padding: '7px 6px', textAlign: 'right', color: p.invFalta ? AMBAR : GRIS }}>{p.invFalta ? 'sin dato' : '−' + miles(p.inv)}</td>
-                  <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.tr)}</td>
-                  <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>+{num1(p.reserva)}</td>
-                  <td style={{ padding: '7px 6px', textAlign: 'right', fontWeight: 500, color: p.neto > 0 ? AZUL : VERDE }}>{p.neto > 0 ? p.neto : '0'}</td>
-                  <td style={{ padding: '7px 6px' }}><span style={{ fontSize: '10px', fontWeight: 500, color: ec, background: ec + '18', padding: '2px 8px', borderRadius: '20px' }}>{et}</span></td>
-                  <td style={{ padding: '7px 6px', textAlign: 'right' }}><button type="button" aria-expanded={abierto} onClick={() => setExpP(abierto ? null : p.pid)} style={{ background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '11px', color: AZUL, cursor: 'pointer', fontWeight: 500 }}>{abierto ? 'Ocultar' : 'Ver'}</button></td>
-                </tr>
-                {abierto && <tr style={{ background: '#f6f9fb' }}><td colSpan={8} style={{ padding: '9px 10px', fontSize: '11px', color: GRIS }}>
-                  {p.precio ? <span>Precio vigente: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(p.precio.precio)}/saco</b> · actualizado {corta(p.precio.fecha)}. </span> : <span style={{ color: AMBAR }}>Sin precio registrado. </span>}
-                  Piscinas: {p.piscinas.map(x => `${x.nombre} (${x.sacos})`).join(' · ')}
-                </td></tr>}
-              </Fragment>)
-            })}
-          </tbody>
-        </table>
-        </div>
-        <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Reserva = consumo diario del producto × {reservaDias} días alimentados. Inventario y tránsito se descuentan una sola vez; el neto se redondea hacia arriba. Desembolso estimado del neto: <b style={{ color: '#51606c', fontWeight: 500 }}>{dinero(desembolsoNeto)}</b>.</div>
-      </div>
-    )}
-    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '9px' }}>
-      {FILTROS.map(([k, l]) => <button key={k} type="button" aria-pressed={filtro === k} onClick={() => setFiltro(k)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '5px 11px', borderRadius: '20px', cursor: 'pointer', border: '1px solid ' + (filtro === k ? AZUL : BORDE), background: filtro === k ? '#e8f1fb' : 'white', color: filtro === k ? AZUL : NAVY, fontWeight: filtro === k ? 500 : 400 }}>{l}</button>)}
-    </div>
+    {alDia.length === 0 ? (
+      <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '18px', textAlign: 'center', fontSize: '12.5px', color: GRIS }}>Todas las piscinas requieren atención.</div>
+    ) : (
     <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px' }}>
         <thead><tr style={{ color: GRIS }}>
-          <th style={{ ...th, textAlign: 'left', paddingLeft: '12px' }}>Piscina</th>
-          <th style={{ ...th, textAlign: 'left' }}>Estado</th>
+          <th style={{ ...th, textAlign: 'left', paddingLeft: '14px' }}>Piscina</th>
           <th style={th}>Gramaje</th>
+          <th style={th}>Crece</th>
           <th style={th}>Biomasa</th>
-          <th style={th}>Aplicado</th>
           <th style={th}>Sacos</th>
-          <th style={{ ...th, textAlign: 'left' }}>Alerta</th>
-          <th style={{ ...th, paddingRight: '12px' }}></th>
+          <th style={{ ...th, textAlign: 'left', paddingLeft: '10px' }}>Cosecha</th>
+          <th style={{ ...th, paddingRight: '14px' }}></th>
         </tr></thead>
         <tbody>
-          {filas.map(r => {
-            const [et, ec] = estPill(r.estadoPlan.k)
-            const abierto = exp === r.f.cicloId
-            return (<Fragment key={r.f.cicloId}>
-              <tr style={{ borderTop: '0.5px solid ' + BORDE }}>
-                <td style={{ padding: '9px 6px 9px 12px', color: NAVY, fontWeight: 500 }}>{r.f.nombre}</td>
-                <td style={{ padding: '9px 6px' }}><span style={{ fontSize: '10px', fontWeight: 500, color: ec, background: ec + '18', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap' }}>{et}</span></td>
+          {alDia.map(({ r }) => {
+            const gs = gSemDe(r); const [cLbl, cCol] = cosechaTxt(r)
+            return (
+              <tr key={r.f.cicloId} style={{ borderTop: '0.5px solid #eef3f7' }}>
+                <td style={{ padding: '9px 6px 9px 14px', color: NAVY, fontWeight: 500 }}>{r.f.nombre}</td>
                 <td style={{ padding: '9px 6px', textAlign: 'right', color: GRIS }}>{num1(r.f.gramaje)} g</td>
-                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.bloqueado && !r.ap ? <span style={{ color: '#c9d3dc' }}>—</span> : miles(r.biomasaSel) + ' lb'}</td>
-                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.ap ? <b style={{ fontWeight: 500 }}>{r.ap.fila_pct}% · {cap(intenLbl(r.ap.intensidad))}</b> : <span style={{ color: '#c9d3dc' }}>—</span>}</td>
-                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{r.sacosShow == null ? <span style={{ color: '#c9d3dc' }}>sim.</span> : r.sugerido ? <span style={{ color: GRIS }}>{r.sacosShow} <span style={{ fontSize: '9px' }}>sug.</span></span> : <b style={{ fontWeight: 500 }}>{r.sacosShow}</b>}</td>
-                <td style={{ padding: '9px 6px', textAlign: 'left', color: r.alertas.length ? ((r.bloqueado || r.estadoPlan.k === 'simulacion') ? ROJO : AMBAR) : '#c9d3dc' }}>{r.alertas[0] || '—'}{r.alertas.length > 1 && <span style={{ color: GRIS, fontSize: '10px' }}> +{r.alertas.length - 1}</span>}</td>
-                <td style={{ padding: '9px 12px 9px 6px', textAlign: 'right' }}><button type="button" aria-expanded={abierto} onClick={() => setExp(abierto ? null : r.f.cicloId)} style={{ background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '11.5px', color: AZUL, cursor: 'pointer', padding: '2px 4px', fontWeight: 500 }}>{abierto ? 'Ocultar' : 'Ver'} ›</button></td>
+                <td style={{ padding: '9px 6px', textAlign: 'right', color: gs ? VERDE : '#c9d3dc' }}>{gs ? '+' + num1(gs) : '—'}</td>
+                <td style={{ padding: '9px 6px', textAlign: 'right' }}>{miles(r.biomasaSel)} lb</td>
+                <td style={{ padding: '9px 6px', textAlign: 'right', fontWeight: 500 }}>{r.sacosShow == null ? <span style={{ color: '#c9d3dc' }}>—</span> : r.sacosShow}</td>
+                <td style={{ padding: '9px 10px', textAlign: 'left', color: cCol }}>{cLbl}</td>
+                <td style={{ padding: '9px 14px 9px 6px', textAlign: 'right' }}><button type="button" onClick={() => onVer(r.f.cicloId)} style={{ background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '11.5px', color: AZUL, cursor: 'pointer', padding: '2px 4px', fontWeight: 500 }}>Ver ›</button></td>
               </tr>
-              {abierto && <tr style={{ background: '#f6f9fb' }}><td colSpan={8} style={{ padding: '10px 12px' }}>
-                <div style={{ display: 'flex', gap: '18px', flexWrap: 'wrap', fontSize: '12px', color: GRIS }}>
-                  <span>Recomendado: <b style={{ color: NAVY, fontWeight: 500 }}>100% · {cap(intenLbl(r.recoInten))}</b></span>
-                  <span>Δ vs semana anterior: <b style={{ color: NAVY, fontWeight: 500 }}>{r.deltaEstado === 'pendiente' ? 'Pendiente' : r.deltaEstado === 'sin-comparable' ? 'Sin semana comparable' : `${r.delta >= 0 ? '+' : ''}${Math.round(r.delta * 100)}%`}</b></span>
-                  <span>Plan / ejecutado: <b style={{ color: NAVY, fontWeight: 500 }}>{r.cumplimiento != null ? Math.round(r.cumplimiento * 100) + '%' : '—'}</b></span>
-                  <span>Muestreo: <b style={{ color: NAVY, fontWeight: 500 }}>{r.muDias != null ? `hace ${r.muDias} d` : '—'}</b></span>
-                  {r.rent && <span>Rentabilidad: <b style={{ color: (r.rent.listo || r.rent.noComercial) ? NAVY : (r.rent.valor >= 0 ? VERDE : AMBAR), fontWeight: 500 }}>{r.rent.noComercial ? 'aún no cosechable' : r.rent.listo ? 'listo para cosechar' : `${r.rent.valor >= 0 ? 'esperar' : 'cosechar'} · ${r.rent.valor >= 0 ? '+' : ''}${dinero(r.rent.valor)} (${dinero(r.rent.valorDia)}/día)`}</b></span>}
-                </div>
-                {r.alertas.length > 0 && <div style={{ fontSize: '11.5px', color: AMBAR, marginTop: '7px' }}>Alertas: {r.alertas.join(' · ')}</div>}
-                <button onClick={() => onVer(r.f.cicloId)} style={{ ...btnAzul, marginTop: '10px' }}>Abrir piscina ›</button>
-              </td></tr>}
-            </Fragment>)
+            )
           })}
         </tbody>
       </table>
     </div>
-    <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Totales del plan semanal (sumas). El confirmado suma solo escenarios aplicados con calendario confirmado; la proyección agrega las recomendaciones pendientes.</div>
+    )}
+    {pedidoNeto.length > 0 && (
+      <div style={{ marginTop: '14px' }}>
+        <button type="button" aria-expanded={verPedido} onClick={() => setVerPedido(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: '7px', background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '12px', color: AZUL, cursor: 'pointer', fontWeight: 500, padding: 0 }}>
+          <span style={{ fontSize: '11px' }}>{verPedido ? '▾' : '▸'}</span> Pedido neto por producto <span style={{ color: '#9fb0bf', fontWeight: 400 }}>· {netoTotal} sacos · {dinero(desembolsoNeto)}</span>
+        </button>
+        {verPedido && (
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '13px 15px', marginTop: '9px' }}>
+            <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginBottom: '8px' }}>= requerimiento − inventario − tránsito + reserva ({reservaDias} días) · inventario al corte: {invCorte ? fechaHoraCorta(invCorte) : '—'}</div>
+            <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', minWidth: '560px' }}>
+              <thead><tr style={{ color: GRIS }}>
+                <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Producto</th>
+                <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Requerim.</th>
+                <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Inventario</th>
+                <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Tránsito</th>
+                <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Reserva</th>
+                <th style={{ textAlign: 'right', padding: '6px 6px', fontWeight: 500 }}>Neto</th>
+                <th style={{ textAlign: 'left', padding: '6px 6px', fontWeight: 500 }}>Estado</th>
+                <th style={{ padding: '6px 6px' }}></th>
+              </tr></thead>
+              <tbody>
+                {pedidoNeto.map(p => {
+                  const [et, ec] = estProd[p.estado]
+                  const abierto = expP === p.pid
+                  return (<Fragment key={p.pid}>
+                    <tr style={{ borderTop: '0.5px solid #eef3f7' }}>
+                      <td style={{ padding: '7px 6px', color: NAVY }}>{p.nombre}</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right' }}>{p.req}</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right', color: p.invFalta ? AMBAR : GRIS }}>{p.invFalta ? 'sin dato' : '−' + miles(p.inv)}</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>−{miles(p.tr)}</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right', color: GRIS }}>+{num1(p.reserva)}</td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right', fontWeight: 500, color: p.neto > 0 ? AZUL : VERDE }}>{p.neto > 0 ? p.neto : '0'}</td>
+                      <td style={{ padding: '7px 6px' }}><span style={{ fontSize: '10px', fontWeight: 500, color: ec, background: ec + '18', padding: '2px 8px', borderRadius: '20px' }}>{et}</span></td>
+                      <td style={{ padding: '7px 6px', textAlign: 'right' }}><button type="button" aria-expanded={abierto} onClick={() => setExpP(abierto ? null : p.pid)} style={{ background: 'none', border: 'none', fontFamily: 'inherit', fontSize: '11px', color: AZUL, cursor: 'pointer', fontWeight: 500 }}>{abierto ? 'Ocultar' : 'Ver'}</button></td>
+                    </tr>
+                    {abierto && <tr style={{ background: '#f6f9fb' }}><td colSpan={8} style={{ padding: '9px 10px', fontSize: '11px', color: GRIS }}>
+                      {p.precio ? <span>Precio vigente: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(p.precio.precio)}/saco</b> · actualizado {corta(p.precio.fecha)}. </span> : <span style={{ color: AMBAR }}>Sin precio registrado. </span>}
+                      Piscinas: {p.piscinas.map(x => `${x.nombre} (${x.sacos})`).join(' · ')}
+                    </td></tr>}
+                  </Fragment>)
+                })}
+              </tbody>
+            </table>
+            </div>
+            <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '9px', lineHeight: 1.5 }}>Reserva = consumo diario × {reservaDias} días alimentados. Inventario y tránsito se descuentan una sola vez; el neto se redondea hacia arriba. Desembolso del neto: <b style={{ color: '#51606c', fontWeight: 500 }}>{dinero(desembolsoNeto)}</b>.</div>
+          </div>
+        )}
+      </div>
+    )}
   </>)
 }
 
