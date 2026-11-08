@@ -303,19 +303,20 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const muDe = {}; (mu || []).forEach(m => { (muDe[m.ciclo_id] ||= []).push({ fecha: m.fecha, peso: Number(m.peso_gramos) }) })
     const alDe = {}; (al || []).forEach(r => { if (!r.sin_alimentacion) (alDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0 }) })
     const alRawDe = {}; (al || []).forEach(r => { (alRawDe[r.ciclo_id] ||= []).push({ fecha: r.fecha, lb: Number(r.libras) || 0, ayuno: !!r.sin_alimentacion, precio: Number(r.precio_saco) || 0 }) })
-    const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en } })
+    const bvDe = {}; (bv || []).forEach(r => { if (!bvDe[r.ciclo_id]) bvDe[r.ciclo_id] = { fuente: r.fuente, valor_lb: Number(r.valor_lb), fecha_ref: r.fecha_ref, validada_en: r.validada_en, validada_por: r.validada_por } })
     const apDe = {}, pendDe = {}; (ap || []).forEach(r => { if (r.estado === 'pendiente') pendDe[r.ciclo_id] = r; else apDe[r.ciclo_id] = r })
     // Patrón de finca + su auditoría (quién lo editó por última vez y cuándo).
     const patF = {}; let patPor = null, patEn = null
     ;(pf || []).forEach(r => { patF[r.dia] = r.alimenta; if (r.actualizado_en && (!patEn || r.actualizado_en > patEn)) { patEn = r.actualizado_en; patPor = r.actualizado_por } })
     // Nombres (quién aplicó escenarios + quién editó el patrón), de public.usuarios.
-    const quienes = [...new Set([...(ap || []).map(r => r.aplicado_por), patPor].filter(Boolean))]
+    const quienes = [...new Set([...(ap || []).map(r => r.aplicado_por), patPor, ...Object.values(bvDe).map(r => r.validada_por)].filter(Boolean))]
     const nomDe = {}
     if (quienes.length) {
       const { data: us } = await supabase.from('usuarios').select('id, nombre').in('id', quienes)
       ;(us || []).forEach(u => { nomDe[u.id] = u.nombre })
       Object.values(apDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
       Object.values(pendDe).forEach(r => { r.aplicado_nombre = nomDe[r.aplicado_por] || null })
+      Object.values(bvDe).forEach(r => { r.validada_nombre = nomDe[r.validada_por] || null })
     }
     const patP = {}; (pp || []).forEach(r => { (patP[r.piscina_id] ||= {})[r.dia] = r.alimenta })
     const planDe = {}; (sp || []).forEach(r => {
@@ -551,7 +552,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     const { error } = await supabase.schema('produccion').from('biomasa_validada')
       .insert({ ciclo_id: sel, fecha_ref: hasta, fuente: fuenteSel, valor_lb: valor, validada_por: userId })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'validar la biomasa') }); return }
-    setValida(v => ({ ...v, [sel]: { fuente: fuenteSel, valor_lb: valor, fecha_ref: hasta, validada_en: new Date().toISOString() } }))
+    setValida(v => ({ ...v, [sel]: { fuente: fuenteSel, valor_lb: valor, fecha_ref: hasta, validada_en: new Date().toISOString(), validada_por: userId, validada_nombre: nombre || null } }))
     setAviso({ tipo: 'ok', texto: 'Biomasa validada.' })
   }
   async function quitarValidacion() {
@@ -1357,11 +1358,25 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>FCR máximo para {num1(fila.gramaje)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{num2(est.fcrMax)}</b></span>
-              <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b>{valdOk && esJefe && <span onClick={quitarValidacion} style={{ color: AZUL, cursor: 'pointer' }}> · cambiar</span>}</span>
+              <span style={{ fontSize: '12px', color: GRIS }}>Usando: <b style={{ color: NAVY, fontWeight: 500 }}>{cap(fuenteUsada)}</b></span>
             </div>
             {!bloqueado && bm && (
               <div style={{ fontSize: '11.5px', color: bm.color, marginTop: '8px' }}>
                 Confianza {confianza}: diferencia {Math.round(bm.difPct * 100)}%{muestreoDias != null && ` · muestreo de hace ${muestreoDias} día${muestreoDias === 1 ? '' : 's'}`}
+              </div>
+            )}
+
+            {/* Estado GUARDADO: ya validada → tarjeta verde con quién/cuándo + Editar */}
+            {esJefe && valdOk && (
+              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '13px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#e7f6ef', border: '0.5px solid #bfe6d2', borderRadius: '10px', padding: '11px 13px', flexWrap: 'wrap' }}>
+                  <span style={{ width: '22px', height: '22px', borderRadius: '50%', background: VERDE, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flex: '0 0 auto', fontSize: '12px' }}>✓</span>
+                  <div style={{ flex: 1, minWidth: '180px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F6E56' }}>Guardado · {vald.fuente === 'consumo' ? 'Por consumo' : vald.fuente === 'densidad' ? 'Por densidad' : 'Aprobada'} · {miles(vald.valor_lb)} lb</div>
+                    <div style={{ fontSize: '11px', color: '#3d7a63' }}>Validó {vald.validada_nombre || '—'} · {vald.validada_en ? fechaHora(vald.validada_en) : (vald.fecha_ref ? corta(vald.fecha_ref) : '—')}</div>
+                  </div>
+                  <button onClick={() => { setFuenteSel(vald.fuente); if (vald.fuente === 'aprobada') setAprobTxt(String(vald.valor_lb)); quitarValidacion() }} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: AZUL, borderColor: '#bcd3ec', padding: '6px 14px' }}>Editar</button>
+                </div>
               </div>
             )}
 
