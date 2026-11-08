@@ -1452,22 +1452,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <div style={{ ...titMini, marginBottom: 0 }}>Detalle · {celdaAct.fila}% × {intenLbl(celdaAct.inten)}</div>
                 {esReco && <span style={{ fontSize: '10px', color: VERDE, background: '#e7f6ef', borderRadius: '20px', padding: '2px 9px' }}>✓ Recomendada</span>}
               </div>
-              <Row k={`Tasa base (${num1(fila.gramaje)} g · Medio)`} v={num3(tasaBase) + '%'} />
-              <Row k={`Ajuste intensidad ${intenLbl(celdaAct.inten)}`} v={(ajusteInt >= 0 ? '+' : '') + Math.round(ajusteInt * 100) + '%'} />
-              <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} fuerte top />
-              <Row k={`${miles(biomasaAsumida)} lb × ${num3(tasaApl)}%`} v={miles(lbDiaSel) + ' lb/día'} fuerte />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', borderTop: '0.5px solid #e3ecf2', marginTop: '7px', paddingTop: '8px' }}>
-                <div style={{ background: '#eef2f6', borderRadius: '9px', padding: '9px 11px' }}>
-                  <div style={{ fontSize: '10.5px', color: GRIS }}>Por día</div>
-                  <div style={{ fontSize: '18px', fontWeight: 500, color: NAVY }}>{num1(lbDiaSel / PARAM.pesoSaco)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></div>
-                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel)} lb</div>
-                </div>
-                <div style={{ background: '#eef2f6', borderRadius: '9px', padding: '9px 11px' }}>
-                  <div style={{ fontSize: '10.5px', color: GRIS }}>Semana · {diasAlim} días</div>
-                  <div style={{ fontSize: '18px', fontWeight: 500, color: NAVY }}>{num1(sacosSemCalc)} <span style={{ fontSize: '11px', color: GRIS }}>sacos</span></div>
-                  <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{miles(lbDiaSel * diasAlim)} lb</div>
-                </div>
-              </div>
+              <Row k="Tasa aplicada" v={num3(tasaApl) + '%'} />
+              <Row k="Por día" v={`${num1(lbDiaSel / PARAM.pesoSaco)} sacos · ${miles(lbDiaSel)} lb`} />
+              <Row k={`Semana · ${diasAlim} días`} v={`${num1(sacosSemCalc)} sacos`} />
               <div style={{ borderTop: '0.5px solid #e3ecf2', marginTop: '8px', paddingTop: '6px' }}>
                 <Row k="Por pedir (lo que falta)" v={pedir + ' sacos'} fuerte azul />
                 <Row k="Costo de consumo" v={dinero(costoConsumo)} />
@@ -1562,12 +1549,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             </div>
           ) : puedeAplicar ? (
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '13px' }}>
-              {nivelCambio && nivelCambio !== 'normal' && (
-                <div style={{ marginBottom: '10px', background: (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '14', border: '0.5px solid ' + (nivelCambio === 'fuerte' ? ROJO : AMBAR) + '44', borderRadius: '9px', padding: '10px 13px', fontSize: '12px', color: nivelCambio === 'fuerte' ? ROJO : AMBAR }}>
-                  <b>Cambio vs la {baseTipo}.</b>
-                  {deltaDia != null && <> Dosis {deltaDia >= 0 ? '+' : ''}{Math.round(deltaDia * 100)}% ({miles(lbDiaSel)} vs {miles(dosisAnterior)} lb/día).</>}
-                  {deltaSem != null && <> Semana {deltaSem >= 0 ? '+' : ''}{Math.round(deltaSem * 100)}% ({num1(sacosSemCalc)} vs {num1(sacosAnterior)} sacos).</>}
-                  {nivelCambio === 'fuerte' && <div style={{ marginTop: '5px' }}>Mayor al 20%: requiere <b>aprobación de un segundo jefe</b> antes de activarse.</div>}
+              {nivelCambio === 'fuerte' && (
+                <div style={{ marginBottom: '10px', background: ROJO + '14', border: '0.5px solid ' + ROJO + '44', borderRadius: '9px', padding: '10px 13px', fontSize: '12px', color: ROJO }}>
+                  Cambio mayor al 20%: requiere <b>aprobación de un segundo jefe</b> antes de activarse.
                 </div>
               )}
               {requiereMotivo && (() => {
@@ -1592,7 +1576,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   {requiereAprobacion ? 'Enviar a aprobación' : apRec ? 'Reemplazar escenario aplicado' : 'Aplicar este escenario'}
                 </button>
                 <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>
-                  {!aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaMotivo ? 'Elige el motivo del cambio.' : requiereAprobacion ? 'Cambio >20%: lo revisa y aprueba un segundo jefe.' : esReco ? 'Es la combinación recomendada por el sistema.' : 'Al aplicar se guarda la decisión, el motivo, quién la aplicó y el calendario de la semana.'}
+                  {!aplicarOk ? 'No se puede aplicar en simulación o bloqueado.' : faltaMotivo ? 'Elige el motivo del cambio.' : requiereAprobacion ? 'Cambio >20%: lo revisa y aprueba un segundo jefe.' : esReco ? 'Es la combinación recomendada por el sistema.' : ''}
                 </span>
               </div>
             </div>
