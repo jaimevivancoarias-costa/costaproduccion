@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, lunesDe, sumarDias, miles, dinero } from '../lib/fechas'
 import { estimar, cfgFinca, PARAM, sobrevDe, proyectarAMeta } from '../lib/estimacion'
@@ -267,6 +267,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [ventanaDias, setVentanaDias] = useState(14) // ventana de consumo oficial: 7 | 14 | 21 (plano, incluye ayunos)
   const [pendiente, setPendiente] = useState({}) // cicloId -> solicitud pendiente de aprobación (esta semana)
   const [bandeja, setBandeja] = useState(false)   // panel de aprobaciones pendientes
+  const [herrOpen, setHerrOpen] = useState(false) // menú Herramientas del encabezado
+  const semRef = useRef(null)                     // date input oculto del selector de semana
   const [rechazando, setRechazando] = useState(null) // id de solicitud en rechazo
   const [rechCod, setRechCod] = useState(''); const [rechTxt, setRechTxt] = useState('')
 
@@ -910,24 +912,44 @@ export default function Estimacion({ finca, esJefe, nombre }) {
           <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: GRIS }}>
             Meta <input type="number" min="1" value={meta} onChange={e => setMeta(Number(e.target.value) || 1)} style={{ ...inp, width: '58px' }} /> g
           </label>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 6px', fontSize: '12.5px' }}>
+          <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 6px', fontSize: '12.5px' }}>
             <button onClick={() => setHasta(h => sumarDias(h, -7))} style={flecha} title="Semana anterior">‹</button>
-            <input type="date" value={hasta} max={hoyISO()} title="Elige cualquier día; se aplica a su semana"
+            <button type="button" onClick={() => { const el = semRef.current; if (el?.showPicker) el.showPicker(); else el?.focus() }} title="Elegir otra semana"
+              style={{ border: 'none', background: 'none', fontFamily: 'inherit', fontSize: '12.5px', fontWeight: 500, color: NAVY, cursor: 'pointer', minWidth: '118px', textAlign: 'center' }}>
+              {corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}
+            </button>
+            <input ref={semRef} type="date" value={hasta} max={hoyISO()} tabIndex={-1} aria-hidden="true"
               onChange={e => { if (!e.target.value) return; const d = domingoDe(e.target.value); setHasta(d > hoyISO() ? hoyISO() : d) }}
-              style={{ border: 'none', background: 'none', fontFamily: 'inherit', fontSize: '12px', color: GRIS, width: '112px' }} />
-            <span style={{ color: NAVY, minWidth: '118px', textAlign: 'center' }}>{corta(lunesDe(hasta))} – {corta(domingoDe(hasta))}</span>
+              style={{ position: 'absolute', left: '40px', bottom: 0, width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }} />
             <button onClick={() => setHasta(h => { const n = sumarDias(h, 7); return n > hoyISO() ? h : n })} style={{ ...flecha, opacity: domingoDe(hasta) >= hoyISO() ? 0.35 : 1 }} title="Semana siguiente">›</button>
           </span>
-          {finca.rol === 'jefe' && ciclos.length > 0 && (<>
-            <button onClick={() => { setPatTmp(Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map(d => [d, patFinca[d] !== false]))); setEditPat(true) }} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Define qué días alimenta la finca por defecto">Patrón de finca</button>
-            <button onClick={abrirMasivo} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Prepara y confirma la semana para varias piscinas">Preparar semana</button>
-            <button onClick={abrirPrecios} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: GRIS }} title="Edita la lista de precios de venta (entero/cola)">Precios</button>
-            {Object.keys(pendiente).length > 0 && <button onClick={() => setBandeja(b => !b)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: bandeja ? AZUL : AMBAR, borderColor: bandeja ? AZUL : '#ecd9b4' }} title="Solicitudes de cambio >20% pendientes de aprobar">Aprobaciones ({Object.keys(pendiente).length})</button>}
-          </>)}
-          {esJefe && ciclos.length > 0 && (
-            <button onClick={() => setDiag(d => !d)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: diag ? AZUL : GRIS, borderColor: diag ? AZUL : BORDE }} title="Compara la ventana de consumo actual con la ponderada">
-              {diag ? 'Ocultar diagnóstico' : 'Diagnóstico'}
-            </button>
+          {finca.rol === 'jefe' && ciclos.length > 0 && Object.keys(pendiente).length > 0 &&
+            <button onClick={() => setBandeja(b => !b)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: bandeja ? AZUL : AMBAR, borderColor: bandeja ? AZUL : '#ecd9b4' }} title="Solicitudes de cambio >20% pendientes de aprobar">Aprobaciones ({Object.keys(pendiente).length})</button>}
+          {(finca.rol === 'jefe' || esJefe) && ciclos.length > 0 && (
+            <span style={{ position: 'relative' }}>
+              <button onClick={() => setHerrOpen(o => !o)} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: herrOpen ? AZUL : GRIS, borderColor: herrOpen ? AZUL : BORDE, display: 'inline-flex', alignItems: 'center', gap: '5px' }} title="Herramientas de planeación">
+                Herramientas <span style={{ fontSize: '9px' }}>▾</span>
+              </button>
+              {herrOpen && (<>
+                <div onClick={() => setHerrOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div style={{ position: 'absolute', top: 'calc(100% + 5px)', right: 0, zIndex: 41, background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', boxShadow: '0 8px 24px rgba(2,40,71,.12)', padding: '5px', minWidth: '184px' }}>
+                  {[
+                    ...(finca.rol === 'jefe' ? [
+                      ['Patrón de finca', 'Qué días alimenta la finca por defecto', () => { setPatTmp(Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map(d => [d, patFinca[d] !== false]))); setEditPat(true) }],
+                      ['Preparar semana', 'Confirma la semana para varias piscinas', abrirMasivo],
+                      ['Precios', 'Lista de precios de venta (entero/cola)', abrirPrecios],
+                    ] : []),
+                    ...(esJefe ? [[diag ? 'Ocultar diagnóstico' : 'Diagnóstico', 'Ventana de consumo actual vs ponderada', () => setDiag(d => !d)]] : []),
+                  ].map(([lbl, sub, fn]) => (
+                    <button key={lbl} onClick={() => { fn(); setHerrOpen(false) }} style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: 'none', fontFamily: 'inherit', cursor: 'pointer', borderRadius: '7px', padding: '8px 10px' }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#f1f6fb'} onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                      <div style={{ fontSize: '12.5px', fontWeight: 500, color: NAVY }}>{lbl}</div>
+                      <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{sub}</div>
+                    </button>
+                  ))}
+                </div>
+              </>)}
+            </span>
           )}
         </div>
       </div>
@@ -1166,21 +1188,31 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             </div>
           </div>
           )
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#e7f6ef', border: '0.5px solid #bfe6d2', borderRadius: '12px', padding: '13px 16px', marginBottom: '14px' }}>
-            <span style={{ width: '26px', height: '26px', borderRadius: '50%', background: VERDE, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flex: '0 0 auto' }}>✓</span>
+        ) : (() => {
+          // Color del estado según el tono de la lectura: ok=verde, alerta=ámbar,
+          // malo=rojo. El recuadro verde con ✓ ya no miente cuando dice "muy atrasado".
+          const tono = est.lectura.tono
+          const T = tono === 'malo'
+            ? { bg: '#FBEAEA', bd: '#f0d2d0', fuerte: ROJO, suave: '#8a4a48', icono: '!' }
+            : tono === 'alerta'
+            ? { bg: '#FBF5E9', bd: '#ecd9b4', fuerte: AMBAR, suave: '#8a6a1e', icono: '!' }
+            : { bg: '#e7f6ef', bd: '#bfe6d2', fuerte: VERDE, suave: '#3d7a63', icono: '✓' }
+          return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: T.bg, border: '0.5px solid ' + T.bd, borderRadius: '12px', padding: '13px 16px', marginBottom: '14px' }}>
+            <span style={{ width: '26px', height: '26px', borderRadius: '50%', background: T.fuerte, color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, flex: '0 0 auto' }}>{T.icono}</span>
             <div>
-              <div style={{ fontSize: '14.5px', fontWeight: 500, color: VERDE }}>{est.lectura.txt}</div>
-              <div style={{ fontSize: '12.5px', color: '#3d7a63' }}>
+              <div style={{ fontSize: '14.5px', fontWeight: 500, color: T.fuerte }}>{est.lectura.txt}</div>
+              <div style={{ fontSize: '12.5px', color: T.suave }}>
                 Llegaría a {num1(est.metaUsa)} g en <b>{num1(diasRest)} días</b> (día {num1(est.diasProyectados)} de cultivo)
                 {!valdOk && bm && bm.nivel === 'precaución' && <span style={{ color: AMBAR }}> · ojo: biomasa con {Math.round(bm.difPct * 100)}% de diferencia</span>}
               </div>
-              {valdOk && <div style={{ fontSize: '12px', color: difGrande ? AMBAR : '#3d7a63', marginTop: '3px' }}>
+              {valdOk && <div style={{ fontSize: '12px', color: difGrande ? AMBAR : T.suave, marginTop: '3px' }}>
                 Biomasa validada manualmente{difGrande && <> · <b>ojo:</b> consumo y densidad aún difieren {Math.round(bm.difPct * 100)}% — revisa si la validación sigue vigente</>}
               </div>}
             </div>
           </div>
-        )}
+          )
+        })()}
         {bloqueado && <div style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '12.5px', color: '#3d7a63', margin: '0 2px 14px' }}>
           <span style={{ color: VERDE }}>✓</span>El crecimiento va {est.atrasoProyectado <= 0 ? 'adelantado ' + num1(Math.abs(est.atrasoProyectado)) + ' días' : 'atrasado ' + num1(est.atrasoProyectado) + ' días'} — pero no cambies la dosis hasta confirmar la biomasa.
         </div>}
@@ -1202,8 +1234,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '22px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', gap: '22px', flex: '0 0 auto' }}>
-                <div style={{ minWidth: '74px' }}><div style={{ fontSize: '11px', color: GRIS }}>Gramaje hoy</div><div style={{ fontSize: '22px', fontWeight: 500, color: NAVY }}>{num1(fila.gramaje)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g</span></div></div>
                 <div style={{ minWidth: '74px' }}><div style={{ fontSize: '11px', color: GRIS }}>Observado</div><div style={{ fontSize: '22px', fontWeight: 500, color: NAVY }}>{num2(est.gDiaObs)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g/día</span></div></div>
+                <div style={{ minWidth: '74px' }}><div style={{ fontSize: '11px', color: GRIS }}>Semanal</div><div style={{ fontSize: '22px', fontWeight: 500, color: NAVY }}>{num1(est.gDiaObs * 7)} <span style={{ fontSize: '11px', color: '#9fb0bf' }}>g/sem</span></div></div>
               </div>
               <div style={{ width: '0.5px', alignSelf: 'stretch', background: BORDE, minHeight: '46px' }} />
               <div style={{ flex: '0 1 54%', minWidth: '200px' }}><Curva puntos={fila.muestreos || []} gramaje={fila.gramaje} /></div>
