@@ -1243,6 +1243,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             <div style={{ display: 'flex', gap: '14px', marginTop: '10px', fontSize: '11px', color: GRIS, flexWrap: 'wrap', alignItems: 'center' }}>
               <span><span style={{ display: 'inline-block', width: '14px', borderTop: '2px solid ' + AZUL, marginRight: '5px', verticalAlign: 'middle' }} />Observado</span>
               <span><span style={{ display: 'inline-block', width: '14px', borderTop: '2px dashed #B4B2A9', marginRight: '5px', verticalAlign: 'middle' }} />Objetivo</span>
+              <span><span style={{ display: 'inline-block', width: '14px', borderTop: '2px solid ' + VERDE, marginRight: '5px', verticalAlign: 'middle' }} />Crecimiento semanal <span style={{ color: '#9fb0bf' }}>(g/sem)</span></span>
               <span style={{ marginLeft: 'auto', color: est.atrasoProyectado <= 0 ? VERDE : AMBAR, fontWeight: 500 }}>
                 {est.atrasoProyectado <= 0 ? `▲ ${num1(Math.abs(est.atrasoProyectado))} días adelantado` : `▼ ${num1(est.atrasoProyectado)} días atrasado`} · Desempeño {pct0(est.desempeno)}
               </span>
@@ -2034,6 +2035,7 @@ function Linea({ k, v, fuerte, color }) {
 // calibrada, diaEq). Misma escala; la distancia entre líneas = atraso/adelanto.
 function Curva({ puntos, gramaje }) {
   const [hi, setHi] = useState(null)
+  const [hiW, setHiW] = useState(null)
   const obj = TABLA_CRECIMIENTO.filter(r => r.g <= gramaje * 1.08).map(r => ({ dia: r.diaEq, g: r.g }))
   const obs = [...puntos].sort((a, b) => a.dia - b.dia)
   if (obs.length < 2) return <div style={{ fontSize: '11.5px', color: '#9fb0bf', padding: '18px 0', textAlign: 'center' }}>Aún no hay suficientes muestreos para dibujar la curva.</div>
@@ -2061,16 +2063,35 @@ function Curva({ puntos, gramaje }) {
     return obj[obj.length - 1].g
   }
   const objG = h ? objEn(h.dia) : null
+
+  // Crecimiento semanal: g ganados por semana. Se agrupa por semana (lunes) y se
+  // toma el último muestreo de cada una; dg = g de esta semana − g de la anterior.
+  // Empieza desde la 2ª semana (la 1ª no tiene con qué comparar). Escala propia
+  // (su máximo), para que se vea la forma aunque los valores sean chicos vs el peso.
+  const byWeek = new Map()
+  for (const p of obs) { if (!p.fecha) continue; const k = lunesDe(p.fecha); const cur = byWeek.get(k); if (!cur || p.dia > cur.dia) byWeek.set(k, p) }
+  const semanas = [...byWeek.values()].sort((a, b) => a.dia - b.dia)
+  const sem = []
+  for (let i = 1; i < semanas.length; i++) sem.push({ dia: semanas[i].dia, fecha: semanas[i].fecha, lunes: lunesDe(semanas[i].fecha), dg: semanas[i].g - semanas[i - 1].g })
+  const maxDG = Math.max(1, ...sem.map(s => Math.abs(s.dg)))
+  const syW = v => padT + (1 - v / maxDG) * (H - padT - padB)
+  const lineaW = sem.map((p, i) => `${i ? 'L' : 'M'}${sx(p.dia).toFixed(1)} ${syW(p.dg).toFixed(1)}`).join(' ')
+  const hw = hiW != null ? sem[hiW] : null
+
   return (
     <div style={{ position: 'relative' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="120" preserveAspectRatio="none" role="img" aria-label="Curva de crecimiento observado vs objetivo">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="120" preserveAspectRatio="none" role="img" aria-label="Curva de crecimiento observado, objetivo y crecimiento semanal">
         {obj.length > 1 && <path d={linea(obj)} fill="none" stroke="#B4B2A9" strokeWidth="2" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />}
         {h && <line x1={sx(h.dia)} y1={padT - 2} x2={sx(h.dia)} y2={H - padB} stroke={BORDE} strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+        {sem.length > 1 && <path d={lineaW} fill="none" stroke={VERDE} strokeWidth="1.6" strokeOpacity="0.7" vectorEffect="non-scaling-stroke" />}
         <path d={linea(obs)} fill="none" stroke={AZUL} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
         {obs.map((p, i) => <circle key={i} cx={sx(p.dia)} cy={sy(p.g)} r={i === hi ? 4.5 : 2.5} fill={AZUL} />)}
         <circle cx={sx(ult.dia)} cy={sy(ult.g)} r="4" fill={AZUL} />
+        {sem.map((p, i) => <circle key={'w' + i} cx={sx(p.dia)} cy={syW(p.dg)} r={i === hiW ? 3.6 : 2} fill={VERDE} />)}
         {obs.map((p, i) => <circle key={'h' + i} cx={sx(p.dia)} cy={sy(p.g)} r="12" fill="transparent" style={{ cursor: 'pointer' }}
-          onMouseEnter={() => setHi(i)} onMouseLeave={() => setHi(null)} />)}
+          onMouseEnter={() => { setHi(i); setHiW(null) }} onMouseLeave={() => setHi(null)} />)}
+        {sem.map((p, i) => <circle key={'wh' + i} cx={sx(p.dia)} cy={syW(p.dg)} r="10" fill="transparent" style={{ cursor: 'pointer' }}
+          onMouseEnter={() => { setHiW(i); setHi(null) }} onMouseLeave={() => setHiW(null)} />)}
       </svg>
       {h && (
         <div style={{ position: 'absolute', left: `${fx(h.dia)}%`, top: `${fy(h.g)}%`, transform: `translate(${fx(h.dia) > 70 ? '-100%' : fx(h.dia) < 15 ? '0' : '-50%'}, -125%)`, background: NAVY, color: '#fff', fontSize: '10.5px', fontWeight: 500, padding: '4px 8px', borderRadius: '6px', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 2, textAlign: 'center' }}>
@@ -2080,6 +2101,12 @@ function Curva({ puntos, gramaje }) {
               Objetivo {num1(objG)} g · {h.g >= objG ? '+' : ''}{num1(h.g - objG)} g
             </div>
           )}
+        </div>
+      )}
+      {hw && (
+        <div style={{ position: 'absolute', left: `${fx(hw.dia)}%`, top: `${(syW(hw.dg) / H) * 100}%`, transform: `translate(${fx(hw.dia) > 70 ? '-100%' : fx(hw.dia) < 15 ? '0' : '-50%'}, -125%)`, background: VERDE, color: '#fff', fontSize: '10.5px', fontWeight: 500, padding: '4px 8px', borderRadius: '6px', whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 2, textAlign: 'center' }}>
+          <div>{hw.dg >= 0 ? '+' : ''}{num1(hw.dg)} g esta semana</div>
+          <div style={{ opacity: 0.82, fontSize: '9.5px', marginTop: '1px' }}>sem {corta(hw.lunes)} – {corta(domingoDe(hw.lunes))}</div>
         </div>
       )}
     </div>
