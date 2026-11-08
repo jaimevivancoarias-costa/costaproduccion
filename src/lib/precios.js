@@ -33,7 +33,13 @@ const phi = (x, mu, sigma) => 0.5 * (1 + erf((x - mu) / (sigma * Math.SQRT2)))
 function blend(centro, edges, precios, cv) {
   const sigma = Math.max(centro * cv, 0.0001)
   let tot = 0; const w = []
-  for (let k = 0; k < precios.length; k++) { const d = phi(edges[k], centro, sigma) - phi(edges[k + 1], centro, sigma); w.push(d); tot += d }
+  for (let k = 0; k < precios.length; k++) {
+    // Dispersión SOLO hacia abajo (decisión nov 2026, se desvía del Excel simétrico):
+    // la cola de sobre-tamaño (talla premium por encima del promedio) NO se cuenta;
+    // solo pesa el camarón del promedio hacia los que se van quedando (más chico).
+    const hi = Math.min(edges[k], centro), lo = Math.min(edges[k + 1], centro)
+    const d = Math.max(0, phi(hi, centro, sigma) - phi(lo, centro, sigma)); w.push(d); tot += d
+  }
   if (tot <= 0) return 0
   let s = 0; for (let k = 0; k < precios.length; k++) s += (w[k] / tot) * precios[k]
   return s
