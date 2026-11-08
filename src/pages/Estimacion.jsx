@@ -546,13 +546,14 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     pctDeConsumo: est.biomasaConsumo > 0 ? est.biomasaDensidad / est.biomasaConsumo : 0,
   } : null
 
-  async function validarBiomasa() {
-    let valor = fuenteSel === 'consumo' ? est.biomasaConsumo : fuenteSel === 'densidad' ? est.biomasaDensidad : Number(String(aprobTxt).replace(',', '.'))
+  async function validarBiomasa(fuenteArg) {
+    const fuente = fuenteArg || fuenteSel
+    let valor = fuente === 'consumo' ? est.biomasaConsumo : fuente === 'densidad' ? est.biomasaDensidad : Number(String(aprobTxt).replace(',', '.'))
     if (!(valor > 0)) { setAviso({ tipo: 'error', texto: 'Pon un valor de biomasa válido.' }); return }
     const { error } = await supabase.schema('produccion').from('biomasa_validada')
-      .insert({ ciclo_id: sel, fecha_ref: hasta, fuente: fuenteSel, valor_lb: valor, validada_por: userId })
+      .insert({ ciclo_id: sel, fecha_ref: hasta, fuente, valor_lb: valor, validada_por: userId })
     if (error) { setAviso({ tipo: 'error', texto: msgError(error, 'validar la biomasa') }); return }
-    setValida(v => ({ ...v, [sel]: { fuente: fuenteSel, valor_lb: valor, fecha_ref: hasta, validada_en: new Date().toISOString(), validada_por: userId, validada_nombre: nombre || null } }))
+    setValida(v => ({ ...v, [sel]: { fuente, valor_lb: valor, fecha_ref: hasta, validada_en: new Date().toISOString(), validada_por: userId, validada_nombre: nombre || null } }))
     setAviso({ tipo: 'ok', texto: 'Biomasa validada.' })
   }
   async function quitarValidacion() {
@@ -1348,12 +1349,6 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                   </Fragment>
                 ))}
               </div>
-              {densRef && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', padding: '9px 11px', background: '#fff8ec', borderRadius: '9px', fontSize: '11.5px', color: '#8a6d2f', flexWrap: 'wrap' }}>
-                  <span style={{ fontWeight: 500 }}>Densidad (tabla):</span>
-                  <span>{miles(densRef.bio)} lb · {miles(densRef.ha)} lb/ha · sobrev. {pct0(densRef.sob)} · FCR {densRef.fcr > 0 ? num2(densRef.fcr) : '—'} — {Math.round(densRef.pctDeConsumo * 100)}% de la de consumo</span>
-                </div>
-              )}
             </>)}
 
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '12px', paddingTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
@@ -1375,24 +1370,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                     <div style={{ fontSize: '13px', fontWeight: 500, color: '#0F6E56' }}>Guardado · {vald.fuente === 'consumo' ? 'Por consumo' : vald.fuente === 'densidad' ? 'Por densidad' : 'Aprobada'} · {miles(vald.valor_lb)} lb</div>
                     <div style={{ fontSize: '11px', color: '#3d7a63' }}>Validó {vald.validada_nombre || '—'} · {vald.validada_en ? fechaHora(vald.validada_en) : (vald.fecha_ref ? corta(vald.fecha_ref) : '—')}</div>
                   </div>
-                  <button onClick={() => { setFuenteSel(vald.fuente); if (vald.fuente === 'aprobada') setAprobTxt(String(vald.valor_lb)); quitarValidacion() }} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: AZUL, borderColor: '#bcd3ec', padding: '6px 14px' }}>Editar</button>
+                  <button onClick={quitarValidacion} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: AZUL, borderColor: '#bcd3ec', padding: '6px 14px' }}>Editar</button>
                 </div>
               </div>
             )}
 
-            {/* Selector de biomasa (jefe) cuando hay que validar o no está validada */}
+            {/* Guardar la biomasa del plan (por consumo). La fuente/supuesto ya se
+                elige en la tabla de arriba, así que aquí solo se guarda. */}
             {esJefe && !valdOk && (
-              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '13px' }}>
-                <div style={{ fontSize: '12.5px', fontWeight: 500, marginBottom: '9px' }}>¿Cuál biomasa usamos para el plan?</div>
-                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
-                  <Opc on={fuenteSel === 'consumo'} onClick={() => setFuenteSel('consumo')}>Por consumo · {miles(est.biomasaConsumo)} lb</Opc>
-                  <Opc on={fuenteSel === 'densidad'} onClick={() => setFuenteSel('densidad')}>Por densidad · {miles(est.biomasaDensidad)} lb</Opc>
-                  <Opc on={fuenteSel === 'aprobada'} onClick={() => setFuenteSel('aprobada')}>Aprobar otra: <input value={aprobTxt} onChange={e => setAprobTxt(e.target.value)} onClick={e => e.stopPropagation()} placeholder="___" style={{ width: '60px', border: 'none', background: 'transparent', fontFamily: 'inherit', fontSize: '13px', color: NAVY, borderBottom: '1px solid ' + BORDE }} /> lb</Opc>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                  <button onClick={validarBiomasa} style={btnAzul}>Validar y usar</button>
-                  <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Se guarda quién la validó y cuándo. Desde ahí se recalculan sacos, FCR, costos y tolvas.</span>
-                </div>
+              <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '13px', paddingTop: '13px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <button onClick={() => validarBiomasa('consumo')} style={btnAzul}>Guardar · {miles(est.biomasaConsumo)} lb</button>
+                <span style={{ fontSize: '11.5px', color: '#9fb0bf' }}>Se guarda quién la validó y cuándo. Desde ahí se recalculan sacos, FCR, costos y tolvas.</span>
               </div>
             )}
           </Caja>
