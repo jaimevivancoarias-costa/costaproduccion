@@ -198,20 +198,19 @@ function resumenPiscina(f, ctx) {
   // Rentabilidad: valor de continuar (cosechar hoy vs esperar a meta). Se calcula
   // aunque la biomasa no esté validada (referencial); no se oculta por bloqueo.
   let rent = null
-  if (biomasaSel > 0 && f.gramaje < G_MIN_COMERCIAL) {
-    rent = { noComercial: true, gHoy: f.gramaje, referencial: bloqueado }
-  } else if (biomasaSel > 0) {
+  const bajoComercial = f.gramaje < G_MIN_COMERCIAL
+  if (biomasaSel > 0) {
     const pHoy = precioPorGramaje(f.gramaje, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
     const pr = proyectarAMeta({ gHoy: f.gramaje, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno })
-    if (!pr) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0, referencial: bloqueado }
+    if (!pr) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0, referencial: bloqueado, bajoComercial }
     else {
       const pMeta = precioPorGramaje(pr.metaUsa, precioOpts)
       const costoAlim = pr.alimentoLb / PARAM.pesoSaco * est.alimento.usdSaco
       const costoOper = (cfg.costoHaDia || 0) * f.area * pr.dias
       const netoMeta = pr.biomasaMeta * pMeta.mejor - costoAlim - costoOper
       const valor = netoMeta - ingresoHoy
-      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, conviene: pMeta.conviene, diasRest: pr.dias, referencial: bloqueado }
+      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, conviene: pMeta.conviene, diasRest: pr.dias, referencial: bloqueado, bajoComercial }
     }
   }
   return { f, est, biomasaSel, bloqueado, estadoPlan, recoInten, ap, confirmado, diasAlim, recoSacos, sacosShow: ap ? Number(ap.sacos_operativos) : (bloqueado ? null : recoSacos), sugerido: !ap, delta, deltaEstado, pve, cumplimiento, muDias, alertas, difPct, precioAplicado, usdSaco: est.alimento.usdSaco, rent }
@@ -820,17 +819,15 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     // Biomasa del ESCENARIO elegido (oficial × supuesto %). Con 100% == oficial.
     const bio = biomasaAsumida > 0 ? biomasaAsumida : biomasaSel
     const supuesto = celdaAct.fila
-    if (gHoy < G_MIN_COMERCIAL) {
-      const eC = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: 1 })
-      const eO = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: est.desempeno })
-      return { noComercial: true, gHoy, metaUsa: eC ? eC.metaUsa : est.metaUsa, diasCurva: eC ? eC.dias : null, diasObs: eO ? eO.dias : null, alertaDatos }
-    }
+    // Aunque el gramaje esté por debajo del mínimo comercial, se muestra la
+    // comparación con precio referencial (se marca para avisar).
+    const bajoComercial = gHoy < G_MIN_COMERCIAL
     const pHoy = precioPorGramaje(gHoy, precioOpts)
     const ingresoHoy = bio * pHoy.mejor
     // Proyección a meta con el ritmo OBSERVADO reciente (si falla, cae a la curva).
     const prO = proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: est.desempeno })
       || proyectarAMeta({ gHoy, meta, biomasaActual: bio, finca: cfg, desempeno: 1 })
-    if (!prO) return { listo: true, gHoy, pHoy, ingresoHoy }
+    if (!prO) return { listo: true, gHoy, pHoy, ingresoHoy, bajoComercial }
     // Costos comunes (larva = hundido).
     const costoLarva = (cfg.larvaMillar || 0) * fila.larva / 1000
     // Alimento consumido hasta hoy = Σ(libras × precio_saco REGISTRADO) ÷ 55.
@@ -876,7 +873,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
       listo: false, gHoy, metaUsa: prO.metaUsa, subeEscalon: prO.metaUsa !== Number(meta),
       hoy: hoyCol, meta: metaCol, panel, valor, esperar: valor >= 0,
       sMetaRef: prO.sobrevMeta, sHoyRef: prO.sobrevHoy, alertaDatos, supuesto,
-      sinPrecioPct: lbSinPrecioPct,
+      sinPrecioPct: lbSinPrecioPct, bajoComercial,
     }
   })()
   const muestreoDias = (fila && fila.ultMuestreo) ? diasEntre(fila.ultMuestreo, hasta) : null
@@ -1526,12 +1523,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
             {!rent.noComercial && rent.supuesto != null && (
               <div style={{ fontSize: '11.5px', color: GRIS, marginBottom: '10px' }}>Sobre el escenario elegido: <b style={{ color: NAVY, fontWeight: 500 }}>{rent.supuesto}% de la biomasa oficial</b>{rent.supuesto === 100 ? ' (oficial)' : ''}{rent.hoy ? ` · ${miles(rent.hoy.libras)} lb` : ''}.</div>
             )}
-            {rent.noComercial ? (<>
-              {rent.alertaDatos && <div style={{ fontSize: '11.5px', color: ROJO, background: '#FBEAEA', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Sobrevivencia por consumo {rent.alertaDatos}% ({'>'}100%): la biomasa por consumo parece alta. Revisa los datos.</div>}
-              <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Aún no es cosechable ({num1(rent.gHoy)} g · mínimo comercial {G_MIN_COMERCIAL} g). Sigue en engorde; todavía no tiene sentido comparar contra cosechar hoy.</div>
-              <div style={{ fontSize: '12px', color: GRIS, marginTop: '8px' }}>Proyección referencial de engorde a {num1(rent.metaUsa)} g: <b style={{ color: NAVY, fontWeight: 500 }}>{rent.diasCurva != null ? rent.diasCurva + ' días' : '—'}</b> según curva · <b style={{ color: NAVY, fontWeight: 500 }}>{rent.diasObs != null ? rent.diasObs + ' días' : '—'}</b> según ritmo observado.</div>
-              <div style={{ fontSize: '11px', color: '#9fb0bf', marginTop: '7px' }}>Sin comparación económica y fuera del "valor de continuar" de la finca hasta alcanzar talla comercial.</div>
-            </>) : rent.listo ? (
+            {rent.bajoComercial && <div style={{ fontSize: '11.5px', color: '#854F0B', background: '#FBF5E9', border: '0.5px solid #ecd9b4', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Gramaje por debajo del mínimo comercial ({num1(rent.gHoy)} g · mín {G_MIN_COMERCIAL} g): el precio de “cosechar hoy” es referencial.</div>}
+            {rent.listo ? (
               <div style={{ fontSize: '12.5px', color: '#4a5a67' }}>Ya está en talla de cosecha ({num1(rent.gHoy)} g). Ingreso estimado hoy: <b style={{ color: NAVY, fontWeight: 500 }}>{dinero(rent.ingresoHoy)}</b> ({cap(rent.pHoy.conviene)} a {dinero(rent.pHoy.mejor)}/lb).</div>
             ) : (() => { const h = rent.hoy, m = rent.meta, p = rent.panel; return (<>
               {rent.alertaDatos && <div style={{ fontSize: '11.5px', color: ROJO, background: '#FBEAEA', borderRadius: '8px', padding: '8px 11px', marginBottom: '10px' }}>Sobrevivencia por consumo {rent.alertaDatos}% ({'>'}100%): la biomasa por consumo parece alta. Revisa los datos antes de decidir; esta rentabilidad es referencial.</div>}
