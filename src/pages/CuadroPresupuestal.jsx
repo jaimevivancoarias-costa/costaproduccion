@@ -59,12 +59,13 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
   const cargarRubros = useCallback(async () => {
     const [{ data: rb }, { data: ins }] = await Promise.all([
       supabase.schema('produccion').from('cuadro_rubro')
-        .select('id, grupo, nombre, orden, origen, incluye_real').eq('activo', true).order('grupo').order('orden'),
+        .select('id, grupo, nombre, orden, origen, incluye_real, finca_id').eq('activo', true)
+        .or(`finca_id.is.null,finca_id.eq.${finca.id}`).order('grupo').order('orden'),
       supabase.schema('produccion').from('insumo').select('id, categoria_presupuesto').eq('activo', true),
     ])
     setRubros(rb || [])
     const cm = {}; (ins || []).forEach(i => { cm[i.id] = i.categoria_presupuesto }); setCatIns(cm)
-  }, [])
+  }, [finca.id])
   useEffect(() => { cargarRubros() }, [cargarRubros])
 
   // Consumo real del mes desde la app, mapeado a los rubros con `origen`.
@@ -128,16 +129,30 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
   }, [finca.id, anio, mes, rubros, cargarAppVals])
 
   const val = id => parseNum(txt[id])
+  // Rubros visibles de ESTA finca: por grupo, sus rubros propios (finca_id) si
+  // tiene; si no, la plantilla compartida (finca_id null). Así cada finca ve su
+  // propio desglose y no los rubros de las demás.
+  const rubrosVis = useMemo(() => {
+    const byG = {}
+    for (const r of rubros) (byG[r.grupo] = byG[r.grupo] || []).push(r)
+    const out = []
+    for (const [g] of GRUPOS) {
+      const arr = byG[g] || []
+      const own = arr.filter(r => r.finca_id === finca.id)
+      out.push(...(own.length ? own : arr.filter(r => r.finca_id == null)))
+    }
+    return out
+  }, [rubros, finca.id])
   const totalesGrupo = useMemo(() => {
     const t = {}; for (const [g] of GRUPOS) t[g] = 0
-    for (const r of rubros) t[r.grupo] = (t[r.grupo] || 0) + val(r.id)
+    for (const r of rubrosVis) t[r.grupo] = (t[r.grupo] || 0) + val(r.id)
     return t
-  }, [rubros, txt])
+  }, [rubrosVis, txt])
   const { bruto, totOp, real, haDiaTotal, haDiaReal } = useMemo(() => {
     // bruto = todo. El ha·día TOTAL excluye balanceado+larva (ya se cuentan aparte
     // en Rentabilidad); el REAL excluye además activos y mejoras (incluye_real).
     let b = 0, to = 0, rl = 0
-    for (const r of rubros) {
+    for (const r of rubrosVis) {
       const v = val(r.id); b += v
       if (r.grupo !== 'BALANCEADO_LARVA') to += v
       if (r.incluye_real) rl += v
@@ -147,7 +162,7 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
     const dedTotal = parseNum(dedSueldos) + parseNum(dedBenef)
     const rlNeto = Math.max(0, rl - dedTotal)        // REAL = operativo − deducción administrativa
     return { bruto: b, totOp: to, real: rlNeto, haDiaTotal: div ? to / div : 0, haDiaReal: div ? rlNeto / div : 0 }
-  }, [rubros, txt, ha, dias, dedSueldos, dedBenef])
+  }, [rubrosVis, txt, ha, dias, dedSueldos, dedBenef])
 
   const cambiar = (r, v) => { setTxt(t => ({ ...t, [r.id]: v })); if (r.origen) setEditado(s => { const n = new Set(s); n.add(r.id); return n }) }
   const restaurarApp = r => {
@@ -163,7 +178,7 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
       .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), deduccion_sueldos: parseNum(dedSueldos), deduccion_beneficios: parseNum(dedBenef), hadia_total: haDiaTotal, hadia_real: haDiaReal, actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
       .select('id').single()
     if (error) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar la cabecera. ' + error.message }); return }
-    const filas = rubros.map(r => {
+    const filas = rubrosVis.map(r => {
       const esApp = !!r.origen && !editado.has(r.id)
       return { cuadro_mes_id: cm.id, rubro_id: r.id, valor: val(r.id), fuente: esApp ? 'app' : 'manual', editado: !!r.origen && editado.has(r.id) }
     })
@@ -174,10 +189,10 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
 
   async function agregarRubro(grupo) {
     const nombre = (nuevo[grupo] || '').trim(); if (!nombre) return
-    const maxOrden = Math.max(0, ...rubros.filter(r => r.grupo === grupo).map(r => r.orden))
+    const maxOrden = Math.max(0, ...rubrosVis.filter(r => r.grupo === grupo).map(r => r.orden))
     const incluye_real = !NO_REAL.has(grupo)
     const { error } = await supabase.schema('produccion').from('cuadro_rubro')
-      .insert({ grupo, nombre, orden: maxOrden + 10, incluye_real })
+      .insert({ grupo, nombre, orden: maxOrden + 10, incluye_real, finca_id: finca.id })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo agregar el rubro. ' + error.message }); return }
     setNuevo(n => ({ ...n, [grupo]: '' })); cargarRubros()
   }
@@ -230,8 +245,9 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
       ) : (
         <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
           {GRUPOS.map(([g, gLabel]) => {
+            // Rubros de esta finca para el grupo (propios o plantilla, vía rubrosVis).
             // El rubro "Total del mes (histórico)" solo se muestra donde tiene valor (carga por grupo).
-            const items = rubros.filter(r => r.grupo === g && !(r.nombre === 'Total del mes (histórico)' && !(val(r.id) > 0)))
+            const items = rubrosVis.filter(r => r.grupo === g && !(r.nombre === 'Total del mes (histórico)' && !(val(r.id) > 0)))
             const open = !!abierto[g]
             const noReal = NO_REAL.has(g)
             return (
