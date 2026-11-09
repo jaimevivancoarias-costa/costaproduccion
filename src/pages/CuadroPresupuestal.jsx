@@ -41,7 +41,8 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
   const [catIns, setCatIns] = useState({})      // insumo_id -> categoria_presupuesto
   const [ha, setHa] = useState('')
   const [dias, setDias] = useState(String(diasDelMes(hoy.getFullYear(), hoy.getMonth() + 1)))
-  const [ded, setDed] = useState('')            // deducción administrativa (se resta solo del REAL)
+  const [dedSueldos, setDedSueldos] = useState('')   // sueldos administrativos (se resta solo del REAL)
+  const [dedBenef, setDedBenef] = useState('')       // beneficios sociales de esos sueldos
   const [txt, setTxt] = useState({})            // rubro_id -> string del valor mostrado
   const [appVals, setAppVals] = useState({})    // rubro_id -> valor sugerido por la app
   const [editado, setEditado] = useState(new Set()) // rubros App que el usuario sobrescribió
@@ -97,19 +98,20 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     ;(async () => {
       setCargando(true)
       const { data: cm } = await supabase.schema('produccion').from('cuadro_mes')
-        .select('id, hectareas, dias, deduccion_admin').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle()
+        .select('id, hectareas, dias, deduccion_sueldos, deduccion_beneficios').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle()
       const app = await cargarAppVals(anio, mes)
       if (!vivo) return
       const saved = {}
       if (cm) {
         setHa(cm.hectareas ? String(cm.hectareas) : ''); setDias(String(cm.dias || diasDelMes(anio, mes)))
-        setDed(cm.deduccion_admin ? num2(cm.deduccion_admin) : '')
+        setDedSueldos(cm.deduccion_sueldos ? num2(cm.deduccion_sueldos) : '')
+        setDedBenef(cm.deduccion_beneficios ? num2(cm.deduccion_beneficios) : '')
         const { data: vs } = await supabase.schema('produccion').from('cuadro_valor')
           .select('rubro_id, valor, editado').eq('cuadro_mes_id', cm.id)
         if (!vivo) return
         ;(vs || []).forEach(v => { saved[v.rubro_id] = { valor: Number(v.valor), editado: v.editado } })
       } else {
-        setHa(''); setDias(String(diasDelMes(anio, mes))); setDed('')
+        setHa(''); setDias(String(diasDelMes(anio, mes))); setDedSueldos(''); setDedBenef('')
       }
       setAppVals(app)
       const nt = {}; const ed = new Set()
@@ -141,9 +143,10 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     }
     const h = parseNum(ha), d = Number(dias) || 0
     const div = h > 0 && d > 0 ? h * d : 0
-    const rlNeto = Math.max(0, rl - parseNum(ded))   // REAL = operativo − deducción administrativa
+    const dedTotal = parseNum(dedSueldos) + parseNum(dedBenef)
+    const rlNeto = Math.max(0, rl - dedTotal)        // REAL = operativo − deducción administrativa
     return { bruto: b, totOp: to, real: rlNeto, haDiaTotal: div ? to / div : 0, haDiaReal: div ? rlNeto / div : 0 }
-  }, [rubros, txt, ha, dias, ded])
+  }, [rubros, txt, ha, dias, dedSueldos, dedBenef])
 
   const cambiar = (r, v) => { setTxt(t => ({ ...t, [r.id]: v })); if (r.origen) setEditado(s => { const n = new Set(s); n.add(r.id); return n }) }
   const restaurarApp = r => {
@@ -156,7 +159,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     setGuardando(true)
     const ahora = new Date().toISOString()
     const { data: cm, error } = await supabase.schema('produccion').from('cuadro_mes')
-      .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), deduccion_admin: parseNum(ded), actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
+      .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), deduccion_sueldos: parseNum(dedSueldos), deduccion_beneficios: parseNum(dedBenef), actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
       .select('id').single()
     if (error) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar la cabecera. ' + error.message }); return }
     const filas = rubros.map(r => {
@@ -266,39 +269,59 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '12px', color: GRIS }}>Deducción administrativa</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ fontSize: '12px', color: GRIS }}>$</span>
-          <input value={ded} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
-            onChange={e => setDed(e.target.value)} onFocus={e => e.target.select()}
-            onBlur={e => setDed(e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)))}
-            style={{ ...inp, width: '118px', textAlign: 'right', padding: '5px 9px' }} />
-        </span>
-        <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>Sueldos administrativos que no se cargan a producción; se resta solo del ha·día REAL.</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }}>Deducción administrativa (solo resta del REAL)</span>
+        {[['Sueldos administrativos', dedSueldos, setDedSueldos], ['Beneficios sociales', dedBenef, setDedBenef]].map(([lbl, v, set]) => (
+          <label key={lbl} style={{ fontSize: '12px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>{lbl}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}><span style={{ color: GRIS }}>$</span>
+              <input value={v} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
+                onChange={e => set(e.target.value)} onFocus={e => e.target.select()}
+                onBlur={e => set(e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)))}
+                style={{ ...inp, width: '110px', textAlign: 'right', padding: '5px 9px' }} /></span>
+          </label>
+        ))}
       </div>
 
       {(() => {
-        const dedV = parseNum(ded)
+        const h = parseNum(ha), d = Number(dias) || 0, div = h > 0 && d > 0 ? h * d : 0
+        const pd = v => div ? '$' + num2(v / div) : '—'
         const bl = totalesGrupo['BALANCEADO_LARVA'] || 0, act = totalesGrupo['ACTIVOS'] || 0, mej = totalesGrupo['MEJORAS'] || 0
-        const noIncl = bl + act + mej + dedV
-        const paraResult = bruto - noIncl
-        const fila = (k, v, opt = {}) => (
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: '12px', borderTop: '0.5px solid #f1f5f9', fontWeight: opt.fuerte ? 500 : 400, color: opt.col || (opt.fuerte ? NAVY : GRIS) }}>
-            <span>{k}</span><span style={{ fontWeight: opt.fuerte ? 500 : 400, color: opt.col || NAVY }}>{v}</span>
-          </div>)
+        const sue = parseNum(dedSueldos), ben = parseNum(dedBenef), dedV = sue + ben
+        const paraResult = bruto - bl - act - mej - dedV
+        const C = { th: { padding: '7px 15px', color: '#9fb0bf', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.03em' } }
+        const fila = (k, monthly, perHa, opt = {}) => (<>
+          <div style={{ padding: (opt.sub ? '3px 15px 3px 30px' : '6px 15px') + '', borderTop: opt.sub ? 'none' : '0.5px solid #f1f5f9', fontSize: opt.sub ? '11px' : '12px', fontWeight: opt.fuerte ? 500 : 400, color: opt.col || (opt.sub ? '#9fb0bf' : (opt.fuerte ? NAVY : '#51606c')), background: opt.bg || 'transparent' }}>{k}</div>
+          <div style={{ padding: (opt.sub ? '3px 10px' : '6px 10px') + '', borderTop: opt.sub ? 'none' : '0.5px solid #f1f5f9', fontSize: opt.sub ? '11px' : '12px', textAlign: 'right', color: opt.col || (opt.sub ? '#9fb0bf' : NAVY), background: opt.bg || 'transparent' }}>{monthly}</div>
+          <div style={{ padding: (opt.sub ? '3px 15px 3px 10px' : '6px 15px 6px 10px') + '', borderTop: opt.sub ? 'none' : '0.5px solid #f1f5f9', fontSize: opt.sub ? '11px' : (opt.fuerte ? '14px' : '12px'), textAlign: 'right', fontWeight: opt.fuerte ? 500 : 400, color: opt.col || (opt.sub ? '#9fb0bf' : NAVY), background: opt.bg || 'transparent' }}>{perHa}</div>
+        </>)
         return (
-          <div style={{ marginBottom: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '12px 15px', maxWidth: '480px' }}>
-            <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '2px' }}>Cuadre del costo por hectárea·día</div>
-            {fila('Total costos brutos', dinero(bruto), { fuerte: true })}
-            {fila('Costo ha·día TOTAL', '$' + num2(haDiaTotal), { fuerte: true, col: AZUL })}
-            {fila('(−) Balanceado y larva', dinero(bl))}
-            {fila('(−) Mejoras', dinero(mej))}
-            {fila('(−) Activos fijos', dinero(act))}
-            {fila('(−) Deducción administrativa', dinero(dedV))}
-            {fila('Total costos no incluidos', dinero(noIncl))}
-            {fila('Total para resultados', dinero(paraResult), { fuerte: true })}
-            {fila('Costo ha·día REAL', '$' + num2(haDiaReal), { fuerte: true, col: VERDE })}
+          <div style={{ marginBottom: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden', maxWidth: '620px' }}>
+            <div style={{ padding: '11px 15px', background: '#f3f7fb', borderBottom: '0.5px solid #e6eef5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+              <div style={{ fontSize: '12.5px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.03em', color: '#51606c' }}>Cuadre del costo por hectárea·día</div>
+              <div style={{ fontSize: '11px', color: '#9fb0bf' }}>{div ? `${num2(h)} ha × ${d} días` : 'Falta hectáreas / días'}</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto' }}>
+              <div style={C.th}>Cómo se forma el ha·día total</div><div style={{ ...C.th, textAlign: 'right' }}>Mensual</div><div style={{ ...C.th, textAlign: 'right' }}>Por ha·día</div>
+              {fila('Insumos (materia prima)', dinero(totalesGrupo['MATERIA_PRIMA'] || 0), pd(totalesGrupo['MATERIA_PRIMA'] || 0))}
+              {fila('Mano de obra', dinero(totalesGrupo['MANO_OBRA'] || 0), pd(totalesGrupo['MANO_OBRA'] || 0))}
+              {fila('Indirectos', dinero(totalesGrupo['INDIRECTOS'] || 0), pd(totalesGrupo['INDIRECTOS'] || 0))}
+              {fila('Otros administrativos', dinero(totalesGrupo['OTROS_ADMIN'] || 0), pd(totalesGrupo['OTROS_ADMIN'] || 0))}
+              {fila('Mejoras', dinero(mej), pd(mej))}
+              {fila('Activos fijos', dinero(act), pd(act))}
+              {fila('Costo ha·día TOTAL', dinero(totOp), '$' + num2(haDiaTotal), { fuerte: true, col: '#185FA5', bg: '#eaf2fb' })}
+            </div>
+            <div style={{ padding: '7px 15px', background: '#fcfdfe', borderTop: '0.5px solid #eef3f7', fontSize: '10.5px', color: '#9fb0bf' }}>Balanceado y larva ({dinero(bl)}) no entran: la Rentabilidad ya los cuenta aparte.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', borderTop: '0.5px solid #e6eef5' }}>
+              <div style={C.th}>Del total al real</div><div style={C.th}></div><div style={C.th}></div>
+              {fila('Costo ha·día TOTAL', '', '$' + num2(haDiaTotal))}
+              {fila('(−) Mejoras', dinero(mej), div ? '−$' + num2(mej / div) : '—', { col: '#854F0B' })}
+              {fila('(−) Activos fijos', dinero(act), div ? '−$' + num2(act / div) : '—', { col: '#854F0B' })}
+              {fila('(−) Deducción administrativa', dinero(dedV), div ? '−$' + num2(dedV / div) : '—', { col: '#854F0B' })}
+              {fila('· Sueldos administrativos', dinero(sue), pd(sue), { sub: true })}
+              {fila('· Beneficios sociales', dinero(ben), pd(ben), { sub: true })}
+              {fila('Total para resultados', dinero(paraResult), '', { fuerte: true })}
+              {fila('Costo ha·día REAL', '', '$' + num2(haDiaReal), { fuerte: true, col: VERDE, bg: '#e7f6ef' })}
+            </div>
           </div>
         )
       })()}
