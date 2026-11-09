@@ -295,6 +295,30 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         </div>
       </div>
 
+      {(() => {
+        const dedV = parseNum(ded)
+        const bl = totalesGrupo['BALANCEADO_LARVA'] || 0, act = totalesGrupo['ACTIVOS'] || 0, mej = totalesGrupo['MEJORAS'] || 0
+        const noIncl = bl + act + mej + dedV
+        const paraResult = bruto - noIncl
+        const fila = (k, v, fuerte) => (
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', fontSize: '12px', borderTop: '0.5px solid #f1f5f9', fontWeight: fuerte ? 500 : 400, color: fuerte ? NAVY : GRIS }}>
+            <span>{k}</span><span style={{ color: NAVY }}>{v}</span>
+          </div>)
+        return (
+          <div style={{ marginTop: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '12px 15px', maxWidth: '460px' }}>
+            <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '2px' }}>Cuadre del costo por hectárea·día</div>
+            {fila('Total costos brutos', dinero(bruto), true)}
+            {fila('(−) Balanceado y larva', dinero(bl))}
+            {fila('(−) Mejoras', dinero(mej))}
+            {fila('(−) Activos fijos', dinero(act))}
+            {fila('(−) Deducción administrativa', dinero(dedV))}
+            {fila('Total costos no incluidos', dinero(noIncl))}
+            {fila('Total para resultados', dinero(paraResult), true)}
+            {fila('Costo ha·día REAL', '$' + num2(haDiaReal), true)}
+          </div>
+        )
+      })()}
+
       {esJefe && (
         <div style={{ display: 'flex', gap: '9px', marginTop: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={guardar} disabled={guardando} style={{ ...btnAzul, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Guardar'}</button>
