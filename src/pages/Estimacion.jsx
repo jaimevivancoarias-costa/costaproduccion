@@ -1576,7 +1576,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                     <span style={{ fontSize: '10px', color: '#9fb0bf' }}>fijo hasta que cargues el Cuadro de esta finca{fijoAct ? '' : ` · si lo dejas vacío usa el respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')}`}</span>
                   </>)}
                 </div>
-                <div style={{ gridColumn: '1 / -1', padding: '0 9px 5px', fontSize: '10px', color: '#9fb0bf' }}>Costo operativo = ha·día × {num1(fila.area)} ha × días de cultivo. <b style={{ color: '#7d8fa0', fontWeight: 500 }}>Real</b> descuenta activos, mejoras y admin; <b style={{ color: '#7d8fa0', fontWeight: 500 }}>Total</b> es el costo completo.</div>
+                <div style={{ gridColumn: '1 / -1', padding: '0 9px 5px', fontSize: '10px', color: '#9fb0bf' }}>Costo operativo = ha·día × {num1(fila.area)} ha × {fila.dias} días desde la ocupación (la secada no cuenta). <b style={{ color: '#7d8fa0', fontWeight: 500 }}>Real</b> descuenta activos, mejoras y admin; <b style={{ color: '#7d8fa0', fontWeight: 500 }}>Total</b> es el costo completo.</div>
                 <RentRow k="Costo de la larva" a={dinero(h.costoLarva)} b={dinero(m.costoLarva)} />
                 <RentRow k={`Costo operativo ($${num2(costoHaDiaUsar || 0).replace(/,00$/, '')}/ha·día)`} a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
                 <RentRow k="Alimento consumido hasta hoy" a={dinero(h.alimConsumido)} b={dinero(m.alimConsumido)} />
