@@ -241,6 +241,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [precioOpts, setPrecioOpts] = useState({})     // lista de precios + rendimientos + cv (desde la base)
   const [cuadroHaDia, setCuadroHaDia] = useState(null) // { total, real, anio, mes } del último mes del Cuadro presupuestal
   const [baseCosto, setBaseCosto] = useState(() => { try { return localStorage.getItem('baseCosto|' + finca.id) || 'real' } catch { return 'real' } }) // 'real' | 'total'
+  const [mesesProm, setMesesProm] = useState(() => { try { return Number(localStorage.getItem('mesesProm|' + finca.id)) || 2 } catch { return 2 } }) // meses a promediar si no hay Cuadro del mes
   const [editPrecio, setEditPrecio] = useState(false)  // editor de precios de venta
   const [precioTmp, setPrecioTmp] = useState(null)     // edición en curso del editor de precios
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
@@ -273,26 +274,27 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   useEffect(() => { try { localStorage.setItem('metaEst|' + finca.id, String(meta)) } catch (e) { /* sin storage */ } }, [meta, finca.id])
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
   useEffect(() => { try { localStorage.setItem('baseCosto|' + finca.id, baseCosto) } catch { /* sin storage */ } }, [baseCosto, finca.id])
+  useEffect(() => { try { localStorage.setItem('mesesProm|' + finca.id, String(mesesProm)) } catch { /* sin storage */ } }, [mesesProm, finca.id])
   // Costo ha·día del Cuadro presupuestal. Si el mes actual ya tiene Cuadro, usa
-  // ese; si no, promedia los 2 meses más recientes disponibles.
+  // ese; si no, promedia los N meses más recientes disponibles (N = mesesProm).
   useEffect(() => {
     let vivo = true
     supabase.schema('produccion').from('cuadro_mes')
       .select('anio, mes, hadia_total, hadia_real').eq('finca_id', finca.id)
-      .order('anio', { ascending: false }).order('mes', { ascending: false }).limit(3)
+      .order('anio', { ascending: false }).order('mes', { ascending: false }).limit(mesesProm + 1)
       .then(({ data }) => {
         if (!vivo) return
         const rows = (data || []).filter(r => Number(r.hadia_total) || Number(r.hadia_real))
         if (!rows.length) { setCuadroHaDia(null); return }
         const now = new Date(), cy = now.getFullYear(), cm = now.getMonth() + 1
         const actual = rows.find(r => r.anio === cy && r.mes === cm)
-        const usar = actual ? [actual] : rows.slice(0, 2)
+        const usar = actual ? [actual] : rows.slice(0, mesesProm)
         const n = usar.length
         const prom = cmp => usar.reduce((s, r) => s + Number(r[cmp] || 0), 0) / n
         setCuadroHaDia({ total: prom('hadia_total'), real: prom('hadia_real'), promedio: !actual && n > 1, meses: usar.map(r => ({ anio: r.anio, mes: r.mes })), anio: usar[0].anio, mes: usar[0].mes })
       })
     return () => { vivo = false }
-  }, [finca.id])
+  }, [finca.id, mesesProm])
   // ha·día que alimenta el costo operativo: del Cuadro (según selector) o el de respaldo.
   const costoHaDiaUsar = cuadroHaDia ? (baseCosto === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : (cfg.costoHaDia || 0)
   const cfgCosto = useMemo(() => ({ ...cfg, costoHaDia: costoHaDiaUsar }), [cfg, costoHaDiaUsar])
@@ -1562,6 +1564,10 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                     ))}
                   </span>
                   <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{(() => { const M3 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; if (!cuadroHaDia) return `respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')} (sin Cuadro)`; return cuadroHaDia.promedio ? `Cuadro · promedio ${cuadroHaDia.meses.map(x => M3[x.mes - 1]).join('–')} ${cuadroHaDia.meses[cuadroHaDia.meses.length - 1].anio}` : `Cuadro presupuestal · ${M3[cuadroHaDia.mes - 1]} ${cuadroHaDia.anio}` })()}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', color: GRIS }}>· promedio
+                    <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '7px', overflow: 'hidden' }}>
+                      {[2, 3, 4].map(nn => <button key={nn} type="button" onClick={() => setMesesProm(nn)} style={{ padding: '2px 8px', border: 'none', fontFamily: 'inherit', fontSize: '10.5px', cursor: 'pointer', background: mesesProm === nn ? AZUL : 'white', color: mesesProm === nn ? 'white' : GRIS, fontWeight: mesesProm === nn ? 500 : 400 }}>{nn}</button>)}
+                    </span>meses</span>
                 </div>
                 <RentRow k="Costo de la larva" a={dinero(h.costoLarva)} b={dinero(m.costoLarva)} />
                 <RentRow k={`Costo operativo ($${num2(costoHaDiaUsar || 0).replace(/,00$/, '')}/ha·día)`} a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
