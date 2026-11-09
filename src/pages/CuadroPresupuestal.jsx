@@ -269,15 +269,15 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         </div>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }}>Deducción administrativa (solo resta del REAL)</span>
+      <div style={{ marginTop: '14px', marginBottom: '10px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '11px 15px', display: 'flex', alignItems: 'center', gap: '22px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em', minWidth: '150px' }}>Deducción administrativa<br /><span style={{ textTransform: 'none', letterSpacing: 0 }}>solo resta del ha·día REAL</span></span>
         {[['Sueldos administrativos', dedSueldos, setDedSueldos], ['Beneficios sociales', dedBenef, setDedBenef]].map(([lbl, v, set]) => (
-          <label key={lbl} style={{ fontSize: '12px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>{lbl}
+          <label key={lbl} style={{ fontSize: '12px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{lbl}
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}><span style={{ color: GRIS }}>$</span>
               <input value={v} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
                 onChange={e => set(e.target.value)} onFocus={e => e.target.select()}
                 onBlur={e => set(e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)))}
-                style={{ ...inp, width: '110px', textAlign: 'right', padding: '5px 9px' }} /></span>
+                style={{ ...inp, width: '120px', textAlign: 'right', padding: '6px 10px' }} /></span>
           </label>
         ))}
       </div>
@@ -295,7 +295,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
           <div style={{ padding: (opt.sub ? '3px 15px 3px 10px' : '6px 15px 6px 10px') + '', borderTop: opt.sub ? 'none' : '0.5px solid #f1f5f9', fontSize: opt.sub ? '11px' : (opt.fuerte ? '14px' : '12px'), textAlign: 'right', fontWeight: opt.fuerte ? 500 : 400, color: opt.col || (opt.sub ? '#9fb0bf' : NAVY), background: opt.bg || 'transparent' }}>{perHa}</div>
         </>)
         return (
-          <div style={{ marginBottom: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden', maxWidth: '620px' }}>
+          <div style={{ marginBottom: '12px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden' }}>
             <div style={{ padding: '11px 15px', background: '#f3f7fb', borderBottom: '0.5px solid #e6eef5', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
               <div style={{ fontSize: '12.5px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '.03em', color: '#51606c' }}>Cuadre del costo por hectárea·día</div>
               <div style={{ fontSize: '11px', color: '#9fb0bf' }}>{div ? `${num2(h)} ha × ${d} días` : 'Falta hectáreas / días'}</div>
