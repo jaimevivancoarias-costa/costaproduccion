@@ -15,8 +15,10 @@ const GRUPOS = [
   ['MANO_OBRA', 'Mano de obra'],
   ['INDIRECTOS', 'Indirectos'],
   ['OTROS_ADMIN', 'Otros administrativos'],
-  ['ACTIVOS_MEJORAS', 'Activos y mejoras'],
+  ['ACTIVOS', 'Activos fijos'],
+  ['MEJORAS', 'Mejoras'],
 ]
+const NO_REAL = new Set(['BALANCEADO_LARVA', 'ACTIVOS', 'MEJORAS'])
 const diasDelMes = (y, m) => new Date(y, m, 0).getDate()  // m = 1..12
 const num2 = n => (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // Parser tolerante: "319.210,80" | "319210.8" | "1,234" -> número.
@@ -69,7 +71,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         const { data: vs } = await supabase.schema('produccion').from('cuadro_valor')
           .select('rubro_id, valor').eq('cuadro_mes_id', cm.id)
         if (!vivo) return
-        const m = {}; (vs || []).forEach(v => { if (Number(v.valor)) m[v.rubro_id] = String(v.valor) })
+        const m = {}; (vs || []).forEach(v => { if (Number(v.valor)) m[v.rubro_id] = num2(v.valor) })
         setTxt(m)
       } else {
         setMesId(null); setHa(''); setDias(String(diasDelMes(anio, mes))); setTxt({})
@@ -111,7 +113,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
   async function agregarRubro(grupo) {
     const nombre = (nuevo[grupo] || '').trim(); if (!nombre) return
     const maxOrden = Math.max(0, ...rubros.filter(r => r.grupo === grupo).map(r => r.orden))
-    const incluye_real = !(grupo === 'BALANCEADO_LARVA' || grupo === 'ACTIVOS_MEJORAS')
+    const incluye_real = !NO_REAL.has(grupo)
     const { error } = await supabase.schema('produccion').from('cuadro_rubro')
       .insert({ grupo, nombre, orden: maxOrden + 10, incluye_real })
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo agregar el rubro. ' + error.message }); return }
@@ -160,7 +162,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
           {GRUPOS.map(([g, gLabel]) => {
             const items = rubros.filter(r => r.grupo === g)
             const open = !!abierto[g]
-            const noReal = g === 'BALANCEADO_LARVA' || g === 'ACTIVOS_MEJORAS'
+            const noReal = NO_REAL.has(g)
             return (
               <div key={g}>
                 <div onClick={() => setAbierto(a => ({ ...a, [g]: !open }))}
@@ -175,8 +177,14 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
                   {items.map(r => (
                     <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '7px 14px 7px 30px', borderBottom: '0.5px solid #f1f5f9', fontSize: '12.5px' }}>
                       <span>{r.nombre}{r.origen && <span style={{ fontSize: '9.5px', color: '#185FA5', background: '#e8f1fb', borderRadius: '10px', padding: '1px 7px', marginLeft: '6px' }}>App</span>}</span>
-                      <input value={txt[r.id] || ''} onChange={e => setTxt(t => ({ ...t, [r.id]: e.target.value }))} disabled={!esJefe} placeholder="0,00"
-                        style={{ ...inp, width: '120px', textAlign: 'right', padding: '5px 9px', background: r.origen ? '#f3f9ff' : 'white' }} />
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                        <input value={txt[r.id] || ''} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
+                          onChange={e => setTxt(t => ({ ...t, [r.id]: e.target.value }))}
+                          onFocus={e => e.target.select()}
+                          onBlur={e => setTxt(t => ({ ...t, [r.id]: e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)) }))}
+                          style={{ ...inp, width: '118px', textAlign: 'right', padding: '5px 9px', background: r.origen ? '#f3f9ff' : 'white' }} />
+                      </span>
                     </div>
                   ))}
                   {esJefe && (
