@@ -7,7 +7,7 @@ import { dinero } from '../lib/fechas'
 // app calcula el costo por hectárea-día TOTAL y REAL. No se cierra: va
 // calculando en vivo. Los rubros marcados "App" (balanceado, insumos por
 // categoría, diésel) se PRECARGAN con el consumo real del mes y son editables.
-const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', VERDE = '#0F6E56'
+const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', VERDE = '#0F6E56', ROJO = '#8A2F2E'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const GRUPOS = [
   ['BALANCEADO_LARVA', 'Balanceado y larva'],
@@ -428,6 +428,7 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
 
 // ===== Tabla comparativa · meses en columnas (solo lectura) =====
 function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setAbierto, cmpMeses, setCmpMeses }) {
+  const [trendH, setTrendH] = useState(null)   // índice de mes resaltado en la tendencia
   if (cargando) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando…</div>
   const meses = cmp?.meses || []
   if (!meses.length) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>No hay meses cargados para {finca.nombre} en {anio}.</div>
@@ -448,6 +449,14 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
     <td style={{ padding: '6px 12px', textAlign: 'right', fontSize: opt.f ? '12.5px' : '12px', fontWeight: opt.fuerte ? 500 : 400, color: opt.col || NAVY, background: opt.bg || 'transparent', borderBottom: '0.5px solid #f1f5f9', whiteSpace: 'nowrap' }}>{txt}</td>
   )
   const th1 = { position: 'sticky', left: 0, zIndex: 1, background: 'white', borderRight: '0.5px solid ' + BORDE }
+  // variación vs el mes anterior (verde = bajó el costo, rojo = subió)
+  const deltaTxt = (cur, prev) => {
+    if (prev == null || cur == null || !isFinite(prev) || prev === 0) return null
+    const d = (cur - prev) / Math.abs(prev)
+    if (Math.abs(d) < 0.005) return <span style={{ fontSize: '9.5px', color: '#b8c4ce', marginLeft: '4px' }}>0%</span>
+    const up = d > 0
+    return <span style={{ fontSize: '9.5px', color: up ? ROJO : VERDE, marginLeft: '4px' }}>{up ? '▲' : '▼'}{Math.abs(Math.round(d * 100))}%</span>
+  }
   return (
     <div>
       {/* selector de meses */}
@@ -470,11 +479,11 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
             {/* ha·día destacado */}
             <tr>
               <td style={{ ...th1, padding: '8px 14px', fontSize: '12.5px', fontWeight: 500, color: '#185FA5', background: '#eaf2fb', borderBottom: '0.5px solid #e6eef5' }}>ha·día TOTAL</td>
-              {sel.map(m => <td key={m} style={{ padding: '8px 12px', textAlign: 'right', fontSize: '13px', fontWeight: 500, color: '#185FA5', background: '#eaf2fb', borderBottom: '0.5px solid #e6eef5', borderLeft: '0.5px solid #e6eef5', whiteSpace: 'nowrap' }}>${num2(hdia(m, 'hadia_total'))}</td>)}
+              {sel.map((m, i) => <td key={m} style={{ padding: '8px 12px', textAlign: 'right', fontSize: '13px', fontWeight: 500, color: '#185FA5', background: '#eaf2fb', borderBottom: '0.5px solid #e6eef5', borderLeft: '0.5px solid #e6eef5', whiteSpace: 'nowrap' }}>${num2(hdia(m, 'hadia_total'))}{i > 0 && deltaTxt(hdia(m, 'hadia_total'), hdia(sel[i - 1], 'hadia_total'))}</td>)}
             </tr>
             <tr>
               <td style={{ ...th1, padding: '8px 14px', fontSize: '12.5px', fontWeight: 500, color: VERDE, background: '#e7f6ef', borderBottom: '0.5px solid ' + BORDE }}>ha·día REAL</td>
-              {sel.map(m => <td key={m} style={{ padding: '8px 12px', textAlign: 'right', fontSize: '13px', fontWeight: 500, color: VERDE, background: '#e7f6ef', borderBottom: '0.5px solid ' + BORDE, borderLeft: '0.5px solid #dcefe6', whiteSpace: 'nowrap' }}>${num2(hdia(m, 'hadia_real'))}</td>)}
+              {sel.map((m, i) => <td key={m} style={{ padding: '8px 12px', textAlign: 'right', fontSize: '13px', fontWeight: 500, color: VERDE, background: '#e7f6ef', borderBottom: '0.5px solid ' + BORDE, borderLeft: '0.5px solid #dcefe6', whiteSpace: 'nowrap' }}>${num2(hdia(m, 'hadia_real'))}{i > 0 && deltaTxt(hdia(m, 'hadia_real'), hdia(sel[i - 1], 'hadia_real'))}</td>)}
             </tr>
             {/* hectáreas / días */}
             <tr>
@@ -496,12 +505,12 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
                     <td style={{ ...th1, padding: '9px 14px', fontSize: '12.5px', fontWeight: 500, color: noReal ? '#854F0B' : NAVY, background: noReal ? '#FBF8F0' : '#f3f7fb', borderTop: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderBottom: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5') }}>
                       <span style={{ fontSize: '10px', color: GRIS }}>{open ? '▾' : '▸'}</span>&nbsp; {gLabel}
                     </td>
-                    {sel.map(m => <td key={m} style={{ padding: '9px 12px', textAlign: 'right', fontSize: '12.5px', fontWeight: 500, color: noReal ? '#854F0B' : NAVY, background: noReal ? '#FBF8F0' : '#f3f7fb', borderTop: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderBottom: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderLeft: '0.5px solid #eef3f7', whiteSpace: 'nowrap' }}>{dinero(grpTot(m, g))}</td>)}
+                    {sel.map((m, i) => <td key={m} style={{ padding: '9px 12px', textAlign: 'right', fontSize: '12.5px', fontWeight: 500, color: noReal ? '#854F0B' : NAVY, background: noReal ? '#FBF8F0' : '#f3f7fb', borderTop: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderBottom: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderLeft: '0.5px solid #eef3f7', whiteSpace: 'nowrap' }}>{dinero(grpTot(m, g))}{i > 0 && deltaTxt(grpTot(m, g), grpTot(sel[i - 1], g))}</td>)}
                   </tr>
                   {open && items.map(r => (
                     <tr key={r.id}>
                       <td style={{ ...th1, padding: '6px 14px 6px 30px', fontSize: '12px', color: '#51606c' }}>{r.nombre}</td>
-                      {sel.map(m => td(dinero(vOf(m, r.id)), { col: '#51606c' }))}
+                      {sel.map((m, i) => <td key={m} style={{ padding: '6px 12px', textAlign: 'right', fontSize: '12px', color: '#51606c', background: 'transparent', borderBottom: '0.5px solid #f1f5f9', whiteSpace: 'nowrap' }}>{dinero(vOf(m, r.id))}{i > 0 && deltaTxt(vOf(m, r.id), vOf(sel[i - 1], r.id))}</td>)}
                     </tr>
                   ))}
                 </Fragment>
@@ -510,7 +519,43 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
           </tbody>
         </table>
       </div>
-      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '8px' }}>Solo lectura. Para editar un mes, vuelve a “Mes”. El ha·día TOTAL y REAL es el guardado de cada mes.</div>
+      {/* mini-gráfico de tendencia del ha·día */}
+      {sel.length > 1 && (() => {
+        const serie = [['hadia_total', '#0D6CB0', 'TOTAL'], ['hadia_real', VERDE, 'REAL']]
+        const vals = sel.flatMap(m => [hdia(m, 'hadia_total'), hdia(m, 'hadia_real')]).filter(v => v > 0)
+        if (!vals.length) return null
+        const lo = Math.min(...vals) * 0.9, hi = Math.max(...vals) * 1.05
+        const W = 600, H = 150, L = 42, R = 12, T = 14, B = 26, n = sel.length
+        const px = i => L + i * (W - L - R) / (n - 1)
+        const py = v => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B)
+        const onMove = e => { const rc = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - rc.left) / rc.width * W; let b = 0, bd = 1e9; for (let i = 0; i < n; i++) { const d = Math.abs(px(i) - x); if (d < bd) { bd = d; b = i } } setTrendH(b) }
+        return (
+          <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '12px 14px', marginTop: '12px' }}>
+            <div style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '6px' }}>Tendencia del ha·día</div>
+            <div style={{ position: 'relative' }}>
+              <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setTrendH(null)}>
+                {[0, 0.5, 1].map((t, i) => { const v = lo + t * (hi - lo); return <g key={i}><line x1={L} y1={py(v)} x2={W - R} y2={py(v)} stroke="#f1f5f9" /><text x={L - 6} y={py(v) + 3} textAnchor="end" style={{ fontSize: '9.5px', fill: '#9fb0bf' }}>${num2(v)}</text></g> })}
+                {sel.map((m, i) => <text key={m} x={px(i)} y={H - 9} textAnchor="middle" style={{ fontSize: '10px', fill: '#7d8fa0' }}>{MESES[m - 1].slice(0, 3)}</text>)}
+                {trendH != null && <line x1={px(trendH)} y1={T} x2={px(trendH)} y2={H - B} stroke="#cdd9e5" strokeDasharray="3 3" />}
+                {serie.map(([k, c]) => <polyline key={k} points={sel.map((m, i) => `${px(i)},${py(hdia(m, k))}`).join(' ')} fill="none" stroke={c} strokeWidth="2.5" strokeLinejoin="round" />)}
+                {serie.map(([k, c]) => sel.map((m, i) => <circle key={k + i} cx={px(i)} cy={py(hdia(m, k))} r={trendH === i ? 4.5 : 2.5} fill={c} />))}
+              </svg>
+              {trendH != null && (() => { const left = px(trendH) / W * 100, flip = left > 60, m = sel[trendH]; return (
+                <div style={{ position: 'absolute', top: '4px', left: flip ? 'auto' : `calc(${left}% + 8px)`, right: flip ? `calc(${100 - left}% + 8px)` : 'auto', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', boxShadow: '0 6px 18px rgba(2,40,71,.12)', padding: '6px 9px', fontSize: '11px', pointerEvents: 'none', minWidth: '110px' }}>
+                  <div style={{ fontWeight: 500, marginBottom: '3px' }}>{MESES[m - 1]} {anio}</div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', color: '#185FA5' }}><span>TOTAL</span><b style={{ fontWeight: 500 }}>${num2(hdia(m, 'hadia_total'))}</b></div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', color: VERDE }}><span>REAL</span><b style={{ fontWeight: 500 }}>${num2(hdia(m, 'hadia_real'))}</b></div>
+                </div>
+              ) })()}
+            </div>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '10.5px', color: '#7d8fa0', marginTop: '4px', paddingLeft: '8px' }}>
+              <span><span style={{ display: 'inline-block', width: '14px', height: '3px', background: '#0D6CB0', verticalAlign: '3px' }} /> TOTAL</span>
+              <span><span style={{ display: 'inline-block', width: '14px', height: '3px', background: VERDE, verticalAlign: '3px' }} /> REAL</span>
+            </div>
+          </div>
+        )
+      })()}
+      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '8px' }}>Solo lectura. Para editar un mes, vuelve a “Mes”. La columna muestra la variación vs el mes anterior (verde = bajó, rojo = subió).</div>
     </div>
   )
 }
@@ -543,6 +588,7 @@ function Dashboard({ fincas, esJefe, setVista }) {
   const [fincasOpen, setFincasOpen] = useState(false)
   const [data, setData] = useState(null)
   const [cargando, setCargando] = useState(true)
+  const [modoDash, setModoDash] = useState('resumen')   // 'resumen' | 'comparar'
 
   const visibles = useMemo(() => activas.filter(f => !zona || f.zona === zona), [activas, zona])
   const idsSel = useMemo(() => visibles.filter(f => sel.has(f.id)).map(f => f.id), [visibles, sel])
@@ -614,6 +660,11 @@ function Dashboard({ fincas, esJefe, setVista }) {
       </div>
 
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px', fontSize: '12.5px' }}>
+        <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12px' }}>
+          {[['resumen', 'Resumen'], ['comparar', 'Comparar']].map(([k, l]) => (
+            <button key={k} onClick={() => setModoDash(k)} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: modoDash === k ? 500 : 400, background: modoDash === k ? AZUL : 'white', color: modoDash === k ? 'white' : GRIS }}>{l}</button>
+          ))}
+        </span>
         {zonas.length > 0 && (
           <Dropdown label="Zona" value={zona ? zlabel(zona) : 'Todas'}>
             {[['', 'Todas'], ...zonas.map(z => [z, zlabel(z)])].map(([v, l]) => <DItem key={v} on={zona === v} onClick={() => setZona(v)}>{l}</DItem>)}
@@ -662,7 +713,9 @@ function Dashboard({ fincas, esJefe, setVista }) {
         </div>
       </div>
 
-      {cargando ? (
+      {modoDash === 'comparar' ? (
+        <ComparaFincas visibles={visibles} idsSel={idsSel} anio={ancla.anio} />
+      ) : cargando ? (
         <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando…</div>
       ) : (<>
         <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px', marginBottom: '14px' }}>
@@ -766,4 +819,151 @@ function Dropdown({ label, value, children }) {
 function DItem({ on, onClick, children }) {
   return <button onClick={onClick} style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: on ? '#f1f6fb' : 'none', fontFamily: 'inherit', cursor: 'pointer', borderRadius: '7px', padding: '7px 10px', fontSize: '12.5px', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}
     onMouseEnter={e => { if (!on) e.currentTarget.style.background = '#f6f9fb' }} onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'none' }}>{children}</button>
+}
+
+// ===== Comparar fincas · líneas interactivas por mes =====
+const FINCA_COLORS = ['#0D6CB0', '#BA7517', '#1D9E75', '#D4537E', '#7F77DD', '#378ADD', '#993C1D', '#0F6E56', '#854F0B', '#51606c']
+// métricas: ha·día TOTAL/REAL + cada grupo "por ha·día" (comparable entre fincas)
+const METRICAS = [['hadia_real', 'ha·día REAL'], ['hadia_total', 'ha·día TOTAL'],
+  ...GRP.filter(([k]) => k !== 'BALANCEADO_LARVA').map(([k, l]) => ['g:' + k, l])]
+
+function ComparaFincas({ visibles, idsSel, anio }) {
+  const [metrica, setMetrica] = useState('hadia_real')
+  const [data, setData] = useState(null)
+  const [cargando, setCargando] = useState(true)
+  const [mesesSel, setMesesSel] = useState([])
+  const [hover, setHover] = useState(null)   // índice de mes resaltado
+
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      setCargando(true)
+      if (!idsSel.length) { if (vivo) { setData({ porFinca: {}, meses: [] }); setCargando(false) } return }
+      const { data: cms } = await supabase.schema('produccion').from('cuadro_mes')
+        .select('id, finca_id, mes, hectareas, dias, hadia_total, hadia_real').in('finca_id', idsSel).eq('anio', anio)
+      const ids = (cms || []).map(c => c.id)
+      let vs = []
+      if (ids.length) {
+        const r = await supabase.schema('produccion').from('cuadro_valor')
+          .select('cuadro_mes_id, valor, rubro:rubro_id(grupo)').in('cuadro_mes_id', ids)
+        vs = r.data || []
+      }
+      if (!vivo) return
+      const byId = {}; (cms || []).forEach(c => { byId[c.id] = c })
+      const porFinca = {}
+      ;(cms || []).forEach(c => {
+        (porFinca[c.finca_id] = porFinca[c.finca_id] || {})[c.mes] = {
+          ht: Number(c.hadia_total) || 0, hr: Number(c.hadia_real) || 0,
+          div: (Number(c.hectareas) || 0) * (Number(c.dias) || 0), grupos: {},
+        }
+      })
+      vs.forEach(v => {
+        const c = byId[v.cuadro_mes_id]; const g = v.rubro?.grupo; if (!c || !g) return
+        const node = porFinca[c.finca_id]?.[c.mes]; if (node) node.grupos[g] = (node.grupos[g] || 0) + Number(v.valor || 0)
+      })
+      const meses = [...new Set((cms || []).map(c => c.mes))].sort((a, b) => a - b)
+      setData({ porFinca, meses }); setMesesSel(meses); setCargando(false)
+    })()
+    return () => { vivo = false }
+  }, [JSON.stringify(idsSel), anio])
+
+  if (cargando) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando…</div>
+  const mesesAll = data?.meses || []
+  if (!idsSel.length || !mesesAll.length) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Elige fincas con Cuadro cargado para comparar.</div>
+  const sel = (mesesSel.length ? mesesSel : mesesAll).slice().sort((a, b) => a - b)
+  const toggleMes = m => setMesesSel(cur => { const b = cur.length ? cur : mesesAll; const n = b.includes(m) ? b.filter(x => x !== m) : [...b, m]; return n.length ? n : b })
+  const esGrupo = metrica.startsWith('g:')
+  const valOf = (fid, m) => {
+    const n = data.porFinca[fid]?.[m]; if (!n) return null
+    if (metrica === 'hadia_total') return n.ht
+    if (metrica === 'hadia_real') return n.hr
+    const g = metrica.slice(2); return n.div ? (n.grupos[g] || 0) / n.div : null
+  }
+  const series = idsSel.map((fid, i) => {
+    const f = visibles.find(x => x.id === fid)
+    return { fid, nombre: f?.nombre || '', color: FINCA_COLORS[i % FINCA_COLORS.length], pts: sel.map(m => valOf(fid, m)) }
+  }).filter(s => s.pts.some(v => v != null))
+  const todos = series.flatMap(s => s.pts).filter(v => v != null)
+  const ymin = todos.length ? Math.min(...todos) : 0, ymax = todos.length ? Math.max(...todos) : 1
+  const pad = (ymax - ymin) * 0.15 || 1
+  const lo = Math.max(0, ymin - pad), hi = ymax + pad
+  const W = 640, H = 240, L = 48, R = 14, T = 16, B = 34
+  const n = sel.length
+  const px = i => n <= 1 ? (L + (W - L - R) / 2) : L + i * (W - L - R) / (n - 1)
+  const py = v => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B)
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(t => lo + t * (hi - lo))
+  const onMove = e => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width * W
+    let best = 0, bd = Infinity
+    for (let i = 0; i < n; i++) { const d = Math.abs(px(i) - x); if (d < bd) { bd = d; best = i } }
+    setHover(best)
+  }
+  const metLabel = (METRICAS.find(m => m[0] === metrica) || [])[1] || ''
+  return (
+    <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px' }}>
+      {/* métrica */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <span style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }}>Métrica</span>
+        {METRICAS.map(([k, l]) => {
+          const on = metrica === k
+          return <button key={k} onClick={() => setMetrica(k)} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
+        })}
+        <span style={{ marginLeft: 'auto', fontSize: '10.5px', color: '#9fb0bf' }}>{esGrupo ? 'por ha·día' : ''} · {anio}</span>
+      </div>
+      {/* meses */}
+      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <span style={{ fontSize: '11px', color: GRIS, alignSelf: 'center', marginRight: '2px' }}>Meses:</span>
+        {mesesAll.map(m => { const on = sel.includes(m); return <button key={m} onClick={() => toggleMes(m)} style={{ padding: '3px 9px', fontSize: '11px', fontFamily: 'inherit', borderRadius: '7px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{MESES[m - 1].slice(0, 3)}</button> })}
+      </div>
+      {series.length === 0 ? (
+        <div style={{ fontSize: '12.5px', color: GRIS, padding: '20px 0', textAlign: 'center' }}>Las fincas seleccionadas no tienen datos de “{metLabel}” en estos meses.</div>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', overflow: 'visible' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+            {ticks.map((t, i) => (
+              <g key={i}>
+                <line x1={L} y1={py(t)} x2={W - R} y2={py(t)} stroke="#f1f5f9" />
+                <text x={L - 6} y={py(t) + 3} textAnchor="end" style={{ fontSize: '10px', fill: '#9fb0bf' }}>${num2(t)}</text>
+              </g>
+            ))}
+            {sel.map((m, i) => <text key={m} x={px(i)} y={H - 12} textAnchor="middle" style={{ fontSize: '11px', fill: '#7d8fa0' }}>{MESES[m - 1].slice(0, 3)}</text>)}
+            {hover != null && <line x1={px(hover)} y1={T} x2={px(hover)} y2={H - B} stroke="#cdd9e5" strokeDasharray="3 3" />}
+            {series.map(s => {
+              const pts = s.pts.map((v, i) => v == null ? null : `${px(i)},${py(v)}`).filter(Boolean).join(' ')
+              return <polyline key={s.fid} points={pts} fill="none" stroke={s.color} strokeWidth="2.5" strokeLinejoin="round" />
+            })}
+            {series.map(s => s.pts.map((v, i) => v == null ? null : (
+              <circle key={s.fid + '-' + i} cx={px(i)} cy={py(v)} r={hover === i ? 5 : 3} fill={s.color} />
+            )))}
+          </svg>
+          {hover != null && (() => {
+            const left = px(hover) / W * 100
+            const flip = left > 60
+            return (
+              <div style={{ position: 'absolute', top: '6px', left: flip ? 'auto' : `calc(${left}% + 10px)`, right: flip ? `calc(${100 - left}% + 10px)` : 'auto', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', boxShadow: '0 6px 18px rgba(2,40,71,.12)', padding: '8px 10px', fontSize: '11.5px', pointerEvents: 'none', minWidth: '130px' }}>
+                <div style={{ fontWeight: 500, marginBottom: '5px' }}>{MESES[sel[hover] - 1]} {anio}</div>
+                {[...series].map(s => ({ s, v: s.pts[hover] })).sort((a, b) => (b.v ?? -1) - (a.v ?? -1)).map(({ s, v }) => (
+                  <div key={s.fid} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '1.5px 0' }}>
+                    <span style={{ width: '9px', height: '9px', borderRadius: '2px', background: s.color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, color: '#51606c' }}>{s.nombre}</span>
+                    <b style={{ fontWeight: 500 }}>{v == null ? '—' : '$' + num2(v)}</b>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+        </div>
+      )}
+      {/* leyenda */}
+      <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', marginTop: '12px' }}>
+        {series.map(s => (
+          <span key={s.fid} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '11.5px', color: '#51606c' }}>
+            <span style={{ width: '14px', height: '3px', borderRadius: '2px', background: s.color }} /> {s.nombre}
+          </span>
+        ))}
+      </div>
+      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>Pasa el cursor para ver el valor de cada finca. {esGrupo ? 'Los grupos se muestran por ha·día para comparar fincas de distinto tamaño.' : ''}</div>
+    </div>
+  )
 }
