@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { dinero } from '../lib/fechas'
 
@@ -536,8 +536,8 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
         return (
           <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '12px 14px', marginTop: '12px' }}>
             <div style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '6px' }}>Tendencia del ha·día</div>
-            <div style={{ position: 'relative' }}>
-              <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setTrendH(null)}>
+            <div style={{ position: 'relative', maxWidth: '620px' }}>
+              <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setTrendH(null)}>
                 {[0, 0.5, 1].map((t, i) => { const v = lo + t * (hi - lo); return <g key={i}><line x1={L} y1={py(v)} x2={W - R} y2={py(v)} stroke="#f1f5f9" /><text x={L - 6} y={py(v) + 3} textAnchor="end" style={{ fontSize: '9.5px', fill: '#9fb0bf' }}>${num2(v)}</text></g> })}
                 {sel.map((m, i) => <text key={m} x={px(i)} y={H - 9} textAnchor="middle" style={{ fontSize: '10px', fill: '#7d8fa0' }}>{MESES[m - 1].slice(0, 3)}</text>)}
                 {trendH != null && <line x1={px(trendH)} y1={T} x2={px(trendH)} y2={H - B} stroke="#cdd9e5" strokeDasharray="3 3" />}
@@ -843,6 +843,17 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const [cargando, setCargando] = useState(true)
   const [mesesSel, setMesesSel] = useState([])
   const [hover, setHover] = useState(null)   // índice de mes resaltado
+  const wrapRef = useRef(null)
+  const [cw, setCw] = useState(680)          // ancho real del gráfico (alto fijo)
+
+  // mide el ancho del contenedor para que el SVG tenga alto fijo (no gigante)
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(es => { for (const e of es) setCw(e.contentRect.width) })
+    ro.observe(el); setCw(el.clientWidth || 680)
+    return () => ro.disconnect()
+  }, [cargando])
 
   useEffect(() => {
     let vivo = true
@@ -903,7 +914,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const ymin = todos.length ? Math.min(...todos) : 0, ymax = todos.length ? Math.max(...todos) : 1
   const pad = (ymax - ymin) * 0.15 || 1
   const lo = Math.max(0, ymin - pad), hi = ymax + pad
-  const W = 640, H = 240, L = 48, R = 14, T = 16, B = 34
+  const W = Math.max(360, Math.round(cw)), H = 230, L = 48, R = 14, T = 16, B = 34
   const n = sel.length
   const px = i => n <= 1 ? (L + (W - L - R) / 2) : L + i * (W - L - R) / (n - 1)
   const py = v => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B)
@@ -935,8 +946,8 @@ function ComparaFincas({ visibles, idsSel, anio }) {
       {series.length === 0 ? (
         <div style={{ fontSize: '12.5px', color: GRIS, padding: '20px 0', textAlign: 'center' }}>Las fincas seleccionadas no tienen datos de “{metLabel}” en estos meses.</div>
       ) : (
-        <div style={{ position: 'relative' }}>
-          <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', overflow: 'visible' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        <div ref={wrapRef} style={{ position: 'relative' }}>
+          <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
             {ticks.map((t, i) => (
               <g key={i}>
                 <line x1={L} y1={py(t)} x2={W - R} y2={py(t)} stroke="#f1f5f9" />
