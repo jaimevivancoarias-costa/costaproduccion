@@ -230,7 +230,8 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
       ) : (
         <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
           {GRUPOS.map(([g, gLabel]) => {
-            const items = rubros.filter(r => r.grupo === g)
+            // El rubro "Total del mes (histórico)" solo se muestra donde tiene valor (carga por grupo).
+            const items = rubros.filter(r => r.grupo === g && !(r.nombre === 'Total del mes (histórico)' && !(val(r.id) > 0)))
             const open = !!abierto[g]
             const noReal = NO_REAL.has(g)
             return (
