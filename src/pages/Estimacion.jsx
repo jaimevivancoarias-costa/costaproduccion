@@ -299,10 +299,11 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   }, [finca.id, mesesProm])
   // ha·día que alimenta el costo operativo: del Cuadro (según selector) o el de respaldo.
   const pNfijo = s => { const v = Number(String(s ?? '').replace(',', '.')); return isFinite(v) ? v : 0 }
-  const fijoAct = !cuadroHaDia && (pNfijo(fijoTotal) > 0 || pNfijo(fijoReal) > 0)
+  const selFijo = baseCosto === 'total' ? fijoTotal : fijoReal   // el campo del lado elegido
+  const fijoAct = !cuadroHaDia && String(selFijo ?? '').trim() !== ''   // vacío = respaldo; "0" = cero real
   const costoHaDiaUsar = cuadroHaDia
     ? (baseCosto === 'total' ? cuadroHaDia.total : cuadroHaDia.real)
-    : fijoAct ? (baseCosto === 'total' ? pNfijo(fijoTotal) : pNfijo(fijoReal)) : (cfg.costoHaDia || 0)
+    : fijoAct ? pNfijo(selFijo) : (cfg.costoHaDia || 0)
   const cfgCosto = useMemo(() => ({ ...cfg, costoHaDia: costoHaDiaUsar }), [cfg, costoHaDiaUsar])
 
   const cargar = useCallback(async () => {
