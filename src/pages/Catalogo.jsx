@@ -128,7 +128,7 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
       return { data: out }
     }
     const [{ data: ins }, { data: prod }, { data: ov }, { data: pi }, { data: pb }, { data: si }, { data: sb }, { data: pres }] = await Promise.all([
-      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor, densidad').eq('activo', true).order('nombre'),
+      supabase.schema('produccion').from('insumo').select('id, nombre, unidad, unidad_compra, factor, proveedor, densidad, categoria_presupuesto').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('producto').select('id, nombre, nombre_corto, marca, proveedor').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('insumo_finca').select('insumo_id, finca_id, unidad, unidad_compra, factor, contenido, unidad_contenido, stock_minimo, stock_objetivo').in('finca_id', fincaIds.length ? fincaIds : ['00000000-0000-0000-0000-000000000000']),
       allVigente('precio_insumo', 'id, insumo_id, finca_id, precio_unitario, plazo, vigente_desde, vigente_hasta'),
@@ -491,6 +491,9 @@ export default function Catalogo({ esJefe, esJefeGlobal, fincas, tabInicial }) {
                   <span style={{ fontSize: '15px', fontWeight: 600 }}>
                     <span style={{ display: 'inline-block', width: '14px', color: GRIS, fontSize: '12px' }}>{ab ? '▾' : '▸'}</span>
                     {p.nombre}
+                    {tab === 'insumos' && (p.categoria_presupuesto
+                      ? <Insignia color="#185FA5" bg="#e8f1fb">{catLabel(p.categoria_presupuesto)}</Insignia>
+                      : <Insignia color="#854F0B" bg="#FDF8EE">Sin clasificar</Insignia>)}
                   </span>
                   {esJefe && (
                     <span style={{ display: 'flex', gap: '14px' }} onClick={e => e.stopPropagation()}>
@@ -847,13 +850,17 @@ const dineroPrec = v => {
   return '$' + n.toLocaleString('es-EC', { minimumFractionDigits: dec, maximumFractionDigits: 4 })
 }
 
-async function crearInsumo({ nombre, unidad, unidadCompra, factor, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1, proveedor: (proveedor || '').trim() || null })
+// Categorías presupuestales del insumo (para el Cuadro presupuestal).
+const CATS_INS = [['ANTIBIOTICOS', 'Antibióticos'], ['ANTIPARASITARIO', 'Antiparasitario'], ['BACTERIAS', 'Bacterias'], ['DESINFECTANTES', 'Desinfectantes'], ['FERTILIZANTES', 'Fertilizantes'], ['VITAMINAS', 'Vitaminas'], ['PRESERVANTES', 'Preservantes'], ['NO_APLICA', 'No aplica']]
+const catLabel = v => (CATS_INS.find(c => c[0] === v) || [])[1] || null
+
+async function crearInsumo({ nombre, unidad, unidadCompra, factor, proveedor, categoria }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('insumo').insert({ nombre: nombre.trim(), unidad, unidad_compra: (unidadCompra || unidad).trim(), factor: factor || 1, proveedor: (proveedor || '').trim() || null, categoria_presupuesto: categoria || null })
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Insumo agregado.' }); return true
 }
-async function editarInsumo(actual, { nombre, proveedor }, setAviso) {
-  const { error } = await supabase.schema('produccion').from('insumo').update({ nombre: nombre.trim(), proveedor: (proveedor || '').trim() || null }).eq('id', actual.id)
+async function editarInsumo(actual, { nombre, proveedor, categoria }, setAviso) {
+  const { error } = await supabase.schema('produccion').from('insumo').update({ nombre: nombre.trim(), proveedor: (proveedor || '').trim() || null, categoria_presupuesto: categoria || null }).eq('id', actual.id)
   if (error) { setAviso({ tipo: 'error', texto: /duplicate|unique/i.test(error.message) ? 'Ya existe un insumo con ese nombre.' : error.message }); return false }
   setAviso({ tipo: 'ok', texto: 'Insumo actualizado.' }); return true
 }
@@ -2673,6 +2680,7 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
   const [nombre, setNombre] = useState(actual?.nombre || '')
   const [unidad, setUnidad] = useState(actual?.unidad || 'kg')
   const [proveedor, setProveedor] = useState(actual?.proveedor || '')
+  const [categoria, setCategoria] = useState(actual?.categoria_presupuesto || '')
   const dist = actual ? (actual.unidad_compra && actual.unidad_compra !== actual.unidad) : false
   const [compraDistinta, setCompraDistinta] = useState(!!dist)
   const [unidadCompra, setUnidadCompra] = useState(dist ? actual.unidad_compra : '')
@@ -2686,6 +2694,7 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
         <Campo label="Nombre"><input autoFocus value={nombre} onChange={e => setNombre(e.target.value)} style={{ ...inp, width: '220px' }} placeholder="Ej. Cal agrícola" /></Campo>
         {!soloNombre && <Campo label="Se aplica en (por defecto)"><select value={unidad} onChange={e => setUnidad(e.target.value)} style={{ ...inp, width: '160px' }}>{UNIDADES.map(u => <option key={u} value={u}>{UNIDAD[u]}</option>)}</select></Campo>}
         <Campo label="Proveedor (opcional)"><input value={proveedor} onChange={e => setProveedor(e.target.value)} style={{ ...inp, width: '200px' }} placeholder="Ej. Agripac" /></Campo>
+        <Campo label="Categoría (cuadro presupuestal)"><select value={categoria} onChange={e => setCategoria(e.target.value)} style={{ ...inp, width: '180px', borderColor: categoria ? '#dce6ef' : '#e3b765', background: categoria ? 'white' : '#FDF8EE' }}><option value="">Sin clasificar</option>{CATS_INS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Campo>
       </div>
       {!soloNombre && (
         <>
@@ -2702,7 +2711,7 @@ function FormaInsumo({ actual, onGuardar, onCancelar }) {
         </>
       )}
       <div style={{ display: 'flex', gap: '9px', marginTop: '14px' }}>
-        <button disabled={!listo || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1, proveedor }); setEnviando(false) }}
+        <button disabled={!listo || enviando} onClick={async () => { setEnviando(true); await onGuardar({ nombre, unidad, unidadCompra: compraDistinta ? unidadCompra : unidad, factor: compraDistinta ? numDec(factor) : 1, proveedor, categoria }); setEnviando(false) }}
           style={{ ...btnPri, opacity: (!listo || enviando) ? 0.5 : 1 }}>{enviando ? 'Guardando...' : 'Guardar'}</button>
         <button onClick={onCancelar} style={btn}>Cancelar</button>
       </div>
