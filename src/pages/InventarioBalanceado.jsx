@@ -555,8 +555,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     // recálculo en vivo de la víspera: así la diferencia reproduce la del acta y
     // re-guardar no la desvía. Fallback a la víspera/saldo para líneas nuevas.
     const sisGuardado = editToma ? sistemaEdit[s.producto_id] : undefined
+    // Un conteo con fecha PASADA nunca usa el saldo en vivo (incluiría ingresos
+    // posteriores a esa fecha); usa el saldo a la fecha, y 0 si aún no cargó.
+    const esPasado = !editToma && fecha < hoyISO()
     const sis = (sisGuardado != null) ? Number(sisGuardado)
-      : (saldoFecha[s.producto_id] != null) ? Number(saldoFecha[s.producto_id]) : Number(s.saldo)
+      : (saldoFecha[s.producto_id] != null) ? Number(saldoFecha[s.producto_id])
+      : esPasado ? 0 : Number(s.saldo)
     const cons = numDec(String(consumoDia[s.producto_id] ?? ''))
     const consRef = numDec(String(consDiaRef[s.producto_id] ?? ''))
     const habiaSistema = editToma ? sis : (cons > 0.0001 ? sis + cons : sis)   // había al inicio del día (al editar, sis ya es la víspera)
@@ -570,7 +574,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
              // Redondeada a 2 decimales: así una diferencia minúscula por la
              // conversión (ej. 0.002) cuenta como "Cuadra", no "Sobran 0".
              diferencia: habiaContado === null ? null : Math.round((habiaContado - habiaSistema) * 100) / 100 }
-  }), [saldos, precios, contado, contadoExacto, sueltas, lps, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit])
+  }), [saldos, precios, contado, contadoExacto, sueltas, lps, consumoDia, consDiaRef, contoDespues, saldoFecha, editToma, sistemaEdit, fecha])
   const llenadas = filas.filter(f => f.contado !== null).length
   // Editar un inventario inicial: se muestra como la carga inicial (solo las
   // cantidades, sin Sistema ni Diferencia), porque el inicial ES el punto de partida.
