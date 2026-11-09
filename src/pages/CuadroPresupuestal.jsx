@@ -574,12 +574,12 @@ function Dashboard({ fincas, esJefe, setVista }) {
                 <div style={{ fontSize: '12.5px' }}><b style={{ color: grpInfo(grupoSel)[2], fontWeight: 500 }}>{grpInfo(grupoSel)[1]}</b> <span style={{ color: '#9fb0bf' }}>· detalle</span></div>
                 <button onClick={() => setGrupoSel(null)} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: GRIS }}>Cerrar</button>
               </div>
-              {(() => { const mx = Math.max(1, ...seldrill.map(s => s.v)); const gl = grpInfo(grupoSel)[1]; const clean = n => String(n).replace(new RegExp('^' + gl + '\\s*·\\s*', 'i'), ''); return (
+              {(() => { const mx = Math.max(1, ...seldrill.map(s => s.v)); const tot = seldrill.reduce((a, s) => a + s.v, 0) || 1; const gl = grpInfo(grupoSel)[1]; const clean = n => { const t = String(n).replace(new RegExp('^' + gl + '\\s*·\\s*', 'i'), ''); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t }; return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {seldrill.filter(s => s.v > 0.005).map(s => (
                     <div key={s.n}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '11.5px', marginBottom: '3px' }}>
-                        <span>{clean(s.n)}</span><b style={{ fontWeight: 500 }}>{dinero(s.v)}</b>
+                        <span>{clean(s.n)}</span><span><b style={{ fontWeight: 500 }}>{Math.round(s.v / tot * 100)}%</b> <span style={{ color: '#9fb0bf' }}>· {dinero(s.v)}</span></span>
                       </div>
                       <div style={{ height: '10px', borderRadius: '3px', background: grpInfo(grupoSel)[2], width: (100 * s.v / mx) + '%', minWidth: '2px' }} />
                     </div>
