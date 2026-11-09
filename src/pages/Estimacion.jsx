@@ -195,22 +195,23 @@ function resumenPiscina(f, ctx) {
   if (delta != null && Math.abs(delta) > 0.10 && Math.abs(delta) <= 0.20) alertas.push(`Cambio ${delta >= 0 ? '+' : ''}${Math.round(delta * 100)}%`)
   if (muDias != null && muDias > 14) alertas.push(`Muestreo hace ${muDias} d`)
   const precioAplicado = ap && Number(ap.sacos_calc) > 0 ? Number(ap.costo_usd) / Number(ap.sacos_calc) : est.alimento.usdSaco
-  // Rentabilidad: valor de continuar (cosechar hoy vs esperar a meta).
+  // Rentabilidad: valor de continuar (cosechar hoy vs esperar a meta). Se calcula
+  // aunque la biomasa no esté validada (referencial); no se oculta por bloqueo.
   let rent = null
-  if (!bloqueado && biomasaSel > 0 && f.gramaje < G_MIN_COMERCIAL) {
-    rent = { noComercial: true, gHoy: f.gramaje }
-  } else if (!bloqueado && biomasaSel > 0) {
+  if (biomasaSel > 0 && f.gramaje < G_MIN_COMERCIAL) {
+    rent = { noComercial: true, gHoy: f.gramaje, referencial: bloqueado }
+  } else if (biomasaSel > 0) {
     const pHoy = precioPorGramaje(f.gramaje, precioOpts)
     const ingresoHoy = biomasaSel * pHoy.mejor
     const pr = proyectarAMeta({ gHoy: f.gramaje, meta, biomasaActual: biomasaSel, finca: cfg, desempeno: est.desempeno })
-    if (!pr) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0 }
+    if (!pr) rent = { listo: true, ingresoHoy, conviene: pHoy.conviene, valor: 0, referencial: bloqueado }
     else {
       const pMeta = precioPorGramaje(pr.metaUsa, precioOpts)
       const costoAlim = pr.alimentoLb / PARAM.pesoSaco * est.alimento.usdSaco
       const costoOper = (cfg.costoHaDia || 0) * f.area * pr.dias
       const netoMeta = pr.biomasaMeta * pMeta.mejor - costoAlim - costoOper
       const valor = netoMeta - ingresoHoy
-      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, conviene: pMeta.conviene, diasRest: pr.dias }
+      rent = { listo: false, ingresoHoy, netoMeta, valor, valorDia: pr.dias > 0 ? valor / pr.dias : 0, conviene: pMeta.conviene, diasRest: pr.dias, referencial: bloqueado }
     }
   }
   return { f, est, biomasaSel, bloqueado, estadoPlan, recoInten, ap, confirmado, diasAlim, recoSacos, sacosShow: ap ? Number(ap.sacos_operativos) : (bloqueado ? null : recoSacos), sugerido: !ap, delta, deltaEstado, pve, cumplimiento, muDias, alertas, difPct, precioAplicado, usdSaco: est.alimento.usdSaco, rent }
@@ -272,13 +273,24 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   useEffect(() => { try { localStorage.setItem('metaEst|' + finca.id, String(meta)) } catch (e) { /* sin storage */ } }, [meta, finca.id])
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
   useEffect(() => { try { localStorage.setItem('baseCosto|' + finca.id, baseCosto) } catch { /* sin storage */ } }, [baseCosto, finca.id])
-  // Costo ha·día del Cuadro presupuestal (último mes cargado de la finca).
+  // Costo ha·día del Cuadro presupuestal. Si el mes actual ya tiene Cuadro, usa
+  // ese; si no, promedia los 2 meses más recientes disponibles.
   useEffect(() => {
     let vivo = true
     supabase.schema('produccion').from('cuadro_mes')
       .select('anio, mes, hadia_total, hadia_real').eq('finca_id', finca.id)
-      .order('anio', { ascending: false }).order('mes', { ascending: false }).limit(1).maybeSingle()
-      .then(({ data }) => { if (vivo) setCuadroHaDia(data && (Number(data.hadia_total) || Number(data.hadia_real)) ? { total: Number(data.hadia_total), real: Number(data.hadia_real), anio: data.anio, mes: data.mes } : null) })
+      .order('anio', { ascending: false }).order('mes', { ascending: false }).limit(3)
+      .then(({ data }) => {
+        if (!vivo) return
+        const rows = (data || []).filter(r => Number(r.hadia_total) || Number(r.hadia_real))
+        if (!rows.length) { setCuadroHaDia(null); return }
+        const now = new Date(), cy = now.getFullYear(), cm = now.getMonth() + 1
+        const actual = rows.find(r => r.anio === cy && r.mes === cm)
+        const usar = actual ? [actual] : rows.slice(0, 2)
+        const n = usar.length
+        const prom = cmp => usar.reduce((s, r) => s + Number(r[cmp] || 0), 0) / n
+        setCuadroHaDia({ total: prom('hadia_total'), real: prom('hadia_real'), promedio: !actual && n > 1, meses: usar.map(r => ({ anio: r.anio, mes: r.mes })), anio: usar[0].anio, mes: usar[0].mes })
+      })
     return () => { vivo = false }
   }, [finca.id])
   // ha·día que alimenta el costo operativo: del Cuadro (según selector) o el de respaldo.
@@ -1549,7 +1561,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                       <button key={k} type="button" onClick={() => cuadroHaDia && setBaseCosto(k)} style={{ padding: '3px 10px', border: 'none', fontFamily: 'inherit', cursor: cuadroHaDia ? 'pointer' : 'default', fontWeight: baseCosto === k ? 500 : 400, background: baseCosto === k ? AZUL : 'white', color: baseCosto === k ? 'white' : GRIS }}>{l}{cuadroHaDia ? ' $' + num2(k === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : ''}</button>
                     ))}
                   </span>
-                  <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{cuadroHaDia ? `Cuadro presupuestal · ${['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][cuadroHaDia.mes - 1]} ${cuadroHaDia.anio}` : `respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')} (sin Cuadro)`}</span>
+                  <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{(() => { const M3 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; if (!cuadroHaDia) return `respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')} (sin Cuadro)`; return cuadroHaDia.promedio ? `Cuadro · promedio ${cuadroHaDia.meses.map(x => M3[x.mes - 1]).join('–')} ${cuadroHaDia.meses[cuadroHaDia.meses.length - 1].anio}` : `Cuadro presupuestal · ${M3[cuadroHaDia.mes - 1]} ${cuadroHaDia.anio}` })()}</span>
                 </div>
                 <RentRow k="Costo de la larva" a={dinero(h.costoLarva)} b={dinero(m.costoLarva)} />
                 <RentRow k={`Costo operativo ($${num2(costoHaDiaUsar || 0).replace(/,00$/, '')}/ha·día)`} a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
