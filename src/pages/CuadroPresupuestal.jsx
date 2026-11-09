@@ -41,6 +41,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
   const [catIns, setCatIns] = useState({})      // insumo_id -> categoria_presupuesto
   const [ha, setHa] = useState('')
   const [dias, setDias] = useState(String(diasDelMes(hoy.getFullYear(), hoy.getMonth() + 1)))
+  const [ded, setDed] = useState('')            // deducción administrativa (se resta solo del REAL)
   const [txt, setTxt] = useState({})            // rubro_id -> string del valor mostrado
   const [appVals, setAppVals] = useState({})    // rubro_id -> valor sugerido por la app
   const [editado, setEditado] = useState(new Set()) // rubros App que el usuario sobrescribió
@@ -96,18 +97,19 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     ;(async () => {
       setCargando(true)
       const { data: cm } = await supabase.schema('produccion').from('cuadro_mes')
-        .select('id, hectareas, dias').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle()
+        .select('id, hectareas, dias, deduccion_admin').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle()
       const app = await cargarAppVals(anio, mes)
       if (!vivo) return
       const saved = {}
       if (cm) {
         setHa(cm.hectareas ? String(cm.hectareas) : ''); setDias(String(cm.dias || diasDelMes(anio, mes)))
+        setDed(cm.deduccion_admin ? num2(cm.deduccion_admin) : '')
         const { data: vs } = await supabase.schema('produccion').from('cuadro_valor')
           .select('rubro_id, valor, editado').eq('cuadro_mes_id', cm.id)
         if (!vivo) return
         ;(vs || []).forEach(v => { saved[v.rubro_id] = { valor: Number(v.valor), editado: v.editado } })
       } else {
-        setHa(''); setDias(String(diasDelMes(anio, mes)))
+        setHa(''); setDias(String(diasDelMes(anio, mes))); setDed('')
       }
       setAppVals(app)
       const nt = {}; const ed = new Set()
@@ -139,8 +141,9 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     }
     const h = parseNum(ha), d = Number(dias) || 0
     const div = h > 0 && d > 0 ? h * d : 0
-    return { bruto: b, totOp: to, real: rl, haDiaTotal: div ? to / div : 0, haDiaReal: div ? rl / div : 0 }
-  }, [rubros, txt, ha, dias])
+    const rlNeto = Math.max(0, rl - parseNum(ded))   // REAL = operativo − deducción administrativa
+    return { bruto: b, totOp: to, real: rlNeto, haDiaTotal: div ? to / div : 0, haDiaReal: div ? rlNeto / div : 0 }
+  }, [rubros, txt, ha, dias, ded])
 
   const cambiar = (r, v) => { setTxt(t => ({ ...t, [r.id]: v })); if (r.origen) setEditado(s => { const n = new Set(s); n.add(r.id); return n }) }
   const restaurarApp = r => {
@@ -153,7 +156,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     setGuardando(true)
     const ahora = new Date().toISOString()
     const { data: cm, error } = await supabase.schema('produccion').from('cuadro_mes')
-      .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
+      .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), deduccion_admin: parseNum(ded), actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
       .select('id').single()
     if (error) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar la cabecera. ' + error.message }); return }
     const filas = rubros.map(r => {
@@ -263,7 +266,19 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px', marginTop: '14px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '12px', color: GRIS }}>Deducción administrativa</span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+          <input value={ded} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
+            onChange={e => setDed(e.target.value)} onFocus={e => e.target.select()}
+            onBlur={e => setDed(e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)))}
+            style={{ ...inp, width: '118px', textAlign: 'right', padding: '5px 9px' }} />
+        </span>
+        <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>Sueldos administrativos que no se cargan a producción; se resta solo del ha·día REAL.</span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
         <div style={{ background: '#f6f9fb', borderRadius: '10px', padding: '12px 14px' }}>
           <div style={{ fontSize: '11px', color: GRIS }}>Total bruto del mes</div>
           <div style={{ fontSize: '19px', fontWeight: 500 }}>{dinero(bruto)}</div>
@@ -276,7 +291,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         <div style={{ background: '#e7f6ef', borderRadius: '10px', padding: '12px 14px' }}>
           <div style={{ fontSize: '11px', color: VERDE }}>ha·día REAL</div>
           <div style={{ fontSize: '21px', fontWeight: 500, color: VERDE }}>${num2(haDiaReal)}</div>
-          <div style={{ fontSize: '9.5px', color: '#9fb0bf' }}>sin activos ni mejoras · → Rentabilidad</div>
+          <div style={{ fontSize: '9.5px', color: '#9fb0bf' }}>sin activos, mejoras ni admin · → Rentabilidad</div>
         </div>
       </div>
 
