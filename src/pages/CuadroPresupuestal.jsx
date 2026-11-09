@@ -128,12 +128,18 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     for (const r of rubros) t[r.grupo] = (t[r.grupo] || 0) + val(r.id)
     return t
   }, [rubros, txt])
-  const { bruto, real, haDiaTotal, haDiaReal } = useMemo(() => {
-    let b = 0, rl = 0
-    for (const r of rubros) { const v = val(r.id); b += v; if (r.incluye_real) rl += v }
+  const { bruto, totOp, real, haDiaTotal, haDiaReal } = useMemo(() => {
+    // bruto = todo. El ha·día TOTAL excluye balanceado+larva (ya se cuentan aparte
+    // en Rentabilidad); el REAL excluye además activos y mejoras (incluye_real).
+    let b = 0, to = 0, rl = 0
+    for (const r of rubros) {
+      const v = val(r.id); b += v
+      if (r.grupo !== 'BALANCEADO_LARVA') to += v
+      if (r.incluye_real) rl += v
+    }
     const h = parseNum(ha), d = Number(dias) || 0
     const div = h > 0 && d > 0 ? h * d : 0
-    return { bruto: b, real: rl, haDiaTotal: div ? b / div : 0, haDiaReal: div ? rl / div : 0 }
+    return { bruto: b, totOp: to, real: rl, haDiaTotal: div ? to / div : 0, haDiaReal: div ? rl / div : 0 }
   }, [rubros, txt, ha, dias])
 
   const cambiar = (r, v) => { setTxt(t => ({ ...t, [r.id]: v })); if (r.origen) setEditado(s => { const n = new Set(s); n.add(r.id); return n }) }
@@ -265,12 +271,12 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         <div style={{ background: '#eaf2fb', borderRadius: '10px', padding: '12px 14px' }}>
           <div style={{ fontSize: '11px', color: '#185FA5' }}>ha·día TOTAL</div>
           <div style={{ fontSize: '21px', fontWeight: 500, color: AZUL }}>${num2(haDiaTotal)}</div>
-          <div style={{ fontSize: '9.5px', color: '#9fb0bf' }}>incluye balanceado y larva</div>
+          <div style={{ fontSize: '9.5px', color: '#9fb0bf' }}>incluye activos y mejoras</div>
         </div>
         <div style={{ background: '#e7f6ef', borderRadius: '10px', padding: '12px 14px' }}>
           <div style={{ fontSize: '11px', color: VERDE }}>ha·día REAL</div>
           <div style={{ fontSize: '21px', fontWeight: 500, color: VERDE }}>${num2(haDiaReal)}</div>
-          <div style={{ fontSize: '9.5px', color: '#9fb0bf' }}>→ va a Rentabilidad</div>
+          <div style={{ fontSize: '9.5px', color: '#9fb0bf' }}>sin activos ni mejoras · → Rentabilidad</div>
         </div>
       </div>
 
