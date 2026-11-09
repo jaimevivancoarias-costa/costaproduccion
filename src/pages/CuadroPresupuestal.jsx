@@ -2,12 +2,12 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { dinero } from '../lib/fechas'
 
-// Cuadro presupuestal · módulo Producción (F1)
+// Cuadro presupuestal · módulo Producción (F1 + F2)
 // Hoja mensual por finca: la contadora/jefe carga todos los costos del mes y la
 // app calcula el costo por hectárea-día TOTAL y REAL. No se cierra: va
-// calculando en vivo. La precarga desde la app (balanceado, insumos, diésel) y
-// la conexión a Rentabilidad llegan en fases siguientes.
-const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', VERDE = '#0F6E56', AMBAR = '#BA7517'
+// calculando en vivo. Los rubros marcados "App" (balanceado, insumos por
+// categoría, diésel) se PRECARGAN con el consumo real del mes y son editables.
+const NAVY = '#022847', AZUL = '#0D6CB0', BORDE = '#dce6ef', GRIS = '#7d8fa0', VERDE = '#0F6E56'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const GRUPOS = [
   ['BALANCEADO_LARVA', 'Balanceado y larva'],
@@ -38,12 +38,14 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
   const [anio, setAnio] = useState(hoy.getFullYear())
   const [mes, setMes] = useState(hoy.getMonth() + 1)
   const [rubros, setRubros] = useState([])
-  const [mesId, setMesId] = useState(null)
+  const [catIns, setCatIns] = useState({})      // insumo_id -> categoria_presupuesto
   const [ha, setHa] = useState('')
   const [dias, setDias] = useState(String(diasDelMes(hoy.getFullYear(), hoy.getMonth() + 1)))
-  const [txt, setTxt] = useState({})            // rubro_id -> string del valor
+  const [txt, setTxt] = useState({})            // rubro_id -> string del valor mostrado
+  const [appVals, setAppVals] = useState({})    // rubro_id -> valor sugerido por la app
+  const [editado, setEditado] = useState(new Set()) // rubros App que el usuario sobrescribió
   const [abierto, setAbierto] = useState({ BALANCEADO_LARVA: true, MATERIA_PRIMA: true })
-  const [nuevo, setNuevo] = useState({})        // grupo -> nombre en edición
+  const [nuevo, setNuevo] = useState({})
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
@@ -52,34 +54,73 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
 
   const cargarRubros = useCallback(async () => {
-    const { data } = await supabase.schema('produccion').from('cuadro_rubro')
-      .select('id, grupo, nombre, orden, origen, incluye_real').eq('activo', true).order('grupo').order('orden')
-    setRubros(data || [])
+    const [{ data: rb }, { data: ins }] = await Promise.all([
+      supabase.schema('produccion').from('cuadro_rubro')
+        .select('id, grupo, nombre, orden, origen, incluye_real').eq('activo', true).order('grupo').order('orden'),
+      supabase.schema('produccion').from('insumo').select('id, categoria_presupuesto').eq('activo', true),
+    ])
+    setRubros(rb || [])
+    const cm = {}; (ins || []).forEach(i => { cm[i.id] = i.categoria_presupuesto }); setCatIns(cm)
   }, [])
   useEffect(() => { cargarRubros() }, [cargarRubros])
 
-  // Carga la hoja del mes (cabecera + valores) al cambiar finca/mes.
+  // Consumo real del mes desde la app, mapeado a los rubros con `origen`.
+  const cargarAppVals = useCallback(async (y, m) => {
+    const desde = `${y}-${String(m).padStart(2, '0')}-01`
+    const hasta = new Date(y, m, 0).toISOString().slice(0, 10)
+    const [{ data: cons }, { data: dsl }] = await Promise.all([
+      supabase.schema('produccion').rpc('fn_reporte_consumo', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
+      supabase.schema('produccion').rpc('fn_gasto_diesel_mes', { p_finca: finca.id, p_anio: y, p_mes: m }),
+    ])
+    let bal = 0; const cat = {}
+    for (const f of (cons || [])) {
+      if (f.tipo === 'balanceado') bal += Number(f.costo) || 0
+      else if (f.tipo === 'insumo') {
+        const c = catIns[f.item_id]
+        if (c && c !== 'NO_APLICA') cat[c] = (cat[c] || 0) + (Number(f.costo) || 0)
+      }
+    }
+    const out = {}
+    for (const r of rubros) {
+      if (r.origen === 'balanceado') out[r.id] = bal
+      else if (r.origen === 'diesel') out[r.id] = Number(dsl) || 0
+      else if (r.origen && r.origen.startsWith('insumo:')) { const k = r.origen.slice(7); out[r.id] = cat[k] || 0 }
+    }
+    return out
+  }, [finca.id, rubros, catIns])
+
+  // Carga la hoja del mes (cabecera + valores guardados + precarga de la app).
   useEffect(() => {
+    if (!rubros.length) return
     let vivo = true
     ;(async () => {
       setCargando(true)
       const { data: cm } = await supabase.schema('produccion').from('cuadro_mes')
         .select('id, hectareas, dias').eq('finca_id', finca.id).eq('anio', anio).eq('mes', mes).maybeSingle()
+      const app = await cargarAppVals(anio, mes)
       if (!vivo) return
+      const saved = {}
       if (cm) {
-        setMesId(cm.id); setHa(cm.hectareas ? String(cm.hectareas) : ''); setDias(String(cm.dias || diasDelMes(anio, mes)))
+        setHa(cm.hectareas ? String(cm.hectareas) : ''); setDias(String(cm.dias || diasDelMes(anio, mes)))
         const { data: vs } = await supabase.schema('produccion').from('cuadro_valor')
-          .select('rubro_id, valor').eq('cuadro_mes_id', cm.id)
+          .select('rubro_id, valor, editado').eq('cuadro_mes_id', cm.id)
         if (!vivo) return
-        const m = {}; (vs || []).forEach(v => { if (Number(v.valor)) m[v.rubro_id] = num2(v.valor) })
-        setTxt(m)
+        ;(vs || []).forEach(v => { saved[v.rubro_id] = { valor: Number(v.valor), editado: v.editado } })
       } else {
-        setMesId(null); setHa(''); setDias(String(diasDelMes(anio, mes))); setTxt({})
+        setHa(''); setDias(String(diasDelMes(anio, mes)))
       }
-      setCargando(false)
+      setAppVals(app)
+      const nt = {}; const ed = new Set()
+      for (const r of rubros) {
+        const s = saved[r.id]
+        if (r.origen && s && s.editado) { nt[r.id] = num2(s.valor); ed.add(r.id) }       // override guardado
+        else if (r.origen && app[r.id] != null) { if (app[r.id]) nt[r.id] = num2(app[r.id]) } // precarga
+        else if (s && Number(s.valor)) { nt[r.id] = num2(s.valor) }                        // manual guardado
+      }
+      setTxt(nt); setEditado(ed); setCargando(false)
     })()
     return () => { vivo = false }
-  }, [finca.id, anio, mes])
+  }, [finca.id, anio, mes, rubros, cargarAppVals])
 
   const val = id => parseNum(txt[id])
   const totalesGrupo = useMemo(() => {
@@ -95,6 +136,12 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     return { bruto: b, real: rl, haDiaTotal: div ? b / div : 0, haDiaReal: div ? rl / div : 0 }
   }, [rubros, txt, ha, dias])
 
+  const cambiar = (r, v) => { setTxt(t => ({ ...t, [r.id]: v })); if (r.origen) setEditado(s => { const n = new Set(s); n.add(r.id); return n }) }
+  const restaurarApp = r => {
+    setTxt(t => ({ ...t, [r.id]: appVals[r.id] ? num2(appVals[r.id]) : '' }))
+    setEditado(s => { const n = new Set(s); n.delete(r.id); return n })
+  }
+
   async function guardar() {
     if (!esJefe) return
     setGuardando(true)
@@ -103,8 +150,10 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
       .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
       .select('id').single()
     if (error) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar la cabecera. ' + error.message }); return }
-    setMesId(cm.id)
-    const filas = rubros.map(r => ({ cuadro_mes_id: cm.id, rubro_id: r.id, valor: val(r.id), fuente: 'manual' }))
+    const filas = rubros.map(r => {
+      const esApp = !!r.origen && !editado.has(r.id)
+      return { cuadro_mes_id: cm.id, rubro_id: r.id, valor: val(r.id), fuente: esApp ? 'app' : 'manual', editado: !!r.origen && editado.has(r.id) }
+    })
     const { error: e2 } = await supabase.schema('produccion').from('cuadro_valor').upsert(filas, { onConflict: 'cuadro_mes_id,rubro_id' })
     setGuardando(false)
     setAviso(e2 ? { tipo: 'error', texto: 'No se pudieron guardar los valores. ' + e2.message } : { tipo: 'ok', texto: `Cuadro de ${MESES[mes - 1]} ${anio} guardado.` })
@@ -150,7 +199,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
         <label style={{ fontSize: '12.5px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>Días del mes
           <input value={dias} onChange={e => setDias(e.target.value)} disabled={!esJefe} style={{ ...inp, width: '62px' }} /></label>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center', fontSize: '10.5px', color: GRIS }}>
-          <span><span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: '#e8f1fb', border: '1px solid #9fc3e8', verticalAlign: '1px' }} /> App</span>
+          <span><span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: '#e8f1fb', border: '1px solid #9fc3e8', verticalAlign: '1px' }} /> App (precargado del consumo del mes)</span>
           <span><span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '2px', background: 'white', border: '1px solid ' + BORDE, verticalAlign: '1px' }} /> Manual</span>
         </span>
       </div>
@@ -174,19 +223,26 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
                   <div style={{ fontSize: '12.5px', fontWeight: 500, color: noReal ? '#854F0B' : NAVY }}>{dinero(totalesGrupo[g] || 0)}</div>
                 </div>
                 {open && (<>
-                  {items.map(r => (
-                    <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '7px 14px 7px 30px', borderBottom: '0.5px solid #f1f5f9', fontSize: '12.5px' }}>
-                      <span>{r.nombre}{r.origen && <span style={{ fontSize: '9.5px', color: '#185FA5', background: '#e8f1fb', borderRadius: '10px', padding: '1px 7px', marginLeft: '6px' }}>App</span>}</span>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ fontSize: '12px', color: GRIS }}>$</span>
-                        <input value={txt[r.id] || ''} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
-                          onChange={e => setTxt(t => ({ ...t, [r.id]: e.target.value }))}
-                          onFocus={e => e.target.select()}
-                          onBlur={e => setTxt(t => ({ ...t, [r.id]: e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)) }))}
-                          style={{ ...inp, width: '118px', textAlign: 'right', padding: '5px 9px', background: r.origen ? '#f3f9ff' : 'white' }} />
-                      </span>
-                    </div>
-                  ))}
+                  {items.map(r => {
+                    const esApp = !!r.origen
+                    const sobre = esApp && editado.has(r.id)
+                    return (
+                      <div key={r.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '7px 14px 7px 30px', borderBottom: '0.5px solid #f1f5f9', fontSize: '12.5px' }}>
+                        <span>{r.nombre}
+                          {esApp && <span style={{ fontSize: '9.5px', color: '#185FA5', background: '#e8f1fb', borderRadius: '10px', padding: '1px 7px', marginLeft: '6px' }}>App</span>}
+                          {sobre && <span onClick={() => restaurarApp(r)} style={{ fontSize: '10px', color: GRIS, marginLeft: '8px', cursor: 'pointer' }} title="Volver al valor de la app">↺ app {dinero(appVals[r.id] || 0)}</span>}
+                        </span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{ fontSize: '12px', color: GRIS }}>$</span>
+                          <input value={txt[r.id] || ''} disabled={!esJefe} placeholder="0,00" inputMode="decimal"
+                            onChange={e => cambiar(r, e.target.value)}
+                            onFocus={e => e.target.select()}
+                            onBlur={e => setTxt(t => ({ ...t, [r.id]: e.target.value.trim() === '' ? '' : num2(parseNum(e.target.value)) }))}
+                            style={{ ...inp, width: '118px', textAlign: 'right', padding: '5px 9px', background: esApp && !sobre ? '#f3f9ff' : 'white' }} />
+                        </span>
+                      </div>
+                    )
+                  })}
                   {esJefe && (
                     <div style={{ display: 'flex', gap: '8px', padding: '8px 14px 10px 30px', alignItems: 'center' }}>
                       <input value={nuevo[g] || ''} onChange={e => setNuevo(n => ({ ...n, [g]: e.target.value }))} placeholder="Agregar rubro…"
@@ -221,7 +277,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
       {esJefe && (
         <div style={{ display: 'flex', gap: '9px', marginTop: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button onClick={guardar} disabled={guardando} style={{ ...btnAzul, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Guardar'}</button>
-          <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Se calcula en vivo; no hay que cerrar el mes. El ha·día queda disponible para la Rentabilidad.</span>
+          <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Los rubros “App” vienen del consumo real del mes y los puedes editar. Se calcula en vivo; no hay que cerrar el mes.</span>
         </div>
       )}
     </div>
