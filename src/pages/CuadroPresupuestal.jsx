@@ -373,7 +373,7 @@ const GRP = [
   ['MEJORAS', 'Mejoras', '#D4537E'],
 ]
 const grpInfo = k => GRP.find(g => g[0] === k) || [k, k, '#9fb0bf']
-const PERIODOS = [[1, 'Último mes'], [2, '2 meses'], [3, '3 meses'], [4, '4 meses']]
+const PERIODOS = [[1, '1 mes'], [2, '2 meses'], [3, '3 meses'], [4, '4 meses']]
 const ZONA_LBL = { jambeli: 'Jambelí', 'jambelí': 'Jambelí', puna: 'Puná', 'puná': 'Puná' }
 const zlabel = z => ZONA_LBL[String(z || '').toLowerCase()] || (z ? z.charAt(0).toUpperCase() + z.slice(1) : z)
 
@@ -460,20 +460,14 @@ function Dashboard({ fincas, esJefe, setVista }) {
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px', fontSize: '12px' }}>
-        {zonas.length > 0 && <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
-          {[['', 'Todas'], ...zonas.map(z => [z, zlabel(z)])].map(([v, l]) => <button key={v} onClick={() => setZona(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: zona === v ? AZUL : 'white', color: zona === v ? 'white' : GRIS, fontWeight: zona === v ? 500 : 400 }}>{l}</button>)}
-        </span>}
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '2px 5px', background: 'white' }}>
-          <button onClick={() => setAncla(a => { let y = a.anio, m = a.mes - 1; if (m < 1) { m = 12; y-- } return { anio: y, mes: m } })} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '15px', fontFamily: 'inherit' }}>‹</button>
-          <b style={{ fontWeight: 500, minWidth: '96px', textAlign: 'center', fontSize: '11.5px' }}>{MESES[ancla.mes - 1]} {ancla.anio}</b>
-          <button onClick={() => setAncla(a => { let y = a.anio, m = a.mes + 1; if (m > 12) { m = 1; y++ } return { anio: y, mes: m } })} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '15px', fontFamily: 'inherit' }}>›</button>
-        </span>
-        <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
-          {PERIODOS.map(([v, l]) => <button key={v} onClick={() => setPeriodo(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: periodo === v ? AZUL : 'white', color: periodo === v ? 'white' : GRIS, fontWeight: periodo === v ? 500 : 400 }}>{l}</button>)}
-        </span>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px', fontSize: '12.5px' }}>
+        {zonas.length > 0 && (
+          <Dropdown label="Zona" value={zona ? zlabel(zona) : 'Todas'}>
+            {[['', 'Todas'], ...zonas.map(z => [z, zlabel(z)])].map(([v, l]) => <DItem key={v} on={zona === v} onClick={() => setZona(v)}>{l}</DItem>)}
+          </Dropdown>
+        )}
         <span style={{ position: 'relative' }}>
-          <button onClick={() => setFincasOpen(o => !o)} style={{ padding: '5px 11px', border: '0.5px solid ' + (fincasOpen ? AZUL : BORDE), borderRadius: '8px', background: 'white', cursor: 'pointer', fontFamily: 'inherit', color: fincasOpen ? AZUL : NAVY, fontWeight: 500 }}>Fincas · {sel.size}/{visibles.length} ▾</button>
+          <button onClick={() => setFincasOpen(o => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', border: '0.5px solid ' + (fincasOpen ? AZUL : BORDE), borderRadius: '9px', padding: '7px 12px', background: 'white', cursor: 'pointer', fontFamily: 'inherit', color: fincasOpen ? AZUL : NAVY }}><b style={{ fontWeight: 500 }}>{sel.size} {sel.size === 1 ? 'finca' : 'fincas'}</b> <span style={{ color: '#9fb0bf' }}>▾</span></button>
           {fincasOpen && (<>
             <div onClick={() => setFincasOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
             <div style={{ position: 'absolute', top: 'calc(100% + 5px)', left: 0, zIndex: 41, background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', boxShadow: '0 8px 24px rgba(2,40,71,.12)', padding: '8px', minWidth: '180px', maxHeight: '300px', overflowY: 'auto' }}>
@@ -489,6 +483,17 @@ function Dashboard({ fincas, esJefe, setVista }) {
             </div>
           </>)}
         </span>
+
+        <span style={{ width: '1px', height: '24px', background: '#e6edf3' }} />
+
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 7px', background: 'white' }}>
+          <button onClick={() => setAncla(a => { let y = a.anio, m = a.mes - 1; if (m < 1) { m = 12; y-- } return { anio: y, mes: m } })} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '15px', fontFamily: 'inherit' }}>‹</button>
+          <b style={{ fontWeight: 500, minWidth: '78px', textAlign: 'center', fontSize: '12px' }}>{MESES[ancla.mes - 1].slice(0, 3)} {ancla.anio}</b>
+          <button onClick={() => setAncla(a => { let y = a.anio, m = a.mes + 1; if (m > 12) { m = 1; y++ } return { anio: y, mes: m } })} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '15px', fontFamily: 'inherit' }}>›</button>
+        </span>
+        <Dropdown label="Promedio" value={(PERIODOS.find(p => p[0] === periodo) || PERIODOS[0])[1]}>
+          {PERIODOS.map(([v, l]) => <DItem key={v} on={periodo === v} onClick={() => setPeriodo(v)}>{l}</DItem>)}
+        </Dropdown>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
@@ -586,4 +591,25 @@ function Dashboard({ fincas, esJefe, setVista }) {
       </>)}
     </div>
   )
+}
+
+function Dropdown({ label, value, children }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', border: '0.5px solid ' + (open ? AZUL : BORDE), borderRadius: '9px', padding: '7px 12px', fontSize: '12.5px', background: 'white', cursor: 'pointer', fontFamily: 'inherit', color: NAVY }}>
+        {label && <span style={{ color: '#9fb0bf' }}>{label}</span>} <b style={{ fontWeight: 500 }}>{value}</b> <span style={{ color: '#9fb0bf' }}>▾</span>
+      </button>
+      {open && (<>
+        <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+        <div onClick={() => setOpen(false)} style={{ position: 'absolute', top: 'calc(100% + 5px)', left: 0, zIndex: 41, background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', boxShadow: '0 8px 24px rgba(2,40,71,.12)', padding: '5px', minWidth: '150px' }}>
+          {children}
+        </div>
+      </>)}
+    </span>
+  )
+}
+function DItem({ on, onClick, children }) {
+  return <button onClick={onClick} style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: on ? '#f1f6fb' : 'none', fontFamily: 'inherit', cursor: 'pointer', borderRadius: '7px', padding: '7px 10px', fontSize: '12.5px', color: on ? AZUL : NAVY, fontWeight: on ? 500 : 400 }}
+    onMouseEnter={e => { if (!on) e.currentTarget.style.background = '#f6f9fb' }} onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'none' }}>{children}</button>
 }
