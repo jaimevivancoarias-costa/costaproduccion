@@ -526,7 +526,7 @@ export default function App() {
           ) : tabId === 'estimacion' ? (
             <Estimacion key={finca.id} finca={finca} esJefe={esJefe} nombre={nombre} />
           ) : tabId === 'cuadro' ? (
-            <CuadroPresupuestal key={finca.id} finca={finca} esJefe={esJefe} nombre={nombre} />
+            <CuadroPresupuestal key={finca.id} finca={finca} fincas={fincas} esJefe={esJefe} nombre={nombre} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === tabId)} />
           )}

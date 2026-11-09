@@ -33,7 +33,8 @@ function parseNum(s) {
 const inp = { padding: '7px 11px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, boxSizing: 'border-box' }
 const btnAzul = { padding: '8px 15px', fontSize: '12.5px', fontFamily: 'inherit', fontWeight: 500, border: 'none', borderRadius: '8px', background: AZUL, color: 'white', cursor: 'pointer' }
 
-export default function CuadroPresupuestal({ finca, esJefe }) {
+export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
+  const [vista, setVista] = useState('finca')   // 'finca' | 'dashboard'
   const hoy = new Date()
   const [anio, setAnio] = useState(hoy.getFullYear())
   const [mes, setMes] = useState(hoy.getMonth() + 1)
@@ -187,6 +188,8 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     setAnio(y); setMes(m)
   }
 
+  if (vista === 'dashboard') return <Dashboard fincas={fincas || []} esJefe={esJefe} setVista={setVista} />
+
   return (
     <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem', background: '#eef2f6', minHeight: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
@@ -195,6 +198,12 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
           <div style={{ fontSize: '12.5px', color: GRIS }}>{finca.nombre} · {MESES[mes - 1]} {anio}</div>
         </div>
         <div style={{ display: 'flex', gap: '9px', alignItems: 'center', flexWrap: 'wrap' }}>
+          {esJefe && (fincas || []).length > 1 && (
+            <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12.5px' }}>
+              <button onClick={() => setVista('finca')} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, background: AZUL, color: 'white' }}>Por finca</button>
+              <button onClick={() => setVista('dashboard')} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: 'white', color: GRIS }}>Dashboard</button>
+            </span>
+          )}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 8px', fontSize: '12.5px' }}>
             <button onClick={() => pasoMes(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>‹</button>
             <b style={{ fontWeight: 500, minWidth: '128px', textAlign: 'center' }}>{MESES[mes - 1]} {anio}</b>
@@ -349,6 +358,213 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
           <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Los rubros “App” vienen del consumo real del mes y los puedes editar. Se calcula en vivo; no hay que cerrar el mes.</span>
         </div>
       )}
+    </div>
+  )
+}
+
+// ===== Dashboard · resumen multi-finca del Cuadro presupuestal =====
+const GRP = [
+  ['BALANCEADO_LARVA', 'Balanceado y larva', '#51606c'],
+  ['MATERIA_PRIMA', 'Insumos', '#BA7517'],
+  ['MANO_OBRA', 'Mano de obra', '#1D9E75'],
+  ['INDIRECTOS', 'Indirectos', '#0D6CB0'],
+  ['OTROS_ADMIN', 'Otros administrativos', '#7F77DD'],
+  ['ACTIVOS', 'Activos fijos', '#9fb0bf'],
+  ['MEJORAS', 'Mejoras', '#D4537E'],
+]
+const grpInfo = k => GRP.find(g => g[0] === k) || [k, k, '#9fb0bf']
+const PERIODOS = [[1, 'Este mes'], [2, '2 meses'], [3, '3 meses'], [4, '4 meses']]
+
+function Dashboard({ fincas, esJefe, setVista }) {
+  const activas = useMemo(() => (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA'), [fincas])
+  const zonas = useMemo(() => [...new Set(activas.map(f => f.zona).filter(Boolean))], [activas])
+  const [zona, setZona] = useState('')
+  const [sel, setSel] = useState(() => new Set(activas.map(f => f.id)))
+  const [periodo, setPeriodo] = useState(1)
+  const [operativo, setOperativo] = useState(true)
+  const [grupoSel, setGrupoSel] = useState(null)
+  const [hoverG, setHoverG] = useState(null)
+  const [data, setData] = useState(null)
+  const [cargando, setCargando] = useState(true)
+
+  const visibles = useMemo(() => activas.filter(f => !zona || f.zona === zona), [activas, zona])
+  const idsSel = useMemo(() => visibles.filter(f => sel.has(f.id)).map(f => f.id), [visibles, sel])
+
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      setCargando(true)
+      if (!idsSel.length) { if (vivo) { setData({ porFinca: [], grupos: {}, sub: {}, nMeses: 0 }); setCargando(false) } return }
+      const { data: cms } = await supabase.schema('produccion').from('cuadro_mes')
+        .select('id, finca_id, anio, mes, hadia_total, hadia_real').in('finca_id', idsSel)
+        .order('anio', { ascending: false }).order('mes', { ascending: false })
+      if (!vivo) return
+      const porF = {}; (cms || []).forEach(r => { (porF[r.finca_id] = porF[r.finca_id] || []).push(r) })
+      const mesIds = []
+      const porFinca = idsSel.map(fid => {
+        const rows = (porF[fid] || []).slice(0, periodo); rows.forEach(r => mesIds.push(r.id))
+        const n = rows.length, avg = c => n ? rows.reduce((s, r) => s + Number(r[c] || 0), 0) / n : 0
+        const f = visibles.find(x => x.id === fid)
+        return { id: fid, nombre: f?.nombre || '', zona: f?.zona, real: avg('hadia_real'), total: avg('hadia_total'), n }
+      })
+      let grupos = {}, sub = {}
+      if (mesIds.length) {
+        const { data: vs } = await supabase.schema('produccion').from('cuadro_valor')
+          .select('valor, rubro:rubro_id(grupo, nombre)').in('cuadro_mes_id', mesIds)
+        if (!vivo) return
+        ;(vs || []).forEach(v => {
+          const g = v.rubro?.grupo; if (!g) return
+          grupos[g] = (grupos[g] || 0) + Number(v.valor || 0)
+          ;(sub[g] = sub[g] || {})[v.rubro.nombre] = (sub[g][v.rubro.nombre] || 0) + Number(v.valor || 0)
+        })
+      }
+      setData({ porFinca, grupos, sub, nMeses: Math.max(0, ...porFinca.map(x => x.n)) })
+      setCargando(false)
+    })()
+    return () => { vivo = false }
+  }, [JSON.stringify(idsSel), periodo])
+
+  const toggleFinca = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const conDato = (data?.porFinca || []).filter(f => f.n > 0)
+  const promReal = conDato.length ? conDato.reduce((s, f) => s + f.real, 0) / conDato.length : 0
+  const promTotal = conDato.length ? conDato.reduce((s, f) => s + f.total, 0) / conDato.length : 0
+  const rango = arr => arr.length ? `$${num2(Math.min(...arr))}–${num2(Math.max(...arr))}` : '—'
+  const maxBar = Math.max(1, ...conDato.map(f => f.total))
+
+  // Gasto por grupo (dona): excluye balanceado+larva si operativo.
+  const grupos = data?.grupos || {}
+  const segs = GRP.filter(([k]) => (operativo ? k !== 'BALANCEADO_LARVA' : true)).map(([k, l, c]) => ({ k, l, c, v: grupos[k] || 0 })).filter(s => s.v > 0.005)
+  const totGasto = segs.reduce((s, x) => s + x.v, 0)
+  const R = 54, C = 2 * Math.PI * R
+  let acc = 0
+  const arcos = segs.map(s => { const len = totGasto ? (s.v / totGasto) * C : 0; const el = { ...s, len, off: acc, pct: totGasto ? s.v / totGasto : 0 }; acc += len; return el })
+  const centroG = hoverG ? arcos.find(a => a.k === hoverG) : null
+
+  const seldrill = grupoSel ? Object.entries(data?.sub?.[grupoSel] || {}).map(([n, v]) => ({ n, v })).sort((a, b) => b.v - a.v) : null
+
+  return (
+    <div style={{ fontFamily: 'Inter, system-ui, sans-serif', color: NAVY, padding: '1.4rem', background: '#eef2f6', minHeight: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        <div>
+          <h1 style={{ fontSize: '21px', fontWeight: 500, margin: '0 0 2px' }}>Cuadro presupuestal · Dashboard</h1>
+          <div style={{ fontSize: '12.5px', color: GRIS }}>{conDato.length} de {idsSel.length} fincas con datos{data?.nMeses ? ` · ${PERIODOS.find(p => p[0] === periodo)[1].toLowerCase()}` : ''}</div>
+        </div>
+        <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12.5px' }}>
+          <button onClick={() => setVista('finca')} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: 'white', color: GRIS }}>Por finca</button>
+          <button onClick={() => setVista('dashboard')} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500, background: AZUL, color: 'white' }}>Dashboard</button>
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px', fontSize: '12px' }}>
+        {zonas.length > 0 && <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
+          {[['', 'Todas'], ...zonas.map(z => [z, z])].map(([v, l]) => <button key={v} onClick={() => setZona(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: zona === v ? AZUL : 'white', color: zona === v ? 'white' : GRIS, fontWeight: zona === v ? 500 : 400 }}>{l}</button>)}
+        </span>}
+        <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
+          {PERIODOS.map(([v, l]) => <button key={v} onClick={() => setPeriodo(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: periodo === v ? AZUL : 'white', color: periodo === v ? 'white' : GRIS, fontWeight: periodo === v ? 500 : 400 }}>{l}</button>)}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span style={{ color: '#9fb0bf', fontSize: '11px' }}>{sel.size} de {visibles.length} fincas</span>
+      </div>
+
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
+        {visibles.map(f => { const on = sel.has(f.id); return (
+          <button key={f.id} onClick={() => toggleFinca(f.id)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '4px 10px', borderRadius: '7px', cursor: 'pointer', border: '1px solid ' + (on ? AZUL : BORDE), background: on ? '#e8f1fb' : 'white', color: on ? AZUL : GRIS }}>{on ? '✓ ' : ''}{f.nombre}</button>
+        ) })}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
+        <div style={{ background: '#e7f6ef', borderRadius: '12px', padding: '13px 16px' }}>
+          <div style={{ fontSize: '11px', color: VERDE }}>Ha·día REAL · Promedio</div>
+          <div style={{ fontSize: '24px', fontWeight: 500, color: VERDE }}>${num2(promReal)}</div>
+          <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>Va a la Rentabilidad · rango {rango(conDato.map(f => f.real))}</div>
+        </div>
+        <div style={{ background: '#eaf2fb', borderRadius: '12px', padding: '13px 16px' }}>
+          <div style={{ fontSize: '11px', color: '#185FA5' }}>Ha·día COSTO (TOTAL) · Promedio</div>
+          <div style={{ fontSize: '24px', fontWeight: 500, color: AZUL }}>${num2(promTotal)}</div>
+          <div style={{ fontSize: '10.5px', color: '#9fb0bf' }}>Costo completo · rango {rango(conDato.map(f => f.total))}</div>
+        </div>
+      </div>
+
+      {cargando ? (
+        <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando…</div>
+      ) : (<>
+        <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em' }}>Ha·día por finca</div>
+            <div style={{ fontSize: '10.5px', color: GRIS }}><span style={{ color: VERDE }}>■</span> Real &nbsp;<span style={{ color: AZUL }}>■</span> Total</div>
+          </div>
+          {conDato.length === 0 ? <div style={{ fontSize: '12.5px', color: GRIS, padding: '10px 0' }}>Ninguna finca seleccionada tiene Cuadro cargado en este periodo.</div> : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '11px' }}>
+              {[...conDato].sort((a, b) => b.real - a.real).map(f => (
+                <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ width: '88px', fontSize: '12px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.nombre}</span>
+                  <span style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <span style={{ height: '11px', borderRadius: '3px', background: VERDE, width: (100 * f.real / maxBar) + '%', minWidth: '2px' }} />
+                    <span style={{ height: '11px', borderRadius: '3px', background: AZUL, width: (100 * f.total / maxBar) + '%', minWidth: '2px' }} />
+                  </span>
+                  <span style={{ fontSize: '11.5px', width: '118px', textAlign: 'right' }}><b style={{ color: VERDE, fontWeight: 500 }}>${num2(f.real)}</b> <span style={{ color: '#9fb0bf' }}>/ ${num2(f.total)}</span></span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em' }}>En qué se gasta</div>
+            <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden', fontSize: '11px' }}>
+              <button onClick={() => setOperativo(true)} style={{ padding: '4px 10px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: operativo ? AZUL : 'white', color: operativo ? 'white' : GRIS }}>Operativo</button>
+              <button onClick={() => setOperativo(false)} style={{ padding: '4px 10px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: !operativo ? AZUL : 'white', color: !operativo ? 'white' : GRIS }}>Todo el bruto</button>
+            </span>
+          </div>
+          {totGasto <= 0 ? <div style={{ fontSize: '12.5px', color: GRIS }}>Sin datos de gasto en el periodo.</div> : (
+            <div style={{ display: 'flex', gap: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <svg width="150" height="150" viewBox="0 0 140 140" style={{ flexShrink: 0 }}>
+                <circle cx="70" cy="70" r={R} fill="none" stroke="#eef3f7" strokeWidth="22" />
+                <g transform="rotate(-90 70 70)" fill="none" strokeWidth="22">
+                  {arcos.map(a => <circle key={a.k} cx="70" cy="70" r={R} stroke={a.c} strokeDasharray={`${a.len} ${C - a.len}`} strokeDashoffset={-a.off}
+                    style={{ cursor: 'pointer', opacity: hoverG && hoverG !== a.k ? 0.4 : 1 }}
+                    onMouseEnter={() => setHoverG(a.k)} onMouseLeave={() => setHoverG(null)} onClick={() => setGrupoSel(a.k)} />)}
+                </g>
+                <text x="70" y={centroG ? 64 : 68} textAnchor="middle" style={{ fontSize: '15px', fontWeight: 500, fill: NAVY }}>{centroG ? dinero(centroG.v) : dinero(totGasto)}</text>
+                <text x="70" y={centroG ? 80 : 84} textAnchor="middle" style={{ fontSize: '9px', fill: '#9fb0bf' }}>{centroG ? `${grpInfo(centroG.k)[1]} · ${Math.round(centroG.pct * 100)}%` : (operativo ? 'operativo' : 'bruto')}</text>
+              </svg>
+              <div style={{ fontSize: '11.5px', display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: '180px' }}>
+                {arcos.map(a => (
+                  <div key={a.k} onMouseEnter={() => setHoverG(a.k)} onMouseLeave={() => setHoverG(null)} onClick={() => setGrupoSel(a.k)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', padding: '3px 6px', borderRadius: '6px', background: hoverG === a.k ? '#f3f7fb' : 'transparent' }}>
+                    <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: a.c, flexShrink: 0 }} />
+                    <span style={{ flex: 1 }}>{a.l}</span>
+                    <b style={{ fontWeight: 500 }}>{Math.round(a.pct * 100)}%</b>
+                    <span style={{ color: '#9fb0bf', width: '78px', textAlign: 'right' }}>{dinero(a.v)}</span>
+                  </div>
+                ))}
+                <div style={{ fontSize: '10px', color: '#9fb0bf', marginTop: '2px' }}>Pasa el cursor para resaltar · clic para ver el detalle del grupo.</div>
+              </div>
+            </div>
+          )}
+
+          {seldrill && (
+            <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <div style={{ fontSize: '12.5px' }}><b style={{ color: grpInfo(grupoSel)[2], fontWeight: 500 }}>{grpInfo(grupoSel)[1]}</b> <span style={{ color: '#9fb0bf' }}>· en qué se va</span></div>
+                <button onClick={() => setGrupoSel(null)} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: GRIS }}>Cerrar</button>
+              </div>
+              {(() => { const mx = Math.max(1, ...seldrill.map(s => s.v)); return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {seldrill.filter(s => s.v > 0.005).map(s => (
+                    <div key={s.n} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11.5px' }}>
+                      <span style={{ width: '150px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.n}</span>
+                      <span style={{ height: '13px', borderRadius: '3px', background: grpInfo(grupoSel)[2], width: (100 * s.v / mx) + '%', minWidth: '2px' }} />
+                      <span style={{ fontWeight: 500 }}>{dinero(s.v)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) })()}
+            </div>
+          )}
+        </div>
+      </>)}
     </div>
   )
 }
