@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { dinero } from '../lib/fechas'
 
@@ -19,6 +19,7 @@ const GRUPOS = [
   ['MEJORAS', 'Mejoras'],
 ]
 const NO_REAL = new Set(['BALANCEADO_LARVA', 'ACTIVOS', 'MEJORAS'])
+const CATS_INS = [['ANTIBIOTICOS', 'Antibióticos'], ['ANTIPARASITARIO', 'Antiparasitario'], ['BACTERIAS', 'Bacterias'], ['DESINFECTANTES', 'Desinfectantes'], ['FERTILIZANTES', 'Fertilizantes'], ['VITAMINAS', 'Vitaminas'], ['PRESERVANTES', 'Preservantes'], ['NO_APLICA', 'No aplica']]
 const diasDelMes = (y, m) => new Date(y, m, 0).getDate()  // m = 1..12
 const num2 = n => (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 // Parser tolerante: "319.210,80" | "319210.8" | "1,234" -> número.
@@ -48,6 +49,8 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
   const [editado, setEditado] = useState(new Set()) // rubros App que el usuario sobrescribió
   const [abierto, setAbierto] = useState({ BALANCEADO_LARVA: true, MATERIA_PRIMA: true })
   const [nuevo, setNuevo] = useState({})
+  const [clasOpen, setClasOpen] = useState(false)
+  const [insumos, setInsumos] = useState(null)    // lista para clasificar
   const [cargando, setCargando] = useState(true)
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
@@ -181,6 +184,19 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     setNuevo(n => ({ ...n, [grupo]: '' })); cargarRubros()
   }
 
+  async function abrirClas() {
+    if (!clasOpen && !insumos) {
+      const { data } = await supabase.schema('produccion').from('insumo')
+        .select('id, nombre, categoria_presupuesto').eq('activo', true).order('nombre')
+      setInsumos(data || [])
+    }
+    setClasOpen(o => !o)
+  }
+  async function setCatInsumo(id, cat) {
+    setInsumos(xs => xs.map(x => x.id === id ? { ...x, categoria_presupuesto: cat || null } : x))
+    await supabase.schema('produccion').from('insumo').update({ categoria_presupuesto: cat || null }).eq('id', id)
+  }
+
   const pasoMes = d => {
     let y = anio, m = mes + d
     if (m < 1) { m = 12; y-- } else if (m > 12) { m = 1; y++ }
@@ -200,8 +216,36 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
             <b style={{ fontWeight: 500, minWidth: '128px', textAlign: 'center' }}>{MESES[mes - 1]} {anio}</b>
             <button onClick={() => pasoMes(1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>›</button>
           </span>
+          {esJefe && <button onClick={abrirClas} style={{ ...inp, cursor: 'pointer', fontWeight: 500, color: clasOpen ? AZUL : GRIS, borderColor: clasOpen ? AZUL : BORDE }}>Clasificar insumos</button>}
         </div>
       </div>
+
+      {clasOpen && insumos && (() => {
+        const sinClas = insumos.filter(i => !i.categoria_presupuesto).length
+        return (
+          <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 500 }}>Clasificar insumos</div>
+              <button onClick={() => setClasOpen(false)} style={{ ...inp, cursor: 'pointer', padding: '5px 10px', color: GRIS }}>Cerrar</button>
+            </div>
+            <div style={{ fontSize: '11.5px', color: sinClas ? '#854F0B' : '#9fb0bf', marginBottom: '10px' }}>Cada insumo pertenece a una categoría del cuadro. {sinClas ? `${sinClas} sin clasificar.` : 'Todos clasificados.'} El cambio se guarda al instante.</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0 14px', maxHeight: '440px', overflowY: 'auto' }}>
+              {insumos.map(i => (
+                <Fragment key={i.id}>
+                  <div style={{ padding: '7px 0', fontSize: '12.5px', borderTop: '0.5px solid #f1f5f9', color: i.categoria_presupuesto ? NAVY : '#854F0B', alignSelf: 'center' }}>{i.nombre}</div>
+                  <div style={{ padding: '5px 0', borderTop: '0.5px solid #f1f5f9' }}>
+                    <select value={i.categoria_presupuesto || ''} disabled={!esJefe} onChange={e => setCatInsumo(i.id, e.target.value)}
+                      style={{ ...inp, padding: '5px 9px', fontSize: '12px', minWidth: '170px', borderColor: i.categoria_presupuesto ? BORDE : '#e3b765', background: i.categoria_presupuesto ? 'white' : '#FDF8EE' }}>
+                      <option value="">Sin clasificar</option>
+                      {CATS_INS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </div>
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {aviso && <div style={{ borderRadius: '10px', padding: '11px 14px', fontSize: '13px', marginBottom: '12px', background: aviso.tipo === 'ok' ? '#E1F5EE' : '#FBEAEA', color: aviso.tipo === 'ok' ? VERDE : '#8A2F2E' }}>{aviso.texto}</div>}
 
