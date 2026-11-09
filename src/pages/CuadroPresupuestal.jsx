@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { dinero } from '../lib/fechas'
 
@@ -53,6 +53,10 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
   const [guardando, setGuardando] = useState(false)
   const [aviso, setAviso] = useState(null)
   const [userId, setUserId] = useState(null)
+  const [modo, setModo] = useState('mes')        // 'mes' (edición) | 'comparar' (meses en columnas)
+  const [cmp, setCmp] = useState(null)           // { porMes, meses } datos comparativos del año
+  const [cmpCargando, setCmpCargando] = useState(false)
+  const [cmpMeses, setCmpMeses] = useState([])   // meses seleccionados a mostrar en la comparativa
 
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
 
@@ -127,6 +131,32 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
     })()
     return () => { vivo = false }
   }, [finca.id, anio, mes, rubros, cargarAppVals])
+
+  // Comparativa: carga TODOS los meses del año de la finca (solo lectura).
+  useEffect(() => {
+    if (modo !== 'comparar' || !rubros.length) return
+    let vivo = true
+    ;(async () => {
+      setCmpCargando(true)
+      const { data: cms } = await supabase.schema('produccion').from('cuadro_mes')
+        .select('id, mes, hectareas, dias, deduccion_sueldos, deduccion_beneficios, hadia_total, hadia_real')
+        .eq('finca_id', finca.id).eq('anio', anio).order('mes')
+      const ids = (cms || []).map(c => c.id)
+      let vs = []
+      if (ids.length) {
+        const r = await supabase.schema('produccion').from('cuadro_valor')
+          .select('cuadro_mes_id, rubro_id, valor').in('cuadro_mes_id', ids)
+        vs = r.data || []
+      }
+      if (!vivo) return
+      const mesDe = {}; (cms || []).forEach(c => { mesDe[c.id] = c.mes })
+      const porMes = {}; (cms || []).forEach(c => { porMes[c.mes] = { ...c, valores: {} } })
+      vs.forEach(v => { const m = mesDe[v.cuadro_mes_id]; if (m) porMes[m].valores[v.rubro_id] = Number(v.valor) })
+      const meses = (cms || []).map(c => c.mes)
+      setCmp({ porMes, meses }); setCmpMeses(meses); setCmpCargando(false)
+    })()
+    return () => { vivo = false }
+  }, [modo, finca.id, anio, rubros])
 
   const val = id => parseNum(txt[id])
   // Rubros visibles de ESTA finca: por grupo, sus rubros propios (finca_id) si
@@ -219,16 +249,33 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
               <button onClick={() => setVista('dashboard')} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: 'white', color: GRIS }}>Dashboard</button>
             </span>
           )}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 8px', fontSize: '12.5px' }}>
-            <button onClick={() => pasoMes(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>‹</button>
-            <b style={{ fontWeight: 500, minWidth: '128px', textAlign: 'center' }}>{MESES[mes - 1]} {anio}</b>
-            <button onClick={() => pasoMes(1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>›</button>
+          <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '9px', overflow: 'hidden', fontSize: '12.5px' }}>
+            {[['mes', 'Mes'], ['comparar', 'Comparar']].map(([k, l]) => (
+              <button key={k} onClick={() => setModo(k)} style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: modo === k ? 500 : 400, background: modo === k ? AZUL : 'white', color: modo === k ? 'white' : GRIS }}>{l}</button>
+            ))}
           </span>
+          {modo === 'mes' ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 8px', fontSize: '12.5px' }}>
+              <button onClick={() => pasoMes(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>‹</button>
+              <b style={{ fontWeight: 500, minWidth: '128px', textAlign: 'center' }}>{MESES[mes - 1]} {anio}</b>
+              <button onClick={() => pasoMes(1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>›</button>
+            </span>
+          ) : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '9px', padding: '4px 8px', fontSize: '12.5px' }}>
+              <button onClick={() => setAnio(a => a - 1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>‹</button>
+              <b style={{ fontWeight: 500, minWidth: '48px', textAlign: 'center' }}>{anio}</b>
+              <button onClick={() => setAnio(a => a + 1)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '16px', fontFamily: 'inherit' }}>›</button>
+            </span>
+          )}
         </div>
       </div>
 
       {aviso && <div style={{ borderRadius: '10px', padding: '11px 14px', fontSize: '13px', marginBottom: '12px', background: aviso.tipo === 'ok' ? '#E1F5EE' : '#FBEAEA', color: aviso.tipo === 'ok' ? VERDE : '#8A2F2E' }}>{aviso.texto}</div>}
 
+      {modo === 'comparar' ? (
+        <TablaComparativa finca={finca} anio={anio} cargando={cmpCargando} cmp={cmp}
+          rubrosVis={rubrosVis} abierto={abierto} setAbierto={setAbierto} cmpMeses={cmpMeses} setCmpMeses={setCmpMeses} />
+      ) : (<>
       <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
         <label style={{ fontSize: '12.5px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>Hectáreas
           <input value={ha} onChange={e => setHa(e.target.value)} disabled={!esJefe} placeholder="108,24" style={{ ...inp, width: '90px' }} /></label>
@@ -374,6 +421,96 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
           <span style={{ fontSize: '11px', color: '#9fb0bf' }}>Los rubros “App” vienen del consumo real del mes y los puedes editar. Se calcula en vivo; no hay que cerrar el mes.</span>
         </div>
       )}
+      </>)}
+    </div>
+  )
+}
+
+// ===== Tabla comparativa · meses en columnas (solo lectura) =====
+function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setAbierto, cmpMeses, setCmpMeses }) {
+  if (cargando) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando…</div>
+  const meses = cmp?.meses || []
+  if (!meses.length) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>No hay meses cargados para {finca.nombre} en {anio}.</div>
+  const sel = (cmpMeses.length ? cmpMeses : meses).slice().sort((a, b) => a - b)
+  const toggleMes = m => setCmpMeses(cur => {
+    const base = cur.length ? cur : meses
+    const n = base.includes(m) ? base.filter(x => x !== m) : [...base, m]
+    return n.length ? n : base   // nunca dejar 0
+  })
+  const vOf = (m, rid) => cmp.porMes[m]?.valores[rid] || 0
+  const grpItems = g => rubrosVis.filter(r => r.grupo === g)
+  const grpTot = (m, g) => grpItems(g).reduce((s, r) => s + vOf(m, r.id), 0)
+  const hdia = (m, k) => Number(cmp.porMes[m]?.[k]) || 0
+  const cab = (m) => cmp.porMes[m] || {}
+  const cols = sel.length
+  // celda numérica
+  const td = (txt, opt = {}) => (
+    <td style={{ padding: '6px 12px', textAlign: 'right', fontSize: opt.f ? '12.5px' : '12px', fontWeight: opt.fuerte ? 500 : 400, color: opt.col || NAVY, background: opt.bg || 'transparent', borderBottom: '0.5px solid #f1f5f9', whiteSpace: 'nowrap' }}>{txt}</td>
+  )
+  const th1 = { position: 'sticky', left: 0, zIndex: 1, background: 'white', borderRight: '0.5px solid ' + BORDE }
+  return (
+    <div>
+      {/* selector de meses */}
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px', alignItems: 'center' }}>
+        <span style={{ fontSize: '11px', color: GRIS, marginRight: '2px' }}>Meses:</span>
+        {meses.map(m => {
+          const on = sel.includes(m)
+          return <button key={m} onClick={() => toggleMes(m)} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{MESES[m - 1].slice(0, 3)}</button>
+        })}
+      </div>
+      <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: (180 + cols * 96) + 'px' }}>
+          <thead>
+            <tr>
+              <th style={{ ...th1, padding: '9px 14px', textAlign: 'left', fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em', borderBottom: '0.5px solid ' + BORDE, zIndex: 2 }}>Concepto</th>
+              {sel.map(m => <th key={m} style={{ padding: '9px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 500, color: NAVY, borderBottom: '0.5px solid ' + BORDE, borderLeft: '0.5px solid #f1f5f9', whiteSpace: 'nowrap' }}>{MESES[m - 1].slice(0, 3)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {/* ha·día destacado */}
+            <tr>
+              <td style={{ ...th1, padding: '8px 14px', fontSize: '12.5px', fontWeight: 500, color: '#185FA5', background: '#eaf2fb', borderBottom: '0.5px solid #e6eef5' }}>ha·día TOTAL</td>
+              {sel.map(m => <td key={m} style={{ padding: '8px 12px', textAlign: 'right', fontSize: '13px', fontWeight: 500, color: '#185FA5', background: '#eaf2fb', borderBottom: '0.5px solid #e6eef5', borderLeft: '0.5px solid #e6eef5', whiteSpace: 'nowrap' }}>${num2(hdia(m, 'hadia_total'))}</td>)}
+            </tr>
+            <tr>
+              <td style={{ ...th1, padding: '8px 14px', fontSize: '12.5px', fontWeight: 500, color: VERDE, background: '#e7f6ef', borderBottom: '0.5px solid ' + BORDE }}>ha·día REAL</td>
+              {sel.map(m => <td key={m} style={{ padding: '8px 12px', textAlign: 'right', fontSize: '13px', fontWeight: 500, color: VERDE, background: '#e7f6ef', borderBottom: '0.5px solid ' + BORDE, borderLeft: '0.5px solid #dcefe6', whiteSpace: 'nowrap' }}>${num2(hdia(m, 'hadia_real'))}</td>)}
+            </tr>
+            {/* hectáreas / días */}
+            <tr>
+              <td style={{ ...th1, padding: '5px 14px', fontSize: '11px', color: '#9fb0bf' }}>Hectáreas</td>
+              {sel.map(m => td(num2(cab(m).hectareas || 0), { col: '#9fb0bf' }))}
+            </tr>
+            <tr>
+              <td style={{ ...th1, padding: '5px 14px', fontSize: '11px', color: '#9fb0bf' }}>Días</td>
+              {sel.map(m => td(cab(m).dias || '—', { col: '#9fb0bf' }))}
+            </tr>
+            {/* grupos */}
+            {GRUPOS.map(([g, gLabel]) => {
+              const items = grpItems(g)
+              const open = !!abierto[g]
+              const noReal = NO_REAL.has(g)
+              return (
+                <Fragment key={g}>
+                  <tr onClick={() => setAbierto(a => ({ ...a, [g]: !open }))} style={{ cursor: 'pointer' }}>
+                    <td style={{ ...th1, padding: '9px 14px', fontSize: '12.5px', fontWeight: 500, color: noReal ? '#854F0B' : NAVY, background: noReal ? '#FBF8F0' : '#f3f7fb', borderTop: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderBottom: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5') }}>
+                      <span style={{ fontSize: '10px', color: GRIS }}>{open ? '▾' : '▸'}</span>&nbsp; {gLabel}
+                    </td>
+                    {sel.map(m => <td key={m} style={{ padding: '9px 12px', textAlign: 'right', fontSize: '12.5px', fontWeight: 500, color: noReal ? '#854F0B' : NAVY, background: noReal ? '#FBF8F0' : '#f3f7fb', borderTop: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderBottom: '0.5px solid ' + (noReal ? '#ecd9b4' : '#e6eef5'), borderLeft: '0.5px solid #eef3f7', whiteSpace: 'nowrap' }}>{dinero(grpTot(m, g))}</td>)}
+                  </tr>
+                  {open && items.map(r => (
+                    <tr key={r.id}>
+                      <td style={{ ...th1, padding: '6px 14px 6px 30px', fontSize: '12px', color: '#51606c' }}>{r.nombre}</td>
+                      {sel.map(m => td(dinero(vOf(m, r.id)), { col: '#51606c' }))}
+                    </tr>
+                  ))}
+                </Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '8px' }}>Solo lectura. Para editar un mes, vuelve a “Mes”. El ha·día TOTAL y REAL es el guardado de cada mes.</div>
     </div>
   )
 }
