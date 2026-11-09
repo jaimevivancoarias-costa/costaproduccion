@@ -373,7 +373,9 @@ const GRP = [
   ['MEJORAS', 'Mejoras', '#D4537E'],
 ]
 const grpInfo = k => GRP.find(g => g[0] === k) || [k, k, '#9fb0bf']
-const PERIODOS = [[1, 'Este mes'], [2, '2 meses'], [3, '3 meses'], [4, '4 meses']]
+const PERIODOS = [[1, 'Último mes'], [2, '2 meses'], [3, '3 meses'], [4, '4 meses']]
+const ZONA_LBL = { jambeli: 'Jambelí', 'jambelí': 'Jambelí', puna: 'Puná', 'puná': 'Puná' }
+const zlabel = z => ZONA_LBL[String(z || '').toLowerCase()] || (z ? z.charAt(0).toUpperCase() + z.slice(1) : z)
 
 function Dashboard({ fincas, esJefe, setVista }) {
   const activas = useMemo(() => (fincas || []).filter(f => String(f.nombre).toUpperCase() !== 'PRUEBA'), [fincas])
@@ -384,6 +386,7 @@ function Dashboard({ fincas, esJefe, setVista }) {
   const [operativo, setOperativo] = useState(true)
   const [grupoSel, setGrupoSel] = useState(null)
   const [hoverG, setHoverG] = useState(null)
+  const [fincasOpen, setFincasOpen] = useState(false)
   const [data, setData] = useState(null)
   const [cargando, setCargando] = useState(true)
 
@@ -455,21 +458,30 @@ function Dashboard({ fincas, esJefe, setVista }) {
         </span>
       </div>
 
-      <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px', fontSize: '12px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '14px', fontSize: '12px' }}>
         {zonas.length > 0 && <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
-          {[['', 'Todas'], ...zonas.map(z => [z, z])].map(([v, l]) => <button key={v} onClick={() => setZona(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: zona === v ? AZUL : 'white', color: zona === v ? 'white' : GRIS, fontWeight: zona === v ? 500 : 400 }}>{l}</button>)}
+          {[['', 'Todas'], ...zonas.map(z => [z, zlabel(z)])].map(([v, l]) => <button key={v} onClick={() => setZona(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: zona === v ? AZUL : 'white', color: zona === v ? 'white' : GRIS, fontWeight: zona === v ? 500 : 400 }}>{l}</button>)}
         </span>}
         <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
           {PERIODOS.map(([v, l]) => <button key={v} onClick={() => setPeriodo(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: periodo === v ? AZUL : 'white', color: periodo === v ? 'white' : GRIS, fontWeight: periodo === v ? 500 : 400 }}>{l}</button>)}
         </span>
-        <span style={{ flex: 1 }} />
-        <span style={{ color: '#9fb0bf', fontSize: '11px' }}>{sel.size} de {visibles.length} fincas</span>
-      </div>
-
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        {visibles.map(f => { const on = sel.has(f.id); return (
-          <button key={f.id} onClick={() => toggleFinca(f.id)} style={{ fontFamily: 'inherit', fontSize: '11.5px', padding: '4px 10px', borderRadius: '7px', cursor: 'pointer', border: '1px solid ' + (on ? AZUL : BORDE), background: on ? '#e8f1fb' : 'white', color: on ? AZUL : GRIS }}>{on ? '✓ ' : ''}{f.nombre}</button>
-        ) })}
+        <span style={{ position: 'relative' }}>
+          <button onClick={() => setFincasOpen(o => !o)} style={{ padding: '5px 11px', border: '0.5px solid ' + (fincasOpen ? AZUL : BORDE), borderRadius: '8px', background: 'white', cursor: 'pointer', fontFamily: 'inherit', color: fincasOpen ? AZUL : NAVY, fontWeight: 500 }}>Fincas · {sel.size}/{visibles.length} ▾</button>
+          {fincasOpen && (<>
+            <div onClick={() => setFincasOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+            <div style={{ position: 'absolute', top: 'calc(100% + 5px)', left: 0, zIndex: 41, background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '10px', boxShadow: '0 8px 24px rgba(2,40,71,.12)', padding: '8px', minWidth: '180px', maxHeight: '300px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                <button onClick={() => setSel(new Set(visibles.map(f => f.id)))} style={{ ...inp, cursor: 'pointer', padding: '3px 9px', fontSize: '11px', color: AZUL, borderColor: AZUL }}>Todas</button>
+                <button onClick={() => setSel(new Set())} style={{ ...inp, cursor: 'pointer', padding: '3px 9px', fontSize: '11px', color: GRIS }}>Ninguna</button>
+              </div>
+              {visibles.map(f => { const on = sel.has(f.id); return (
+                <label key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 6px', fontSize: '12.5px', cursor: 'pointer', borderRadius: '6px' }} onMouseEnter={e => e.currentTarget.style.background = '#f3f7fb'} onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  <input type="checkbox" checked={on} onChange={() => toggleFinca(f.id)} /> {f.nombre}
+                </label>
+              ) })}
+            </div>
+          </>)}
+        </span>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px' }}>
@@ -511,7 +523,7 @@ function Dashboard({ fincas, esJefe, setVista }) {
 
         <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em' }}>En qué se gasta</div>
+            <div style={{ fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em' }}>En qué se va</div>
             <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden', fontSize: '11px' }}>
               <button onClick={() => setOperativo(true)} style={{ padding: '4px 10px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: operativo ? AZUL : 'white', color: operativo ? 'white' : GRIS }}>Operativo</button>
               <button onClick={() => setOperativo(false)} style={{ padding: '4px 10px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: !operativo ? AZUL : 'white', color: !operativo ? 'white' : GRIS }}>Todo el bruto</button>
