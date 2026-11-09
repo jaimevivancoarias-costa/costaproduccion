@@ -93,8 +93,30 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     setCargando(true); setAviso(null)
     const p = { p_finca: todasFincas ? null : finca.id, p_desde: desde, p_hasta: hasta }
     const { data, error } = await supabase.schema('produccion').rpc('fn_reporte_consumo', p)
-    if (error) { setFilas([]); setAviso({ tipo: 'error', texto: 'No se pudo cargar el consumo. ' + (error.message || '') }) }
-    else setFilas(data || [])
+    if (error) { setFilas([]); setAviso({ tipo: 'error', texto: 'No se pudo cargar el consumo. ' + (error.message || '') }); setCargando(false); return }
+    let filas = data || []
+    // Balanceado al FIFO real por lote (misma fuente que la ▸): el precio_saco
+    // congelado por alimentación se desfasa al cambiar un precio con fecha pasada.
+    // Se recuesta cada producto con fn_reporte_consumo_lotes (singular, rápida) y
+    // se escala el costo congelado al total FIFO, conservando el reparto por piscina.
+    if (!todasFincas && filas.length) {
+      const prods = [...new Set(filas.filter(f => f.tipo === 'balanceado').map(f => f.item_id))]
+      if (prods.length) {
+        try {
+          const res = await Promise.all(prods.map(pid =>
+            supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: pid, p_desde: desde, p_hasta: hasta })
+              .then(r => [pid, (r.data || []).reduce((s, x) => s + Number(x.precio) * Number(x.sacos), 0)])))
+          const fifo = Object.fromEntries(res)
+          const cong = {}; filas.forEach(f => { if (f.tipo === 'balanceado') cong[f.item_id] = (cong[f.item_id] || 0) + Number(f.costo) })
+          filas = filas.map(f => {
+            if (f.tipo !== 'balanceado') return f
+            const c = cong[f.item_id], fi = fifo[f.item_id]
+            return (c > 0.0001 && fi != null) ? { ...f, costo: Number(f.costo) * (fi / c) } : f
+          })
+        } catch { /* si falla el FIFO, se queda el costo congelado */ }
+      }
+    }
+    setFilas(filas)
     setCargando(false)
   }, [finca.id, desde, hasta, todasFincas])
 
