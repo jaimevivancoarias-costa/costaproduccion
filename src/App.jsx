@@ -16,6 +16,7 @@ import PresupuestoDiesel from './pages/PresupuestoDiesel'
 import Diesel from './pages/Diesel'
 import Historial from './pages/Historial'
 import Estimacion from './pages/Estimacion'
+import CuadroPresupuestal from './pages/CuadroPresupuestal'
 import Catalogo from './pages/Catalogo'
 import EnConstruccion from './pages/EnConstruccion'
 
@@ -40,6 +41,7 @@ const GRUPOS = [
   ] },
   { titulo: 'Planeación', items: [
     { id: 'presupuesto', nombre: 'Presupuesto',   icono: 'moneda' },
+    { id: 'cuadro',     nombre: 'Cuadro presupuestal', icono: 'moneda', soloJefe: true },
     { id: 'catalogo',   nombre: 'Catálogo',       icono: 'etiqueta', soloJefe: true },
     { id: 'estimacion', nombre: 'Estimación',     icono: 'diana', soloJefe: true },
   ] },
@@ -523,6 +525,8 @@ export default function App() {
             <Historial key={finca.id} finca={finca} esJefe={esJefe} todasLasFincas={fincas.length} />
           ) : tabId === 'estimacion' ? (
             <Estimacion key={finca.id} finca={finca} esJefe={esJefe} nombre={nombre} />
+          ) : tabId === 'cuadro' ? (
+            <CuadroPresupuestal key={finca.id} finca={finca} esJefe={esJefe} nombre={nombre} />
           ) : (
             <EnConstruccion modulo={MODULOS.find(m => m.id === tabId)} />
           )}
