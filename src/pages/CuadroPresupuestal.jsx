@@ -571,16 +571,17 @@ function Dashboard({ fincas, esJefe, setVista }) {
           {seldrill && (
             <div style={{ borderTop: '0.5px solid #eef3f7', marginTop: '14px', paddingTop: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <div style={{ fontSize: '12.5px' }}><b style={{ color: grpInfo(grupoSel)[2], fontWeight: 500 }}>{grpInfo(grupoSel)[1]}</b> <span style={{ color: '#9fb0bf' }}>· en qué se va</span></div>
+                <div style={{ fontSize: '12.5px' }}><b style={{ color: grpInfo(grupoSel)[2], fontWeight: 500 }}>{grpInfo(grupoSel)[1]}</b> <span style={{ color: '#9fb0bf' }}>· detalle</span></div>
                 <button onClick={() => setGrupoSel(null)} style={{ ...inp, cursor: 'pointer', padding: '4px 10px', fontSize: '11.5px', color: GRIS }}>Cerrar</button>
               </div>
-              {(() => { const mx = Math.max(1, ...seldrill.map(s => s.v)); return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {(() => { const mx = Math.max(1, ...seldrill.map(s => s.v)); const gl = grpInfo(grupoSel)[1]; const clean = n => String(n).replace(new RegExp('^' + gl + '\\s*·\\s*', 'i'), ''); return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {seldrill.filter(s => s.v > 0.005).map(s => (
-                    <div key={s.n} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '11.5px' }}>
-                      <span style={{ width: '150px', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.n}</span>
-                      <span style={{ height: '13px', borderRadius: '3px', background: grpInfo(grupoSel)[2], width: (100 * s.v / mx) + '%', minWidth: '2px' }} />
-                      <span style={{ fontWeight: 500 }}>{dinero(s.v)}</span>
+                    <div key={s.n}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: '11.5px', marginBottom: '3px' }}>
+                        <span>{clean(s.n)}</span><b style={{ fontWeight: 500 }}>{dinero(s.v)}</b>
+                      </div>
+                      <div style={{ height: '10px', borderRadius: '3px', background: grpInfo(grupoSel)[2], width: (100 * s.v / mx) + '%', minWidth: '2px' }} />
                     </div>
                   ))}
                 </div>
