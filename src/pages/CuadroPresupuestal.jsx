@@ -383,6 +383,7 @@ function Dashboard({ fincas, esJefe, setVista }) {
   const [zona, setZona] = useState('')
   const [sel, setSel] = useState(() => new Set(activas.map(f => f.id)))
   const [periodo, setPeriodo] = useState(1)
+  const [ancla, setAncla] = useState(() => { const d = new Date(); return { anio: d.getFullYear(), mes: d.getMonth() + 1 } }) // mes de referencia
   const [operativo, setOperativo] = useState(true)
   const [grupoSel, setGrupoSel] = useState(null)
   const [hoverG, setHoverG] = useState(null)
@@ -402,7 +403,8 @@ function Dashboard({ fincas, esJefe, setVista }) {
         .select('id, finca_id, anio, mes, hadia_total, hadia_real').in('finca_id', idsSel)
         .order('anio', { ascending: false }).order('mes', { ascending: false })
       if (!vivo) return
-      const porF = {}; (cms || []).forEach(r => { (porF[r.finca_id] = porF[r.finca_id] || []).push(r) })
+      const anclaKey = ancla.anio * 12 + ancla.mes
+      const porF = {}; (cms || []).forEach(r => { if (r.anio * 12 + r.mes <= anclaKey) (porF[r.finca_id] = porF[r.finca_id] || []).push(r) })
       const mesIds = []
       const porFinca = idsSel.map(fid => {
         const rows = (porF[fid] || []).slice(0, periodo); rows.forEach(r => mesIds.push(r.id))
@@ -425,7 +427,7 @@ function Dashboard({ fincas, esJefe, setVista }) {
       setCargando(false)
     })()
     return () => { vivo = false }
-  }, [JSON.stringify(idsSel), periodo])
+  }, [JSON.stringify(idsSel), periodo, ancla.anio, ancla.mes])
 
   const toggleFinca = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const conDato = (data?.porFinca || []).filter(f => f.n > 0)
@@ -462,6 +464,11 @@ function Dashboard({ fincas, esJefe, setVista }) {
         {zonas.length > 0 && <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
           {[['', 'Todas'], ...zonas.map(z => [z, zlabel(z)])].map(([v, l]) => <button key={v} onClick={() => setZona(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: zona === v ? AZUL : 'white', color: zona === v ? 'white' : GRIS, fontWeight: zona === v ? 500 : 400 }}>{l}</button>)}
         </span>}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '2px 5px', background: 'white' }}>
+          <button onClick={() => setAncla(a => { let y = a.anio, m = a.mes - 1; if (m < 1) { m = 12; y-- } return { anio: y, mes: m } })} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '15px', fontFamily: 'inherit' }}>‹</button>
+          <b style={{ fontWeight: 500, minWidth: '96px', textAlign: 'center', fontSize: '11.5px' }}>{MESES[ancla.mes - 1]} {ancla.anio}</b>
+          <button onClick={() => setAncla(a => { let y = a.anio, m = a.mes + 1; if (m > 12) { m = 1; y++ } return { anio: y, mes: m } })} style={{ border: 'none', background: 'none', cursor: 'pointer', color: GRIS, fontSize: '15px', fontFamily: 'inherit' }}>›</button>
+        </span>
         <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden' }}>
           {PERIODOS.map(([v, l]) => <button key={v} onClick={() => setPeriodo(v)} style={{ padding: '5px 11px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: periodo === v ? AZUL : 'white', color: periodo === v ? 'white' : GRIS, fontWeight: periodo === v ? 500 : 400 }}>{l}</button>)}
         </span>
