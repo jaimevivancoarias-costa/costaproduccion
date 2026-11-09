@@ -144,9 +144,13 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
       const ids = (cms || []).map(c => c.id)
       let vs = []
       if (ids.length) {
-        const r = await supabase.schema('produccion').from('cuadro_valor')
-          .select('cuadro_mes_id, rubro_id, valor').in('cuadro_mes_id', ids)
-        vs = r.data || []
+        for (let from = 0; ; from += 1000) {   // paginar por si pasa de 1000 filas
+          const r = await supabase.schema('produccion').from('cuadro_valor')
+            .select('cuadro_mes_id, rubro_id, valor').in('cuadro_mes_id', ids).range(from, from + 999)
+          const chunk = r.data || []
+          vs = vs.concat(chunk)
+          if (chunk.length < 1000) break
+        }
       }
       if (!vivo) return
       const mesDe = {}; (cms || []).forEach(c => { mesDe[c.id] = c.mes })
@@ -613,10 +617,16 @@ function Dashboard({ fincas, esJefe, setVista }) {
       })
       let grupos = {}, sub = {}
       if (mesIds.length) {
-        const { data: vs } = await supabase.schema('produccion').from('cuadro_valor')
-          .select('valor, rubro:rubro_id(grupo, nombre)').in('cuadro_mes_id', mesIds)
+        let vs = []   // paginar: con varias fincas×meses se pasa de 1000 filas
+        for (let from = 0; ; from += 1000) {
+          const r = await supabase.schema('produccion').from('cuadro_valor')
+            .select('valor, rubro:rubro_id(grupo, nombre)').in('cuadro_mes_id', mesIds).range(from, from + 999)
+          const chunk = r.data || []
+          vs = vs.concat(chunk)
+          if (chunk.length < 1000) break
+        }
         if (!vivo) return
-        ;(vs || []).forEach(v => {
+        vs.forEach(v => {
           const g = v.rubro?.grupo; if (!g) return
           grupos[g] = (grupos[g] || 0) + Number(v.valor || 0)
           ;(sub[g] = sub[g] || {})[v.rubro.nombre] = (sub[g][v.rubro.nombre] || 0) + Number(v.valor || 0)
@@ -842,11 +852,17 @@ function ComparaFincas({ visibles, idsSel, anio }) {
       const { data: cms } = await supabase.schema('produccion').from('cuadro_mes')
         .select('id, finca_id, mes, hectareas, dias, hadia_total, hadia_real').in('finca_id', idsSel).eq('anio', anio)
       const ids = (cms || []).map(c => c.id)
+      // paginar: Supabase corta a 1000 filas y cuadro_valor de muchas fincas×meses son miles
       let vs = []
       if (ids.length) {
-        const r = await supabase.schema('produccion').from('cuadro_valor')
-          .select('cuadro_mes_id, valor, rubro:rubro_id(grupo)').in('cuadro_mes_id', ids)
-        vs = r.data || []
+        for (let from = 0; ; from += 1000) {
+          const r = await supabase.schema('produccion').from('cuadro_valor')
+            .select('cuadro_mes_id, valor, rubro:rubro_id(grupo)').in('cuadro_mes_id', ids)
+            .range(from, from + 999)
+          const chunk = r.data || []
+          vs = vs.concat(chunk)
+          if (chunk.length < 1000) break
+        }
       }
       if (!vivo) return
       const byId = {}; (cms || []).forEach(c => { byId[c.id] = c })
