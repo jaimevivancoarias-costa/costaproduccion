@@ -159,7 +159,7 @@ export default function CuadroPresupuestal({ finca, esJefe }) {
     setGuardando(true)
     const ahora = new Date().toISOString()
     const { data: cm, error } = await supabase.schema('produccion').from('cuadro_mes')
-      .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), deduccion_sueldos: parseNum(dedSueldos), deduccion_beneficios: parseNum(dedBenef), actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
+      .upsert({ finca_id: finca.id, anio, mes, hectareas: parseNum(ha), dias: Number(dias) || diasDelMes(anio, mes), deduccion_sueldos: parseNum(dedSueldos), deduccion_beneficios: parseNum(dedBenef), hadia_total: haDiaTotal, hadia_real: haDiaReal, actualizado_por: userId, actualizado_en: ahora }, { onConflict: 'finca_id,anio,mes' })
       .select('id').single()
     if (error) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar la cabecera. ' + error.message }); return }
     const filas = rubros.map(r => {

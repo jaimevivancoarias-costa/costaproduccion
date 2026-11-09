@@ -238,6 +238,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [invCorte, setInvCorte] = useState(null)       // fecha/hora del corte de inventario
   const [reservaDias, setReservaDias] = useState(2)    // parámetro: días alimentados de reserva
   const [precioOpts, setPrecioOpts] = useState({})     // lista de precios + rendimientos + cv (desde la base)
+  const [cuadroHaDia, setCuadroHaDia] = useState(null) // { total, real, anio, mes } del último mes del Cuadro presupuestal
+  const [baseCosto, setBaseCosto] = useState(() => { try { return localStorage.getItem('baseCosto|' + finca.id) || 'real' } catch { return 'real' } }) // 'real' | 'total'
   const [editPrecio, setEditPrecio] = useState(false)  // editor de precios de venta
   const [precioTmp, setPrecioTmp] = useState(null)     // edición en curso del editor de precios
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
@@ -269,6 +271,19 @@ export default function Estimacion({ finca, esJefe, nombre }) {
 
   useEffect(() => { try { localStorage.setItem('metaEst|' + finca.id, String(meta)) } catch (e) { /* sin storage */ } }, [meta, finca.id])
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
+  useEffect(() => { try { localStorage.setItem('baseCosto|' + finca.id, baseCosto) } catch { /* sin storage */ } }, [baseCosto, finca.id])
+  // Costo ha·día del Cuadro presupuestal (último mes cargado de la finca).
+  useEffect(() => {
+    let vivo = true
+    supabase.schema('produccion').from('cuadro_mes')
+      .select('anio, mes, hadia_total, hadia_real').eq('finca_id', finca.id)
+      .order('anio', { ascending: false }).order('mes', { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (vivo) setCuadroHaDia(data && (Number(data.hadia_total) || Number(data.hadia_real)) ? { total: Number(data.hadia_total), real: Number(data.hadia_real), anio: data.anio, mes: data.mes } : null) })
+    return () => { vivo = false }
+  }, [finca.id])
+  // ha·día que alimenta el costo operativo: del Cuadro (según selector) o el de respaldo.
+  const costoHaDiaUsar = cuadroHaDia ? (baseCosto === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : (cfg.costoHaDia || 0)
+  const cfgCosto = useMemo(() => ({ ...cfg, costoHaDia: costoHaDiaUsar }), [cfg, costoHaDiaUsar])
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
@@ -445,9 +460,9 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     if (vista !== 'tablero' || !ciclos.length) return []
     const hoy = hoyISO()
     const semFechas = Array.from({ length: 7 }, (_, i) => sumarDias(lunesDe(hasta), i))
-    const ctx = { meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas, precioOpts }
+    const ctx = { meta, cfg: cfgCosto, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, hasta, hoy, semFechas, precioOpts }
     return ciclos.map(f => resumenPiscina({ ...f, consumoVentana: consVentDe(f) }, ctx))
-  }, [vista, ciclos, hasta, meta, cfg, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, precioOpts, ventanaDias])
+  }, [vista, ciclos, hasta, meta, cfgCosto, valida, aplicado, aplicadoPrev, planSemana, patFinca, patPisc, precioOpts, ventanaDias])
 
   // Totales en dos niveles: plan confirmado (aplicado + calendario confirmado) y
   // proyección completa (+ recomendaciones pendientes).
@@ -818,7 +833,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     // Una columna de P&L. Raleo = 0 por ahora (100% nadando).
     const col = ({ dias, g, libras, precio, alimFaltaLb, consumoTotalLb }) => {
       const alimFalta = (alimFaltaLb || 0) / PARAM.pesoSaco * est.alimento.usdSaco
-      const costoOper = (cfg.costoHaDia || 0) * area * dias
+      const costoOper = (costoHaDiaUsar || 0) * area * dias
       const costoTotal = costoLarva + costoOper + alimConsumido + alimFalta
       const ingEnt = libras * precio.entero, ingCol = libras * precio.cola, ingRaleo = 0
       const utilEnt = ingEnt + ingRaleo - costoTotal, utilCol = ingCol + ingRaleo - costoTotal
@@ -1527,8 +1542,17 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <RentRow k="Ingreso vendiendo cola" a={dinero(h.ingCol)} b={dinero(m.ingCol)} />
                 <RentRow k="Ingreso por raleos" a={dinero(h.ingRaleo)} b={dinero(m.ingRaleo)} />
                 <RentRow head k="Costos" />
+                <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 9px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '11px', color: GRIS }}>Costo ha·día:</span>
+                  <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '7px', overflow: 'hidden', fontSize: '11px' }}>
+                    {[['total', 'Total'], ['real', 'Real']].map(([k, l]) => (
+                      <button key={k} type="button" onClick={() => cuadroHaDia && setBaseCosto(k)} style={{ padding: '3px 10px', border: 'none', fontFamily: 'inherit', cursor: cuadroHaDia ? 'pointer' : 'default', fontWeight: baseCosto === k ? 500 : 400, background: baseCosto === k ? AZUL : 'white', color: baseCosto === k ? 'white' : GRIS }}>{l}{cuadroHaDia ? ' $' + num2(k === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : ''}</button>
+                    ))}
+                  </span>
+                  <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{cuadroHaDia ? `Cuadro presupuestal · ${['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][cuadroHaDia.mes - 1]} ${cuadroHaDia.anio}` : `respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')} (sin Cuadro)`}</span>
+                </div>
                 <RentRow k="Costo de la larva" a={dinero(h.costoLarva)} b={dinero(m.costoLarva)} />
-                <RentRow k="Costo operativo" a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
+                <RentRow k={`Costo operativo ($${num2(costoHaDiaUsar || 0).replace(/,00$/, '')}/ha·día)`} a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
                 <RentRow k="Alimento consumido hasta hoy" a={dinero(h.alimConsumido)} b={dinero(m.alimConsumido)} />
                 <RentRow k="Alimento que falta hasta meta" a="—" b={dinero(m.alimFalta)} />
                 <RentRow fuerte k="Costo total" a={dinero(h.costoTotal)} b={dinero(m.costoTotal)} />
