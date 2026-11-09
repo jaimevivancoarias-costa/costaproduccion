@@ -241,6 +241,8 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   const [cuadroHaDia, setCuadroHaDia] = useState(null) // { total, real, anio, mes } del último mes del Cuadro presupuestal
   const [baseCosto, setBaseCosto] = useState(() => { try { return localStorage.getItem('baseCosto|' + finca.id) || 'real' } catch { return 'real' } }) // 'real' | 'total'
   const [mesesProm, setMesesProm] = useState(() => { try { return Number(localStorage.getItem('mesesProm|' + finca.id)) || 2 } catch { return 2 } }) // meses a promediar si no hay Cuadro del mes
+  const [fijoTotal, setFijoTotal] = useState(() => { try { return JSON.parse(localStorage.getItem('fijoHaDia|' + finca.id) || '{}').total || '' } catch { return '' } }) // ha·día fijo manual (sin Cuadro)
+  const [fijoReal, setFijoReal] = useState(() => { try { return JSON.parse(localStorage.getItem('fijoHaDia|' + finca.id) || '{}').real || '' } catch { return '' } })
   const [editPrecio, setEditPrecio] = useState(false)  // editor de precios de venta
   const [precioTmp, setPrecioTmp] = useState(null)     // edición en curso del editor de precios
   const [vista, setVista] = useState('piscina')        // 'piscina' | 'tablero'
@@ -274,6 +276,7 @@ export default function Estimacion({ finca, esJefe, nombre }) {
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setUserId(data?.user?.id || null)) }, [])
   useEffect(() => { try { localStorage.setItem('baseCosto|' + finca.id, baseCosto) } catch { /* sin storage */ } }, [baseCosto, finca.id])
   useEffect(() => { try { localStorage.setItem('mesesProm|' + finca.id, String(mesesProm)) } catch { /* sin storage */ } }, [mesesProm, finca.id])
+  useEffect(() => { try { localStorage.setItem('fijoHaDia|' + finca.id, JSON.stringify({ total: fijoTotal, real: fijoReal })) } catch { /* sin storage */ } }, [fijoTotal, fijoReal, finca.id])
   // Costo ha·día del Cuadro presupuestal. Si el mes actual ya tiene Cuadro, usa
   // ese; si no, promedia los N meses más recientes disponibles (N = mesesProm).
   useEffect(() => {
@@ -295,7 +298,11 @@ export default function Estimacion({ finca, esJefe, nombre }) {
     return () => { vivo = false }
   }, [finca.id, mesesProm])
   // ha·día que alimenta el costo operativo: del Cuadro (según selector) o el de respaldo.
-  const costoHaDiaUsar = cuadroHaDia ? (baseCosto === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : (cfg.costoHaDia || 0)
+  const pNfijo = s => { const v = Number(String(s ?? '').replace(',', '.')); return isFinite(v) ? v : 0 }
+  const fijoAct = !cuadroHaDia && (pNfijo(fijoTotal) > 0 || pNfijo(fijoReal) > 0)
+  const costoHaDiaUsar = cuadroHaDia
+    ? (baseCosto === 'total' ? cuadroHaDia.total : cuadroHaDia.real)
+    : fijoAct ? (baseCosto === 'total' ? pNfijo(fijoTotal) : pNfijo(fijoReal)) : (cfg.costoHaDia || 0)
   const cfgCosto = useMemo(() => ({ ...cfg, costoHaDia: costoHaDiaUsar }), [cfg, costoHaDiaUsar])
 
   const cargar = useCallback(async () => {
@@ -1552,15 +1559,22 @@ export default function Estimacion({ finca, esJefe, nombre }) {
                 <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 9px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '11px', color: GRIS }}>Costo ha·día:</span>
                   <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '7px', overflow: 'hidden', fontSize: '11px' }}>
-                    {[['total', 'Total'], ['real', 'Real']].map(([k, l]) => (
-                      <button key={k} type="button" onClick={() => cuadroHaDia && setBaseCosto(k)} style={{ padding: '3px 10px', border: 'none', fontFamily: 'inherit', cursor: cuadroHaDia ? 'pointer' : 'default', fontWeight: baseCosto === k ? 500 : 400, background: baseCosto === k ? AZUL : 'white', color: baseCosto === k ? 'white' : GRIS }}>{l}{cuadroHaDia ? ' $' + num2(k === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : ''}</button>
-                    ))}
+                    {[['total', 'Total'], ['real', 'Real']].map(([k, l]) => { const vc = cuadroHaDia ? (k === 'total' ? cuadroHaDia.total : cuadroHaDia.real) : null; return (
+                      <button key={k} type="button" onClick={() => setBaseCosto(k)} style={{ padding: '3px 10px', border: 'none', fontFamily: 'inherit', cursor: 'pointer', fontWeight: baseCosto === k ? 500 : 400, background: baseCosto === k ? AZUL : 'white', color: baseCosto === k ? 'white' : GRIS }}>{l}{vc != null ? ' $' + num2(vc) : ''}</button>
+                    ) })}
                   </span>
-                  <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{(() => { const M3 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; if (!cuadroHaDia) return `respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')} (sin Cuadro)`; return cuadroHaDia.promedio ? `Cuadro · promedio ${cuadroHaDia.meses.map(x => M3[x.mes - 1]).join('–')} ${cuadroHaDia.meses[cuadroHaDia.meses.length - 1].anio}` : `Cuadro presupuestal · ${M3[cuadroHaDia.mes - 1]} ${cuadroHaDia.anio}` })()}</span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', color: GRIS }}>· promedio
-                    <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '7px', overflow: 'hidden' }}>
-                      {[2, 3, 4].map(nn => <button key={nn} type="button" onClick={() => setMesesProm(nn)} style={{ padding: '2px 8px', border: 'none', fontFamily: 'inherit', fontSize: '10.5px', cursor: 'pointer', background: mesesProm === nn ? AZUL : 'white', color: mesesProm === nn ? 'white' : GRIS, fontWeight: mesesProm === nn ? 500 : 400 }}>{nn}</button>)}
-                    </span>meses</span>
+                  {cuadroHaDia ? (<>
+                    <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{(() => { const M3 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']; return cuadroHaDia.promedio ? `Cuadro · promedio ${cuadroHaDia.meses.map(x => M3[x.mes - 1]).join('–')} ${cuadroHaDia.meses[cuadroHaDia.meses.length - 1].anio}` : `Cuadro presupuestal · ${M3[cuadroHaDia.mes - 1]} ${cuadroHaDia.anio}` })()}</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '10.5px', color: GRIS }}>· promedio
+                      <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '7px', overflow: 'hidden' }}>
+                        {[2, 3, 4].map(nn => <button key={nn} type="button" onClick={() => setMesesProm(nn)} style={{ padding: '2px 8px', border: 'none', fontFamily: 'inherit', fontSize: '10.5px', cursor: 'pointer', background: mesesProm === nn ? AZUL : 'white', color: mesesProm === nn ? 'white' : GRIS, fontWeight: mesesProm === nn ? 500 : 400 }}>{nn}</button>)}
+                      </span>meses</span>
+                  </>) : (<>
+                    <span style={{ fontSize: '10.5px', color: GRIS }}>fijo:</span>
+                    <label style={{ fontSize: '10.5px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>Total $<input value={fijoTotal} onChange={e => setFijoTotal(e.target.value)} placeholder="0,00" inputMode="decimal" style={{ ...inp, width: '64px', padding: '3px 7px', fontSize: '11px', textAlign: 'right' }} /></label>
+                    <label style={{ fontSize: '10.5px', color: GRIS, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>Real $<input value={fijoReal} onChange={e => setFijoReal(e.target.value)} placeholder="0,00" inputMode="decimal" style={{ ...inp, width: '64px', padding: '3px 7px', fontSize: '11px', textAlign: 'right' }} /></label>
+                    <span style={{ fontSize: '10px', color: '#9fb0bf' }}>fijo hasta que cargues el Cuadro de esta finca{fijoAct ? '' : ` · si lo dejas vacío usa el respaldo $${num2(cfg.costoHaDia || 0).replace(/,00$/, '')}`}</span>
+                  </>)}
                 </div>
                 <RentRow k="Costo de la larva" a={dinero(h.costoLarva)} b={dinero(m.costoLarva)} />
                 <RentRow k={`Costo operativo ($${num2(costoHaDiaUsar || 0).replace(/,00$/, '')}/ha·día)`} a={dinero(h.costoOper)} b={dinero(m.costoOper)} />
