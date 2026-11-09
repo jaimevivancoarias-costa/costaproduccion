@@ -154,6 +154,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [guardandoCorr, setGuardandoCorr] = useState(false)
 
   const cargar = useCallback(async () => {
+    if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
     setCargando(true); setAviso(null)
     try {
       const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }] = await Promise.all([
@@ -302,7 +303,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // sistema debe mostrar lo que había ESE día, no el saldo de hoy). Al editar un
   // conteo se usa el sistema GUARDADO, así que aquí no se recalcula.
   useEffect(() => {
-    if (!contando || primeraVez || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
+    if (!contando || primeraVez || !fecha || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
     let vivo = true
     ;(async () => {
       const hastaSF = editToma ? sumarDias(fecha, -1) : fecha

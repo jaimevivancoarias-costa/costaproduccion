@@ -650,6 +650,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [corrAjustes, setCorrAjustes] = useState([])       // correcciones (ajustes manuales) del insumo en edición
 
   const cargar = useCallback(async () => {
+    if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
     setCargando(true); setAviso(null)
     try {
       const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }, { data: plzAct }, { data: lt }] = await Promise.all([
@@ -825,7 +826,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   useEffect(() => {
     // Se recalcula también al EDITAR (para que el Sistema sea el real de hoy, no
     // el viejo guardado). Solo se omite el inventario inicial (no tiene Sistema).
-    if (!contando || primeraVez || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
+    if (!contando || primeraVez || !fecha || (editToma && editToma.es_inicial)) { setSaldoFecha({}); return }
     let vivo = true
     ;(async () => {
       // Al EDITAR, el conteo ya está guardado en `fecha` y ancla el saldo a lo
