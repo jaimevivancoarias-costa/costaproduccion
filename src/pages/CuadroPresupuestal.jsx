@@ -1054,10 +1054,10 @@ function ComparaFincas({ visibles, idsSel, anio }) {
       <div style={card}>
         <div style={tit}>Mapa de calor · {metLabel} · finca × mes</div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', fontSize: '11.5px' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '11.5px', width: '100%', tableLayout: 'fixed', minWidth: (108 + sel.length * 42) + 'px' }}>
             <thead>
               <tr style={{ color: '#9fb0bf' }}>
-                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, position: 'sticky', left: 0, background: 'white' }}>Finca</th>
+                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, position: 'sticky', left: 0, background: 'white', width: '108px' }}>Finca</th>
                 {sel.map(m => <th key={m} style={{ padding: '4px 6px', fontWeight: 500 }}>{MESES[m - 1].slice(0, 3)}</th>)}
               </tr>
             </thead>
@@ -1068,7 +1068,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
                   {s.pts.map((v, i) => {
                     if (v == null) return <td key={i} style={{ padding: '7px 6px', textAlign: 'center', color: '#cdd9e5', border: '2px solid #fff' }}>—</td>
                     const c = heatColor(v, cmin, cmax)
-                    return <td key={i} title={fmtV(v)} style={{ padding: '7px 6px', textAlign: 'center', background: c[0], color: c[1], border: '2px solid #fff', borderRadius: '4px', fontWeight: 500, minWidth: '34px', whiteSpace: 'nowrap' }}>{hcell(v)}</td>
+                    return <td key={i} title={fmtV(v)} style={{ padding: '7px 6px', textAlign: 'center', background: c[0], color: c[1], border: '2px solid #fff', borderRadius: '4px', fontWeight: 500, whiteSpace: 'nowrap' }}>{hcell(v)}</td>
                   })}
                 </tr>
               ))}
