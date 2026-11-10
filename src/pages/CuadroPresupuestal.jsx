@@ -433,6 +433,15 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
 // ===== Tabla comparativa · meses en columnas (solo lectura) =====
 function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setAbierto, cmpMeses, setCmpMeses }) {
   const [trendH, setTrendH] = useState(null)   // índice de mes resaltado en la tendencia
+  const twRef = useRef(null)
+  const [tcw, setTcw] = useState(680)          // ancho real del gráfico de tendencia
+  useEffect(() => {
+    const el = twRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(es => { for (const e of es) setTcw(e.contentRect.width) })
+    ro.observe(el); setTcw(el.clientWidth || 680)
+    return () => ro.disconnect()
+  }, [cargando, cmpMeses.length])
   if (cargando) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando…</div>
   const meses = cmp?.meses || []
   if (!meses.length) return <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>No hay meses cargados para {finca.nombre} en {anio}.</div>
@@ -514,7 +523,7 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
                   {open && items.map(r => (
                     <tr key={r.id}>
                       <td style={{ ...th1, padding: '6px 14px 6px 30px', fontSize: '12px', color: '#51606c' }}>{r.nombre}</td>
-                      {sel.map((m, i) => <td key={m} style={{ padding: '6px 12px', textAlign: 'right', fontSize: '12px', color: '#51606c', background: 'transparent', borderBottom: '0.5px solid #f1f5f9', whiteSpace: 'nowrap' }}>{dinero(vOf(m, r.id))}{i > 0 && deltaTxt(vOf(m, r.id), vOf(sel[i - 1], r.id))}</td>)}
+                      {sel.map((m) => <td key={m} style={{ padding: '6px 12px', textAlign: 'right', fontSize: '12px', color: '#51606c', background: 'transparent', borderBottom: '0.5px solid #f1f5f9', whiteSpace: 'nowrap' }}>{dinero(vOf(m, r.id))}</td>)}
                     </tr>
                   ))}
                 </Fragment>
@@ -529,14 +538,14 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
         const vals = sel.flatMap(m => [hdia(m, 'hadia_total'), hdia(m, 'hadia_real')]).filter(v => v > 0)
         if (!vals.length) return null
         const lo = Math.min(...vals) * 0.9, hi = Math.max(...vals) * 1.05
-        const W = 600, H = 150, L = 42, R = 12, T = 14, B = 26, n = sel.length
+        const W = Math.max(360, Math.round(tcw)), H = 160, L = 42, R = 12, T = 14, B = 26, n = sel.length
         const px = i => L + i * (W - L - R) / (n - 1)
         const py = v => T + (1 - (v - lo) / (hi - lo || 1)) * (H - T - B)
         const onMove = e => { const rc = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - rc.left) / rc.width * W; let b = 0, bd = 1e9; for (let i = 0; i < n; i++) { const d = Math.abs(px(i) - x); if (d < bd) { bd = d; b = i } } setTrendH(b) }
         return (
           <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '12px 14px', marginTop: '12px' }}>
             <div style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em', marginBottom: '6px' }}>Tendencia del ha·día</div>
-            <div style={{ position: 'relative', maxWidth: '620px' }}>
+            <div ref={twRef} style={{ position: 'relative' }}>
               <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: 'block' }} onMouseMove={onMove} onMouseLeave={() => setTrendH(null)}>
                 {[0, 0.5, 1].map((t, i) => { const v = lo + t * (hi - lo); return <g key={i}><line x1={L} y1={py(v)} x2={W - R} y2={py(v)} stroke="#f1f5f9" /><text x={L - 6} y={py(v) + 3} textAnchor="end" style={{ fontSize: '9.5px', fill: '#9fb0bf' }}>${num2(v)}</text></g> })}
                 {sel.map((m, i) => <text key={m} x={px(i)} y={H - 9} textAnchor="middle" style={{ fontSize: '10px', fill: '#7d8fa0' }}>{MESES[m - 1].slice(0, 3)}</text>)}
