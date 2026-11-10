@@ -845,6 +845,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const [hover, setHover] = useState(null)   // índice de mes resaltado
   const wrapRef = useRef(null)
   const [cw, setCw] = useState(680)          // ancho real del gráfico (alto fijo)
+  const [base, setBase] = useState('hadia')  // 'hadia' (por ha·día) | 'total' ($ del mes, como el Cuadro)
 
   // mide el ancho del contenedor para que el SVG tenga alto fijo (no gigante)
   useEffect(() => {
@@ -900,11 +901,14 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const sel = (mesesSel.length ? mesesSel : mesesAll).slice().sort((a, b) => a - b)
   const toggleMes = m => setMesesSel(cur => { const b = cur.length ? cur : mesesAll; const n = b.includes(m) ? b.filter(x => x !== m) : [...b, m]; return n.length ? n : b })
   const esGrupo = metrica.startsWith('g:')
+  const totalM = base === 'total'   // $ del mes (como el Cuadro) vs por ha·día
+  const fmtV = v => totalM ? dinero(v) : '$' + num2(v)
   const valOf = (fid, m) => {
     const n = data.porFinca[fid]?.[m]; if (!n) return null
-    if (metrica === 'hadia_total') return n.ht
-    if (metrica === 'hadia_real') return n.hr
-    const g = metrica.slice(2); return n.div ? (n.grupos[g] || 0) / n.div : null
+    if (metrica === 'hadia_total') return totalM ? n.ht * n.div : n.ht
+    if (metrica === 'hadia_real') return totalM ? n.hr * n.div : n.hr
+    const g = metrica.slice(2); const tot = n.grupos[g] || 0
+    return totalM ? tot : (n.div ? tot / n.div : null)
   }
   const series = idsSel.map((fid, i) => {
     const f = visibles.find(x => x.id === fid)
@@ -936,7 +940,14 @@ function ComparaFincas({ visibles, idsSel, anio }) {
           const on = metrica === k
           return <button key={k} onClick={() => setMetrica(k)} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
         })}
-        <span style={{ marginLeft: 'auto', fontSize: '10.5px', color: '#9fb0bf' }}>{esGrupo ? 'por ha·día' : ''} · {anio}</span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden', fontSize: '11px' }}>
+            {[['hadia', 'Por ha·día'], ['total', '$ del mes']].map(([k, l]) => (
+              <button key={k} onClick={() => setBase(k)} style={{ padding: '3px 9px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: base === k ? 500 : 400, background: base === k ? AZUL : 'white', color: base === k ? 'white' : GRIS }}>{l}</button>
+            ))}
+          </span>
+          <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{anio}</span>
+        </span>
       </div>
       {/* meses */}
       <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -951,7 +962,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
             {ticks.map((t, i) => (
               <g key={i}>
                 <line x1={L} y1={py(t)} x2={W - R} y2={py(t)} stroke="#f1f5f9" />
-                <text x={L - 6} y={py(t) + 3} textAnchor="end" style={{ fontSize: '10px', fill: '#9fb0bf' }}>${num2(t)}</text>
+                <text x={L - 6} y={py(t) + 3} textAnchor="end" style={{ fontSize: '10px', fill: '#9fb0bf' }}>{fmtV(t)}</text>
               </g>
             ))}
             {sel.map((m, i) => <text key={m} x={px(i)} y={H - 12} textAnchor="middle" style={{ fontSize: '11px', fill: '#7d8fa0' }}>{MESES[m - 1].slice(0, 3)}</text>)}
@@ -974,7 +985,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
                   <div key={s.fid} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '1.5px 0' }}>
                     <span style={{ width: '9px', height: '9px', borderRadius: '2px', background: s.color, flexShrink: 0 }} />
                     <span style={{ flex: 1, color: '#51606c' }}>{s.nombre}</span>
-                    <b style={{ fontWeight: 500 }}>{v == null ? '—' : '$' + num2(v)}</b>
+                    <b style={{ fontWeight: 500 }}>{v == null ? '—' : fmtV(v)}</b>
                   </div>
                 ))}
               </div>
@@ -990,7 +1001,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
           </span>
         ))}
       </div>
-      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>Pasa el cursor para ver el valor de cada finca. {esGrupo ? 'Los grupos se muestran por ha·día para comparar fincas de distinto tamaño.' : ''}</div>
+      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>Pasa el cursor para ver el valor de cada finca. {totalM ? '“$ del mes” son los montos tal cual el Cuadro.' : 'Por ha·día (÷ hectáreas ÷ días) para comparar fincas de distinto tamaño; usa “$ del mes” para cuadrar con el Cuadro.'}</div>
     </div>
   )
 }
