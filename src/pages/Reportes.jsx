@@ -667,7 +667,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         <div style={{ display: 'flex', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden',
                       marginBottom: '16px', boxShadow: '0 1px 4px rgba(2,40,71,.07)', flexWrap: 'wrap' }}>
           {esJefe && <KCel hl k={verTodoR ? 'Gasto del rango (con diesel)' : 'Gasto del rango'}
-                           v={dinero(totalCosto + perdidasR + (verTodoR ? dslR.total : 0))} />}
+                           v={dinero(totalCosto + (verTodoR ? dslR.total : 0))} />}
           {esJefe && perdidasR > 0 && <KCel k="Pérdidas (bajas)" v={dinero(perdidasR)} />}
           {esJefe && !todasFincas && <KCel k="Diesel del rango" v={dinero(dslR.total)} />}
           <KCel k={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'} v={String(grupos.length)} />
