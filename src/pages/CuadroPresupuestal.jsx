@@ -938,7 +938,8 @@ function ComparaFincas({ visibles, idsSel, anio }) {
         <span style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }}>Métrica</span>
         {METRICAS.map(([k, l]) => {
           const on = metrica === k
-          return <button key={k} onClick={() => setMetrica(k)} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
+          // al elegir métrica, ajusta la base: grupos → $ del mes (miles); ha·día/real → por ha·día
+          return <button key={k} onClick={() => { setMetrica(k); setBase(k.startsWith('g:') ? 'total' : 'hadia') }} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
         })}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden', fontSize: '11px' }}>
