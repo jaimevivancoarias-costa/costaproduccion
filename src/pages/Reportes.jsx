@@ -111,7 +111,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
           filas = filas.map(f => {
             if (f.tipo !== 'balanceado') return f
             const c = cong[f.item_id], fi = fifo[f.item_id]
-            return (c > 0.0001 && fi != null) ? { ...f, costo: Number(f.costo) * (fi / c) } : f
+            // Solo ajustar si el FIFO pudo costear (fi > 0). Si el FIFO da 0
+            // (lotes sin precio), NO poner el costo en $0: se deja el congelado.
+            return (c > 0.0001 && fi > 0.0001) ? { ...f, costo: Number(f.costo) * (fi / c) } : f
           })
         } catch { /* si falla el FIFO, se queda el costo congelado */ }
       }
