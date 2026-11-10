@@ -458,6 +458,25 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // insumo, una finca) y el detalle se CARGA al abrir (lazy, un producto).
   const puedeLote = g => agrupar === 'item' && !todasFincas && !g.mixto && Number(g.cantidad) > 0 &&
     (g.tipo === 'balanceado' || g.tipo === 'insumo')
+  // En "Por piscina": al abrir, se ven los productos que consumió esa piscina (con precio).
+  const puedePisc = g => agrupar === 'piscina' && esJefe
+  const prodsDe = pid => {
+    const m = {}
+    visibles.filter(f => f.piscina_id === pid).forEach(f => {
+      if (!m[f.item_id]) m[f.item_id] = { id: f.item_id, nombre: f.item, tipo: f.tipo, costo: 0, cantidad: 0, unidad: f.unidad, mixto: false }
+      const it = m[f.item_id]; it.costo += Number(f.costo) || 0
+      if (it.unidad === f.unidad) it.cantidad += Number(f.cantidad) || 0; else it.mixto = true
+    })
+    return Object.values(m).sort((a, b) => b.costo - a.costo)
+  }
+  const precioUnit = p => {  // $/saco (balanceado) o $/unidad de compra (insumo)
+    if (p.mixto || !p.cantidad) return null
+    if (p.tipo === 'balanceado') return dinero(p.costo / (p.cantidad / lpsEff)) + ' /saco'
+    const fi = factoresIns[p.id]
+    const uc = (fi && fi.unidad_compra) ? (UNIDAD[fi.unidad_compra] || fi.unidad_compra) : (UNIDAD[p.unidad] || p.unidad || 'u')
+    const factor = (fi && fi.factor) ? fi.factor : 1
+    return dinero(p.costo / (p.cantidad / factor)) + ' /' + uc
+  }
   const cacheLote = g => g.tipo === 'balanceado' ? porPrecio[g.clave] : porLoteIns[g.clave]
   async function abrirLote(g) {
     const abrir = !abiertoP[g.clave]
@@ -818,8 +837,8 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
             <div style={{ display: 'grid', gridTemplateColumns: grid, gap: '12px',
                     padding: '11px 16px', alignItems: 'center', fontSize: '13px' }}>
               <span>
-                {esJefe && puedeLote(g) && (
-                  <button onClick={() => abrirLote(g)}
+                {esJefe && (puedeLote(g) || puedePisc(g)) && (
+                  <button onClick={() => puedeLote(g) ? abrirLote(g) : setAbiertoP(a => ({ ...a, [g.clave]: !a[g.clave] }))}
                     style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0, marginRight: '6px' }}>
                     {abiertoP[g.clave] ? '▾' : '▸'}</button>
                 )}
@@ -882,6 +901,27 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                       <span style={{ fontWeight: 600, color: GRIS }}>{dinero(tC)}</span>
                     </div>
                   )}
+                </div>
+              )
+            })()}
+            {esJefe && puedePisc(g) && abiertoP[g.clave] && (() => {
+              const prods = prodsDe(g.clave)
+              if (!prods.length) return <div style={{ margin: '2px 16px 11px 42px', fontSize: '12px', color: GRIS }}>Sin productos.</div>
+              return (
+                <div style={{ margin: '2px 16px 11px 42px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#9fb0bf', marginBottom: '7px' }}>Qué consumió esta piscina</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center' }}>
+                    {prods.flatMap((p, i) => [
+                      <span key={i + 'n'}>{p.nombre}
+                        <span style={{ fontSize: '10.5px', color: p.tipo === 'insumo' ? AMBAR : AZUL, marginLeft: '6px' }}>{p.tipo === 'insumo' ? 'insumo' : 'balanceado'}</span>
+                      </span>,
+                      <span key={i + 'q'} style={{ textAlign: 'right', color: GRIS }}>
+                        {p.mixto ? '—' : p.tipo === 'balanceado' ? cant2(p.cantidad / lpsEff) + ' sacos' : cant2(p.cantidad) + ' ' + (UNIDAD[p.unidad] || p.unidad || '')}
+                        {precioUnit(p) ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1' }}>{precioUnit(p)}</span> : null}
+                      </span>,
+                      <span key={i + 'c'} style={{ textAlign: 'right', fontWeight: 600 }}>{dinero(p.costo)}</span>,
+                    ])}
+                  </div>
                 </div>
               )
             })()}
