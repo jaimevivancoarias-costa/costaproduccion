@@ -836,6 +836,9 @@ const FINCA_COLORS = ['#0D6CB0', '#BA7517', '#1D9E75', '#D4537E', '#7F77DD', '#3
 // métricas: ha·día TOTAL/REAL + cada grupo "por ha·día" (comparable entre fincas)
 const METRICAS = [['hadia_real', 'ha·día REAL'], ['hadia_total', 'ha·día TOTAL'],
   ...GRP.filter(([k]) => k !== 'BALANCEADO_LARVA').map(([k, l]) => ['g:' + k, l])]
+// escala del mapa de calor: verde (barato) → rojo (caro)
+const HEAT = [['#E1F5EE', '#0F6E56'], ['#C0DD97', '#27500A'], ['#FAC775', '#854F0B'], ['#F09595', '#A32D2D'], ['#E24B4A', '#ffffff']]
+const heatColor = (v, min, max) => HEAT[max > min ? Math.min(4, Math.floor((v - min) / (max - min) * 5)) : 0]
 
 function ComparaFincas({ visibles, idsSel, anio }) {
   const [metrica, setMetrica] = useState('hadia_real')
@@ -903,6 +906,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const esGrupo = metrica.startsWith('g:')
   const totalM = base === 'total'   // $ del mes (como el Cuadro) vs por ha·día
   const fmtV = v => totalM ? dinero(v) : '$' + num2(v)
+  const hcell = v => totalM ? (v >= 1000 ? Math.round(v / 1000) + 'k' : String(Math.round(v))) : String(Math.round(v))  // compacto para celdas
   const valOf = (fid, m) => {
     const n = data.porFinca[fid]?.[m]; if (!n) return null
     if (metrica === 'hadia_total') return totalM ? n.ht * n.div : n.ht
@@ -931,8 +935,22 @@ function ComparaFincas({ visibles, idsSel, anio }) {
     setHover(best)
   }
   const metLabel = (METRICAS.find(m => m[0] === metrica) || [])[1] || ''
+  // ranking (promedio del periodo, más barata primero) y variación del periodo (último vs primero)
+  const ranking = series.map(s => {
+    const def = s.pts.filter(v => v != null)
+    const avg = def.length ? def.reduce((a, b) => a + b, 0) / def.length : null
+    const first = s.pts.find(v => v != null), last = [...s.pts].reverse().find(v => v != null)
+    const chg = (first != null && last != null && first !== 0) ? (last - first) / Math.abs(first) : null
+    return { ...s, avg, chg }
+  }).filter(r => r.avg != null).sort((a, b) => a.avg - b.avg)
+  const maxAvg = Math.max(1, ...ranking.map(r => r.avg))
+  const cells = series.flatMap(s => s.pts).filter(v => v != null)
+  const cmin = cells.length ? Math.min(...cells) : 0, cmax = cells.length ? Math.max(...cells) : 1
+  const card = { border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px' }
+  const tit = { fontSize: '11px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: '12px' }
   return (
-    <div style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px' }}>
+   <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <div style={card}>
       {/* métrica */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '7px', flexWrap: 'wrap', marginBottom: '10px' }}>
         <span style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }}>Métrica</span>
@@ -1004,5 +1022,66 @@ function ComparaFincas({ visibles, idsSel, anio }) {
       </div>
       <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>Pasa el cursor para ver el valor de cada finca. {totalM ? '“$ del mes” son los montos tal cual el Cuadro.' : 'Por ha·día (÷ hectáreas ÷ días) para comparar fincas de distinto tamaño; usa “$ del mes” para cuadrar con el Cuadro.'}</div>
     </div>
+
+    {/* RANKING */}
+    {ranking.length > 0 && (
+      <div style={card}>
+        <div style={tit}>Ranking · {metLabel} · promedio del periodo</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '9px', fontSize: '12.5px' }}>
+          {ranking.map((r, i) => {
+            const c = heatColor(r.avg, cmin, cmax)
+            return (
+              <div key={r.fid} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ width: '16px', color: '#9fb0bf', textAlign: 'right', fontSize: '11px' }}>{i + 1}</span>
+                <span style={{ width: '96px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.nombre}</span>
+                <span style={{ flex: 1, background: '#eef3f7', borderRadius: '5px', height: '15px', position: 'relative', minWidth: '40px' }}>
+                  <span style={{ position: 'absolute', left: 0, top: 0, height: '15px', borderRadius: '5px', background: c[0], width: Math.max(3, 100 * r.avg / maxAvg) + '%' }} />
+                </span>
+                <span style={{ width: '74px', textAlign: 'right', fontWeight: 500 }}>{fmtV(r.avg)}</span>
+                <span style={{ width: '48px', textAlign: 'right', fontSize: '11px', color: r.chg == null ? '#b8c4ce' : r.chg > 0.005 ? ROJO : r.chg < -0.005 ? VERDE : '#b8c4ce' }}>
+                  {r.chg == null ? '—' : (Math.abs(r.chg) < 0.005 ? '0%' : (r.chg > 0 ? '▲' : '▼') + Math.abs(Math.round(r.chg * 100)) + '%')}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>De más barata (verde) a más cara (roja). La flecha = cambio del periodo (último mes vs primero).</div>
+      </div>
+    )}
+
+    {/* MAPA DE CALOR */}
+    {series.length > 0 && sel.length > 0 && (
+      <div style={card}>
+        <div style={tit}>Mapa de calor · {metLabel} · finca × mes</div>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: '11.5px' }}>
+            <thead>
+              <tr style={{ color: '#9fb0bf' }}>
+                <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, position: 'sticky', left: 0, background: 'white' }}>Finca</th>
+                {sel.map(m => <th key={m} style={{ padding: '4px 6px', fontWeight: 500 }}>{MESES[m - 1].slice(0, 3)}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {series.map(s => (
+                <tr key={s.fid}>
+                  <td style={{ padding: '3px 8px', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'white' }}>{s.nombre}</td>
+                  {s.pts.map((v, i) => {
+                    if (v == null) return <td key={i} style={{ padding: '7px 6px', textAlign: 'center', color: '#cdd9e5', border: '2px solid #fff' }}>—</td>
+                    const c = heatColor(v, cmin, cmax)
+                    return <td key={i} title={fmtV(v)} style={{ padding: '7px 6px', textAlign: 'center', background: c[0], color: c[1], border: '2px solid #fff', borderRadius: '4px', fontWeight: 500, minWidth: '34px', whiteSpace: 'nowrap' }}>{hcell(v)}</td>
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '10.5px', color: '#7d8fa0' }}>
+          <span>Más barato</span>
+          {HEAT.map((c, i) => <span key={i} style={{ width: '18px', height: '12px', background: c[0], borderRadius: '2px' }} />)}
+          <span>Más caro</span>
+        </div>
+      </div>
+    )}
+   </div>
   )
 }
