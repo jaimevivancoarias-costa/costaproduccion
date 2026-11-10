@@ -433,6 +433,8 @@ export default function CuadroPresupuestal({ finca, fincas, esJefe }) {
 // ===== Tabla comparativa · meses en columnas (solo lectura) =====
 function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setAbierto, cmpMeses, setCmpMeses }) {
   const [trendH, setTrendH] = useState(null)   // índice de mes resaltado en la tendencia
+  const [donaOp, setDonaOp] = useState(true)   // dona: operativo (sin balanceado) vs todo
+  const [grupoBar, setGrupoBar] = useState('INDIRECTOS')  // grupo para las barras por mes
   const twRef = useRef(null)
   const [tcw, setTcw] = useState(680)          // ancho real del gráfico de tendencia
   useEffect(() => {
@@ -568,6 +570,82 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
           </div>
         )
       })()}
+
+      {/* DONA · en qué se va (periodo) + BARRAS de un grupo por mes */}
+      {(() => {
+        const cardP = { border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', padding: '14px 16px', marginTop: '12px' }
+        const tit = { fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em' }
+        const grpPer = g => sel.reduce((s, m) => s + grpTot(m, g), 0)
+        const segs = GRP.filter(([k]) => donaOp ? k !== 'BALANCEADO_LARVA' : true)
+          .map(([k, l, c]) => ({ k, l, c, v: grpPer(k) })).filter(s => s.v > 0.005)
+        const tot = segs.reduce((a, s) => a + s.v, 0)
+        const Rd = 54, Cc = 2 * Math.PI * Rd
+        let acc = 0
+        const arcos = segs.map(s => { const len = tot ? (s.v / tot) * Cc : 0; const el = { ...s, len, off: acc, pct: tot ? s.v / tot : 0 }; acc += len; return el })
+        // barras de un grupo por mes
+        const bvals = sel.map(m => grpTot(m, grupoBar))
+        const bmax = Math.max(1, ...bvals)
+        const bcol = (GRP.find(g => g[0] === grupoBar) || [, , '#0D6CB0'])[2]
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
+            {/* dona */}
+            <div style={cardP}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
+                <span style={tit}>En qué se va · periodo</span>
+                <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden', fontSize: '10.5px' }}>
+                  {[['op', 'Operativo', true], ['all', 'Todo', false]].map(([k, l, op]) => <button key={k} onClick={() => setDonaOp(op)} style={{ padding: '3px 9px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: donaOp === op ? AZUL : 'white', color: donaOp === op ? 'white' : GRIS }}>{l}</button>)}
+                </span>
+              </div>
+              {tot <= 0 ? <div style={{ fontSize: '12px', color: GRIS, padding: '10px 0' }}>Sin datos en el periodo.</div> : (
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <svg width="134" height="134" viewBox="0 0 140 140" style={{ flexShrink: 0 }}>
+                    <circle cx="70" cy="70" r={Rd} fill="none" stroke="#eef3f7" strokeWidth="22" />
+                    <g transform="rotate(-90 70 70)" fill="none" strokeWidth="22">
+                      {arcos.map(a => <circle key={a.k} cx="70" cy="70" r={Rd} stroke={a.c} strokeDasharray={`${a.len} ${Cc - a.len}`} strokeDashoffset={-a.off} />)}
+                    </g>
+                    <text x="70" y="74" textAnchor="middle" style={{ fontSize: '13px', fontWeight: 500, fill: NAVY }}>{dinero(tot)}</text>
+                  </svg>
+                  <div style={{ fontSize: '11.5px', display: 'flex', flexDirection: 'column', gap: '5px', flex: 1, minWidth: '150px' }}>
+                    {arcos.map(a => (
+                      <div key={a.k} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: a.c, flexShrink: 0 }} />
+                        <span style={{ flex: 1 }}>{a.l}</span>
+                        <b style={{ fontWeight: 500 }}>{Math.round(a.pct * 100)}%</b>
+                        <span style={{ color: '#9fb0bf', width: '72px', textAlign: 'right' }}>{dinero(a.v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* barras de un grupo por mes */}
+            <div style={cardP}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
+                <span style={tit}>Grupo por mes</span>
+                <select value={grupoBar} onChange={e => setGrupoBar(e.target.value)} style={{ ...inp, padding: '4px 8px', fontSize: '11.5px' }}>
+                  {GRUPOS.map(([g, l]) => <option key={g} value={g}>{l}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
+                {sel.map((m, i) => {
+                  const v = bvals[i], prev = i > 0 ? bvals[i - 1] : null
+                  return (
+                    <div key={m} style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '11.5px' }}>
+                      <span style={{ width: '30px', color: GRIS }}>{MESES[m - 1].slice(0, 3)}</span>
+                      <span style={{ flex: 1, background: '#eef3f7', borderRadius: '4px', height: '13px', position: 'relative', minWidth: '30px' }}>
+                        <span style={{ position: 'absolute', left: 0, top: 0, height: '13px', borderRadius: '4px', background: bcol, width: Math.max(2, 100 * v / bmax) + '%' }} />
+                      </span>
+                      <span style={{ width: '74px', textAlign: 'right', fontWeight: 500 }}>{dinero(v)}</span>
+                      <span style={{ width: '42px', textAlign: 'right' }}>{i > 0 ? deltaTxt(v, prev) : null}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '8px' }}>Solo lectura. Para editar un mes, vuelve a “Mes”. La columna muestra la variación vs el mes anterior (verde = bajó, rojo = subió).</div>
     </div>
   )
