@@ -469,13 +469,17 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     })
     return Object.values(m).sort((a, b) => b.costo - a.costo)
   }
+  // $/unidad: con precios chiquitos (ej. $0,005 /mL) 2 decimales engañan (se ve $0,01
+  // y no cuadra al multiplicar). Se muestran más decimales cuando el valor es < $1.
+  const dineroU = v => Math.abs(Number(v)) >= 1 ? dinero(v)
+    : '$' + Number(v || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
   const precioUnit = p => {  // $/saco (balanceado) o $/unidad de compra (insumo)
     if (p.mixto || !p.cantidad) return null
-    if (p.tipo === 'balanceado') return dinero(p.costo / (p.cantidad / lpsEff)) + ' /saco'
+    if (p.tipo === 'balanceado') return dineroU(p.costo / (p.cantidad / lpsEff)) + ' /saco'
     const fi = factoresIns[p.id]
     const uc = (fi && fi.unidad_compra) ? (UNIDAD[fi.unidad_compra] || fi.unidad_compra) : (UNIDAD[p.unidad] || p.unidad || 'u')
     const factor = (fi && fi.factor) ? fi.factor : 1
-    return dinero(p.costo / (p.cantidad / factor)) + ' /' + uc
+    return dineroU(p.costo / (p.cantidad / factor)) + ' /' + uc
   }
   const cacheLote = g => g.tipo === 'balanceado' ? porPrecio[g.clave] : porLoteIns[g.clave]
   async function abrirLote(g) {
@@ -522,7 +526,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         cantidad: g.mixto ? '—' : balView ? `${cant2(g.cantidad / lpsEff)} sacos` : `${cant2(g.cantidad)} ${unidadCel(g)}`,
         equivale: balView ? (g.mixto || !g.cantidad ? '—' : `${miles(g.cantidad)} lb`) : equivale(g),
         costo: dinero(g.costo),
-        costoUnit: (!g.mixto && g.cantidad) ? (balView ? `${dinero(g.costo / (g.cantidad / lpsEff))} /saco` : `${dinero(g.costo / g.cantidad)} /${unidadCel(g)}`) : '',
+        costoUnit: (!g.mixto && g.cantidad) ? (balView ? `${dineroU(g.costo / (g.cantidad / lpsEff))} /saco` : `${dineroU(g.costo / g.cantidad)} /${unidadCel(g)}`) : '',
       }
     })
     const columnas = [
@@ -861,7 +865,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
                   {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
-                    {balView ? dinero(g.costo / (g.cantidad / lpsEff)) + ' /saco' : dinero(g.costo / g.cantidad) + ' /' + unidadCel(g)}
+                    {balView ? dineroU(g.costo / (g.cantidad / lpsEff)) + ' /saco' : dineroU(g.costo / g.cantidad) + ' /' + unidadCel(g)}
                   </span> : null}
                 </span>
               )}
@@ -890,7 +894,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                     {ld.rows.flatMap((x, i) => [
                       <span key={i + 'f'} style={{ color: GRIS }}>{x.fecha ? corta(x.fecha) : 'Inicial'}</span>,
                       <span key={i + 's'} style={{ color: GRIS }}>{cant2(x.cant)} {ld.countUnit}</span>,
-                      <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dinero(x.precio)} /{ld.priceUnit}</span>,
+                      <span key={i + 'p'} style={{ textAlign: 'right', color: GRIS }}>{dineroU(x.precio)} /{ld.priceUnit}</span>,
                       <span key={i + 'c'} style={{ textAlign: 'right', fontWeight: 600 }}>{dinero(x.costo)}</span>,
                     ])}
                   </div>
