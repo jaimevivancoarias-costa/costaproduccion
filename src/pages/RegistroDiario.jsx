@@ -43,6 +43,15 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [piscinas, setPiscinas] = useState([])
   const [productos, setProductos] = useState([])
   const [celdas, setCeldas] = useState({})       // clave `${piscinaId}|${fecha}`
+  // piscinas que TIENEN alimentación con producto esta semana (para avisar si figuran sin sembrar)
+  const piscinasConAlim = useMemo(() => {
+    const s = new Set()
+    for (const [k, v] of Object.entries(celdas)) {
+      if (v && v.productoId && parseFloat(String(v.libras).replace(',', '.')) > 0) s.add(k.split('|')[0])
+      ;(v?.extras || []).forEach(e => { if (e.productoId && parseFloat(String(e.libras).replace(',', '.')) > 0) s.add(k.split('|')[0]) })
+    }
+    return s
+  }, [celdas])
   const [dias, setDias] = useState({})           // estado por fecha
   const [diasId, setDiasId] = useState({})       // id de la fila dia_registro por fecha
   const [solReapertura, setSolReapertura] = useState([])  // solicitudes de reabrir día
@@ -1179,6 +1188,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <Td>
                       <Estado
                         fila={p} eventos={eventos[p.piscinaId] || []}
+                        conAlim={piscinasConAlim.has(p.piscinaId)}
                         puede={!soloLectura && modo === 'registrar'}
                         onElegir={tipo => abrirEvento(tipo, p)}
                         onDeshacer={ev => borrarEvento(p, ev)}
@@ -1751,10 +1761,17 @@ function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
 // Columna de estado: es la columna ESTADO PISCINA del Excel.
 // Si la piscina no tiene ciclo, lo unico posible es sembrarla.
 // ---------------------------------------------------------------------
-function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar, onEditarTransf }) {
+function Estado({ fila, eventos, conAlim, puede, onElegir, onDeshacer, onEditar, onEditarTransf }) {
   // Tras cosechar o transferir, la piscina queda vacia y puede volver a
   // sembrarse esta misma semana.
   const vacia = !fila.cicloId || fila.cosechadaEstaSemana
+  // Aviso: la piscina figura sin sembrar esta semana pero SÍ tiene alimentación
+  // registrada (ej. fecha de siembra puesta en el futuro). Para que no se esconda sin avisar.
+  const avisoAlim = (vacia && conAlim) ? (
+    <div style={{ fontSize: '11px', color: '#854F0B', background: '#FBF8F0', border: '0.5px solid #ecd9b4', borderRadius: '6px', padding: '5px 8px', marginTop: '5px', lineHeight: 1.35 }}>
+      Hay alimentación registrada esta semana pero la piscina figura sin sembrar. Revisa la fecha de siembra.
+    </div>
+  ) : null
 
   // Todos los eventos de la piscina esta semana, cada uno con su pill y
   // su Deshacer. Puede haber cosecha y luego siembra el mismo periodo.
@@ -1811,6 +1828,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar, onEditar
         <span style={{ color: GRIS, fontSize: '12px' }}>
           Vacía · se siembra el {cortita(fila.siembraPosterior)}
         </span>
+        {avisoAlim}
       </div>
     )
   }
@@ -1834,6 +1852,7 @@ function Estado({ fila, eventos, puede, onElegir, onDeshacer, onEditar, onEditar
         <option value="">{vacia ? (fila.cosechadaEstaSemana ? 'Sembrar de nuevo' : 'Vacía') : 'Sin novedad'}</option>
         {opciones.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
       </select>
+      {avisoAlim}
     </div>
   )
 }
