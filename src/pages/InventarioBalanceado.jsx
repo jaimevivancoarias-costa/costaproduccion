@@ -159,7 +159,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }, { data: vfc }] = await Promise.all([
+      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }, { data: vfc }, { data: cuR }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
@@ -179,6 +179,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         hasta !== alDia
           ? supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: hasta })
           : Promise.resolve({ data: null }),
+        // Consumo $ del rango por lote (saldo-diferencia), TODOS los productos en
+        // una sola consulta. Cuadra al centavo con el reporte de Consumo.
+        esJefe ? supabase.schema('produccion').rpc('fn_consumo_rango_bal', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }) : Promise.resolve({ data: [] }),
       ])
       if (e) throw e
       // Precios por plazo (con su "desde") + plazo que rige. Con esto sabemos
@@ -212,11 +215,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const vfmCierre = {}; (vfc || vf || []).forEach(x => { vfmCierre[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
-      // Consumo $ del renglón = consumo DEL RANGO: fn_movimiento_balanceado ya lo
-      // trae valorizado y recortado a [desde, hasta] en UNA sola consulta (rápido
-      // y estable). El override por producto que había antes (desde el último
-      // conteo) inflaba el total y hacía el reporte lento e inconsistente.
-      const movFifo = m || []
+      // Consumo $ del renglón = consumo DEL RANGO por lote (fn_consumo_rango_bal,
+      // UNA sola consulta para todos los productos). Cuadra al centavo con el
+      // reporte de Consumo. Fallback a lo que trae fn_movimiento_balanceado.
+      const cuMap = {}; (cuR || []).forEach(x => { cuMap[x.producto_id] = Number(x.consumo_usd) })
+      const movFifo = (m || []).map(x => cuMap[x.producto_id] != null ? { ...x, consumo_dolares: cuMap[x.producto_id] } : x)
       // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
       // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
       setSaldos(s || []); setValorFifo(vfm); setValorFifoCierre(vfmCierre); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo); setIniRango({})
