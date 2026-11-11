@@ -80,7 +80,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [movs, setMovs] = useState([])
   const [precios, setPrecios] = useState({})
   const [precioInfo, setPrecioInfo] = useState({})  // insumoId -> { plazo, desde } del que rige
-  const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO
+  const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO (hoy)
+  const [valorFifoCierre, setValorFifoCierre] = useState({})  // valor del stock a la fecha de cierre del rango (para el reporte)
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
   const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
@@ -653,7 +654,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }, { data: plzAct }, { data: lt }] = await Promise.all([
+      const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }, { data: plzAct }, { data: lt }, { data: vfc }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_insumo',
           { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_insumo',
@@ -677,6 +678,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
         esJefe ? supabase.schema('produccion').rpc('fn_lotes_insumo', { p_finca: finca.id, p_hasta: alDia }) : Promise.resolve({ data: [] }),
+        // Valor del stock A LA FECHA DE CIERRE del rango (para el reporte). Si el
+        // rango termina hoy, reusamos la valorización de arriba.
+        hasta !== alDia
+          ? supabase.schema('produccion').rpc('fn_valor_bodega_fifo', { p_finca: finca.id, p_hasta: hasta })
+          : Promise.resolve({ data: null }),
       ])
       if (eS) throw eS
 
@@ -736,6 +742,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const vfMap = {}
       ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
       setValorFifo(vfMap)
+      // Valor del stock a la fecha de cierre del rango (para el reporte). Si el
+      // rango termina hoy, vfc viene null y se reusa el de hoy.
+      const vfMapCierre = {}
+      ;(vfc || vf || []).forEach(x => { vfMapCierre[x.insumo_id] = Number(x.valor) })
+      setValorFifoCierre(vfMapCierre)
 
       const ltm = {}
       ;(lt || []).forEach(x => { (ltm[x.insumo_id] = ltm[x.insumo_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
@@ -951,7 +962,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const convR = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && uApp !== uPres
       const precio = precios[id] || 0
       const pdesde = precioInfo[id]?.desde
-      const valor = Number(valorFifo[id] || 0)
+      // Valor del stock a la fecha de CIERRE del rango (no de hoy), con la función
+      // oficial FIFO. Si el rango termina hoy es el mismo valor.
+      const valor = Number(valorFifoCierre[id] ?? valorFifo[id] ?? 0)
       // Si el período arranca en el inventario inicial (o en un conteo), ese
       // valor contado ES el Saldo Ini. — igual que en pantalla.
       const iniEsConteo = anclaInicio(m)
@@ -962,7 +975,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
       const dif = conteo != null ? conteo - teorico : null
       // Faltante/sobrante al precio FIFO real del saldo (no catálogo).
-      const precioFifo = saldoAlDia > 0.0001 ? valor / saldoAlDia : precio
+      const precioFifo = saldoAlDia > 0.0001 ? Number(valorFifo[id] || 0) / saldoAlDia : precio
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precioFifo : null
       const cq = conteoQuien[id]
       // Lotes en una sola línea, solo si hay más de uno (agrupa el caso "todos al mismo precio").
@@ -989,11 +1002,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       // pantalla "Qué se movió". Así cuadra la fórmula Inicial+Ingresos−Dev−Consumo
       // = Saldo. saldoAlDia (hoy) solo se usa para valorizar y detectar sin-inventario.
       const saldoCierre = teorico
-      // Valor coherente con el saldo mostrado (cierre del rango): mismo precio FIFO
-      // unitario. En el período actual saldoCierre = saldoAlDia, así que no cambia.
-      const valorCierre = saldoCierre * precioFifo
       totIni += iniVal; totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
-      totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoCierre; totValor += valorCierre
+      totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoCierre; totValor += valor
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       filasRep.push({
@@ -1004,7 +1014,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         saldoHoy: `${limpio(saldoCierre)} ${uPres.toLowerCase()}`,
         saldoEquiv: convR ? `= ${limpio(saldoCierre * factorN)} ${uApp.toLowerCase()}` : '',
         precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
-        valor: dinero(valorCierre),
+        valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),

@@ -51,6 +51,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
+  const [valorFifoCierre, setValorFifoCierre] = useState({})  // valor del stock a la fecha de cierre del rango (para el reporte)
   const [desglose, setDesglose] = useState({})
   const [abierto, setAbierto] = useState(null)
   const [movs, setMovs] = useState([])
@@ -158,7 +159,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
     setCargando(true); setAviso(null)
     try {
-      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }] = await Promise.all([
+      const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }, { data: vfc }] = await Promise.all([
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: alDia }),
         supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
@@ -173,6 +174,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         // Plazo que rige por producto (para verificar QUÉ precio se aplica).
         supabase.schema('produccion').from('plazo_producto')
           .select('producto_id, plazo, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
+        // Valor del stock A LA FECHA DE CIERRE del rango (para el reporte), si el
+        // rango no termina hoy. Si termina hoy, reusamos la valorización de arriba.
+        hasta !== alDia
+          ? supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: hasta })
+          : Promise.resolve({ data: null }),
       ])
       if (e) throw e
       // Precios por plazo (con su "desde") + plazo que rige. Con esto sabemos
@@ -201,27 +207,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         pinfo[pid] = { aplicado, otros, semaforo: rigeSinPrecio ? 'warn' : 'ok', rigeSinPrecio }
       })
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
+      // Valor del stock a la fecha de cierre del rango (para el reporte). Si el
+      // rango termina hoy, es el mismo de arriba (vfc viene null).
+      const vfmCierre = {}; (vfc || vf || []).forEach(x => { vfmCierre[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
-      // Consumo $ del renglón = consumo DEL RANGO por lote (FIFO real), idéntico al
-      // reporte de "Consumo" (fn_reporte_consumo_lotes recorta a [desde, hasta]).
-      // Antes se calculaba "desde el último conteo": si ese conteo era anterior al
-      // rango (ej. conteo de agosto en un reporte de octubre) metía el consumo de
-      // los meses previos e inflaba el total. Ahora siempre cuadra con el mes.
-      let fifoUsd = {}
-      if (esJefe) {
-        const prods = (m || []).filter(x => Number(x.consumo) > 0).map(x => x.producto_id)
-        const arr = await Promise.all(prods.map(pid =>
-          supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: pid, p_desde: desde, p_hasta: hasta })
-            .then(r => ({ pid, lotes: r.data || [] })).catch(() => ({ pid, lotes: [] }))))
-        for (const { pid, lotes } of arr) {
-          fifoUsd[pid] = lotes.reduce((acc, l) => acc + Number(l.sacos || 0) * Number(l.precio || 0), 0)
-        }
-      }
-      const movFifo = (m || []).map(x => fifoUsd[x.producto_id] != null ? { ...x, consumo_dolares: fifoUsd[x.producto_id] } : x)
+      // Consumo $ del renglón = consumo DEL RANGO: fn_movimiento_balanceado ya lo
+      // trae valorizado y recortado a [desde, hasta] en UNA sola consulta (rápido
+      // y estable). El override por producto que había antes (desde el último
+      // conteo) inflaba el total y hacía el reporte lento e inconsistente.
+      const movFifo = m || []
       // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
       // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
-      setSaldos(s || []); setValorFifo(vfm); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo); setIniRango({})
+      setSaldos(s || []); setValorFifo(vfm); setValorFifoCierre(vfmCierre); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo); setIniRango({})
       setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
       // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
@@ -615,7 +613,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
       const precio = precios[id] || 0
       const desde = precioInfo[id]?.aplicado?.desde
-      const valor = Number(valorFifo[id] || 0)
+      // Valor del stock a la fecha de CIERRE del rango (no de hoy), con la función
+      // oficial FIFO. Si el rango termina hoy es el mismo valor.
+      const valor = Number(valorFifoCierre[id] ?? valorFifo[id] ?? 0)
       // Si el período arranca en el inventario inicial (o en un conteo), ese
       // valor contado ES el Saldo Ini. — igual que en pantalla.
       const iniEsConteo = anclaInicio(m)
@@ -627,7 +627,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const dif = conteo != null ? conteo - teorico : null
       // El faltante/sobrante se costea al precio FIFO real del saldo (lo que de
       // verdad costó), no al de catálogo. Así el robo/merma sale bien valorado.
-      const precioFifo = saldoAlDia > 0.0001 ? valor / saldoAlDia : precio
+      const precioFifo = saldoAlDia > 0.0001 ? Number(valorFifo[id] || 0) / saldoAlDia : precio
       const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precioFifo : null
       const cq = conteoQuien[id]
       // Lotes en una sola línea (solo si hay más de uno; agrupa "todos al mismo precio").
@@ -646,10 +646,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // Saldo del renglón = saldo al CIERRE del rango (saldo_final), igual que la
       // pantalla "Qué se movió", para que cuadre Inicial+Ingresos−Dev−Consumo = Saldo.
       const saldoCierre = teorico
-      // Valor coherente con el saldo de cierre (mismo precio FIFO unitario).
-      const valorCierre = saldoCierre * precioFifo
       totIni += iniVal; totIng += numDec(m?.ingresos); totDev += numDec(m?.devuelto)
-      totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoCierre; totValor += valorCierre
+      totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoCierre; totValor += valor
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
@@ -662,7 +660,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
         saldoHoy: `${limpio(saldoCierre)} sacos`, saldoEquiv: `= ${limpio(saldoCierre * (lps || LIBRAS_POR_SACO))} lb`,
         precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
-        valor: dinero(valorCierre),
+        valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
