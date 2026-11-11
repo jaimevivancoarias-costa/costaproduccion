@@ -604,7 +604,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const ids = [...new Set([...(saldos || []).map(s => s.producto_id), ...(movs || []).map(m => m.producto_id)])]
     const filaTieneMov = m => m && (numDec(m.ingresos) || numDec(m.consumo) || numDec(m.devuelto) || numDec(m.ajustes) || m.conteo != null)
 
-    let totIni = 0, totIng = 0, totDev = 0, totCon = 0, totConUsd = 0, totAlaFecha = 0, totValor = 0, totDif = 0, totDesc = 0, nDesc = 0
+    let totIni = 0, totIng = 0, totDev = 0, totCon = 0, totConUsd = 0, totAlaFecha = 0, totValor = 0, totAjuste = 0, totDesc = 0, nDesc = 0
     const filasRep = []
     ids.forEach(id => {
       const s = sById[id]; const m = movById[id]
@@ -627,11 +627,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const conteo = iniEsConteo ? null : conteoRaw
       const iniVal = apertura != null ? apertura : (iniEsConteo ? conteoRaw : numDec(m?.saldo_inicial))
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
-      const dif = conteo != null ? conteo - teorico : null
       // El faltante/sobrante se costea al precio FIFO real del saldo (lo que de
       // verdad costó), no al de catálogo. Así el robo/merma sale bien valorado.
       const precioFifo = saldoAlDia > 0.0001 ? Number(valorFifo[id] || 0) / saldoAlDia : precio
-      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precioFifo : null
       const cq = conteoQuien[id]
       // Lotes en una sola línea (solo si hay más de uno; agrupa "todos al mismo precio").
       const lts = lotes[id] || []
@@ -649,9 +647,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // Saldo del renglón = saldo al CIERRE del rango (saldo_final), igual que la
       // pantalla "Qué se movió", para que cuadre Inicial+Ingresos−Dev−Consumo = Saldo.
       const saldoCierre = teorico
+      // Ajuste (conteo/baja) = lo que hace cuadrar el flujo:
+      //   Saldo − (Inicial + Ingresos − Devuelto − Consumo).
+      // Captura el sobrante/faltante que dejó un conteo (o una baja) y que antes
+      // "aparecía" en el saldo sin una línea que lo respaldara. Valorizado a FIFO.
+      const ajuste = saldoCierre - (iniVal + numDec(m?.ingresos) - numDec(m?.devuelto) - numDec(m?.consumo))
+      const hayAjuste = Math.abs(ajuste) > 0.0001
+      const ajusteUsd = hayAjuste ? ajuste * precioFifo : 0
       totIni += iniVal; totIng += numDec(m?.ingresos); totDev += numDec(m?.devuelto)
       totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoCierre; totValor += valor
-      if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
+      totAjuste += ajuste; if (hayAjuste) { totDesc += ajusteUsd; nDesc++ }
 
       const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
@@ -666,7 +671,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
-        dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
+        ajuste: hayAjuste ? conSigno(ajuste) : '—',
+        ajusteUsd: hayAjuste ? dinero(ajusteUsd) : '',
         motivo: descMotivo[id] || '',
       })
     })
@@ -682,6 +688,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       { titulo: 'Ingresos', der: true, campo: 'ingresos' },
       { titulo: 'Devuelto', der: true, campo: 'devuelto' },
       { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Ajuste conteo', der: true, campo: 'ajuste', sub: 'ajusteUsd' },
       { titulo: 'Saldo', der: true, campo: 'saldoHoy', sub: 'saldoEquiv', destacar: true },
       { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
       { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
@@ -689,8 +696,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
         ...(hayConsDiaRep ? [{ titulo: 'Consumo del día', der: true, campo: 'consDia', sub: 'consDiaCalc' }] : []),
-        { titulo: 'Dif.', der: true, campo: 'dif' },
-        { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
         { titulo: 'Motivo', campo: 'motivo' },
       ] : []),
     ]
@@ -699,8 +704,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
       saldoHoy: `${limpio(totAlaFecha)} sacos`, saldoEquiv: '', consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
       valor: dinero(totValor), contado: '', contadoInfo: '', consDia: '', consDiaCalc: '',
-      dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
-      descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
+      ajuste: Math.abs(totAjuste) < 0.001 ? '—' : (totAjuste > 0 ? '+' : '−') + limpio(Math.abs(totAjuste)),
+      ajusteUsd: totDesc ? dinero(totDesc) : '', motivo: '',
     }
     const cards = [
       { k: 'Valor total en bodega', v: dinero(totValor) },

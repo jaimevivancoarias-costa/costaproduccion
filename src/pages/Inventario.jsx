@@ -945,7 +945,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const ids = [...new Set([...(saldos || []).map(s => s.insumo_id), ...(movs || []).map(m => m.insumo_id)])]
     const tieneMov = m => m && (nd(m.ingresos) || nd(m.consumo) || nd(m.devuelto) || nd(m.ajustes) || m.conteo != null)
 
-    let totIni = 0, totIng = 0, totDev = 0, totCon = 0, totConUsd = 0, totSaldo = 0, totValor = 0, totDif = 0, totDesc = 0, nDesc = 0
+    let totIni = 0, totIng = 0, totDev = 0, totCon = 0, totConUsd = 0, totSaldo = 0, totValor = 0, totAjuste = 0, totDesc = 0, nDesc = 0
     const filasRep = []
     ids.forEach(id => {
       const s = sById[id]; const m = movById[id]
@@ -973,10 +973,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const conteo = iniEsConteo ? null : conteoRaw
       const iniVal = apertura != null ? apertura : (iniEsConteo ? conteoRaw : nd(m?.saldo_inicial))
       const teorico = m ? Number(m.saldo_final) : saldoAlDia
-      const dif = conteo != null ? conteo - teorico : null
       // Faltante/sobrante al precio FIFO real del saldo (no catálogo).
       const precioFifo = saldoAlDia > 0.0001 ? Number(valorFifo[id] || 0) / saldoAlDia : precio
-      const descUsd = (dif != null && Math.abs(dif) > 0.001) ? dif * precioFifo : null
       const cq = conteoQuien[id]
       // Lotes en una sola línea, solo si hay más de uno (agrupa el caso "todos al mismo precio").
       const lts = lotes[id] || []
@@ -1002,9 +1000,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       // pantalla "Qué se movió". Así cuadra la fórmula Inicial+Ingresos−Dev−Consumo
       // = Saldo. saldoAlDia (hoy) solo se usa para valorizar y detectar sin-inventario.
       const saldoCierre = teorico
+      // Ajuste (conteo/baja) = lo que hace cuadrar el flujo:
+      //   Saldo − (Inicial + Ingresos − Devuelto − Consumo).
+      // Captura el sobrante/faltante del conteo que antes "aparecía" en el saldo
+      // sin una línea que lo respaldara. Valorizado a FIFO.
+      const ajuste = saldoCierre - (iniVal + nd(m?.ingresos) - nd(m?.devuelto) - nd(m?.consumo))
+      const hayAjuste = Math.abs(ajuste) > 0.0001
+      const ajusteUsd = hayAjuste ? ajuste * precioFifo : 0
       totIni += iniVal; totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
       totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoCierre; totValor += valor
-      if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
+      totAjuste += ajuste; if (hayAjuste) { totDesc += ajusteUsd; nDesc++ }
 
       filasRep.push({
         nombre, lotesLinea,
@@ -1017,7 +1022,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
-        dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),
+        ajuste: hayAjuste ? conSigno(ajuste) : '—',
+        ajusteUsd: hayAjuste ? dinero(ajusteUsd) : '',
         motivo: descMotivo[id] || '',
       })
     })
@@ -1032,6 +1038,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       { titulo: 'Ingresos', der: true, campo: 'ingresos' },
       { titulo: 'Devuelto', der: true, campo: 'devuelto' },
       { titulo: 'Consumo', der: true, campo: 'consumo' },
+      { titulo: 'Ajuste conteo', der: true, campo: 'ajuste', sub: 'ajusteUsd' },
       { titulo: 'Saldo', der: true, campo: 'saldoHoy', sub: 'saldoEquiv', destacar: true },
       { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
       { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
@@ -1039,8 +1046,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
         ...(hayConsDiaRep ? [{ titulo: 'Consumo del día', der: true, campo: 'consDia', sub: 'consDiaCalc' }] : []),
-        { titulo: 'Dif.', der: true, campo: 'dif' },
-        { titulo: 'Descuadre $', der: true, campo: 'descuadre' },
         { titulo: 'Motivo', campo: 'motivo' },
       ] : []),
     ]
@@ -1049,8 +1054,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       devuelto: totDev ? '−' + limpio(totDev) : '—', consumo: totCon ? '−' + limpio(totCon) : '—',
       saldoHoy: '', saldoEquiv: '', consumoUsd: dinero(totConUsd), precio: '', precioDesde: '',
       valor: dinero(totValor), contado: '', contadoInfo: '', consDia: '', consDiaCalc: '',
-      dif: Math.abs(totDif) < 0.001 ? '0' : (totDif > 0 ? '+' : '−') + limpio(Math.abs(totDif)),
-      descuadre: totDesc ? dinero(totDesc) : '—', motivo: '',
+      ajuste: Math.abs(totAjuste) < 0.001 ? '—' : (totAjuste > 0 ? '+' : '−') + limpio(Math.abs(totAjuste)),
+      ajusteUsd: totDesc ? dinero(totDesc) : '', motivo: '',
     }
     const cards = [
       { k: 'Valor total en bodega', v: dinero(totValor) },
