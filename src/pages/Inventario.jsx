@@ -1416,6 +1416,20 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         await supabase.schema('produccion').from('toma_inventario_linea').delete().eq('toma_id', editToma.id)
         tomaId = editToma.id
       } else {
+        // Solo se permite UN conteo por finca por día. Si ya hay uno para esta
+        // fecha, en vez de reventar con el error de Postgres, ofrecemos editarlo.
+        const yaExiste = conteos.find(c => c.fecha === fecha)
+        if (yaExiste) {
+          setGuardando(false)
+          if (window.confirm(
+            `Ya hay un conteo guardado para el ${corta(fecha)} en esta finca ` +
+            `(solo se permite uno por día).\n\n` +
+            `¿Abrir ese conteo para editarlo? Se cargarán los valores ya guardados.`
+          )) {
+            await editarConteo(yaExiste)
+          }
+          return
+        }
         const { data: toma, error } = await supabase.schema('produccion')
           .from('toma_inventario')
           .insert({ finca_id: finca.id, fecha, observacion: obs || null, es_inicial: conteos.length === 0, conto_despues: contoDespues })
@@ -1463,7 +1477,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       setContando(false); setEditToma(null); setContado({}); setContadoExacto({}); setSobrante({}); setSobranteOn({}); setObs(''); setMotivoDesc({}); setMotivoOtro({}); setContoDespues(false)
       await cargar()
     } catch (err) {
-      setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + (err.message || '') })
+      // Llave duplicada (finca + fecha): ya existe un conteo para ese día.
+      const dup = err?.code === '23505' || /toma_inventario_finca_id_fecha/.test(err?.message || '')
+      setAviso({ tipo: 'error', texto: dup
+        ? `Ya hay un conteo para el ${corta(fecha)} en esta finca. Solo se permite uno por día: abre el conteo de esa fecha y edítalo en vez de crear uno nuevo.`
+        : 'No se pudo guardar. ' + (err.message || '') })
     } finally {
       setGuardando(false)
     }
