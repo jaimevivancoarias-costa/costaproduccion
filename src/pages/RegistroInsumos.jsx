@@ -389,8 +389,13 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       return
     }
     // Chequeo de STOCK: no se puede consumir más de lo que hay en bodega.
+    // Se compara en la unidad de COMPRA (donde se guarda el saldo). Multiplicar el
+    // saldo por el factor para pasarlo a la unidad de aplicación amplifica el
+    // redondeo (ej. 0,0222 saco × 45 = 0,999 kg → bloqueaba consumir 1 kg aunque
+    // muestra "1 kg"). En la unidad de compra la tolerancia de 0,0001 sí alcanza.
     const disp = dispApp(insumoId)
-    if (cant > disp + 0.0001) {
+    const fac = factorIns[insumoId] || 1
+    if (cant / fac > (saldoIns[insumoId] || 0) + 0.0001) {
       setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(insumoId)}: hay ${miles(Math.round(disp * 100) / 100)} ${uds(insumoId)}, quieres consumir ${miles(cant)}. Ingresa a bodega primero.` })
       return
     }
@@ -418,7 +423,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
     const antes = numDec(linea?.cantidad)
     const cant = numDec(valor)
     // Solo se chequea si SUBE. La diferencia extra no puede superar lo disponible.
-    if (cant && linea && cant - antes > dispApp(linea.insumoId) + 0.0001) {
+    if (cant && linea && (cant - antes) / (factorIns[linea.insumoId] || 1) > (saldoIns[linea.insumoId] || 0) + 0.0001) {
       setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(linea.insumoId)}: hay ${miles(Math.round(dispApp(linea.insumoId) * 100) / 100)} ${uds(linea.insumoId)} más disponibles.` })
       return
     }

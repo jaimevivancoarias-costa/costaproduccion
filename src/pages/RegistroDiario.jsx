@@ -730,7 +730,9 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       for (const [pid, delta] of Object.entries(deltaProd)) {
         if (delta <= 0.0001) continue
         const dispLibras = (saldoBal[pid] || 0) * lps
-        if (delta > dispLibras + 0.001) {
+        // Se compara en SACOS (unidad de guardado): pasar el saldo a libras (× lps)
+        // amplifica el redondeo y bloquea consumir lo que sí hay. En sacos alcanza.
+        if (delta / lps > (saldoBal[pid] || 0) + 0.001) {
           const nom = productos.find(x => x.id === pid)?.nombre || 'balanceado'
           faltan.push(`${nom}: hay ${(dispLibras / lps).toFixed(1)} sacos (${miles(Math.round(dispLibras))} lb), quieres consumir ${miles(Math.round(delta))} lb`)
         }
