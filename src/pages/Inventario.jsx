@@ -985,8 +985,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const consDia = cd != null ? `${limpio(cd)} ${uLow} · congelado` : ''
       const consDiaCalc = (cd != null && cq.habia != null) ? `contó ${limpio(cq.habia - cd)} + ${limpio(cd)} = ${limpio(cq.habia)} había` : ''
 
+      // Saldo del renglón = saldo al CIERRE del rango (saldo_final), igual que la
+      // pantalla "Qué se movió". Así cuadra la fórmula Inicial+Ingresos−Dev−Consumo
+      // = Saldo. saldoAlDia (hoy) solo se usa para valorizar y detectar sin-inventario.
+      const saldoCierre = teorico
+      // Valor coherente con el saldo mostrado (cierre del rango): mismo precio FIFO
+      // unitario. En el período actual saldoCierre = saldoAlDia, así que no cambia.
+      const valorCierre = saldoCierre * precioFifo
       totIni += iniVal; totIng += nd(m?.ingresos); totDev += nd(m?.devuelto)
-      totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoAlDia; totValor += valor
+      totCon += nd(m?.consumo); totConUsd += nd(m?.consumo_dolares); totSaldo += saldoCierre; totValor += valorCierre
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       filasRep.push({
@@ -994,10 +1001,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         viaTop: convR ? `${uPres} → ${uApp}` : uPres, viaSub: convR ? `1 ${uPres} = ${limpio(factorN)} ${uApp}` : '',
         inicial: limpio(iniVal || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
-        saldoHoy: `${limpio(saldoAlDia)} ${uPres.toLowerCase()}`,
-        saldoEquiv: convR ? `= ${limpio(saldoAlDia * factorN)} ${uApp.toLowerCase()}` : '',
+        saldoHoy: `${limpio(saldoCierre)} ${uPres.toLowerCase()}`,
+        saldoEquiv: convR ? `= ${limpio(saldoCierre * factorN)} ${uApp.toLowerCase()}` : '',
         precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
-        valor: dinero(valor),
+        valor: dinero(valorCierre),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),

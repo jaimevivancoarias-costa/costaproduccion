@@ -643,8 +643,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         }
       }
 
+      // Saldo del renglón = saldo al CIERRE del rango (saldo_final), igual que la
+      // pantalla "Qué se movió", para que cuadre Inicial+Ingresos−Dev−Consumo = Saldo.
+      const saldoCierre = teorico
+      // Valor coherente con el saldo de cierre (mismo precio FIFO unitario).
+      const valorCierre = saldoCierre * precioFifo
       totIni += iniVal; totIng += numDec(m?.ingresos); totDev += numDec(m?.devuelto)
-      totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoAlDia; totValor += valor
+      totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoCierre; totValor += valorCierre
       if (dif != null) { totDif += dif; if (descUsd) { totDesc += descUsd; nDesc++ } }
 
       const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
@@ -655,9 +660,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         nombre, lotesLinea, viaTop: 'Saco → lb', viaSub: `1 Saco = ${lps || LIBRAS_POR_SACO} lb`,
         inicial: limpio(iniVal || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
-        saldoHoy: `${limpio(saldoAlDia)} sacos`, saldoEquiv: `= ${limpio(saldoAlDia * (lps || LIBRAS_POR_SACO))} lb`,
+        saldoHoy: `${limpio(saldoCierre)} sacos`, saldoEquiv: `= ${limpio(saldoCierre * (lps || LIBRAS_POR_SACO))} lb`,
         precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
-        valor: dinero(valor),
+        valor: dinero(valorCierre),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
         dif: dif != null ? conSigno(dif) : '', descuadre: descUsd ? dinero(descUsd) : (dif === 0 ? '—' : ''),

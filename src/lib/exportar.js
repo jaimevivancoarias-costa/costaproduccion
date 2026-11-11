@@ -117,7 +117,7 @@ function reporteBodegaHTML(opts, paraExcel) {
     `<div class="rcard${c.alerta ? ' alerta' : ''}"><div class="k">${esc(c.k)}</div><div class="v">${esc(c.v)}</div></div>`
   ).join('')
   const subtitulo = opts.subtitulo != null ? opts.subtitulo : 'Inventario que hay y que se movió'
-  const pie = opts.pie != null ? opts.pie : '<b>Cómo se lee:</b> Inicial + Ingresos − Devuelto − Consumo = <b>Saldo hoy</b> (lo que debería haber). &nbsp; <b>Diferencia</b> = Contado − Saldo hoy. &nbsp; En <b>Lotes</b> ves cada precio con su fecha de compra.'
+  const pie = opts.pie != null ? opts.pie : '<b>Cómo se lee:</b> Inicial + Ingresos − Devuelto − Consumo = <b>Saldo</b> al final del rango (lo que debería haber). &nbsp; <b>Diferencia</b> = Contado − Saldo. &nbsp; En <b>Lotes</b> ves cada precio con su fecha de compra.'
 
   // El Excel abre HTML como hoja de cálculo con columnas separadas.
   if (paraExcel) {
