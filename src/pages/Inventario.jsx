@@ -195,7 +195,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       cs.forEach(c => (lins || []).filter(l => l.toma_id === c.id).forEach(l => {
         const conto = Number(l.cantidad_contada)
         const antes = antesPorFecha[c.fecha]?.[l.insumo_id]
-        ;(porIns[l.insumo_id] = porIns[l.insumo_id] || []).push({ fecha: c.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes })
+        ;(porIns[l.insumo_id] = porIns[l.insumo_id] || []).push({ fecha: c.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes, esInicial: c.es_inicial })
       }))
       setConteosRango(porIns)
       setSaldoAntes(antesPorFecha[cs[cs.length - 1].fecha] || {})
@@ -2187,7 +2187,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                                     <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
                                     {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
-                                    {esJefe && !r.es_conteo && (
+                                    {esJefe && (
                                       <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
                                         style={{ marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                         Corregir precio
@@ -2267,8 +2267,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '10px' }}>Qué pasó en cada conteo{uLabel ? ` · en ${uLabel}` : ''}</div>
                         {cs.map((c, i) => (
                           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none', fontSize: '12.5px' }}>
-                            <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.antes == null ? '' : `sistema ${val(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{val(c.conto)}</b></span></span>
-                            {c.dif == null ? <span /> : (
+                            <span>{corta(c.fecha)}
+                              {c.esInicial && <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '1px 6px' }}>INICIAL</span>}
+                              <span style={{ color: GRIS, fontSize: '11.5px' }}> · {c.antes == null ? '' : `sistema ${val(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{val(c.conto)}</b></span></span>
+                            {c.dif == null ? <span /> : c.esInicial ? (
+                              <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: AZUL }}>Inicial</span>
+                            ) : (
                               <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
                                 {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + val(Math.abs(c.dif))}
                               </span>
