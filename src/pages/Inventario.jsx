@@ -1147,7 +1147,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setMovDet(insumoId)
     if (!lotesMov[insumoId]) {
       const { data, error } = await supabase.schema('produccion')
-        .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insumoId, p_hasta: hasta })
+        .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insumoId, p_hasta: hasta, p_desde: desde })
       setLotesMov(m => ({ ...m, [insumoId]: error ? [] : (data || []) }))
     }
   }
@@ -1206,7 +1206,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     await cargar()
     // Refrescar el detalle por lote en pantalla (sin recargar la página).
     const { data } = await supabase.schema('produccion')
-      .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insId, p_hasta: hasta })
+      .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insId, p_hasta: hasta, p_desde: desde })
     setLotesMov(m => ({ ...m, [insId]: data || [] }))
     setGuardandoCorr(false)
     setAviso({ tipo: 'ok', texto: 'Precio corregido y consumos recalculados.' })
@@ -2102,7 +2102,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   ) : lotesMov[m.insumo_id].length === 0 ? (
                     <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                   ) : (() => {
-                    const rows = [...lotesMov[m.insumo_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                    const todos = lotesMov[m.insumo_id] || []
+                    const rows = todos.filter(r => !r.informativo).sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                    const audit = todos.filter(r => r.informativo).sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
                     const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                     const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                     const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
@@ -2149,6 +2151,28 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           <div style={tot}>{val(tQueda)}</div>
                           {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
                         </div>
+                        {audit.length > 0 && (
+                          <div style={{ marginTop: '14px', borderTop: '1px dashed ' + BORDE, paddingTop: '12px' }}>
+                            <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Entró en el rango · a qué precio</div>
+                            <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '9px' }}>
+                              Inicial y compras del período, con su precio{uLabel ? ` (/${uLabel.replace(/s$/, '')})` : ''} — aunque ya se hayan consumido.
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr 1fr 1.2fr' : '2.3fr 1fr', gap: '9px 18px', alignItems: 'baseline' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Origen</div>
+                              <div style={cab}>Cantidad</div>
+                              {esJefe && <div style={cab}>Precio</div>}
+                              {audit.map((r, i) => (
+                                <Fragment key={'a' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
+                                    <span style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'}</span> {r.fecha ? corta(r.fecha) : '—'}
+                                  </div>
+                                  <div style={cel}>{val(r.entro)}</div>
+                                  {esJefe && <div style={cel}>{r.costo_unitario != null ? dineroExacto(r.costo_unitario) : '—'}</div>}
+                                </Fragment>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {esJefe && corrige && corrige.insumoId === m.insumo_id && (
                           <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                             <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>
