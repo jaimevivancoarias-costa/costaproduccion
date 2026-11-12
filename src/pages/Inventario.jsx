@@ -2152,34 +2152,63 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           <div style={tot}>{val(tQueda)}</div>
                           {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
                         </div>
-                        {audit.length > 0 && (
+                        {audit.length > 0 && (() => {
+                          // Orden: más viejo primero; para misma fecha, el inicial antes que la compra.
+                          const aOrd = [...audit].sort((a, b) =>
+                            (a.fecha || '0') !== (b.fecha || '0')
+                              ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1)
+                              : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))
+                          // FIFO: se reparte el consumo del rango (m.consumo, en sacos) de lo más
+                          // viejo a lo más nuevo; lo que no se consumió, queda.
+                          let _cons = Number(m.consumo || 0)
+                          const ac = aOrd.map(r => {
+                            const ent = Number(r.entro || 0)
+                            const c = Math.max(0, Math.min(_cons, ent)); _cons -= c
+                            return { ...r, _c: c, _q: ent - c }
+                          })
+                          const tE = ac.reduce((s, r) => s + Number(r.entro || 0), 0)
+                          const tC = ac.reduce((s, r) => s + r._c, 0)
+                          const tQ = ac.reduce((s, r) => s + r._q, 0)
+                          const tCo = ac.reduce((s, r) => s + r._c * Number(r.costo_unitario || 0), 0)
+                          return (
                           <div style={{ marginTop: '14px', borderTop: '1px dashed ' + BORDE, paddingTop: '12px' }}>
                             <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Entró en el rango · a qué precio</div>
-                            <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '9px' }}>
-                              Inicial y compras del período, con su precio{uLabel ? ` (/${uLabel.replace(/s$/, '')})` : ''} — aunque ya se hayan consumido.
+                            <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
+                              Inicial y compras del período, con lo que se consumió y lo que queda de cada uno (lo más viejo se gasta primero).
                             </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr 1fr 1.2fr' : '2.3fr 1fr', gap: '9px 18px', alignItems: 'baseline' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
                               <div style={{ ...cab, textAlign: 'left' }}>Origen</div>
-                              <div style={cab}>Cantidad</div>
-                              {esJefe && <div style={cab}>Precio</div>}
-                              {audit.map((r, i) => (
+                              <div style={cab}>Entró</div>
+                              <div style={cab}>Consumió</div>
+                              <div style={cab}>Queda</div>
+                              {esJefe && <div style={cab}>Costo consumido</div>}
+                              {ac.map((r, i) => (
                                 <Fragment key={'a' + i}>
-                                  <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
-                                    <span style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'}</span> {r.fecha ? corta(r.fecha) : '—'}
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                    <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
+                                    {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
                                     {esJefe && !r.es_conteo && (
                                       <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
-                                        style={{ display: 'block', marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                        style={{ marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                         Corregir precio
                                       </button>
                                     )}
                                   </div>
                                   <div style={cel}>{val(r.entro)}</div>
-                                  {esJefe && <div style={cel}>{r.costo_unitario != null ? dineroExacto(r.costo_unitario) : '—'}</div>}
+                                  <div style={{ ...cel, color: r._c ? ROJO : '#c3d0db' }}>{r._c ? val(r._c) : '—'}</div>
+                                  <div style={{ ...cel, fontWeight: 600 }}>{val(r._q)}</div>
+                                  {esJefe && <div style={cel}>{dinero(r._c * Number(r.costo_unitario || 0))}</div>}
                                 </Fragment>
                               ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                              <div style={tot}>{val(tE)}</div>
+                              <div style={tot}>{val(tC)}</div>
+                              <div style={tot}>{val(tQ)}</div>
+                              {esJefe && <div style={tot}>{dinero(tCo)}</div>}
                             </div>
                           </div>
-                        )}
+                          )
+                        })()}
                         {esJefe && corrige && corrige.insumoId === m.insumo_id && (
                           <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                             <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>
