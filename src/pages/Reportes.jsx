@@ -82,6 +82,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   const [tipo, setTipo] = useState(enfoqueInsumos ? 'insumo' : 'todo')
   const [agrupar, setAgrupar] = useState('item') // 'item' | 'piscina' | 'finca'
   const [porPrecio, setPorPrecio] = useState({})  // producto_id -> [{fecha, precio, sacos, costo}] (balanceado)
+  const [precioSacoFifo, setPrecioSacoFifo] = useState({}) // producto_id -> $/saco FIFO ponderado (Σprecio×sacos / Σsacos)
   const [porLoteIns, setPorLoteIns] = useState({}) // insumo_id  -> [{fecha, precio, cantidad, costo}] (insumos, unidad de compra)
   const [porLoteDsl, setPorLoteDsl] = useState({}) // tipo_id    -> [{fecha, precio, galones, costo}] (diesel)
   const [cicloSel, setCicloSel] = useState('')
@@ -99,14 +100,22 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     // congelado por alimentación se desfasa al cambiar un precio con fecha pasada.
     // Se recuesta cada producto con fn_reporte_consumo_lotes (singular, rápida) y
     // se escala el costo congelado al total FIFO, conservando el reparto por piscina.
+    let pSaco = {}
     if (!todasFincas && filas.length) {
       const prods = [...new Set(filas.filter(f => f.tipo === 'balanceado').map(f => f.item_id))]
       if (prods.length) {
         try {
           const res = await Promise.all(prods.map(pid =>
             supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: pid, p_desde: desde, p_hasta: hasta })
-              .then(r => [pid, (r.data || []).reduce((s, x) => s + Number(x.precio) * Number(x.sacos), 0)])))
-          const fifo = Object.fromEntries(res)
+              .then(r => {
+                const arr = r.data || []
+                const costo = arr.reduce((s, x) => s + Number(x.precio) * Number(x.sacos), 0)
+                const sacos = arr.reduce((s, x) => s + Number(x.sacos), 0)
+                return [pid, costo, sacos]
+              })))
+          const fifo = Object.fromEntries(res.map(([pid, c]) => [pid, c]))
+          // $/saco FIFO ponderado real (no costo ÷ sacos-redondeados del encabezado).
+          pSaco = Object.fromEntries(res.filter(([, , s]) => s > 0.0001).map(([pid, c, s]) => [pid, c / s]))
           const cong = {}; filas.forEach(f => { if (f.tipo === 'balanceado') cong[f.item_id] = (cong[f.item_id] || 0) + Number(f.costo) })
           filas = filas.map(f => {
             if (f.tipo !== 'balanceado') return f
@@ -119,6 +128,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       }
     }
     setFilas(filas)
+    setPrecioSacoFifo(pSaco)
     setCargando(false)
   }, [finca.id, desde, hasta, todasFincas])
 
@@ -473,6 +483,10 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
   // y no cuadra al multiplicar). Se muestran más decimales cuando el valor es < $1.
   const dineroU = v => Math.abs(Number(v)) >= 1 ? dinero(v)
     : '$' + Number(v || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  // $/saco de balanceado: usa el precio FIFO ponderado real (Σprecio×sacos / Σsacos),
+  // no costo ÷ sacos-redondeados del encabezado (que inflaba el $/saco por el redondeo).
+  const perSacoBal = g => (agrupar === 'item' && precioSacoFifo[g.clave] != null)
+    ? precioSacoFifo[g.clave] : g.costo / (g.cantidad / lpsEff)
   const precioUnit = p => {  // $/saco (balanceado) o $/unidad de compra (insumo)
     if (p.mixto || !p.cantidad) return null
     if (p.tipo === 'balanceado') return dineroU(p.costo / (p.cantidad / lpsEff)) + ' /saco'
@@ -526,7 +540,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         cantidad: g.mixto ? '—' : balView ? `${cant2(g.cantidad / lpsEff)} sacos` : `${cant2(g.cantidad)} ${unidadCel(g)}`,
         equivale: balView ? (g.mixto || !g.cantidad ? '—' : `${miles(g.cantidad)} lb`) : equivale(g),
         costo: dinero(g.costo),
-        costoUnit: (!g.mixto && g.cantidad) ? (balView ? `${dineroU(g.costo / (g.cantidad / lpsEff))} /saco` : `${dineroU(g.costo / g.cantidad)} /${unidadCel(g)}`) : '',
+        costoUnit: (!g.mixto && g.cantidad) ? (balView ? `${dineroU(perSacoBal(g))} /saco` : `${dineroU(g.costo / g.cantidad)} /${unidadCel(g)}`) : '',
       }
     })
     const columnas = [
@@ -865,7 +879,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
                   {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
-                    {balView ? dineroU(g.costo / (g.cantidad / lpsEff)) + ' /saco' : dineroU(g.costo / g.cantidad) + ' /' + unidadCel(g)}
+                    {balView ? dineroU(perSacoBal(g)) + ' /saco' : dineroU(g.costo / g.cantidad) + ' /' + unidadCel(g)}
                   </span> : null}
                 </span>
               )}
