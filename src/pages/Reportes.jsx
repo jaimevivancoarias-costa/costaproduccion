@@ -113,16 +113,24 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 const sacos = arr.reduce((s, x) => s + Number(x.sacos), 0)
                 return [pid, costo, sacos]
               })))
-          const fifo = Object.fromEntries(res.map(([pid, c]) => [pid, c]))
-          // $/saco FIFO ponderado real (no costo ÷ sacos-redondeados del encabezado).
+          // $/saco FIFO ponderado real (Σprecio×sacos / Σsacos), no costo ÷ sacos
+          // redondeados del encabezado (que inflaba el $/saco).
           pSaco = Object.fromEntries(res.filter(([, , s]) => s > 0.0001).map(([pid, c, s]) => [pid, c / s]))
-          const cong = {}; filas.forEach(f => { if (f.tipo === 'balanceado') cong[f.item_id] = (cong[f.item_id] || 0) + Number(f.costo) })
+          const cong = {}, fedLib = {}
+          filas.forEach(f => { if (f.tipo === 'balanceado') {
+            cong[f.item_id] = (cong[f.item_id] || 0) + Number(f.costo)
+            fedLib[f.item_id] = (fedLib[f.item_id] || 0) + Number(f.cantidad)
+          } })
+          const lpsNow = todasFincas ? LIBRAS_POR_SACO : (lps || LIBRAS_POR_SACO)
           filas = filas.map(f => {
             if (f.tipo !== 'balanceado') return f
-            const c = cong[f.item_id], fi = fifo[f.item_id]
-            // Solo ajustar si el FIFO pudo costear (fi > 0). Si el FIFO da 0
-            // (lotes sin precio), NO poner el costo en $0: se deja el congelado.
-            return (c > 0.0001 && fi > 0.0001) ? { ...f, costo: Number(f.costo) * (fi / c) } : f
+            const c = cong[f.item_id], ps = pSaco[f.item_id]
+            if (!(c > 0.0001 && ps != null)) return f
+            // Costo del consumo = sacos ALIMENTADOS (encabezado) × precio FIFO ponderado.
+            // Antes se escalaba al total FIFO (que incluye el descuadre del conteo) y no
+            // cuadraba sacos × precio = costo. El descuadre va al "Ajuste conteo" de Bodega.
+            const target = (fedLib[f.item_id] / lpsNow) * ps
+            return { ...f, costo: Number(f.costo) * (target / c) }
           })
         } catch { /* si falla el FIFO, se queda el costo congelado */ }
       }
@@ -130,7 +138,7 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
     setFilas(filas)
     setPrecioSacoFifo(pSaco)
     setCargando(false)
-  }, [finca.id, desde, hasta, todasFincas])
+  }, [finca.id, desde, hasta, todasFincas, lps])
 
   useEffect(() => { cargar() }, [cargar])
 
