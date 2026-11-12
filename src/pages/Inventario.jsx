@@ -283,26 +283,28 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       })
       setConsumoDiaToma(cdm)
       if (!esJefe) return
-      // Antes se disparaban TODAS las llamadas a fn_movimiento_insumo a la vez
-      // (una por conteo, hasta ~12). En fincas con muchos datos (Agrimarine) esas
-      // llamadas concurrentes y pesadas saturaban la API y devolvían 500 (la vista
-      // salía vacía). Se corren en tandas de 3 para no sobrecargar; los números
-      // son los mismos, solo cambia que no se piden todas de golpe.
-      const tareas = conteos.map((c, i) => ({ c, h: i === 0 ? hoyISO() : sumarDias(conteos[i - 1].fecha, -1) }))
-      const res = []
-      for (let k = 0; k < tareas.length; k += 3) {
-        if (!vivo) return
-        const lote = await Promise.all(tareas.slice(k, k + 3).map(({ c, h }) =>
-          supabase.schema('produccion').rpc('fn_movimiento_insumo', { p_finca: finca.id, p_desde: c.fecha, p_hasta: h })
-            .then(r => ({ id: c.id, rows: r.data || [] }))))
-        res.push(...lote)
-      }
+      // Consumo $ por corte con UNA sola consulta liviana (precio CONGELADO),
+      // en vez de llamar fn_movimiento_insumo una vez por conteo (~12 llamadas
+      // pesadas que dejaban el inventario lentísimo). Cada consumo se asigna al
+      // corte = conteo más reciente con fecha <= la del consumo, y se suma
+      // cantidad × precio_unitario. (El antiguo campo 'sis' no se usaba:
+      // sisCorte lee cantidad_sistema de la línea, no esto.)
+      const { data: consAll } = await supabase.schema('produccion').from('consumo_insumo')
+        .select('insumo_id, fecha, cantidad, precio_unitario, piscina!inner(finca_id)')
+        .eq('piscina.finca_id', finca.id)
       if (!vivo) return
+      const cOrd = [...conteos].sort((a, b) => (a.fecha < b.fecha ? -1 : 1))  // ascendente
       const cmap = {}
-      res.forEach(({ id, rows }) => {
-        const porProd = {}, sis = {}; let total = 0
-        rows.forEach(r => { const d = Number(r.consumo_dolares) || 0; porProd[r.insumo_id] = d; total += d; sis[r.insumo_id] = Number(r.saldo_inicial) })
-        cmap[id] = { porProd, total, sis }
+      conteos.forEach(c => { cmap[c.id] = { porProd: {}, total: 0, sis: {} } })
+      ;(consAll || []).forEach(r => {
+        if (!r.insumo_id || !r.fecha) return
+        let corte = null
+        for (const c of cOrd) { if (c.fecha <= r.fecha) corte = c; else break }
+        if (!corte) return
+        const d = Number(r.cantidad || 0) * Number(r.precio_unitario || 0)
+        const e = cmap[corte.id]
+        e.porProd[r.insumo_id] = (e.porProd[r.insumo_id] || 0) + d
+        e.total += d
       })
       setConsumoToma(cmap)
     })()
