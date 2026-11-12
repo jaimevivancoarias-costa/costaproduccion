@@ -283,11 +283,20 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       })
       setConsumoDiaToma(cdm)
       if (!esJefe) return
-      const res = await Promise.all(conteos.map((c, i) => {
-        const h = i === 0 ? hoyISO() : sumarDias(conteos[i - 1].fecha, -1)
-        return supabase.schema('produccion').rpc('fn_movimiento_insumo', { p_finca: finca.id, p_desde: c.fecha, p_hasta: h })
-          .then(r => ({ id: c.id, rows: r.data || [] }))
-      }))
+      // Antes se disparaban TODAS las llamadas a fn_movimiento_insumo a la vez
+      // (una por conteo, hasta ~12). En fincas con muchos datos (Agrimarine) esas
+      // llamadas concurrentes y pesadas saturaban la API y devolvían 500 (la vista
+      // salía vacía). Se corren en tandas de 3 para no sobrecargar; los números
+      // son los mismos, solo cambia que no se piden todas de golpe.
+      const tareas = conteos.map((c, i) => ({ c, h: i === 0 ? hoyISO() : sumarDias(conteos[i - 1].fecha, -1) }))
+      const res = []
+      for (let k = 0; k < tareas.length; k += 3) {
+        if (!vivo) return
+        const lote = await Promise.all(tareas.slice(k, k + 3).map(({ c, h }) =>
+          supabase.schema('produccion').rpc('fn_movimiento_insumo', { p_finca: finca.id, p_desde: c.fecha, p_hasta: h })
+            .then(r => ({ id: c.id, rows: r.data || [] }))))
+        res.push(...lote)
+      }
       if (!vivo) return
       const cmap = {}
       res.forEach(({ id, rows }) => {

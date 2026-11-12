@@ -416,11 +416,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       tomas.forEach(t => { const mm = {}; (byToma[t.id] || []).forEach(l => { const raw = porFecha[t.fecha + '|' + l.producto_id]; if (raw != null) mm[l.producto_id] = raw / fL }); cdm[t.id] = mm })
       setConsumoDiaToma(cdm)
       if (!esJefe) return
-      const res = await Promise.all(tomas.map((t, i) => {
-        const h = i === 0 ? hoyISO() : sumarDias(tomas[i - 1].fecha, -1)
-        return supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: t.fecha, p_hasta: h })
-          .then(r => ({ id: t.id, rows: r.data || [] }))
-      }))
+      // En tandas de 3 (no todas a la vez): pedir una llamada por conteo de golpe
+      // saturaba la API en fincas con muchos datos y devolvía 500. Mismos números.
+      const tareas = tomas.map((t, i) => ({ t, h: i === 0 ? hoyISO() : sumarDias(tomas[i - 1].fecha, -1) }))
+      const res = []
+      for (let k = 0; k < tareas.length; k += 3) {
+        if (!vivo) return
+        const lote = await Promise.all(tareas.slice(k, k + 3).map(({ t, h }) =>
+          supabase.schema('produccion').rpc('fn_movimiento_balanceado', { p_finca: finca.id, p_desde: t.fecha, p_hasta: h })
+            .then(r => ({ id: t.id, rows: r.data || [] }))))
+        res.push(...lote)
+      }
       if (!vivo) return
       const cmap = {}
       res.forEach(({ id, rows }) => {
