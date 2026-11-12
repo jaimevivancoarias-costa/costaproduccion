@@ -137,9 +137,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
   // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
   useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
-  // El detalle por lote depende de la fecha "hasta" y la finca; si cambian,
-  // se limpia la caché para no mostrar lotes de otro corte.
-  useEffect(() => { setLotesMov({}); setMovDet(null) }, [hasta, finca.id])
+  // El detalle por lote depende del RANGO (desde y hasta) y la finca; si cambian,
+  // se limpia la caché para no mostrar lotes/compras de otro rango (antes solo
+  // miraba "hasta", así que al cambiar la fecha inicial el detalle quedaba viejo).
+  useEffect(() => { setLotesMov({}); setMovDet(null) }, [desde, hasta, finca.id])
 
   // Detalle de Entró (ingresos) y Se aplicó (consumos) por fecha, para las
   // flechitas de esas columnas en "Qué se movió". En unidad de COMPRA (como
@@ -2165,6 +2166,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 <Fragment key={'a' + i}>
                                   <div style={{ fontSize: '12.5px', textAlign: 'left' }}>
                                     <span style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'}</span> {r.fecha ? corta(r.fecha) : '—'}
+                                    {esJefe && !r.es_conteo && (
+                                      <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
+                                        style={{ display: 'block', marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                        Corregir precio
+                                      </button>
+                                    )}
                                   </div>
                                   <div style={cel}>{val(r.entro)}</div>
                                   {esJefe && <div style={cel}>{r.costo_unitario != null ? dineroExacto(r.costo_unitario) : '—'}</div>}
