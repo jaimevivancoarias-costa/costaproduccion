@@ -98,7 +98,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [aplicoDet, setAplicoDet] = useState({})   // insumoId -> [{fecha, cant}] consumos del rango (unidad de compra)
   const [corrige, setCorrige] = useState(null)     // { insumoId, fecha, plazo, actual } lote en corrección de precio
   const [corrPrecio, setCorrPrecio] = useState('') // nuevo precio (por unidad de compra)
-  const [corrAdelante, setCorrAdelante] = useState(false)  // false = solo este período · true = de ahí en adelante
+  const [corrModo, setCorrModo] = useState('ingreso')  // 'ingreso' = solo ese ingreso (no toca catálogo) · 'periodo' = catálogo del período · 'adelante' = catálogo de ahí en adelante
   const [guardandoCorr, setGuardandoCorr] = useState(false)
   const [minimos, setMinimos] = useState({})       // insumoId -> stock mínimo (unidad de aplicación)
   const [conteos, setConteos] = useState([])
@@ -1173,7 +1173,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     }
     setCorrige({ insumoId, fecha: lote.fecha, plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
     setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
-    setCorrAdelante(false)
+    // Compra: por defecto corrige SOLO ese ingreso (no toca el catálogo). Conteo:
+    // no hay ingreso que corregir, así que va al catálogo del período.
+    setCorrModo(lote.es_conteo ? 'periodo' : 'ingreso')
   }
 
   // Corregir el precio de un lote: arregla el catálogo del período (o de ahí
@@ -1185,10 +1187,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const insId = corrige.insumoId
     setGuardandoCorr(true)
     setAviso({ tipo: 'ok', texto: 'Corrigiendo y recalculando consumos… puede tardar unos segundos.' })
-    const { error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_insumo', {
-      p_finca: finca.id, p_insumo: insId, p_fecha: corrige.fecha,
-      p_plazo: corrige.plazo, p_nuevo_compra: v, p_adelante: corrAdelante,
-    })
+    // 'ingreso' = corrige SOLO ese ingreso (su costo_unitario) y re-congela los
+    // consumos, sin tocar el catálogo ni los otros lotes. 'periodo'/'adelante'
+    // corrigen el catálogo (comportamiento viejo, para conteos o cambios de lista).
+    const { error } = corrModo === 'ingreso'
+      ? await supabase.schema('produccion').rpc('fn_corregir_ingreso_insumo', {
+          p_finca: finca.id, p_insumo: insId, p_fecha: corrige.fecha,
+          p_precio_viejo: corrige.actual, p_nuevo: v,
+        })
+      : await supabase.schema('produccion').rpc('fn_corregir_precio_lote_insumo', {
+          p_finca: finca.id, p_insumo: insId, p_fecha: corrige.fecha,
+          p_plazo: corrige.plazo, p_nuevo_compra: v, p_adelante: corrModo === 'adelante',
+        })
     if (error) { setGuardandoCorr(false); setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
     setCorrige(null)
     await cargar()
@@ -2151,21 +2161,27 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)}
                                   style={{ ...entrada, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
                               </div>
+                              {corrModo !== 'ingreso' && (
                               <div>
                                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
                                 <Seg valor={corrige.plazo}
                                      onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))}
                                      opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
                               </div>
+                              )}
                               <div>
                                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
-                                <Seg valor={corrAdelante ? 'adelante' : 'solo'}
-                                     onCambio={v => setCorrAdelante(v === 'adelante')}
-                                     opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
+                                <Seg valor={corrModo}
+                                     onCambio={v => setCorrModo(v)}
+                                     opciones={corrige.esConteo
+                                       ? [['periodo', 'Solo este período'], ['adelante', 'De ahí en adelante']]
+                                       : [['ingreso', 'Solo este ingreso'], ['adelante', 'Catálogo en adelante']]} />
                               </div>
                             </div>
                             <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
-                              {corrAdelante
+                              {corrModo === 'ingreso'
+                                ? 'Corrige SOLO el precio de esta compra y recalcula sus consumos. No toca el catálogo ni los otros lotes.'
+                                : corrModo === 'adelante'
                                 ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.'
                                 : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
                             </div>
