@@ -2298,7 +2298,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     )
                   })()}
                   {/* Precio (una línea, con plazo corto). Detalle completo al desplegar. */}
-                  {esJefe && <Celda derecha gris>{f.precio ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(f.precio)}{precioInfo[f.insumo_id] ? <span style={{ color: '#a7b4c1', fontWeight: 400, fontSize: '11px' }}> · {PLAZO_LBL[precioInfo[f.insumo_id].plazo]}</span> : ''}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>}
+                  {esJefe && (() => {
+                    // Precio en la MISMA unidad que el saldo: si se ve "Como se aplica"
+                    // y el insumo convierte (ej. saco → gramos), el precio por unidad de
+                    // compra se divide por el factor para mostrarlo por unidad de aplicación
+                    // (ej. $273,125/saco → $0,0219/g). dineroExacto da hasta 4 decimales.
+                    const fac = factores[f.insumo_id]
+                    const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
+                    const factor = (unidadSaldo === 'aplica' && conv) ? (fac.factor || 1) : 1
+                    return (
+                    <Celda derecha gris>{f.precio ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(f.precio / factor)}{precioInfo[f.insumo_id] ? <span style={{ color: '#a7b4c1', fontWeight: 400, fontSize: '11px' }}> · {PLAZO_LBL[precioInfo[f.insumo_id].plazo]}</span> : ''}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>
+                    )
+                  })()}
                   {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
                   {esJefe && (
                     <div style={{ padding: '6px 10px', borderLeft: '0.5px solid #f6f9fb',
