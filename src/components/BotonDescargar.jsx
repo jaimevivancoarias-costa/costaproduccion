@@ -19,7 +19,15 @@ export default function BotonDescargar({ desde, hasta, setDesde, setHasta, onPDF
 
   useEffect(() => {
     if (!abierto) return
-    const fuera = e => { if (ref.current && !ref.current.contains(e.target)) setAbierto(false) }
+    const fuera = e => {
+      if (!ref.current || ref.current.contains(e.target)) return
+      // El calendario nativo del <input type="date"> se dibuja FUERA del menú,
+      // así que al elegir un día el clic cae fuera de ref y antes cerraba el
+      // menú ("se salía") sin alcanzar a guardar la fecha → quedaba la vieja.
+      // Si el foco sigue en un campo del menú (el date input abierto), no cerrar.
+      if (ref.current.contains(document.activeElement)) return
+      setAbierto(false)
+    }
     document.addEventListener('mousedown', fuera)
     return () => document.removeEventListener('mousedown', fuera)
   }, [abierto])
