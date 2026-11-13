@@ -1963,6 +1963,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </Caja>
           )}
 
+          {!contando && vista === 'movimientos' && esJefe && movs.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '30px', flexWrap: 'wrap',
+                          marginTop: '10px', paddingTop: '11px', borderTop: '1px solid ' + BORDE, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: '13px', color: GRIS }}>Consumo del rango <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(consumoRango)}</b></span>
+              <span style={{ fontSize: '13px', color: GRIS }}>Valor de la bodega <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(valorBodega)}</b></span>
+            </div>
+          )}
+
           {!contando && modoMov === 'fechas' && movs.length > 0 && (
             <div style={{ fontSize: '12px', color: GRIS, marginTop: '10px', lineHeight: 1.55 }}>
               <b style={{ fontWeight: 600, color: NAVY }}>{colFinal}</b> es el saldo al <b style={{ fontWeight: 600 }}>final del rango</b> que elegiste (no el de hoy): cambia según las fechas. Cuadra con <i>Saldo ini + Ingresos − Consumo</i>; si dentro del rango hubo un conteo con descuadre (por ejemplo un robo), el saldo refleja ese conteo físico.

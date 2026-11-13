@@ -2341,6 +2341,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             )})}
           </Tabla>
 
+          {esJefe && movs.length > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '30px', flexWrap: 'wrap',
+                          marginTop: '10px', paddingTop: '11px', borderTop: '1px solid ' + BORDE, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ fontSize: '13px', color: GRIS }}>Consumo del rango <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(consumoRango)}</b></span>
+              <span style={{ fontSize: '13px', color: GRIS }}>Valor de la bodega <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(valorBodega)}</b></span>
+            </div>
+          )}
+
           {renderConteosAnteriores()}
         </>
 
