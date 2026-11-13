@@ -1118,9 +1118,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       <div style={{ display: 'flex', gap: '22px', marginBottom: '18px', flexWrap: 'wrap', alignItems: 'center' }}>
         <TabU on={seccion === 'bodega'} onClick={() => setSeccion('bodega')}>Bodega</TabU>
         <TabU on={seccion === 'ingresos'} onClick={() => { setSeccion('ingresos'); setContando(false) }}>Ingresos</TabU>
-        {seccion === 'bodega' && !contando && !cargando && (
+        {seccion === 'bodega' && !contando && (
           <div style={{ marginLeft: 'auto', display: 'flex', gap: '9px', alignItems: 'center' }}>
-            {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            {esJefe && <BotonDescargar cargando={cargando} onPDF={exportarPDF} onExcel={exportarExcel} />}
             {esJefe && <button onClick={() => setBajaOpen(true)} style={{ ...btn, color: ROJO, borderColor: '#e7cccb' }}>Dar de baja</button>}
             <button onClick={() => { setContoDespues(false); setContando(true) }} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL }}>
               {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}

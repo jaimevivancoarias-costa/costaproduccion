@@ -1567,9 +1567,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             Bodega de {String(finca.nombre).toUpperCase()}.
           </p>
         </div>
-        {seccion === 'bodega' && !contando && !cargando && (
+        {seccion === 'bodega' && !contando && (
           <div style={{ display: 'flex', gap: '9px', alignItems: 'center' }}>
-            {esJefe && <BotonDescargar desde={desde} hasta={hasta} setDesde={setDesde} setHasta={setHasta} onPDF={exportarPDF} onExcel={exportarExcel} />}
+            {esJefe && <BotonDescargar cargando={cargando} onPDF={exportarPDF} onExcel={exportarExcel} />}
             {esJefe && <button onClick={() => setBajaOpen(true)} style={{ padding: '9px 15px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid #e7cccb', borderRadius: '9px', background: 'white', color: ROJO, cursor: 'pointer' }}>Dar de baja</button>}
             <Btn primario onClick={() => { setContoDespues(false); setContando(true); }}>
               {primeraVez ? 'Cargar inventario inicial' : 'Contar la bodega'}

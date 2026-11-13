@@ -8,7 +8,7 @@ import { useState, useRef, useEffect } from 'react'
 // (Se aceptan props viejas desde/hasta/conRango por compatibilidad; se ignoran.)
 const NAVY = '#022847', BORDE = '#dce6ef', FAINT = '#9fb0bf'
 
-export default function BotonDescargar({ onPDF, onExcel }) {
+export default function BotonDescargar({ onPDF, onExcel, cargando = false }) {
   const [abierto, setAbierto] = useState(false)
   const ref = useRef(null)
 
@@ -21,8 +21,9 @@ export default function BotonDescargar({ onPDF, onExcel }) {
 
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
-      <button onClick={() => setAbierto(a => !a)} style={btn}>
-        Descargar <span style={{ fontSize: '11px', color: FAINT }}>▾</span>
+      <button onClick={() => !cargando && setAbierto(a => !a)} disabled={cargando}
+              style={{ ...btn, opacity: cargando ? 0.55 : 1, cursor: cargando ? 'default' : 'pointer' }}>
+        {cargando ? 'Preparando…' : 'Descargar'} <span style={{ fontSize: '11px', color: FAINT }}>▾</span>
       </button>
       {abierto && (
         <div style={menu}>
