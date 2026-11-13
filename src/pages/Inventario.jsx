@@ -880,6 +880,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const valorBodega = useMemo(
     () => saldos.reduce((t, s) => t + Number(valorFifo[s.insumo_id] || 0), 0),
     [saldos, valorFifo])
+  // Consumo $ del rango (= suma de consumo_dolares de "Qué se movió"), igual que el PDF.
+  const consumoRango = useMemo(
+    () => (movs || []).reduce((t, m) => t + Number(m.consumo_dolares || 0), 0),
+    [movs])
   // Precio FIFO real por insumo (valor del saldo ÷ saldo) para costear faltantes.
   const precioFifoDe = id => { const sld = Number(saldos.find(s => s.insumo_id === id)?.saldo); return sld > 0.0001 ? Number(valorFifo[id] || 0) / sld : (precios[id] || 0) }
   const conSaldo = saldos.filter(s => Number(s.saldo) > 0).length
@@ -1929,6 +1933,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               )}
             </div>
           </div>
+          {esJefe && !cargando && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '11px', marginBottom: '14px' }}>
+              <Kpi titulo="Consumo del rango" valor={dinero(consumoRango)} />
+              <Kpi titulo="Valor de la bodega" valor={dinero(valorBodega)} nota="al final del rango" />
+            </div>
+          )}
           <Tabla
             caja min={minMov}
             columnas={colsMov}

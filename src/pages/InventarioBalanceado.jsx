@@ -543,6 +543,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
   const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifo[s.producto_id] || 0), 0), [saldos, valorFifo])
+  // Consumo $ del rango (= suma de consumo_dolares de "Qué se movió"), igual que el PDF.
+  const consumoRango = useMemo(() => (movs || []).reduce((t, m) => t + Number(m.consumo_dolares || 0), 0), [movs])
   // Precio FIFO real por producto (valor del saldo ÷ saldo) para costear faltantes.
   const precioFifoDe = id => { const sld = Number(saldos.find(s => s.producto_id === id)?.saldo); return sld > 0.0001 ? Number(valorFifo[id] || 0) / sld : (precios[id] || 0) }
   const filas = useMemo(() => saldos.map(s => {
@@ -1514,6 +1516,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               </Caja>
             </>
           ) : (
+            <>
+            {esJefe && (
+              <div style={{ display: 'flex', gap: '11px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                <Kpi k="Consumo del rango" v={dinero(consumoRango)} />
+                <Kpi k="Valor de la bodega" v={dinero(valorBodega)} />
+              </div>
+            )}
             <Caja>
               <Encabezado gtc={gMov} cols={colsMov} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
@@ -1959,6 +1968,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 )
               })}
             </Caja>
+            </>
           )}
 
           {!contando && modoMov === 'fechas' && movs.length > 0 && (
