@@ -2440,8 +2440,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     const fac = factores[f.insumo_id]
                     const conv = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && cap1(UNIDAD[fac.uApp] || fac.uApp) !== cap1(UNIDAD[f.unidad] || f.unidad)
                     const factor = (unidadSaldo === 'aplica' && conv) ? (fac.factor || 1) : 1
+                    // Precio REAL del stock (FIFO ponderado = valor / saldo), no el de catálogo.
+                    const pReal = precioFifoDe(f.insumo_id)
                     return (
-                    <Celda derecha gris>{f.precio ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(f.precio / factor)}{precioInfo[f.insumo_id] ? <span style={{ color: '#a7b4c1', fontWeight: 400, fontSize: '11px' }}> · {PLAZO_LBL[precioInfo[f.insumo_id].plazo]}</span> : ''}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>
+                    <Celda derecha gris>{pReal > 0 ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(pReal / factor)}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>
                     )
                   })()}
                   {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
@@ -2544,24 +2546,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                         <div style={{ fontSize: '11px', color: GRIS, textTransform: 'uppercase', marginBottom: '10px' }}>Cuánto queda a cada precio</div>
                         <div style={{ position: 'relative', paddingLeft: '20px' }}>
                           <div style={{ position: 'absolute', left: '4px', top: '8px', bottom: '8px', width: '1.5px', background: BORDE }} />
-                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))).map((L, i) => {
-                            const distinto = ruling > 0 && (L.costo == null || Math.abs(Number(L.costo) - ruling) > 0.005)
-                            return (
+                          {[...(lotes[f.insumo_id] || [])].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1))).map((L, i) => (
                             <div key={i} style={{ position: 'relative', padding: '7px 0' }}>
-                              <div style={{ position: 'absolute', left: '-20px', top: '12px', width: '9px', height: '9px', borderRadius: '50%', background: distinto ? '#FAEEDA' : '#fff', border: '1.5px solid ' + (distinto ? '#d9a441' : AZUL) }} />
+                              <div style={{ position: 'absolute', left: '-20px', top: '12px', width: '9px', height: '9px', borderRadius: '50%', background: '#fff', border: '1.5px solid ' + AZUL }} />
                               <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
                                 <span style={{ fontWeight: 600, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                                <span style={{ fontSize: '11.5px', color: distinto ? '#9a6a12' : GRIS }}>{L.costo == null ? 'sin precio' : dineroExacto(L.costo)}{L.fecha && L.plazo != null ? ' · ' + (PLAZO_LBL[L.plazo] || 'contado') : ''} · {L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}{distinto && L.costo != null ? ' · no es el que rige' : ''}</span>
+                                <span style={{ fontSize: '11.5px', color: GRIS }}>{L.costo == null ? 'sin precio' : dineroExacto(L.costo)} · {L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}</span>
                                 {i === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
                               </div>
-                              {distinto && esJefeGlobal && (
-                                <button onClick={() => setRecosForm(recosForm === f.insumo_id ? null : f.insumo_id)}
-                                  style={{ marginTop: '6px', fontSize: '12px', padding: '4px 10px', background: '#F5D9A6', color: '#6b3f08', border: 'none', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 500 }}>
-                                  Recostear a {dineroExacto(ruling)}
-                                </button>
-                              )}
                             </div>
-                          )})}
+                          ))}
                         </div>
                       </div>
                     )}
