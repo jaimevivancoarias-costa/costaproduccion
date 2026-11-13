@@ -336,6 +336,16 @@ export default function App() {
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button onClick={() => window.location.reload()} title="Actualizar datos" aria-label="Actualizar datos"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.65)',
+                     display: 'inline-flex', alignItems: 'center', padding: '4px', lineHeight: 0 }}
+            onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,0.95)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.65)'}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+          </button>
           {esJefe && <Campana corrPend={corrPend} reponer={reponer} dieselPend={dieselPend} onIr={irACorreccion}
                        onIrReponer={id => { setFincaId(id); irModulo('inventario') }}
                        onIrDiesel={d => { setFincaId(d.finca_id); if (d.zona) setZona(d.zona); irModulo('diesel') }} />}
