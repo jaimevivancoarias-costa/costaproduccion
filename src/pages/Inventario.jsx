@@ -218,11 +218,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     }))
   }, [conteos])
   // En modo "por conteo", el período elegido fija desde/hasta.
+  // Solo en "Qué se movió": en "Cuánto hay" el rango lo fija el efecto de alDia.
   useEffect(() => {
+    if (vista === 'saldo') return
     if (modoMov !== 'conteo') return
     const p = periodos[periodoSel]
     if (p) { setDesde(p.desde); setHasta(p.hasta) }
-  }, [modoMov, periodoSel, periodos])
+  }, [vista, modoMov, periodoSel, periodos])
 
   // El conteo "fija" el saldo: si el período arranca justo en un conteo (o en el
   // inventario inicial), ese valor contado ES el Saldo Ini. — en todos los modos.
