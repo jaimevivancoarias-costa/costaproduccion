@@ -127,6 +127,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [cortesAbiertos, setCortesAbiertos] = useState({})  // toma_id -> abierto/cerrado
   const [saldoAntes, setSaldoAntes] = useState({})    // insumo_id -> saldo víspera del último conteo del rango (Por fechas)
   const [conteosRango, setConteosRango] = useState({}) // insumo_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
+  const [compDet, setCompDet] = useState({})          // 'insumoId|fecha' -> { open, lotes } composición real del conteo
   const [conteoDet, setConteoDet] = useState(null)    // insumo_id con el detalle del conteo abierto
   const [busq, setBusq] = useState('')            // filtro por nombre de insumo (dropdown)
   const coincide = nom => !busq || String(nom).toLowerCase().includes(busq.toLowerCase())
@@ -1151,6 +1152,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         .rpc('fn_lotes_movimiento_insumo', { p_finca: finca.id, p_insumo: insumoId, p_hasta: hasta, p_desde: desde })
       setLotesMov(m => ({ ...m, [insumoId]: error ? [] : (data || []) }))
     }
+  }
+
+  // "Ver composición" de un conteo: los lotes reales (a su precio) que había cuando
+  // se contó. Se pide a demanda a fn_fifo_sim_insumo (saldo al día del conteo).
+  async function toggleComp(insumoId, fecha) {
+    const k = insumoId + '|' + fecha
+    const cur = compDet[k]
+    if (cur?.open) { setCompDet(mm => ({ ...mm, [k]: { ...cur, open: false } })); return }
+    if (cur?.lotes) { setCompDet(mm => ({ ...mm, [k]: { ...cur, open: true } })); return }
+    setCompDet(mm => ({ ...mm, [k]: { open: true, lotes: null } }))
+    const { data } = await supabase.schema('produccion')
+      .rpc('fn_fifo_sim_insumo', { p_finca: finca.id, p_insumo: insumoId, p_hasta: fecha })
+    setCompDet(mm => ({ ...mm, [k]: { open: true, lotes: data || [] } }))
   }
 
   // Abrir el formulario de corrección de precio de un lote concreto.
@@ -2263,20 +2277,47 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', minWidth: '300px', maxWidth: '400px' }}>
                         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Conteos en el rango</div>
                         <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '10px' }}>Qué pasó en cada conteo{uLabel ? ` · en ${uLabel}` : ''}</div>
-                        {cs.map((c, i) => (
-                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none', fontSize: '12.5px' }}>
-                            <span>{corta(c.fecha)}
-                              {c.esInicial && <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '1px 6px' }}>INICIAL</span>}
-                              <span style={{ color: GRIS, fontSize: '11.5px' }}> · {c.antes == null ? '' : `sistema ${val(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{val(c.conto)}</b></span></span>
-                            {c.dif == null ? <span /> : c.esInicial ? (
-                              <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: AZUL }}>Inicial</span>
-                            ) : (
-                              <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
-                                {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + val(Math.abs(c.dif))}
-                              </span>
+                        {cs.map((c, i) => {
+                          const ck = m.insumo_id + '|' + c.fecha
+                          const cd = compDet[ck]
+                          return (
+                          <div key={i} style={{ padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', fontSize: '12.5px' }}>
+                              <span>{corta(c.fecha)}
+                                {c.esInicial && <span style={{ marginLeft: '6px', fontSize: '10px', fontWeight: 600, color: AZUL, background: '#E6F1FB', borderRadius: '5px', padding: '1px 6px' }}>INICIAL</span>}
+                                <span style={{ color: GRIS, fontSize: '11.5px' }}> · {c.antes == null ? '' : `sistema ${val(c.antes)} → `}contó <b style={{ color: NAVY, fontWeight: 700 }}>{val(c.conto)}</b></span></span>
+                              {c.dif == null ? <span /> : c.esInicial ? (
+                                <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: AZUL }}>Inicial</span>
+                              ) : (
+                                <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
+                                  {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + val(Math.abs(c.dif))}
+                                </span>
+                              )}
+                            </div>
+                            {esJefe && !c.esInicial && (
+                              <button onClick={() => toggleComp(m.insumo_id, c.fecha)}
+                                style={{ marginTop: '4px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                {cd?.open ? '▾ ' : '▸ '}Ver composición
+                              </button>
+                            )}
+                            {esJefe && cd?.open && (
+                              <div style={{ marginTop: '6px', paddingLeft: '10px', borderLeft: '2px solid #eef3f8' }}>
+                                {!cd.lotes ? <div style={{ fontSize: '11px', color: GRIS }}>Cargando…</div>
+                                 : cd.lotes.length === 0 ? <div style={{ fontSize: '11px', color: GRIS }}>Sin stock a esa fecha.</div>
+                                 : <>
+                                   <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '4px' }}>Lo que había, a su precio real:</div>
+                                   {cd.lotes.map((l, j) => (
+                                     <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', padding: '2px 0' }}>
+                                       <span style={{ fontWeight: 500 }}>{val(l.cantidad)}{uLabel ? ' ' + uLabel : ''}</span>
+                                       <span style={{ color: NAVY }}>{dineroExacto(l.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</span>
+                                     </div>
+                                   ))}
+                                 </>}
+                              </div>
                             )}
                           </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     )
                   })()}
