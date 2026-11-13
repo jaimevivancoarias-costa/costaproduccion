@@ -2111,51 +2111,44 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     const todos = lotesMov[m.insumo_id] || []
                     const rows = todos.filter(r => !r.informativo).sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                     const audit = todos.filter(r => r.informativo).sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
-                    const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
-                    const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
-                    const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
-                    const tQueda = rows.reduce((s, r) => s + Number(r.queda || 0), 0)
-                    const tCosto = rows.reduce((s, r) => s + Number(r.consumio || 0) * Number(r.costo_unitario || 0), 0)
+                    const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'   // 5 col (lo usa la auditoría de abajo)
+                    const gtcStock = esJefe ? '2.6fr 1fr 1.2fr 1.2fr' : '2.6fr 1fr'
+                    const tCant = rows.reduce((s, r) => s + Number(r.queda || 0), 0)
+                    const tValor = rows.reduce((s, r) => s + Number(r.queda || 0) * Number(r.costo_unitario || 0), 0)
                     const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                     const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
                     const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
-                    const primerQueda = rows.findIndex(r => Number(r.queda) > 0)
                     return (
                       <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
                         <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
-                          Se consume del más viejo primero{uLabel ? ` · en ${uLabel}` : ''}
+                          Lo que queda en bodega, por lote y a su precio real{uLabel ? ` · en ${uLabel}` : ''}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: gtcStock, gap: '15px 18px', alignItems: 'baseline' }}>
                           <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
-                          <div style={cab}>Entró</div>
-                          <div style={cab}>Consumió</div>
-                          <div style={cab}>Queda</div>
-                          {esJefe && <div style={cab}>Costo consumido</div>}
+                          <div style={cab}>Cantidad</div>
+                          {esJefe && <div style={cab}>Precio</div>}
+                          {esJefe && <div style={cab}>Valor</div>}
                           {rows.map((r, i) => (
                             <Fragment key={i}>
                               <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
-                                {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
-                                {i === primerQueda && Number(r.queda) > 0 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                                {esJefe && (
+                                <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Saldo de conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
+                                {esJefe && !r.es_conteo && (
                                   <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
                                     style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                     Corregir precio
                                   </button>
                                 )}
                               </div>
-                              <div style={cel}>{val(r.entro)}</div>
-                              <div style={{ ...cel, color: Number(r.consumio) ? ROJO : '#c3d0db' }}>{Number(r.consumio) ? val(r.consumio) : '—'}</div>
                               <div style={{ ...cel, fontWeight: 600 }}>{val(r.queda)}</div>
-                              {esJefe && <div style={cel}>{dinero(Number(r.consumio) * Number(r.costo_unitario || 0))}</div>}
+                              {esJefe && <div style={cel}>{r.costo_unitario != null ? dineroExacto(r.costo_unitario) : '—'}</div>}
+                              {esJefe && <div style={cel}>{dinero(Number(r.queda || 0) * Number(r.costo_unitario || 0))}</div>}
                             </Fragment>
                           ))}
                           <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-                          <div style={tot}>{val(tEntro)}</div>
-                          <div style={tot}>{val(tCons)}</div>
-                          <div style={tot}>{val(tQueda)}</div>
-                          {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                          <div style={tot}>{val(tCant)}</div>
+                          {esJefe && <div style={tot} />}
+                          {esJefe && <div style={tot}>{dinero(tValor)}</div>}
                         </div>
                         {audit.length > 0 && (() => {
                           // Orden: más viejo primero; para misma fecha, el inicial antes que la compra.
