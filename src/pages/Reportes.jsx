@@ -887,7 +887,12 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
                 <span style={{ textAlign: 'center', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {dinero(g.costo)}
                   {!g.mixto && g.cantidad ? <span style={{ display: 'block', fontSize: '10px', color: '#a7b4c1', fontWeight: 400 }}>
-                    {balView ? dineroU(perSacoBal(g)) + ' /saco' : dineroU(g.costo / g.cantidad) + ' /' + unidadCel(g)}
+                    {(() => {
+                      if (balView) return dineroU(perSacoBal(g)) + ' /saco'
+                      const ld = loteDatos(g)
+                      const varios = ld && new Set(ld.rows.map(x => Number(x.precio).toFixed(4))).size > 1
+                      return varios ? 'Varios precios' : dineroU(g.costo / g.cantidad) + ' /' + unidadCel(g)
+                    })()}
                   </span> : null}
                 </span>
               )}
