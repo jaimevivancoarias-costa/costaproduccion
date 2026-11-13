@@ -1628,9 +1628,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>al</span>
               <input type="date" value={alDia} max={hoyISO()}
-                     onChange={e => setAlDia(e.target.value)} style={entrada} />
+                     onChange={e => { const v = e.target.value; setAlDia(v); if (v) { setDesde(primeroDelMes(v)); setHasta(v) } }} style={entrada} />
               {alDia !== hoyISO() && (
-                <button onClick={() => setAlDia(hoyISO())}
+                <button onClick={() => { const v = hoyISO(); setAlDia(v); setDesde(primeroDelMes(v)); setHasta(v) }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer',
                                  fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>
                   volver a hoy

@@ -1292,7 +1292,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               placeholder="Buscar balanceado…" />
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
-                al <input type="date" value={alDia} max={hoyISO()} onChange={e => setAlDia(e.target.value)} style={inp} />
+                al <input type="date" value={alDia} max={hoyISO()} onChange={e => { const v = e.target.value; setAlDia(v); if (v) { setDesde(primeroDelMes(v)); setHasta(v) } }} style={inp} />
               </label>
             ) : (
               <>
