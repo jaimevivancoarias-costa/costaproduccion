@@ -123,7 +123,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [aplicoDet, setAplicoDet] = useState({})       // producto_id -> [{fecha, cant}] consumos del rango (sacos)
   const [saldoAntes, setSaldoAntes] = useState({})     // producto_id -> saldo víspera del último conteo del rango (Por fechas)
   const [conteosRango, setConteosRango] = useState({}) // producto_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
-  const [flujoRango, setFlujoRango] = useState({})     // producto_id -> {apertura:[{fecha,costo,cant}], compras:[{fecha,costo,cant}]} flujo del rango sin conteo
+  const [flujoRango, setFlujoRango] = useState({})     // producto_id -> {consumo:[{precio,sacos}], queda:[{precio,cant}]} flujo del rango sin conteo
   const [compDet, setCompDet] = useState({})           // 'productoId|fecha' -> {open, lotes} composición de un conteo
   // Carga por adelantado (no al abrir la flecha) los conteos del rango y el
   // saldo la víspera de cada uno, para que el ▸ salga al instante.
@@ -961,28 +961,23 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const cRow = lotes.find(r => r.es_conteo)
       const sinConteoEnRango = !cRow || !cRow.fecha || !desde || cRow.fecha < desde
       if (sinConteoEnRango) {
-        // No hubo conteo dentro del rango. En "Por fechas" armamos el flujo completo
-        // (igual que insumos): stock de apertura (lo que quedaba la víspera, por lote
-        // y precio real) + compras del rango. El consumo se reparte FIFO en pantalla.
+        // No hubo conteo dentro del rango. Armamos el flujo completo por precio, que
+        // CUADRA con el renglón por construcción: Consumió = consumo del rango por
+        // lote (fn_reporte_consumo_lotes, cuadra con el renglón) y Queda = stock al
+        // cierre por lote (fn_lotes_balanceado(hasta), cuadra con el saldo). De ahí
+        // Entró = Consumió + Queda, así el Total da Inicial+Ingresos / Consumo / Saldo.
         if (desde) {
-          const [apR, coR] = await Promise.all([
-            supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: sumarDias(desde, -1) }),
-            supabase.schema('produccion').from('ingreso_balanceado')
-              .select('fecha, ingreso_balanceado_linea(producto_id, cantidad, costo_unitario)')
-              .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta),
+          const [cpR, qdR] = await Promise.all([
+            supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta }),
+            supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: hasta }),
           ])
-          const apertura = (apR.data || [])
+          const consumo = (cpR.data || []).map(x => ({ precio: x.precio == null ? null : Number(x.precio), sacos: Number(x.sacos || 0) }))
+          const queda = (qdR.data || [])
             .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
-            .map(x => ({ fecha: x.fecha, costo: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
-          const compras = []
-          ;(coR.data || []).forEach(g => (g.ingreso_balanceado_linea || []).forEach(l => {
-            if (l.producto_id === productoId && Number(l.cantidad) > 0.0001)
-              compras.push({ fecha: g.fecha, costo: l.costo_unitario == null ? null : Number(l.costo_unitario), cant: Number(l.cantidad) })
-          }))
-          setFlujoRango(m => ({ ...m, [productoId]: { apertura, compras } }))
+            .map(x => ({ precio: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
+          setFlujoRango(m => ({ ...m, [productoId]: { consumo, queda } }))
           setLotesRange(m => ({ ...m, [productoId]: null }))
         } else {
-          // "Al día" (sin rango): mantenemos el consumo por lote recortado.
           const { data: rg } = await supabase.schema('produccion')
             .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
           setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
@@ -1692,28 +1687,23 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     {!lotesMov[m.producto_id] ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
                     ) : flujoRango[m.producto_id] ? (() => {
-                      // No hubo conteo dentro del rango: flujo completo del rango por
-                      // lote (stock de apertura + compras), repartiendo el consumo FIFO
-                      // del más viejo primero. Entró = apertura + compras;
-                      // Queda = Entró − Consumió; cuadra con el renglón.
+                      // No hubo conteo dentro del rango: flujo por precio. Consumió =
+                      // consumo del rango por lote (cuadra con el renglón); Queda =
+                      // stock al cierre por lote (cuadra con el saldo); Entró =
+                      // Consumió + Queda. Así el Total da Inicial+Ingresos / Consumo /
+                      // Saldo, sin reconstruir nada a mano.
                       const fl = flujoRango[m.producto_id]
-                      const agrupa = (arr, origen) => {
-                        const g = {}
-                        arr.forEach(x => {
-                          const k = origen + '|' + (x.costo == null ? 'sp' : x.costo)
-                          if (!g[k]) g[k] = { origen, costo: x.costo, fecha: x.fecha, cant: 0 }
-                          g[k].cant += Number(x.cant || 0)
-                          if ((x.fecha || '0') < (g[k].fecha || '0')) g[k].fecha = x.fecha
-                        })
-                        return Object.values(g).sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : 1)
-                      }
-                      const orden = [...agrupa(fl.apertura || [], 'ini'), ...agrupa(fl.compras || [], 'compra')]
-                      let _c = Math.abs(Number(m.consumo || 0))
-                      const filas = orden.map(r => { const c = Math.max(0, Math.min(_c, r.cant)); _c -= c; return { ...r, cons: c, queda: r.cant - c } })
-                      const tEntro = filas.reduce((s, r) => s + r.cant, 0)
+                      const mp = {}
+                      const key = p => p == null ? 'sp' : Number(p).toFixed(6)
+                      ;(fl.consumo || []).forEach(x => { const k = key(x.precio); (mp[k] = mp[k] || { precio: x.precio, cons: 0, queda: 0 }).cons += Number(x.sacos || 0) })
+                      ;(fl.queda || []).forEach(x => { const k = key(x.precio); (mp[k] = mp[k] || { precio: x.precio, cons: 0, queda: 0 }).queda += Number(x.cant || 0) })
+                      const filas = Object.values(mp).map(r => ({ ...r, entro: r.cons + r.queda }))
+                        .filter(r => r.entro > 0.0001)
+                        .sort((a, b) => Number(b.precio || 0) - Number(a.precio || 0))
+                      const tEntro = filas.reduce((s, r) => s + r.entro, 0)
                       const tCons = filas.reduce((s, r) => s + r.cons, 0)
                       const tQueda = filas.reduce((s, r) => s + r.queda, 0)
-                      const tCosto = filas.reduce((s, r) => s + r.cons * Number(r.costo || 0), 0)
+                      const tCosto = filas.reduce((s, r) => s + r.cons * Number(r.precio || 0), 0)
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
@@ -1723,7 +1713,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
                           <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
-                            Lo que había al empezar + lo que entró, y cómo se repartió el consumo (lo más viejo primero) · en sacos
+                            Por cada precio: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
                             <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
@@ -1734,14 +1724,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             {filas.map((r, i) => (
                               <Fragment key={'fl' + i}>
                                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                  <div style={{ fontWeight: 600 }}>{r.origen === 'ini' ? 'Saldo inicial' : 'Compra ' + (r.fecha ? corta(r.fecha) : '')}</div>
-                                  {esJefe && r.costo != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo)} /saco</div>}
+                                  <div style={{ fontWeight: 600 }}>{r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco'}</div>
                                   {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
                                 </div>
-                                <div style={cel}>{limpio(r.cant)}</div>
+                                <div style={cel}>{limpio(r.entro)}</div>
                                 <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
                                 <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
-                                {esJefe && <div style={cel}>{dinero(r.cons * Number(r.costo || 0))}</div>}
+                                {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
                               </Fragment>
                             ))}
                             <div style={{ ...tot, textAlign: 'left' }}>Total</div>
