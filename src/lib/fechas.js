@@ -119,3 +119,12 @@ export const dineroExacto = n => {
   if (n === null || n === undefined || n === '') return ''
   return '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 }
+
+// Precio "usable": 2 decimales para montos >= $1 (ej. $114,85); hasta 4 solo para
+// los chiquitos por gramo/ml (ej. $0,0262) para que no queden en $0,00.
+export const dineroU = n => {
+  if (n === null || n === undefined || n === '') return ''
+  return Math.abs(Number(n)) >= 1
+    ? dinero(n)
+    : '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+}

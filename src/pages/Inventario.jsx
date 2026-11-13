@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
-import { hoyISO, corta, dinero, dineroExacto, numDec, sumarDias } from '../lib/fechas'
+import { hoyISO, corta, dinero, dineroU, numDec, sumarDias } from '../lib/fechas'
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
@@ -996,10 +996,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         const u = uPres.toLowerCase()
         const costos = [...new Set(lts.map(L => L.costo == null ? 's/p' : Number(L.costo).toFixed(6)))]
         if (costos.length === 1) {
-          const pr = lts[0].costo == null ? 'sin precio' : dineroExacto(lts[0].costo)
+          const pr = lts[0].costo == null ? 'sin precio' : dineroU(lts[0].costo)
           lotesLinea = `Lotes: ${lts.map(L => limpio(L.cantidad)).join(' · ')} ${u} (todos a ${pr})`
         } else {
-          lotesLinea = 'Lotes: ' + lts.map(L => `${limpio(L.cantidad)} a ${L.costo == null ? 's/p' : dineroExacto(L.costo)}`).join(' · ')
+          lotesLinea = 'Lotes: ' + lts.map(L => `${limpio(L.cantidad)} a ${L.costo == null ? 's/p' : dineroU(L.costo)}`).join(' · ')
         }
       }
       const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
@@ -1031,7 +1031,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
         saldoHoy: `${limpio(saldoCierre)} ${uPres.toLowerCase()}`,
         saldoEquiv: convR ? `= ${limpio(saldoCierre * factorN)} ${uApp.toLowerCase()}` : '',
-        precio: precio ? dineroExacto(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
+        precio: precio ? dineroU(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
@@ -2155,7 +2155,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 )}
                               </div>
                               <div style={{ ...cel, fontWeight: 600 }}>{val(r.queda)}</div>
-                              {esJefe && <div style={cel}>{r.costo_unitario != null ? dineroExacto(r.costo_unitario) : '—'}</div>}
+                              {esJefe && <div style={cel}>{r.costo_unitario != null ? dineroU(r.costo_unitario) : '—'}</div>}
                               {esJefe && <div style={cel}>{dinero(Number(r.queda || 0) * Number(r.costo_unitario || 0))}</div>}
                             </Fragment>
                           ))}
@@ -2198,7 +2198,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 <Fragment key={'a' + i}>
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                                     <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
-                                    {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}{r.es_conteo ? ' · catálogo' : ''}</div>}
+                                    {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroU(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}{r.es_conteo ? ' · catálogo' : ''}</div>}
                                     {esJefe && (
                                       <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
                                         style={{ marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
@@ -2227,7 +2227,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                               Corregir precio · {corrige.esConteo ? 'Conteo' : 'Compra'} {corta(corrige.fecha)}
                             </div>
                             <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
-                              Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()} · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este insumo.
+                              Actual {corrige.actual != null ? dineroU(corrige.actual) : 's/p'} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()} · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este insumo.
                             </div>
                             <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                               <div>
@@ -2312,7 +2312,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                      return Object.entries(g).sort((a, b) => Number(b[0]) - Number(a[0])).map(([p, q], j) => (
                                        <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', padding: '2px 0' }}>
                                          <span style={{ fontWeight: 500 }}>{val(q)}{uLabel ? ' ' + uLabel : ''}</span>
-                                         <span style={{ color: NAVY }}>{dineroExacto(Number(p))} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</span>
+                                         <span style={{ color: NAVY }}>{dineroU(Number(p))} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</span>
                                        </div>
                                      ))
                                    })()}
@@ -2443,7 +2443,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     // Precio REAL del stock (FIFO ponderado = valor / saldo), no el de catálogo.
                     const pReal = precioFifoDe(f.insumo_id)
                     return (
-                    <Celda derecha gris>{pReal > 0 ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroExacto(pReal / factor)}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>
+                    <Celda derecha gris>{pReal > 0 ? <span style={{ fontSize: '15px', fontWeight: 500, color: NAVY, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{dineroU(pReal / factor)}</span> : <span style={{ color: GRIS }}>Sin precio</span>}</Celda>
                     )
                   })()}
                   {esJefe && <Celda derecha><span style={{ fontSize: '15px', fontWeight: 500, color: NAVY }}>{dinero(Number(valorFifo[f.insumo_id] || 0))}</span></Celda>}
@@ -2516,14 +2516,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 {recosForm === f.insumo_id && (
                   <div style={{ background: '#f6f9fb', padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9' }}>
                     <div style={{ fontSize: '13px', color: NAVY, marginBottom: '6px' }}>
-                      Recostear <b>{f.insumo}</b> al precio que rige: <b>{dineroExacto(ruling)}</b> /{cap1(UNIDAD[f.unidad] || f.unidad)}.
+                      Recostear <b>{f.insumo}</b> al precio que rige: <b>{dineroU(ruling)}</b> /{cap1(UNIDAD[f.unidad] || f.unidad)}.
                     </div>
                     <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px', lineHeight: 1.5 }}>
-                      Los lotes a otro precio (o sin precio) pasan a {dineroExacto(ruling)} (mantienen su fecha de compra; cambia precio y plazo) y se recostea el consumo de este insumo. Es re-ejecutable, pero no se deshace solo.
+                      Los lotes a otro precio (o sin precio) pasan a {dineroU(ruling)} (mantienen su fecha de compra; cambia precio y plazo) y se recostea el consumo de este insumo. Es re-ejecutable, pero no se deshace solo.
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <Btn primario onClick={() => recostear(f)} disabled={recosteando}>
-                        {recosteando ? 'Recosteando...' : `Recostear a ${dineroExacto(ruling)}`}
+                        {recosteando ? 'Recosteando...' : `Recostear a ${dineroU(ruling)}`}
                       </Btn>
                       <Btn onClick={() => setRecosForm(null)}>Mantener</Btn>
                     </div>
@@ -2551,7 +2551,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                               <div style={{ position: 'absolute', left: '-20px', top: '12px', width: '9px', height: '9px', borderRadius: '50%', background: '#fff', border: '1.5px solid ' + AZUL }} />
                               <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
                                 <span style={{ fontWeight: 600, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{limpio(L.cantidad)} {cap1(UNIDAD[f.unidad] || f.unidad)}</span>
-                                <span style={{ fontSize: '11.5px', color: GRIS }}>{L.costo == null ? 'sin precio' : dineroExacto(L.costo)} · {L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}</span>
+                                <span style={{ fontSize: '11.5px', color: GRIS }}>{L.costo == null ? 'sin precio' : dineroU(L.costo)} · {L.fecha ? 'compra ' + corta(L.fecha) : 'del conteo físico'}</span>
                                 {i === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
                               </div>
                             </div>
