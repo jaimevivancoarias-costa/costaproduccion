@@ -2123,7 +2123,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                   ) : (() => {
                     const todos = lotesMov[m.insumo_id] || []
-                    const rows = todos.filter(r => !r.informativo).sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                    const rows = todos.filter(r => !r.informativo && Number(r.queda) > 0.0001).sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                     const audit = todos.filter(r => r.informativo).sort((a, b) => ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1))
                     const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'   // 5 col (lo usa la auditoría de abajo)
                     const gtcStock = esJefe ? '2.6fr 1fr 1.2fr 1.2fr' : '2.6fr 1fr'
