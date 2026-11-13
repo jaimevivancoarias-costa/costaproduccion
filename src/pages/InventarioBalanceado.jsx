@@ -1516,13 +1516,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               </Caja>
             </>
           ) : (
-            <>
-            {esJefe && (
-              <div style={{ display: 'flex', gap: '11px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                <Kpi k="Consumo del rango" v={dinero(consumoRango)} />
-                <Kpi k="Valor de la bodega" v={dinero(valorBodega)} />
-              </div>
-            )}
             <Caja>
               <Encabezado gtc={gMov} cols={colsMov} />
               {movs.filter(m => coincide(m.producto) && (verSinInv || !esSinInvMov(m)))
@@ -1968,7 +1961,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 )
               })}
             </Caja>
-            </>
           )}
 
           {!contando && modoMov === 'fechas' && movs.length > 0 && (
