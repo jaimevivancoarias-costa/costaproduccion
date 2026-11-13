@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero, dineroU, numDec, sumarDias } from '../lib/fechas'
 import Ingresos from './Ingresos'
@@ -668,6 +668,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [guardandoAj, setGuardandoAj] = useState(false)
   const [corrUnidad, setCorrUnidad] = useState('compra')  // en qué unidad se escribe el saldo al corregir
   const [corrAjustes, setCorrAjustes] = useState([])       // correcciones (ajustes manuales) del insumo en edición
+  const ultimaCarga = useRef(0)                            // ts de la última carga, para el auto-actualizar al volver
 
   const cargar = useCallback(async () => {
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
@@ -820,10 +821,26 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
       setCargando(false)
+      ultimaCarga.current = Date.now()
     }
   }, [finca.id, alDia, desde, hasta, esJefe])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Auto-actualizar al volver a la pestaña/ventana: si varios editan a la vez,
+  // la pantalla queda con datos viejos. Al volver (y si no estás contando ni
+  // recién cargaste hace unos segundos), recarga solo. No molesta mientras contás.
+  useEffect(() => {
+    const alVolver = () => {
+      if (document.visibilityState === 'hidden') return
+      if (contando) return
+      if (Date.now() - ultimaCarga.current < 15000) return
+      cargar()
+    }
+    document.addEventListener('visibilitychange', alVolver)
+    window.addEventListener('focus', alVolver)
+    return () => { document.removeEventListener('visibilitychange', alVolver); window.removeEventListener('focus', alVolver) }
+  }, [contando, cargar])
 
   const primeraVez = conteos.length === 0
 

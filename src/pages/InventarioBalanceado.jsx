@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias, LIBRAS_POR_SACO } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
@@ -159,6 +159,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [corrPrecio, setCorrPrecio] = useState('')     // nuevo precio por saco
   const [corrAdelante, setCorrAdelante] = useState(false)
   const [guardandoCorr, setGuardandoCorr] = useState(false)
+  const ultimaCarga = useRef(0)                            // ts de la última carga, para el auto-actualizar al volver
 
   const cargar = useCallback(async () => {
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
@@ -267,10 +268,24 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       } catch { /* la autoría es opcional: si falla, la tabla igual se muestra */ }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
-    } finally { setCargando(false) }
+    } finally { setCargando(false); ultimaCarga.current = Date.now() }
   }, [finca.id, alDia, desde, hasta, esJefe])
 
   useEffect(() => { cargar() }, [cargar])
+
+  // Auto-actualizar al volver a la pestaña/ventana (si no estás contando ni
+  // recién cargaste), para no quedar con datos viejos cuando varios editan.
+  useEffect(() => {
+    const alVolver = () => {
+      if (document.visibilityState === 'hidden') return
+      if (contando) return
+      if (Date.now() - ultimaCarga.current < 15000) return
+      cargar()
+    }
+    document.addEventListener('visibilitychange', alVolver)
+    window.addEventListener('focus', alVolver)
+    return () => { document.removeEventListener('visibilitychange', alVolver); window.removeEventListener('focus', alVolver) }
+  }, [contando, cargar])
 
   const primeraVez = tomas.length === 0
 
