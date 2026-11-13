@@ -123,6 +123,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [aplicoDet, setAplicoDet] = useState({})       // producto_id -> [{fecha, cant}] consumos del rango (sacos)
   const [saldoAntes, setSaldoAntes] = useState({})     // producto_id -> saldo víspera del último conteo del rango (Por fechas)
   const [conteosRango, setConteosRango] = useState({}) // producto_id -> [{fecha, conto, antes, dif}] conteos del rango (Por fechas)
+  const [flujoRango, setFlujoRango] = useState({})     // producto_id -> {apertura:[{fecha,costo,cant}], compras:[{fecha,costo,cant}]} flujo del rango sin conteo
+  const [compDet, setCompDet] = useState({})           // 'productoId|fecha' -> {open, lotes} composición de un conteo
   // Carga por adelantado (no al abrir la flecha) los conteos del rango y el
   // saldo la víspera de cada uno, para que el ▸ salga al instante.
   useEffect(() => {
@@ -959,12 +961,32 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const cRow = lotes.find(r => r.es_conteo)
       const sinConteoEnRango = !cRow || !cRow.fecha || !desde || cRow.fecha < desde
       if (sinConteoEnRango) {
-        // El movimiento por lote arranca en un conteo ANTERIOR al rango, así que su
-        // "consumió" abarca meses previos. Mostramos el consumo DEL RANGO por lote
-        // (recortado), que cuadra con el renglón y con el reporte de Consumo.
-        const { data: rg } = await supabase.schema('produccion')
-          .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
-        setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
+        // No hubo conteo dentro del rango. En "Por fechas" armamos el flujo completo
+        // (igual que insumos): stock de apertura (lo que quedaba la víspera, por lote
+        // y precio real) + compras del rango. El consumo se reparte FIFO en pantalla.
+        if (desde) {
+          const [apR, coR] = await Promise.all([
+            supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: sumarDias(desde, -1) }),
+            supabase.schema('produccion').from('ingreso_balanceado')
+              .select('fecha, ingreso_balanceado_linea(producto_id, cantidad, costo_unitario)')
+              .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta),
+          ])
+          const apertura = (apR.data || [])
+            .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
+            .map(x => ({ fecha: x.fecha, costo: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
+          const compras = []
+          ;(coR.data || []).forEach(g => (g.ingreso_balanceado_linea || []).forEach(l => {
+            if (l.producto_id === productoId && Number(l.cantidad) > 0.0001)
+              compras.push({ fecha: g.fecha, costo: l.costo_unitario == null ? null : Number(l.costo_unitario), cant: Number(l.cantidad) })
+          }))
+          setFlujoRango(m => ({ ...m, [productoId]: { apertura, compras } }))
+          setLotesRange(m => ({ ...m, [productoId]: null }))
+        } else {
+          // "Al día" (sin rango): mantenemos el consumo por lote recortado.
+          const { data: rg } = await supabase.schema('produccion')
+            .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
+          setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
+        }
         setLotesPre(m => ({ ...m, [productoId]: [] }))
       } else if (cRow && cRow.fecha && desde && cRow.fecha > desde) {
         const { data: pre } = await supabase.schema('produccion')
@@ -976,6 +998,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         setLotesRange(m => ({ ...m, [productoId]: null }))
       }
     }
+  }
+
+  // "Ver composición" de un conteo: los lotes reales (a su precio) que había a esa
+  // fecha. Se pide a demanda a fn_lotes_balanceado (stock al día del conteo).
+  async function toggleComp(productoId, fecha) {
+    const k = productoId + '|' + fecha
+    const cur = compDet[k]
+    if (cur?.open) { setCompDet(mm => ({ ...mm, [k]: { ...cur, open: false } })); return }
+    if (cur?.lotes) { setCompDet(mm => ({ ...mm, [k]: { ...cur, open: true } })); return }
+    setCompDet(mm => ({ ...mm, [k]: { open: true, lotes: null } }))
+    const { data } = await supabase.schema('produccion')
+      .rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: fecha })
+    const lotes = (data || [])
+      .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
+      .map(x => ({ costo_unitario: x.costo_unitario, cantidad: x.cantidad }))
+    setCompDet(mm => ({ ...mm, [k]: { open: true, lotes } }))
   }
 
   async function iniciarCorreccion(productoId, lote) {
@@ -1653,7 +1691,68 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     <div style={{ flex: 1, minWidth: '340px' }}>
                     {!lotesMov[m.producto_id] ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
-                    ) : (Array.isArray(lotesRange[m.producto_id]) && lotesRange[m.producto_id].length > 0) ? (() => {
+                    ) : flujoRango[m.producto_id] ? (() => {
+                      // No hubo conteo dentro del rango: flujo completo del rango por
+                      // lote (stock de apertura + compras), repartiendo el consumo FIFO
+                      // del más viejo primero. Entró = apertura + compras;
+                      // Queda = Entró − Consumió; cuadra con el renglón.
+                      const fl = flujoRango[m.producto_id]
+                      const agrupa = (arr, origen) => {
+                        const g = {}
+                        arr.forEach(x => {
+                          const k = origen + '|' + (x.costo == null ? 'sp' : x.costo)
+                          if (!g[k]) g[k] = { origen, costo: x.costo, fecha: x.fecha, cant: 0 }
+                          g[k].cant += Number(x.cant || 0)
+                          if ((x.fecha || '0') < (g[k].fecha || '0')) g[k].fecha = x.fecha
+                        })
+                        return Object.values(g).sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : 1)
+                      }
+                      const orden = [...agrupa(fl.apertura || [], 'ini'), ...agrupa(fl.compras || [], 'compra')]
+                      let _c = Math.abs(Number(m.consumo || 0))
+                      const filas = orden.map(r => { const c = Math.max(0, Math.min(_c, r.cant)); _c -= c; return { ...r, cons: c, queda: r.cant - c } })
+                      const tEntro = filas.reduce((s, r) => s + r.cant, 0)
+                      const tCons = filas.reduce((s, r) => s + r.cons, 0)
+                      const tQueda = filas.reduce((s, r) => s + r.queda, 0)
+                      const tCosto = filas.reduce((s, r) => s + r.cons * Number(r.costo || 0), 0)
+                      const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
+                      const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
+                      const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
+                      const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
+                      const primerQueda = filas.findIndex(r => r.queda > 0.0001)
+                      return (
+                        <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
+                          <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
+                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
+                            Lo que había al empezar + lo que entró, y cómo se repartió el consumo (lo más viejo primero) · en sacos
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
+                            <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                            <div style={cab}>Entró</div>
+                            <div style={cab}>Consumió</div>
+                            <div style={cab}>Queda</div>
+                            {esJefe && <div style={cab}>Costo consumido</div>}
+                            {filas.map((r, i) => (
+                              <Fragment key={'fl' + i}>
+                                <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                  <div style={{ fontWeight: 600 }}>{r.origen === 'ini' ? 'Saldo inicial' : 'Compra ' + (r.fecha ? corta(r.fecha) : '')}</div>
+                                  {esJefe && r.costo != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo)} /saco</div>}
+                                  {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                </div>
+                                <div style={cel}>{limpio(r.cant)}</div>
+                                <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
+                                <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
+                                {esJefe && <div style={cel}>{dinero(r.cons * Number(r.costo || 0))}</div>}
+                              </Fragment>
+                            ))}
+                            <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                            <div style={tot}>{limpio(tEntro)}</div>
+                            <div style={tot}>{limpio(tCons)}</div>
+                            <div style={tot}>{limpio(tQueda)}</div>
+                            {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                          </div>
+                        </div>
+                      )
+                    })() : (Array.isArray(lotesRange[m.producto_id]) && lotesRange[m.producto_id].length > 0) ? (() => {
                       // No hubo conteo dentro del rango: mostramos el consumo DEL MES
                       // por lote/precio (recortado), que cuadra con el renglón.
                       const rows = [...lotesRange[m.producto_id]].sort((a, b) => Number(b.precio) - Number(a.precio))
@@ -1689,6 +1788,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     })() : lotesMov[m.producto_id].length === 0 ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>No hay lotes para mostrar.</div>
                     ) : (() => {
+                      // Si estamos en "Por fechas" y no hay conteo dentro del rango, el
+                      // detalle correcto es el flujo (arriba); si aún no cargó, esperamos.
+                      const _cRango = lotesMov[m.producto_id].find(r => r.es_conteo && r.fecha && (!desde || r.fecha >= desde))
+                      if (!_cRango && desde) return <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
                       const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
@@ -1810,18 +1913,49 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px', minWidth: '300px', maxWidth: '400px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Conteos en el rango</div>
                           <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '10px' }}>Qué pasó en cada conteo · en sacos</div>
-                          {cs.map((c, i) => (
-                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none', fontSize: '12.5px' }}>
-                              <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.esInicial ? 'cargó' : (c.antes == null ? 'contó' : `sistema ${limpio(c.antes)} → contó`)} <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
-                              {c.esInicial ? (
-                                <span style={{ fontWeight: 600, whiteSpace: 'nowrap', fontSize: '11px', color: AZUL, background: '#eaf2fb', borderRadius: '20px', padding: '2px 9px' }}>Inicial</span>
-                              ) : c.dif == null ? <span /> : (
-                                <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
-                                  {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(c.dif))}
-                                </span>
+                          {cs.map((c, i) => {
+                            const ck = m.producto_id + '|' + c.fecha
+                            const cd = compDet[ck]
+                            return (
+                            <div key={i} style={{ padding: '8px 0', borderTop: i ? '0.5px solid #f1f6f9' : 'none' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '14px', alignItems: 'baseline', fontSize: '12.5px' }}>
+                                <span>{corta(c.fecha)} <span style={{ color: GRIS, fontSize: '11.5px' }}>· {c.esInicial ? 'cargó' : (c.antes == null ? 'contó' : `sistema ${limpio(c.antes)} → contó`)} <b style={{ color: NAVY, fontWeight: 700 }}>{limpio(c.conto)}</b></span></span>
+                                {c.esInicial ? (
+                                  <span style={{ fontWeight: 600, whiteSpace: 'nowrap', fontSize: '11px', color: AZUL, background: '#eaf2fb', borderRadius: '20px', padding: '2px 9px' }}>Inicial</span>
+                                ) : c.dif == null ? <span /> : (
+                                  <span style={{ fontWeight: 700, whiteSpace: 'nowrap', color: Math.abs(c.dif) < 0.001 ? VERDE : (c.dif < 0 ? ROJO : AMBAR) }}>
+                                    {Math.abs(c.dif) < 0.001 ? 'Cuadró' : (c.dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(c.dif))}
+                                  </span>
+                                )}
+                              </div>
+                              {esJefe && !c.esInicial && (
+                                <button onClick={() => toggleComp(m.producto_id, c.fecha)}
+                                  style={{ marginTop: '4px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                  {cd?.open ? '▾ ' : '▸ '}Ver composición
+                                </button>
+                              )}
+                              {esJefe && cd?.open && (
+                                <div style={{ marginTop: '6px', paddingLeft: '10px', borderLeft: '2px solid #eef3f8' }}>
+                                  {!cd.lotes ? <div style={{ fontSize: '11px', color: GRIS }}>Cargando…</div>
+                                   : cd.lotes.length === 0 ? <div style={{ fontSize: '11px', color: GRIS }}>Sin stock a esa fecha.</div>
+                                   : <>
+                                     <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '4px' }}>Lo que había, a su precio real:</div>
+                                     {(() => {
+                                       const g = {}
+                                       cd.lotes.forEach(l => { const p = Number(l.costo_unitario); g[p] = (g[p] || 0) + Number(l.cantidad || 0) })
+                                       return Object.entries(g).sort((a, b) => Number(b[0]) - Number(a[0])).map(([p, q], j) => (
+                                         <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', padding: '2px 0' }}>
+                                           <span style={{ fontWeight: 500 }}>{limpio(q)} sacos</span>
+                                           <span style={{ color: NAVY }}>{dineroExacto(Number(p))} /saco</span>
+                                         </div>
+                                       ))
+                                     })()}
+                                   </>}
+                                </div>
                               )}
                             </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       )
                     })()}
