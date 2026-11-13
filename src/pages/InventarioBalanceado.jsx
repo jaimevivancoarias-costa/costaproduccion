@@ -46,6 +46,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
+  // En "Cuánto hay", el PDF/Excel se ancla a la fecha "al": usa el mes de esa fecha
+  // (01 → al), para que bodega y consumo del reporte cuadren con lo de pantalla.
+  useEffect(() => { if (vista === 'saldo' && alDia) { setDesde(primeroDelMes(alDia)); setHasta(alDia) } }, [vista, alDia])
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
   useEffect(() => { setLotesMov({}); setLotesPre({}); setLotesRange({}); setMovDet(null) }, [hasta, finca.id])
 

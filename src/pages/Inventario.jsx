@@ -138,6 +138,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
   // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
   useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
+  // En "Cuánto hay", el PDF/Excel se ancla a la fecha "al": usa el mes de esa fecha
+  // (01 → al), para que el valor de bodega y el consumo del reporte cuadren con lo
+  // que se ve en pantalla. El usuario ya no elige fechas en el botón de descarga.
+  useEffect(() => { if (vista === 'saldo' && alDia) { setDesde(primeroDelMes(alDia)); setHasta(alDia) } }, [vista, alDia])
   // El detalle por lote depende del RANGO (desde y hasta) y la finca; si cambian,
   // se limpia la caché para no mostrar lotes/compras de otro rango (antes solo
   // miraba "hasta", así que al cambiar la fecha inicial el detalle quedaba viejo).
