@@ -2306,12 +2306,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                  : cd.lotes.length === 0 ? <div style={{ fontSize: '11px', color: GRIS }}>Sin stock a esa fecha.</div>
                                  : <>
                                    <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '4px' }}>Lo que había, a su precio real:</div>
-                                   {cd.lotes.map((l, j) => (
-                                     <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', padding: '2px 0' }}>
-                                       <span style={{ fontWeight: 500 }}>{val(l.cantidad)}{uLabel ? ' ' + uLabel : ''}</span>
-                                       <span style={{ color: NAVY }}>{dineroExacto(l.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</span>
-                                     </div>
-                                   ))}
+                                   {(() => {
+                                     const g = {}
+                                     cd.lotes.forEach(l => { const p = Number(l.costo_unitario); g[p] = (g[p] || 0) + Number(l.cantidad || 0) })
+                                     return Object.entries(g).sort((a, b) => Number(b[0]) - Number(a[0])).map(([p, q], j) => (
+                                       <div key={j} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '12px', padding: '2px 0' }}>
+                                         <span style={{ fontWeight: 500 }}>{val(q)}{uLabel ? ' ' + uLabel : ''}</span>
+                                         <span style={{ color: NAVY }}>{dineroExacto(Number(p))} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</span>
+                                       </div>
+                                     ))
+                                   })()}
                                  </>}
                               </div>
                             )}
