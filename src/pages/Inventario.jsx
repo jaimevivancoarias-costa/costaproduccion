@@ -2186,8 +2186,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 <Fragment key={'a' + i}>
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                                     <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
-                                    {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}</div>}
-                                    {esJefe && (
+                                    {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}{r.es_conteo ? ' · catálogo' : ''}</div>}
+                                    {/* Solo las COMPRAS se corrigen en aislado ("solo este ingreso"). El inicial
+                                        se valora al catálogo, así que corregirlo cambiaría el catálogo y pisaría
+                                        otras compras/consumos — por eso no lleva botón. */}
+                                    {esJefe && !r.es_conteo && (
                                       <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
                                         style={{ marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                         Corregir precio
