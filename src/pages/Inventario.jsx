@@ -1190,10 +1190,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     const insId = corrige.insumoId
     setGuardandoCorr(true)
     setAviso({ tipo: 'ok', texto: 'Corrigiendo y recalculando consumos… puede tardar unos segundos.' })
-    // 'ingreso' = corrige SOLO ese ingreso (su costo_unitario) y re-congela los
-    // consumos, sin tocar el catálogo ni los otros lotes. 'periodo'/'adelante'
-    // corrigen el catálogo (comportamiento viejo, para conteos o cambios de lista).
-    const { error } = corrModo === 'ingreso'
+    // CONTEO/INICIAL = se valora al catálogo: fn_corregir_precio_conteo_insumo
+    // ajusta el catálogo de ese período y re-congela, SIN pisar el precio de las
+    // compras (ese era el bug). COMPRA 'ingreso' = corrige SOLO ese ingreso. El
+    // modo 'adelante' (catálogo a futuro) sigue usando el recosteo clásico.
+    const { error } = corrige.esConteo
+      ? await supabase.schema('produccion').rpc('fn_corregir_precio_conteo_insumo', {
+          p_finca: finca.id, p_insumo: insId, p_fecha: corrige.fecha, p_nuevo_compra: v,
+        })
+      : corrModo === 'ingreso'
       ? await supabase.schema('produccion').rpc('fn_corregir_ingreso_insumo', {
           p_finca: finca.id, p_insumo: insId, p_fecha: corrige.fecha,
           p_precio_viejo: corrige.actual, p_nuevo: v,
@@ -2187,10 +2192,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                                     <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Inicial' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
                                     {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /{(UNIDAD[m.unidad] || m.unidad || '').toLowerCase()}{r.es_conteo ? ' · catálogo' : ''}</div>}
-                                    {/* Solo las COMPRAS se corrigen en aislado ("solo este ingreso"). El inicial
-                                        se valora al catálogo, así que corregirlo cambiaría el catálogo y pisaría
-                                        otras compras/consumos — por eso no lleva botón. */}
-                                    {esJefe && !r.es_conteo && (
+                                    {esJefe && (
                                       <button onClick={() => iniciarCorreccion(m.insumo_id, r)}
                                         style={{ marginTop: '2px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                         Corregir precio
@@ -2226,7 +2228,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)}
                                   style={{ ...entrada, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
                               </div>
-                              {corrModo !== 'ingreso' && (
+                              {!corrige.esConteo && corrModo !== 'ingreso' && (
                               <div>
                                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
                                 <Seg valor={corrige.plazo}
@@ -2234,21 +2236,21 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                      opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
                               </div>
                               )}
+                              {!corrige.esConteo && (
                               <div>
                                 <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
                                 <Seg valor={corrModo}
                                      onCambio={v => setCorrModo(v)}
-                                     opciones={corrige.esConteo
-                                       ? [['periodo', 'Solo este período'], ['adelante', 'De ahí en adelante']]
-                                       : [['ingreso', 'Solo este ingreso'], ['adelante', 'Catálogo en adelante']]} />
+                                     opciones={[['ingreso', 'Solo este ingreso'], ['adelante', 'Catálogo en adelante']]} />
                               </div>
+                              )}
                             </div>
                             <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
-                              {corrModo === 'ingreso'
+                              {corrige.esConteo
+                                ? 'El inicial/conteo se valora al catálogo: ajusta el precio del catálogo de ese período y recalcula sus consumos. NO pisa el precio de las compras.'
+                                : corrModo === 'ingreso'
                                 ? 'Corrige SOLO el precio de esta compra y recalcula sus consumos. No toca el catálogo ni los otros lotes.'
-                                : corrModo === 'adelante'
-                                ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.'
-                                : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
+                                : 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.'}
                             </div>
                             <div style={{ display: 'flex', gap: '9px' }}>
                               <Btn primario onClick={guardarCorreccionPrecio} disabled={guardandoCorr}>
