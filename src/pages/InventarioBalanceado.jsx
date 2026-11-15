@@ -644,7 +644,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const nombre = (s && s.producto) || (m && m.producto) || ''
       if (!coincide(nombre)) return
       const saldoAlDia = s ? Number(s.saldo) : 0
-      const sinInv = Math.abs(saldoAlDia) < 0.001 && !((lotes[id] || []).length)
+      // "Sin inventario" se mide por el saldo al CIERRE del rango (no el de hoy):
+      // un producto con stock al 31/10 pero 0 hoy igual debe salir en el reporte.
+      const saldoFinFiltro = m ? Number(m.saldo_final) : saldoAlDia
+      const sinInv = Math.abs(saldoFinFiltro) < 0.001 && !((lotes[id] || []).length)
       if (sinInv && !filaTieneMov(m) && !verSinInv) return
 
       const precio = precios[id] || 0

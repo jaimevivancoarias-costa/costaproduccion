@@ -997,7 +997,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const nombre = (s && s.insumo) || (m && m.insumo) || ''
       if (!coincide(nombre)) return
       const saldoAlDia = s ? Number(s.saldo) : 0
-      const sinInv = Math.abs(saldoAlDia) < 0.001 && !((lotes[id] || []).length)
+      // "Sin inventario" se mide por el saldo al CIERRE del rango (no el de hoy):
+      // un insumo con stock al cierre pero 0 hoy igual debe salir en el reporte.
+      const saldoFinFiltro = m ? Number(m.saldo_final) : saldoAlDia
+      const sinInv = Math.abs(saldoFinFiltro) < 0.001 && !((lotes[id] || []).length)
       if (sinInv && !tieneMov(m) && !verSinInv) return
 
       const fac = factores[id]
