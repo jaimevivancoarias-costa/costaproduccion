@@ -43,14 +43,18 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
   const [piscinas, setPiscinas] = useState([])
   const [productos, setProductos] = useState([])
   const [celdas, setCeldas] = useState({})       // clave `${piscinaId}|${fecha}`
-  // piscinas que TIENEN alimentación con producto esta semana (para avisar si figuran sin sembrar)
+  // piscinas que TIENEN alimentación con producto esta semana, con la ULTIMA
+  // fecha alimentada (para avisar solo si esa comida NO la cubre un ciclo:
+  // sin sembrar / fecha futura, o alimentada DESPUES del cierre).
   const piscinasConAlim = useMemo(() => {
-    const s = new Set()
+    const m = new Map()  // piscinaId -> ultima fecha (YYYY-MM-DD) con alimentación > 0
+    const add = (pid, fecha) => { const prev = m.get(pid); if (!prev || fecha > prev) m.set(pid, fecha) }
     for (const [k, v] of Object.entries(celdas)) {
-      if (v && v.productoId && parseFloat(String(v.libras).replace(',', '.')) > 0) s.add(k.split('|')[0])
-      ;(v?.extras || []).forEach(e => { if (e.productoId && parseFloat(String(e.libras).replace(',', '.')) > 0) s.add(k.split('|')[0]) })
+      const [pid, fecha] = k.split('|')
+      if (v && v.productoId && parseFloat(String(v.libras).replace(',', '.')) > 0) add(pid, fecha)
+      ;(v?.extras || []).forEach(e => { if (e.productoId && parseFloat(String(e.libras).replace(',', '.')) > 0) add(pid, fecha) })
     }
-    return s
+    return m
   }, [celdas])
   const [dias, setDias] = useState({})           // estado por fecha
   const [diasId, setDiasId] = useState({})       // id de la fila dia_registro por fecha
@@ -1190,7 +1194,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
                     <Td>
                       <Estado
                         fila={p} eventos={eventos[p.piscinaId] || []}
-                        conAlim={piscinasConAlim.has(p.piscinaId)}
+                        alimHasta={piscinasConAlim.get(p.piscinaId) || null}
                         puede={!soloLectura && modo === 'registrar'}
                         onElegir={tipo => abrirEvento(tipo, p)}
                         onDeshacer={ev => borrarEvento(p, ev)}
@@ -1763,13 +1767,18 @@ function Laboratorio({ fila, laboratorios, puede, onElegir, onNuevo }) {
 // Columna de estado: es la columna ESTADO PISCINA del Excel.
 // Si la piscina no tiene ciclo, lo unico posible es sembrarla.
 // ---------------------------------------------------------------------
-function Estado({ fila, eventos, conAlim, puede, onElegir, onDeshacer, onEditar, onEditarTransf }) {
+function Estado({ fila, eventos, alimHasta, puede, onElegir, onDeshacer, onEditar, onEditarTransf }) {
   // Tras cosechar o transferir, la piscina queda vacia y puede volver a
   // sembrarse esta misma semana.
   const vacia = !fila.cicloId || fila.cosechadaEstaSemana
-  // Aviso: la piscina figura sin sembrar esta semana pero SÍ tiene alimentación
-  // registrada (ej. fecha de siembra puesta en el futuro). Para que no se esconda sin avisar.
-  const avisoAlim = (vacia && conAlim) ? (
+  // Aviso: hay alimentación esta semana que NINGUN ciclo cubre. Dos casos:
+  //  - piscina sin ciclo / fecha de siembra en el futuro (el bug original:
+  //    la comida se escondia sin avisar).
+  //  - alimentada DESPUES del cierre (se alimentó una piscina ya vacia).
+  // NO avisa cuando comió y luego se cerró/transfirió la misma semana (comida
+  // ANTES del cierre): ahi la comida esta en un ciclo real que si la cubre.
+  const alimPostCierre = !!(fila.cosechadaEstaSemana && fila.fechaCierre && alimHasta && alimHasta > fila.fechaCierre)
+  const avisoAlim = (((!fila.cicloId && alimHasta) || alimPostCierre)) ? (
     <div style={{ fontSize: '11px', color: '#854F0B', background: '#FBF8F0', border: '0.5px solid #ecd9b4', borderRadius: '6px', padding: '5px 8px', marginTop: '5px', lineHeight: 1.35 }}>
       Hay alimentación registrada esta semana pero la piscina figura sin sembrar. Revisa la fecha de siembra.
     </div>
