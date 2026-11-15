@@ -669,9 +669,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [corrUnidad, setCorrUnidad] = useState('compra')  // en qué unidad se escribe el saldo al corregir
   const [corrAjustes, setCorrAjustes] = useState([])       // correcciones (ajustes manuales) del insumo en edición
   const ultimaCarga = useRef(0)                            // ts de la última carga, para el auto-actualizar al volver
+  const cargaSeq = useRef(0)                               // nº de orden de carga: solo la última escribe en pantalla (evita carreras)
 
   const cargar = useCallback(async () => {
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
+    const myId = ++cargaSeq.current
     setCargando(true); setAviso(null)
     try {
       const [{ data: s, error: eS }, { data: m }, { data: p }, { data: t }, { data: ins }, { data: vf }, { data: ovFactor }, { data: dpz }, { data: plzAct }, { data: lt }, { data: vfc }] = await Promise.all([
@@ -778,6 +780,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
       // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
+      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó: descartar esta
       // iniRango se limpia aquí y se llena abajo (la apertura se dibuja con el
       // saldo_inicial mientras tanto, no con un valor viejo).
       setSaldos(s || []); setPrecios(pr); setConteos(t || []); setMovs(m || []); setIniRango({})

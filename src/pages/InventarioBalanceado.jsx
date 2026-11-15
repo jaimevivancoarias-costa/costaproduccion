@@ -160,9 +160,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [corrAdelante, setCorrAdelante] = useState(false)
   const [guardandoCorr, setGuardandoCorr] = useState(false)
   const ultimaCarga = useRef(0)                            // ts de la última carga, para el auto-actualizar al volver
+  const cargaSeq = useRef(0)                               // nº de orden de carga: solo la última escribe en pantalla (evita carreras)
 
   const cargar = useCallback(async () => {
     if (!alDia || !desde || !hasta) { setCargando(false); return }   // fecha vacía: no consultar
+    const myId = ++cargaSeq.current
     setCargando(true); setAviso(null)
     try {
       const [{ data: s, error: e }, { data: vf }, { data: m }, { data: p }, { data: t }, { data: dpz }, { data: par }, { data: lt }, { data: pzr }, { data: vfc }, { data: cuR }] = await Promise.all([
@@ -226,6 +228,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // reporte de Consumo. Fallback a lo que trae fn_movimiento_balanceado.
       const cuMap = {}; (cuR || []).forEach(x => { cuMap[x.producto_id] = Number(x.consumo_usd) })
       const movFifo = (m || []).map(x => cuMap[x.producto_id] != null ? { ...x, consumo_dolares: cuMap[x.producto_id] } : x)
+      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó: descartar esta
       // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
       // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
       setSaldos(s || []); setValorFifo(vfm); setValorFifoCierre(vfmCierre); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo); setIniRango({})
