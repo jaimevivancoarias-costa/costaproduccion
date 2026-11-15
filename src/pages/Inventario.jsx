@@ -700,11 +700,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
         // Lotes por precio (FIFO): solo se piden si es jefe/contadora.
         esJefe ? supabase.schema('produccion').rpc('fn_lotes_insumo', { p_finca: finca.id, p_hasta: alDia }) : Promise.resolve({ data: [] }),
-        // Valor del stock A LA FECHA DE CIERRE del rango (para el reporte). Si el
-        // rango termina hoy, reusamos la valorización de arriba.
-        hasta !== alDia
-          ? supabase.schema('produccion').rpc('fn_valor_bodega_fifo', { p_finca: finca.id, p_hasta: hasta })
-          : Promise.resolve({ data: null }),
+        // Valor del stock A LA FECHA DE CIERRE del rango (para el reporte). SIEMPRE
+        // a la fecha hasta, así el reporte nunca mezcla el valor de hoy con el saldo
+        // del cierre (CAL-P24: saldo 31/10 pero valor de hoy).
+        supabase.schema('produccion').rpc('fn_valor_bodega_fifo', { p_finca: finca.id, p_hasta: hasta }),
       ])
       if (eS) throw eS
 
@@ -764,10 +763,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const vfMap = {}
       ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
       setValorFifo(vfMap)
-      // Valor del stock a la fecha de cierre del rango (para el reporte). Si el
-      // rango termina hoy, vfc viene null y se reusa el de hoy.
+      // Valor del stock a la fecha de CIERRE del rango (para el reporte), siempre
+      // a la fecha hasta (vfc). Nunca se mezcla con el valor de hoy.
       const vfMapCierre = {}
-      ;(vfc || vf || []).forEach(x => { vfMapCierre[x.insumo_id] = Number(x.valor) })
+      ;(vfc || []).forEach(x => { vfMapCierre[x.insumo_id] = Number(x.valor) })
       setValorFifoCierre(vfMapCierre)
 
       const ltm = {}

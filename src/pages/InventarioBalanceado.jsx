@@ -182,11 +182,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         // Plazo que rige por producto (para verificar QUÉ precio se aplica).
         supabase.schema('produccion').from('plazo_producto')
           .select('producto_id, plazo, vigente_desde').eq('finca_id', finca.id).is('vigente_hasta', null),
-        // Valor del stock A LA FECHA DE CIERRE del rango (para el reporte), si el
-        // rango no termina hoy. Si termina hoy, reusamos la valorización de arriba.
-        hasta !== alDia
-          ? supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: hasta })
-          : Promise.resolve({ data: null }),
+        // Valor del stock A LA FECHA DE CIERRE del rango (para el reporte), SIEMPRE
+        // a la fecha hasta, así el reporte nunca mezcla el valor de hoy con el saldo
+        // del cierre.
+        supabase.schema('produccion').rpc('fn_valor_bodega_bal_fifo', { p_finca: finca.id, p_hasta: hasta }),
         // Consumo $ del rango por lote (saldo-diferencia), TODOS los productos en
         // una sola consulta. Cuadra al centavo con el reporte de Consumo.
         esJefe ? supabase.schema('produccion').rpc('fn_consumo_rango_bal', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }) : Promise.resolve({ data: [] }),
@@ -220,7 +219,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const vfm = {}; (vf || []).forEach(x => { vfm[x.producto_id] = Number(x.valor) })
       // Valor del stock a la fecha de cierre del rango (para el reporte). Si el
       // rango termina hoy, es el mismo de arriba (vfc viene null).
-      const vfmCierre = {}; (vfc || vf || []).forEach(x => { vfmCierre[x.producto_id] = Number(x.valor) })
+      const vfmCierre = {}; (vfc || []).forEach(x => { vfmCierre[x.producto_id] = Number(x.valor) })
       const dgm = {}; (dpz || []).forEach(x => { (dgm[x.producto_id] = dgm[x.producto_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
       const ltm = {}; (lt || []).forEach(x => { (ltm[x.producto_id] = ltm[x.producto_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
       // Consumo $ del renglón = consumo DEL RANGO por lote (fn_consumo_rango_bal,
