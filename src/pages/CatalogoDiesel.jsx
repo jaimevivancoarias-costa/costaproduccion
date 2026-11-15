@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, numDec } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
@@ -10,9 +10,10 @@ const precio6 = n => '$' + (Number(n) || 0).toLocaleString('es-EC', { minimumFra
 // cada proveedor vende uno o dos tipos (B / Premium) a una o varias fincas,
 // y cada combinación proveedor·finca·tipo tiene su precio con vigencia.
 // Dos sub-menús:
-//   - Fincas: qué paga cada finca, por tipo y proveedor (editar precio).
-//   - Proveedores: cada proveedor, a qué fincas y a qué precio; alta de
-//     proveedor y cambio de precio EN BLOQUE (grupos de fincas) para el mes.
+//   - Fincas: qué paga cada finca, por tipo y proveedor (+ precios "sin
+//     proveedor" del catálogo anterior, que se conservan). Filtro por finca.
+//   - Proveedores: cada proveedor, a qué fincas y a qué precio; alta/edición
+//     de proveedor y cambio de precio EN BLOQUE (grupos de fincas / todas).
 // El precio del ingreso se congela desde aquí (precio sugerido del proveedor).
 
 const NAVY = '#022847'
@@ -29,47 +30,53 @@ export default function CatalogoDiesel({ fincas }) {
   const [tab, setTab] = useState('fincas')
   const [tipos, setTipos] = useState([])
   const [proveedores, setProveedores] = useState([])
-  const [precios, setPrecios] = useState([])   // [{ proveedor_id, finca_id, tipo_id, precio, desde }]
+  const [precios, setPrecios] = useState([])        // [{ proveedor_id, finca_id, tipo_id, precio, desde }]
+  const [legacy, setLegacy] = useState([])          // [{ finca_id, tipo_id, precio, desde }] sin proveedor
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
   const [guardando, setGuardando] = useState(false)
 
-  const [edit, setEdit] = useState(null)        // { proveedorId, fincaId, tipoId, precio, desde } (Fincas)
-  const [hist, setHist] = useState(null)        // `${proveedorId}|${fincaId}|${tipoId}` con historial abierto
+  const [fincaSel, setFincaSel] = useState('todas')
+  const [edit, setEdit] = useState(null)            // { proveedorId, fincaId, tipoId, precio, desde } (Fincas)
+  const [hist, setHist] = useState(null)            // `${proveedorId||'0'}|${fincaId}|${tipoId}`
   const [histRows, setHistRows] = useState([])
   const [histNombres, setHistNombres] = useState({})
-  const [expandir, setExpandir] = useState(null)   // proveedorId expandido (Proveedores)
-  const [alta, setAlta] = useState(null)        // alta de proveedor
-  const [bulk, setBulk] = useState(null)        // cambio en bloque { proveedorId, tipoId, grupos:[{precio,fincaIds}], desde }
+  const [expandir, setExpandir] = useState(null)
+  const [alta, setAlta] = useState(null)
+  const [editProv, setEditProv] = useState(null)    // { id, nombre }
+  const [bulk, setBulk] = useState(null)
   const [recostear, setRecostear] = useState(null)
 
   const nombreFinca = id => activas.find(f => f.id === id)?.nombre || '—'
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
-  const nombreProv = id => proveedores.find(p => p.id === id)?.nombre || '—'
   const precioDe = (prov, finca, tipo) => precios.find(p => p.proveedor_id === prov && p.finca_id === finca && p.tipo_id === tipo)
 
   const cargar = useCallback(async () => {
     setCargando(true)
-    const [{ data: tp }, { data: prov }, { data: pr }] = await Promise.all([
+    const [{ data: tp }, { data: prov }, { data: pr }, { data: lg }] = await Promise.all([
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('diesel_proveedor').select('id, nombre').eq('activo', true).order('nombre'),
       supabase.schema('produccion').from('diesel_precio')
         .select('proveedor_id, finca_id, tipo_id, precio_galon, vigente_desde')
         .not('proveedor_id', 'is', null).is('vigente_hasta', null),
+      supabase.schema('produccion').from('diesel_precio')
+        .select('finca_id, tipo_id, precio_galon, vigente_desde')
+        .is('proveedor_id', null).is('vigente_hasta', null),
     ])
     setTipos(tp || [])
     setProveedores(prov || [])
     setPrecios((pr || []).filter(r => r.finca_id).map(r => ({
-      proveedor_id: r.proveedor_id, finca_id: r.finca_id, tipo_id: r.tipo_id,
-      precio: Number(r.precio_galon), desde: r.vigente_desde,
+      proveedor_id: r.proveedor_id, finca_id: r.finca_id, tipo_id: r.tipo_id, precio: Number(r.precio_galon), desde: r.vigente_desde,
+    })))
+    setLegacy((lg || []).filter(r => r.finca_id).map(r => ({
+      finca_id: r.finca_id, tipo_id: r.tipo_id, precio: Number(r.precio_galon), desde: r.vigente_desde,
     })))
     setCargando(false)
   }, [])
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Deja UNA sola fila vigente para proveedor·finca·tipo: borra las del mismo
-  // día o posteriores, cierra la anterior (historial), inserta la nueva.
+  // Deja UNA sola fila vigente para proveedor·finca·tipo.
   async function aplicarPrecio(proveedorId, fincaId, tipoId, precio, desde) {
     await supabase.schema('produccion').from('diesel_precio')
       .delete().eq('proveedor_id', proveedorId).eq('tipo_id', tipoId).eq('finca_id', fincaId)
@@ -83,7 +90,6 @@ export default function CatalogoDiesel({ fincas }) {
     if (error) throw error
   }
 
-  // Compras ya registradas de ese proveedor·finca·tipo en [desde, hoy] con otro precio.
   async function detectarRecosteo(proveedorId, combos, desde) {
     if (!desde || desde >= hoyISO()) return []
     const items = []
@@ -110,9 +116,8 @@ export default function CatalogoDiesel({ fincas }) {
   }
 
   // ---- Editar un precio (Fincas) ----
-  function abrirEdit(proveedorId, fincaId, tipoId) {
-    const p = precioDe(proveedorId, fincaId, tipoId)
-    setHist(null); setEdit({ proveedorId, fincaId, tipoId, precio: p ? String(p.precio) : '', desde: hoyISO() })
+  function abrirEdit(proveedorId, fincaId, tipoId, precioActual) {
+    setHist(null); setEdit({ proveedorId, fincaId, tipoId, precio: precioActual != null ? String(precioActual) : '', desde: hoyISO() })
   }
   async function guardarEdit() {
     if (guardando) return
@@ -127,13 +132,15 @@ export default function CatalogoDiesel({ fincas }) {
     if (items.length) setRecostear({ items })
   }
 
+  // Historial de un precio (proveedorId null = sin proveedor / catálogo anterior).
   async function abrirHist(proveedorId, fincaId, tipoId) {
-    const clave = `${proveedorId}|${fincaId}|${tipoId}`
+    const clave = `${proveedorId || '0'}|${fincaId}|${tipoId}`
     if (hist === clave) { setHist(null); return }
-    const { data } = await supabase.schema('produccion').from('diesel_precio')
+    let q = supabase.schema('produccion').from('diesel_precio')
       .select('precio_galon, vigente_desde, vigente_hasta, creado_por, creado_en')
-      .eq('proveedor_id', proveedorId).eq('finca_id', fincaId).eq('tipo_id', tipoId)
-      .order('vigente_desde', { ascending: false })
+      .eq('finca_id', fincaId).eq('tipo_id', tipoId).order('vigente_desde', { ascending: false })
+    q = proveedorId ? q.eq('proveedor_id', proveedorId) : q.is('proveedor_id', null)
+    const { data } = await q
     const ids = [...new Set((data || []).map(r => r.creado_por).filter(Boolean))]
     const nombres = {}
     if (ids.length) {
@@ -144,26 +151,20 @@ export default function CatalogoDiesel({ fincas }) {
   }
 
   // ---- Alta de proveedor ----
-  function abrirAlta() {
-    setAlta({ nombre: '', fincas: {}, desde: hoyISO() })   // fincas: fincaId -> { B: '', Premium... } por tipo_id
-  }
+  function abrirAlta() { setAlta({ nombre: '', fincas: {}, desde: hoyISO() }) }
   async function guardarAlta() {
     if (guardando) return
     const nombre = (alta.nombre || '').trim()
     if (!nombre) { setAviso({ tipo: 'error', texto: 'Pon el nombre del proveedor.' }); return }
     const filas = []
     for (const [fincaId, porTipo] of Object.entries(alta.fincas)) {
-      for (const t of tipos) {
-        const raw = numDec(porTipo[t.id] || '')
-        if (raw > 0) filas.push({ fincaId, tipoId: t.id, precio: raw })
-      }
+      for (const t of tipos) { const raw = numDec(porTipo[t.id] || ''); if (raw > 0) filas.push({ fincaId, tipoId: t.id, precio: raw }) }
     }
     if (!filas.length) { setAviso({ tipo: 'error', texto: 'Asigna al menos una finca con su precio.' }); return }
     setGuardando(true)
     let provId
     try {
-      const { data, error } = await supabase.schema('produccion').from('diesel_proveedor')
-        .insert({ nombre }).select('id').single()
+      const { data, error } = await supabase.schema('produccion').from('diesel_proveedor').insert({ nombre }).select('id').single()
       if (error) throw error
       provId = data.id
       for (const f of filas) await aplicarPrecio(provId, f.fincaId, f.tipoId, f.precio, alta.desde || hoyISO())
@@ -171,10 +172,28 @@ export default function CatalogoDiesel({ fincas }) {
     setGuardando(false); setAlta(null); setAviso({ tipo: 'ok', texto: `Proveedor ${nombre} creado.` }); await cargar(); setExpandir(provId)
   }
 
-  // ---- Cambio de precio en bloque (Proveedores) ----
-  function abrirBulk(proveedorId, tipoId) {
-    setBulk({ proveedorId, tipoId, grupos: [{ precio: '', fincaIds: [] }], desde: hoyISO() })
+  // ---- Editar proveedor (renombrar / desactivar) ----
+  async function guardarEditProv() {
+    if (guardando) return
+    const nombre = (editProv.nombre || '').trim()
+    if (!nombre) { setAviso({ tipo: 'error', texto: 'Pon el nombre.' }); return }
+    setGuardando(true)
+    const { error } = await supabase.schema('produccion').from('diesel_proveedor').update({ nombre }).eq('id', editProv.id)
+    setGuardando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
+    setEditProv(null); setAviso({ tipo: 'ok', texto: 'Proveedor actualizado.' }); await cargar()
   }
+  async function desactivarProv(id, nombre) {
+    if (!window.confirm(`¿Quitar el proveedor "${nombre}"? Sus precios dejan de verse, pero los ingresos viejos no se tocan.`)) return
+    setGuardando(true)
+    const { error } = await supabase.schema('produccion').from('diesel_proveedor').update({ activo: false }).eq('id', id)
+    setGuardando(false)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo quitar. ' + error.message }); return }
+    setEditProv(null); setExpandir(null); setAviso({ tipo: 'ok', texto: `${nombre} quitado.` }); await cargar()
+  }
+
+  // ---- Cambio de precio en bloque (Proveedores) ----
+  function abrirBulk(proveedorId, tipoId) { setBulk({ proveedorId, tipoId, grupos: [{ precio: '', fincaIds: [] }], desde: hoyISO() }) }
   async function guardarBulk() {
     if (guardando) return
     const combos = []
@@ -193,7 +212,6 @@ export default function CatalogoDiesel({ fincas }) {
     if (items.length) setRecostear({ items })
   }
 
-  // Fincas que un proveedor ya tiene asignadas (con algún precio vigente).
   const fincasDeProv = provId => [...new Set(precios.filter(p => p.proveedor_id === provId).map(p => p.finca_id))]
   const tiposDeProv = provId => [...new Set(precios.filter(p => p.proveedor_id === provId).map(p => p.tipo_id))]
 
@@ -201,8 +219,7 @@ export default function CatalogoDiesel({ fincas }) {
     <div>
       {aviso && (
         <div style={{ borderRadius: '10px', padding: '11px 13px', fontSize: '13px', marginBottom: '12px',
-                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE',
-                      color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
+                      background: aviso.tipo === 'error' ? '#FBEAEA' : '#E1F5EE', color: aviso.tipo === 'error' ? ROJO : VERDE }}>{aviso.texto}</div>
       )}
 
       {recostear && (() => {
@@ -223,10 +240,7 @@ export default function CatalogoDiesel({ fincas }) {
               ))}
             </div>
             <div style={{ display: 'flex', gap: '9px' }}>
-              <button onClick={aplicarRecosteo} disabled={guardando}
-                style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>
-                {guardando ? 'Aplicando…' : 'Sí, recostear'}
-              </button>
+              <button onClick={aplicarRecosteo} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Aplicando…' : 'Sí, recostear'}</button>
               <button onClick={() => setRecostear(null)} style={boton}>No, dejar cada una con su precio</button>
             </div>
           </div>
@@ -236,7 +250,7 @@ export default function CatalogoDiesel({ fincas }) {
 
       <div style={{ display: 'flex', gap: '6px', marginBottom: '16px' }}>
         {[['fincas', 'Fincas'], ['proveedores', 'Proveedores']].map(([k, l]) => (
-          <button key={k} onClick={() => { setTab(k); setEdit(null); setHist(null); setAlta(null); setBulk(null) }}
+          <button key={k} onClick={() => { setTab(k); setEdit(null); setHist(null); setAlta(null); setBulk(null); setEditProv(null) }}
             style={{ ...boton, background: tab === k ? NAVY : 'white', color: tab === k ? 'white' : NAVY, borderColor: tab === k ? NAVY : BORDE }}>{l}</button>
         ))}
       </div>
@@ -244,101 +258,111 @@ export default function CatalogoDiesel({ fincas }) {
       {cargando ? (
         <div style={{ padding: '30px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Cargando...</div>
       ) : tab === 'fincas' ? (
-        <VistaFincas {...{ activas, tipos, proveedores, precios, precioDe, edit, setEdit, abrirEdit, guardarEdit, guardando, hist, abrirHist, histRows, histNombres, nombreTipo }} />
+        <VistaFincas {...{ activas, tipos, proveedores, precios, legacy, fincaSel, setFincaSel, edit, setEdit, abrirEdit, guardarEdit, guardando, hist, abrirHist, histRows, histNombres, nombreTipo }} />
       ) : (
-        <VistaProveedores {...{ activas, tipos, proveedores, precios, precioDe, fincasDeProv, tiposDeProv, nombreFinca, nombreTipo,
-          expandir, setExpandir, alta, setAlta, abrirAlta, guardarAlta, bulk, setBulk, abrirBulk, guardarBulk, guardando }} />
+        <VistaProveedores {...{ activas, tipos, proveedores, precioDe, fincasDeProv, tiposDeProv, nombreFinca, nombreTipo,
+          expandir, setExpandir, alta, setAlta, abrirAlta, guardarAlta, editProv, setEditProv, guardarEditProv, desactivarProv,
+          bulk, setBulk, abrirBulk, guardarBulk, guardando }} />
       )}
     </div>
   )
 }
 
 // ========================= SUB-MENÚ: FINCAS =========================
-function VistaFincas({ activas, tipos, proveedores, precios, precioDe, edit, setEdit, abrirEdit, guardarEdit, guardando, hist, abrirHist, histRows, histNombres, nombreTipo }) {
+function VistaFincas({ activas, tipos, proveedores, precios, legacy, fincaSel, setFincaSel, edit, setEdit, abrirEdit, guardarEdit, guardando, hist, abrirHist, histRows, histNombres, nombreTipo }) {
   const provsDe = (fincaId, tipoId) => precios.filter(p => p.finca_id === fincaId && p.tipo_id === tipoId)
     .map(p => ({ ...p, nombre: proveedores.find(x => x.id === p.proveedor_id)?.nombre || '—' }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre))
+  const legacyDe = (fincaId, tipoId) => legacy.find(p => p.finca_id === fincaId && p.tipo_id === tipoId)
+  const fincaConAlgo = f => precios.some(p => p.finca_id === f.id) || legacy.some(p => p.finca_id === f.id)
 
-  const fincaConAlgo = f => precios.some(p => p.finca_id === f.id)
-  const lista = activas.filter(fincaConAlgo)
+  const conAlgo = activas.filter(fincaConAlgo)
+  const lista = fincaSel === 'todas' ? conAlgo : conAlgo.filter(f => f.id === fincaSel)
 
-  if (!lista.length) return <div style={{ padding: '24px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay precios de proveedores. Ve a “Proveedores” para crear uno.</div>
+  if (!conAlgo.length) return <div style={{ padding: '24px', textAlign: 'center', color: GRIS, fontSize: '13px' }}>Todavía no hay precios. Ve a “Proveedores” para crear uno.</div>
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      {lista.map(f => (
-        <div key={f.id} style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
-          <div style={{ padding: '11px 16px', fontSize: '15px', fontWeight: 500, color: NAVY, borderBottom: '0.5px solid #f1f6f9' }}>{String(f.nombre).toUpperCase()}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tipos.length}, 1fr)` }}>
-            {tipos.map((t, ti) => (
-              <div key={t.id} style={{ padding: '12px 16px', borderRight: ti < tipos.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
-                <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.03em', color: AZUL, fontWeight: 600, marginBottom: '9px' }}>{t.nombre}</div>
-                {provsDe(f.id, t.id).length === 0 ? (
-                  <div style={{ fontSize: '13px', color: '#c3d0db' }}>—</div>
-                ) : provsDe(f.id, t.id).map(p => {
-                  const clave = `${p.proveedor_id}|${f.id}|${t.id}`
-                  const enEdit = edit && edit.proveedorId === p.proveedor_id && edit.fincaId === f.id && edit.tipoId === t.id
-                  const enHist = hist === clave
-                  return (
-                    <div key={p.proveedor_id} style={{ marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px' }}>
-                        <span>{p.nombre}</span>
-                        <span style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                          <b style={{ fontWeight: 500, color: NAVY }}>{precio6(p.precio)}</b>
-                          <button onClick={() => abrirHist(p.proveedor_id, f.id, t.id)} style={btnLink} title="Historial">⌄</button>
-                          <button onClick={() => enEdit ? setEdit(null) : abrirEdit(p.proveedor_id, f.id, t.id)} style={btnLink}>{enEdit ? 'Cerrar' : 'Editar'}</button>
-                        </span>
-                      </div>
-
-                      {enEdit && (
-                        <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                            <div>
-                              <label style={lbl}>Precio nuevo</label>
-                              <CampoNumero maxDec={6} value={edit.precio} placeholder="ej. 1.80"
-                                onChange={v => setEdit(x => ({ ...x, precio: v }))} style={{ ...inp, width: '100px', textAlign: 'right' }} />
-                            </div>
-                            <div>
-                              <label style={lbl}>Rige desde</label>
-                              <input type="date" value={edit.desde} max={hoyISO()}
-                                onChange={e => setEdit(x => ({ ...x, desde: e.target.value }))} style={inp} />
-                            </div>
-                            <button onClick={guardarEdit} disabled={guardando}
-                              style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Guardar'}</button>
-                          </div>
-                        </div>
-                      )}
-
-                      {enHist && (
-                        <div style={{ marginTop: '8px', padding: '10px 12px', background: '#fafcfd', borderRadius: '8px' }}>
-                          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '7px' }}>Historial · {p.nombre} · {nombreTipo(t.id)}</div>
-                          {histRows.length === 0 ? <div style={{ fontSize: '12px', color: GRIS }}>—</div> : histRows.map((r, i) => (
-                            <div key={i} style={{ padding: '5px 0', borderBottom: i < histRows.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
-                              <div style={{ fontSize: '14px', fontWeight: i === 0 && !r.vigente_hasta ? 600 : 400 }}>
-                                {precio6(Number(r.precio_galon))}
-                                {i === 0 && !r.vigente_hasta && <span style={{ fontSize: '11px', color: AZUL, fontWeight: 400, marginLeft: '6px' }}>vigente</span>}
-                              </div>
-                              <div style={{ fontSize: '12px', color: GRIS }}>desde {corta(r.vigente_desde)}{r.vigente_hasta ? ` – ${corta(r.vigente_hasta)}` : ''}{histNombres[r.creado_por] ? ` · ${histNombres[r.creado_por]}` : ''}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+  const linea = (f, t, p, esLegacy) => {
+    const prov = esLegacy ? null : p.proveedor_id
+    const clave = `${prov || '0'}|${f.id}|${t.id}`
+    const enEdit = !esLegacy && edit && edit.proveedorId === p.proveedor_id && edit.fincaId === f.id && edit.tipoId === t.id
+    const enHist = hist === clave
+    return (
+      <div key={esLegacy ? 'legacy' : p.proveedor_id} style={{ marginBottom: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '14px' }}>
+          <span style={{ color: esLegacy ? GRIS : NAVY }}>{esLegacy ? 'Sin proveedor' : p.nombre}</span>
+          <span style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <b style={{ fontWeight: 500, color: NAVY }}>{precio6(p.precio)}</b>
+            <button onClick={() => abrirHist(prov, f.id, t.id)} style={btnLink}>{enHist ? 'Ocultar' : 'Historial'}</button>
+            {!esLegacy && <button onClick={() => enEdit ? setEdit(null) : abrirEdit(p.proveedor_id, f.id, t.id, p.precio)} style={btnLink}>{enEdit ? 'Cerrar' : 'Editar'}</button>}
+          </span>
+        </div>
+        {enEdit && (
+          <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div><label style={lbl}>Precio nuevo</label>
+                <CampoNumero maxDec={6} value={edit.precio} placeholder="ej. 1.80" onChange={v => setEdit(x => ({ ...x, precio: v }))} style={{ ...inp, width: '100px', textAlign: 'right' }} /></div>
+              <div><label style={lbl}>Rige desde</label>
+                <input type="date" value={edit.desde} max={hoyISO()} onChange={e => setEdit(x => ({ ...x, desde: e.target.value }))} style={inp} /></div>
+              <button onClick={guardarEdit} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Guardar'}</button>
+            </div>
+          </div>
+        )}
+        {enHist && (
+          <div style={{ marginTop: '8px', padding: '10px 12px', background: '#fafcfd', borderRadius: '8px' }}>
+            <div style={{ fontSize: '11px', color: GRIS, marginBottom: '7px' }}>Historial · {esLegacy ? 'Sin proveedor' : p.nombre} · {nombreTipo(t.id)}</div>
+            {histRows.length === 0 ? <div style={{ fontSize: '12px', color: GRIS }}>—</div> : histRows.map((r, i) => (
+              <div key={i} style={{ padding: '5px 0', borderBottom: i < histRows.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
+                <div style={{ fontSize: '14px', fontWeight: i === 0 && !r.vigente_hasta ? 600 : 400 }}>
+                  {precio6(Number(r.precio_galon))}{i === 0 && !r.vigente_hasta && <span style={{ fontSize: '11px', color: AZUL, fontWeight: 400, marginLeft: '6px' }}>vigente</span>}
+                </div>
+                <div style={{ fontSize: '12px', color: GRIS }}>desde {corta(r.vigente_desde)}{r.vigente_hasta ? ` – ${corta(r.vigente_hasta)}` : ''}{histNombres[r.creado_por] ? ` · ${histNombres[r.creado_por]}` : ''}</div>
               </div>
             ))}
           </div>
-        </div>
-      ))}
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: '12px' }}>
+        <label style={lbl}>Finca</label>
+        <select value={fincaSel} onChange={e => setFincaSel(e.target.value)} style={{ ...inp, minWidth: '200px' }}>
+          <option value="todas">Todas las fincas</option>
+          {conAlgo.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+        </select>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {lista.map(f => (
+          <div key={f.id} style={{ border: '0.5px solid ' + BORDE, borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
+            <div style={{ padding: '11px 16px', fontSize: '15px', fontWeight: 500, color: NAVY, borderBottom: '0.5px solid #f1f6f9' }}>{String(f.nombre).toUpperCase()}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${tipos.length}, 1fr)` }}>
+              {tipos.map((t, ti) => {
+                const provs = provsDe(f.id, t.id)
+                const lg = legacyDe(f.id, t.id)
+                return (
+                  <div key={t.id} style={{ padding: '12px 16px', borderRight: ti < tipos.length - 1 ? '0.5px solid #f1f6f9' : 'none' }}>
+                    <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.03em', color: AZUL, fontWeight: 600, marginBottom: '9px' }}>{t.nombre}</div>
+                    {provs.length === 0 && !lg ? <div style={{ fontSize: '13px', color: '#c3d0db' }}>—</div> : (<>
+                      {provs.map(p => linea(f, t, p, false))}
+                      {lg && linea(f, t, lg, true)}
+                    </>)}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
 
 // ========================= SUB-MENÚ: PROVEEDORES =========================
-function VistaProveedores({ activas, tipos, proveedores, precios, precioDe, fincasDeProv, tiposDeProv, nombreFinca, nombreTipo,
-  expandir, setExpandir, alta, setAlta, abrirAlta, guardarAlta, bulk, setBulk, abrirBulk, guardarBulk, guardando }) {
-
+function VistaProveedores({ activas, tipos, proveedores, precioDe, fincasDeProv, tiposDeProv, nombreFinca, nombreTipo,
+  expandir, setExpandir, alta, setAlta, abrirAlta, guardarAlta, editProv, setEditProv, guardarEditProv, desactivarProv,
+  bulk, setBulk, abrirBulk, guardarBulk, guardando }) {
   return (
     <div>
       {!alta && (
@@ -346,7 +370,6 @@ function VistaProveedores({ activas, tipos, proveedores, precios, precioDe, finc
           <button onClick={abrirAlta} style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY }}>+ Agregar proveedor</button>
         </div>
       )}
-
       {alta && <PanelAlta {...{ activas, tipos, alta, setAlta, guardarAlta, guardando }} />}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -357,16 +380,29 @@ function VistaProveedores({ activas, tipos, proveedores, precios, precioDe, finc
           const ab = expandir === prov.id
           const sus = fincasDeProv(prov.id)
           const tp = tiposDeProv(prov.id)
+          const renom = editProv && editProv.id === prov.id
           return (
             <div key={prov.id} style={{ border: '0.5px solid ' + (ab ? BORDE : '#eef3f7'), borderRadius: '12px', background: 'white', overflow: 'hidden' }}>
-              <div onClick={() => { setExpandir(ab ? null : prov.id); setBulk(null) }}
-                style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', cursor: 'pointer' }}>
-                <span style={{ color: GRIS, fontSize: '12px' }}>{ab ? '▾' : '▸'}</span>
-                <span style={{ fontSize: '14px', fontWeight: 500, color: NAVY }}>{prov.nombre}</span>
-                {tipos.filter(t => tp.includes(t.id)).map(t => (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px' }}>
+                <span onClick={() => { setExpandir(ab ? null : prov.id); setBulk(null); setEditProv(null) }} style={{ color: GRIS, fontSize: '12px', cursor: 'pointer' }}>{ab ? '▾' : '▸'}</span>
+                {renom ? (
+                  <input value={editProv.nombre} onChange={e => setEditProv(x => ({ ...x, nombre: e.target.value }))} style={{ ...inp, width: '220px' }} autoFocus />
+                ) : (
+                  <span onClick={() => { setExpandir(ab ? null : prov.id); setBulk(null) }} style={{ fontSize: '14px', fontWeight: 500, color: NAVY, cursor: 'pointer' }}>{prov.nombre}</span>
+                )}
+                {!renom && tipos.filter(t => tp.includes(t.id)).map(t => (
                   <span key={t.id} style={{ fontSize: '11px', background: '#E6F1FB', color: '#0C447C', padding: '2px 8px', borderRadius: '20px' }}>{t.nombre}</span>
                 ))}
-                <span style={{ fontSize: '12px', color: GRIS, marginLeft: 'auto' }}>{sus.length} {sus.length === 1 ? 'finca' : 'fincas'}</span>
+                <span style={{ display: 'flex', gap: '12px', alignItems: 'center', marginLeft: 'auto' }}>
+                  {renom ? (<>
+                    <button onClick={guardarEditProv} disabled={guardando} style={btnLink}>Guardar</button>
+                    <button onClick={() => desactivarProv(prov.id, prov.nombre)} style={{ ...btnLink, color: ROJO }}>Quitar</button>
+                    <button onClick={() => setEditProv(null)} style={{ ...btnLink, color: GRIS }}>Cancelar</button>
+                  </>) : (<>
+                    <span style={{ fontSize: '12px', color: GRIS }}>{sus.length} {sus.length === 1 ? 'finca' : 'fincas'}</span>
+                    <button onClick={() => { setEditProv({ id: prov.id, nombre: prov.nombre }); setExpandir(prov.id) }} style={btnLink}>Editar</button>
+                  </>)}
+                </span>
               </div>
 
               {ab && (
@@ -377,21 +413,15 @@ function VistaProveedores({ activas, tipos, proveedores, precios, precioDe, finc
                   {sus.map(fincaId => (
                     <div key={fincaId} style={{ display: 'grid', gridTemplateColumns: `1.6fr repeat(${tipos.length}, 1fr)`, gap: '8px', padding: '7px 16px', fontSize: '14px', alignItems: 'center', borderTop: '0.5px solid #f1f6f9' }}>
                       <span>{nombreFinca(fincaId)}</span>
-                      {tipos.map(t => {
-                        const p = precioDe(prov.id, fincaId, t.id)
-                        return <span key={t.id} style={{ textAlign: 'right', color: p ? NAVY : '#c3d0db' }}>{p ? precio6(p.precio) : '—'}</span>
-                      })}
+                      {tipos.map(t => { const p = precioDe(prov.id, fincaId, t.id); return <span key={t.id} style={{ textAlign: 'right', color: p ? NAVY : '#c3d0db' }}>{p ? precio6(p.precio) : '—'}</span> })}
                     </div>
                   ))}
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', padding: '10px 16px', borderTop: '0.5px solid #f1f6f9' }}>
-                    {tipos.filter(t => tp.includes(t.id)).map(t => (
+                    {tipos.map(t => (
                       <button key={t.id} onClick={() => abrirBulk(prov.id, t.id)} style={{ ...boton, fontSize: '12px', padding: '6px 11px' }}>Cambiar precio {t.nombre}</button>
                     ))}
                   </div>
-
-                  {bulk && bulk.proveedorId === prov.id && (
-                    <PanelBulk {...{ activas, bulk, setBulk, guardarBulk, guardando, nombreTipo }} />
-                  )}
+                  {bulk && bulk.proveedorId === prov.id && <PanelBulk {...{ activas, bulk, setBulk, guardarBulk, guardando, nombreTipo }} />}
                 </div>
               )}
             </div>
@@ -403,11 +433,7 @@ function VistaProveedores({ activas, tipos, proveedores, precios, precioDe, finc
 }
 
 function PanelAlta({ activas, tipos, alta, setAlta, guardarAlta, guardando }) {
-  const toggleFinca = fId => setAlta(x => {
-    const fincas = { ...x.fincas }
-    if (fincas[fId]) delete fincas[fId]; else fincas[fId] = {}
-    return { ...x, fincas }
-  })
+  const toggleFinca = fId => setAlta(x => { const fincas = { ...x.fincas }; if (fincas[fId]) delete fincas[fId]; else fincas[fId] = {}; return { ...x, fincas } })
   const setPrecio = (fId, tId, v) => setAlta(x => ({ ...x, fincas: { ...x.fincas, [fId]: { ...x.fincas[fId], [tId]: v } } }))
   return (
     <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
@@ -427,18 +453,15 @@ function PanelAlta({ activas, tipos, alta, setAlta, guardarAlta, guardando }) {
               </label>
               {tipos.map(t => (
                 <CampoNumero key={t.id} maxDec={6} value={(alta.fincas[f.id] || {})[t.id] || ''} placeholder={marcada ? t.nombre : '—'}
-                  onChange={v => setPrecio(f.id, t.id, v)} disabled={!marcada}
-                  style={{ ...inp, width: '100%', textAlign: 'right', opacity: marcada ? 1 : 0.4 }} />
+                  onChange={v => setPrecio(f.id, t.id, v)} disabled={!marcada} style={{ ...inp, width: '100%', textAlign: 'right', opacity: marcada ? 1 : 0.4 }} />
               ))}
             </div>
           )
         })}
       </div>
       <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
-        <div>
-          <label style={lbl}>Rige desde</label>
-          <input type="date" value={alta.desde} max={hoyISO()} onChange={e => setAlta(x => ({ ...x, desde: e.target.value }))} style={inp} />
-        </div>
+        <div><label style={lbl}>Rige desde</label>
+          <input type="date" value={alta.desde} max={hoyISO()} onChange={e => setAlta(x => ({ ...x, desde: e.target.value }))} style={inp} /></div>
         <button onClick={guardarAlta} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Creando…' : 'Crear proveedor'}</button>
         <button onClick={() => setAlta(null)} style={boton}>Cancelar</button>
       </div>
@@ -450,26 +473,30 @@ function PanelBulk({ activas, bulk, setBulk, guardarBulk, guardando, nombreTipo 
   const usadas = new Set(bulk.grupos.flatMap(g => g.fincaIds))
   const toggle = (gi, fId) => setBulk(x => {
     const grupos = x.grupos.map((g, i) => {
-      if (i !== gi) return { ...g, fincaIds: g.fincaIds.filter(id => id !== fId) }   // una finca en un solo grupo
+      if (i !== gi) return { ...g, fincaIds: g.fincaIds.filter(id => id !== fId) }
       const has = g.fincaIds.includes(fId)
       return { ...g, fincaIds: has ? g.fincaIds.filter(id => id !== fId) : [...g.fincaIds, fId] }
     })
     return { ...x, grupos }
   })
+  const setGrupo = (gi, ids) => setBulk(x => ({ ...x, grupos: x.grupos.map((g, i) => i === gi ? { ...g, fincaIds: ids } : { ...g, fincaIds: g.fincaIds.filter(id => !ids.includes(id)) }) }))
+  const zonas = [...new Set(activas.map(f => f.zona).filter(Boolean))]
+  const zonaLabel = z => z === 'jambeli' ? 'Jambelí' : z === 'puna' ? 'Puná' : z
   return (
     <div style={{ padding: '12px 16px', borderTop: '0.5px solid #f1f6f9' }}>
       <div style={{ fontSize: '12px', fontWeight: 500, marginBottom: '10px' }}>Cambiar precio de {nombreTipo(bulk.tipoId)} · marca las fincas de cada precio</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {bulk.grupos.map((g, gi) => (
           <div key={gi} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '10px 12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '12px', color: GRIS }}>Precio</span>
               <CampoNumero maxDec={6} value={g.precio} placeholder="ej. 4.09"
-                onChange={v => setBulk(x => ({ ...x, grupos: x.grupos.map((gg, i) => i === gi ? { ...gg, precio: v } : gg) }))}
-                style={{ ...inp, width: '100px', textAlign: 'right' }} />
-              {bulk.grupos.length > 1 && (
-                <button onClick={() => setBulk(x => ({ ...x, grupos: x.grupos.filter((_, i) => i !== gi) }))} style={{ ...btnLink, color: ROJO, marginLeft: 'auto' }}>Quitar</button>
-              )}
+                onChange={v => setBulk(x => ({ ...x, grupos: x.grupos.map((gg, i) => i === gi ? { ...gg, precio: v } : gg) }))} style={{ ...inp, width: '100px', textAlign: 'right' }} />
+              <span style={{ fontSize: '11px', color: GRIS, marginLeft: '4px' }}>rápido:</span>
+              <button onClick={() => setGrupo(gi, activas.map(f => f.id))} style={chipQuick}>Todas</button>
+              {zonas.map(z => <button key={z} onClick={() => setGrupo(gi, activas.filter(f => f.zona === z).map(f => f.id))} style={chipQuick}>{zonaLabel(z)}</button>)}
+              <button onClick={() => setGrupo(gi, [])} style={{ ...chipQuick, color: GRIS }}>Ninguna</button>
+              {bulk.grupos.length > 1 && <button onClick={() => setBulk(x => ({ ...x, grupos: x.grupos.filter((_, i) => i !== gi) }))} style={{ ...btnLink, color: ROJO, marginLeft: 'auto' }}>Quitar grupo</button>}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {activas.map(f => {
@@ -478,8 +505,7 @@ function PanelBulk({ activas, bulk, setBulk, guardarBulk, guardando, nombreTipo 
                 return (
                   <button key={f.id} onClick={() => toggle(gi, f.id)} disabled={ocupada}
                     style={{ fontSize: '12px', padding: '4px 10px', borderRadius: '20px', cursor: ocupada ? 'default' : 'pointer', fontFamily: 'inherit',
-                      border: '0.5px solid ' + (marcada ? AZUL : BORDE), background: marcada ? '#E6F1FB' : 'white',
-                      color: marcada ? '#0C447C' : (ocupada ? '#c3d0db' : NAVY) }}>{f.nombre}</button>
+                      border: '0.5px solid ' + (marcada ? AZUL : BORDE), background: marcada ? '#E6F1FB' : 'white', color: marcada ? '#0C447C' : (ocupada ? '#c3d0db' : NAVY) }}>{f.nombre}</button>
                 )
               })}
             </div>
@@ -487,11 +513,9 @@ function PanelBulk({ activas, bulk, setBulk, guardarBulk, guardando, nombreTipo 
         ))}
       </div>
       <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', marginTop: '12px' }}>
-        <button onClick={() => setBulk(x => ({ ...x, grupos: [...x.grupos, { precio: '', fincaIds: [] }] }))} style={{ ...btnLink }}>+ Otro precio</button>
-        <div style={{ marginLeft: 'auto' }}>
-          <label style={lbl}>Rige desde</label>
-          <input type="date" value={bulk.desde} max={hoyISO()} onChange={e => setBulk(x => ({ ...x, desde: e.target.value }))} style={inp} />
-        </div>
+        <button onClick={() => setBulk(x => ({ ...x, grupos: [...x.grupos, { precio: '', fincaIds: [] }] }))} style={btnLink}>+ Otro precio</button>
+        <div style={{ marginLeft: 'auto' }}><label style={lbl}>Rige desde</label>
+          <input type="date" value={bulk.desde} max={hoyISO()} onChange={e => setBulk(x => ({ ...x, desde: e.target.value }))} style={inp} /></div>
         <button onClick={guardarBulk} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Aplicando…' : 'Guardar precios'}</button>
         <button onClick={() => setBulk(null)} style={boton}>Cancelar</button>
       </div>
@@ -499,9 +523,8 @@ function PanelBulk({ activas, bulk, setBulk, guardarBulk, guardando, nombreTipo 
   )
 }
 
-const inp = { padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE,
-              borderRadius: '8px', background: 'white', color: NAVY }
+const inp = { padding: '8px 10px', fontSize: '13px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '8px', background: 'white', color: NAVY }
 const lbl = { display: 'block', fontSize: '11px', color: GRIS, margin: '0 0 5px' }
-const boton = { padding: '9px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
-                border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
+const boton = { padding: '9px 14px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, border: '0.5px solid ' + BORDE, borderRadius: '9px', background: 'white', color: NAVY, cursor: 'pointer' }
 const btnLink = { fontSize: '12px', border: 'none', background: 'none', color: AZUL, cursor: 'pointer', fontFamily: 'inherit', padding: 0 }
+const chipQuick = { fontSize: '11px', padding: '3px 9px', borderRadius: '20px', border: '0.5px solid ' + BORDE, background: 'white', color: AZUL, cursor: 'pointer', fontFamily: 'inherit' }
