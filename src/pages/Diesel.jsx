@@ -240,15 +240,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const proveedoresUI = [{ id: 'SIN', nombre: 'Sin proveedor' }, ...provsBase]
   const nombreProv = id => (id ? (provsBase.find(p => p.id === id)?.nombre || '—') : 'Sin proveedor')
   const nombreProvRow = row => row.proveedor_id ? nombreProv(row.proveedor_id) : (row.proveedor || '—')
-  // Proveedores con precio para ESTA finca (+ "Sin proveedor" siempre), para el dropdown.
-  const provsConPrecio = [...new Set(Object.keys(preciosProv).map(k => k.split('|')[0]))]
-  const provsIngreso = proveedoresUI.filter(p => p.id === 'SIN' || provsConPrecio.includes(p.id))
-  // Tipos que un proveedor vende en esta finca (según el catálogo); SIN = todos.
-  const tiposDeProvIngreso = provId => {
-    if (provId === 'SIN') return tipos
-    const ids = Object.keys(preciosProv).filter(k => k.split('|')[0] === provId).map(k => k.split('|')[1])
-    const lista = tipos.filter(t => ids.includes(t.id))
-    return lista.length ? lista : tipos
+  // Proveedores que venden un TIPO en esta finca (según el catálogo) + "Sin
+  // proveedor" siempre. Para el dropdown del ingreso (que filtra por tipo).
+  const provsDeTipoFinca = tipoId => {
+    const ids = Object.keys(preciosProv).filter(k => k.split('|')[1] === tipoId).map(k => k.split('|')[0])
+    return [{ id: 'SIN', nombre: 'Sin proveedor' }, ...provsBase.filter(p => ids.includes(p.id))]
   }
   const precioProvTipo = (provId, tipoId) => {
     if (!provId || !tipoId) return null
@@ -320,17 +316,33 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const fecha = form.fecha || hoyISO()
     if (form.modo === 'ingreso') {
       if (!form.proveedorId) { setAviso({ tipo: 'error', texto: 'Elige el proveedor.' }); return }
+      const esNuevo = form.proveedorId === '__nuevo'
+      if (esNuevo && !(form.nuevoNombre || '').trim()) { setAviso({ tipo: 'error', texto: 'Pon el nombre del proveedor nuevo.' }); return }
       const guia = (form.guia || '').trim() || null
-      const provId = form.proveedorId === 'SIN' ? null : form.proveedorId
       // Precio: el del catálogo del proveedor para esta finca. El jefe lo puede
       // ajustar en el formulario; se CONGELA en la compra (precio_galon).
-      const pCat = precioProvTipo(form.proveedorId, form.tipoId)
       const editado = esJefe && form.precio !== '' && form.precio != null ? numDec(form.precio) : null
+      let provId, nombreP
+      if (esNuevo) {
+        nombreP = form.nuevoNombre.trim()
+        const { data, error: ep } = await supabase.schema('produccion').from('diesel_proveedor').insert({ nombre: nombreP }).select('id').single()
+        if (ep) { setAviso({ tipo: 'error', texto: 'No se pudo crear el proveedor. ' + ep.message }); return }
+        provId = data.id
+        // Si el jefe puso precio, lo deja también en el catálogo (así el proveedor ya queda con su precio).
+        if (editado != null && editado > 0) {
+          await supabase.schema('produccion').from('diesel_precio')
+            .insert({ proveedor_id: provId, tipo_id: form.tipoId, finca_id: finca.id, precio_galon: editado, vigente_desde: fecha })
+        }
+      } else {
+        provId = form.proveedorId === 'SIN' ? null : form.proveedorId
+        nombreP = provId ? nombreProv(provId) : null
+      }
+      const pCat = esNuevo ? null : precioProvTipo(form.proveedorId, form.tipoId)
       const precioGal = editado != null ? editado : pCat
       const { error } = await supabase.schema('produccion').from('diesel_pedido')
         .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha, estado: 'aprobado',
                   aprobado_por: userId, aprobado_en: new Date().toISOString(),
-                  numero_guia: guia, proveedor_id: provId, proveedor: provId ? nombreProv(provId) : null,
+                  numero_guia: guia, proveedor_id: provId, proveedor: nombreP,
                   precio_galon: precioGal != null && precioGal > 0 ? precioGal : null })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
       setAviso({ tipo: 'ok', texto: 'Ingreso registrado.' })
@@ -343,23 +355,24 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     setForm(null); await refrescar()
   }
 
-  // Abrir el form de ingreso con el primer proveedor y su precio ya puestos.
+  // Abrir el form de ingreso: primero el tipo, luego su primer proveedor y precio.
   function formIngresoInicial() {
-    const pv = provsIngreso[0]?.id || 'SIN'
-    const tp = tiposDeProvIngreso(pv); const tipoId = tp[0]?.id || ''
+    const tipoId = tipos[0]?.id || ''
+    const provs = provsDeTipoFinca(tipoId); const pv = provs[0]?.id || 'SIN'
     const pc = precioProvTipo(pv, tipoId)
-    return { modo: 'ingreso', proveedorId: pv, tipoId, galones: '', fecha: hoyISO(), guia: '', precio: pc != null ? String(pc) : '' }
-  }
-  function cambiarProvForm(provId) {
-    setForm(f => {
-      const tp = tiposDeProvIngreso(provId)
-      const tipoId = tp.some(t => t.id === f.tipoId) ? f.tipoId : (tp[0]?.id || '')
-      const pc = precioProvTipo(provId, tipoId)
-      return { ...f, proveedorId: provId, tipoId, precio: pc != null ? String(pc) : '' }
-    })
+    return { modo: 'ingreso', tipoId, proveedorId: pv, galones: '', fecha: hoyISO(), guia: '', precio: pc != null ? String(pc) : '', nuevoNombre: '' }
   }
   function cambiarTipoForm(tipoId) {
-    setForm(f => { const pc = precioProvTipo(f.proveedorId, tipoId); return { ...f, tipoId, precio: pc != null ? String(pc) : '' } })
+    setForm(f => {
+      const provs = provsDeTipoFinca(tipoId)
+      const pv = provs.some(p => p.id === f.proveedorId) ? f.proveedorId : (provs[0]?.id || 'SIN')
+      const pc = precioProvTipo(pv, tipoId)
+      return { ...f, tipoId, proveedorId: pv, precio: pc != null ? String(pc) : '' }
+    })
+  }
+  function cambiarProvForm(provId) {
+    if (provId === '__nuevo') { setForm(f => ({ ...f, proveedorId: '__nuevo', precio: '' })); return }
+    setForm(f => { const pc = precioProvTipo(provId, f.tipoId); return { ...f, proveedorId: provId, precio: pc != null ? String(pc) : '' } })
   }
 
   async function guardarIngreso() {
@@ -813,23 +826,25 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                     {form.modo === 'ingreso' && (() => {
-                      const tiposProv = tiposDeProvIngreso(form.proveedorId)
+                      const provs = provsDeTipoFinca(form.tipoId)
                       return (
                         <>
-                          <Campo label="Proveedor">
-                            <select value={form.proveedorId} onChange={e => cambiarProvForm(e.target.value)} style={{ ...inp, width: '190px' }}>
-                              {provsIngreso.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                          <Campo label="Tipo">
+                            <select value={form.tipoId} onChange={e => cambiarTipoForm(e.target.value)} style={{ ...inp, width: '150px' }}>
+                              {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
                             </select>
                           </Campo>
-                          <Campo label="Tipo">
-                            {tiposProv.length === 1 ? (
-                              <div style={{ ...inp, width: '150px', display: 'flex', alignItems: 'center', color: NAVY, background: '#f6f9fb' }}>{tiposProv[0].nombre}</div>
-                            ) : (
-                              <select value={form.tipoId} onChange={e => cambiarTipoForm(e.target.value)} style={{ ...inp, width: '150px' }}>
-                                {tiposProv.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                              </select>
-                            )}
+                          <Campo label="Proveedor">
+                            <select value={form.proveedorId} onChange={e => cambiarProvForm(e.target.value)} style={{ ...inp, width: '190px' }}>
+                              {provs.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                              <option value="__nuevo">+ Agregar proveedor</option>
+                            </select>
                           </Campo>
+                          {form.proveedorId === '__nuevo' && (
+                            <Campo label="Nombre del nuevo">
+                              <input value={form.nuevoNombre || ''} placeholder="ej. Primax" onChange={e => setForm(f => ({ ...f, nuevoNombre: e.target.value }))} style={{ ...inp, width: '160px' }} autoFocus />
+                            </Campo>
+                          )}
                         </>
                       )
                     })()}
