@@ -197,6 +197,8 @@ export default function CatalogoDiesel({ fincas }) {
   async function guardarFijar() {
     if (guardando) return
     if (!fijar.proveedorId) { setAviso({ tipo: 'error', texto: 'Elegí el proveedor.' }); return }
+    const esNuevo = fijar.proveedorId === '__nuevo'
+    if (esNuevo && !(fijar.nuevoNombre || '').trim()) { setAviso({ tipo: 'error', texto: 'Pon el nombre del proveedor nuevo.' }); return }
     if (!fijar.tipoId) { setAviso({ tipo: 'error', texto: 'Elegí el tipo.' }); return }
     const combos = []
     for (const g of fijar.grupos) {
@@ -205,10 +207,17 @@ export default function CatalogoDiesel({ fincas }) {
       for (const fincaId of g.fincaIds) combos.push({ fincaId, tipoId: fijar.tipoId, precio: raw })
     }
     if (!combos.length) { setAviso({ tipo: 'error', texto: 'Pon un precio y marca al menos una finca.' }); return }
-    const desde = fijar.desde || hoyISO(); const prov = idReal(fijar.proveedorId)
+    const desde = fijar.desde || hoyISO()
     setGuardando(true)
-    try { for (const c of combos) await aplicarPrecio(prov, c.fincaId, c.tipoId, c.precio, desde) }
-    catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + e.message }); return }
+    let prov
+    try {
+      if (esNuevo) {
+        const { data, error } = await supabase.schema('produccion').from('diesel_proveedor').insert({ nombre: fijar.nuevoNombre.trim() }).select('id').single()
+        if (error) throw error
+        prov = data.id
+      } else prov = idReal(fijar.proveedorId)
+      for (const c of combos) await aplicarPrecio(prov, c.fincaId, c.tipoId, c.precio, desde)
+    } catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo aplicar. ' + e.message }); return }
     const items = await detectarRecosteo(prov, combos, desde)
     setGuardando(false); setFijar(null); setAviso({ tipo: 'ok', texto: 'Precios aplicados.' }); await cargar()
     if (items.length) setRecostear({ items })
@@ -269,9 +278,10 @@ export default function CatalogoDiesel({ fincas }) {
             </select>
             <button onClick={() => abrirFijar({ lugar: 'fincas' })} style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY }}>Fijar precios</button>
           </>)}
-          {tab === 'proveedores' && !cargando && !alta && (
+          {tab === 'proveedores' && !cargando && !alta && (<>
+            <button onClick={() => abrirFijar({ lugar: 'proveedores' })} style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY }}>Fijar precios</button>
             <button onClick={abrirAlta} style={{ ...boton, background: NAVY, color: 'white', borderColor: NAVY }}>+ Agregar proveedor</button>
-          )}
+          </>)}
         </div>
       </div>
 
@@ -372,6 +382,7 @@ function VistaProveedores({ activas, tipos, proveedores, precioDe, fincasDeProv,
   return (
     <div>
       {alta && <PanelAlta {...{ activas, tipos, alta, setAlta, guardarAlta, guardando }} />}
+      {panelFijar('proveedores')}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {proveedores.map(prov => {
           const ab = expandir === prov.id
@@ -490,8 +501,15 @@ function PanelFijar({ activas, tipos, proveedores, fijar, setFijar, guardarFijar
           <select value={fijar.proveedorId} disabled={fijar.provFijo} onChange={e => setFijar(x => ({ ...x, proveedorId: e.target.value }))} style={{ ...inp, opacity: fijar.provFijo ? 0.7 : 1 }}>
             <option value="">Elegir…</option>
             {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            <option value="__nuevo">+ Nuevo proveedor</option>
           </select>
         </div>
+        {fijar.proveedorId === '__nuevo' && (
+          <div>
+            <label style={lbl}>Nombre del nuevo</label>
+            <input value={fijar.nuevoNombre || ''} placeholder="ej. Primax" onChange={e => setFijar(x => ({ ...x, nuevoNombre: e.target.value }))} style={inp} autoFocus />
+          </div>
+        )}
         <div>
           <label style={lbl}>Tipo</label>
           <select value={fijar.tipoId} disabled={fijar.tipoFijo} onChange={e => setFijar(x => ({ ...x, tipoId: e.target.value }))} style={{ ...inp, opacity: fijar.tipoFijo ? 0.7 : 1 }}>
@@ -508,8 +526,7 @@ function PanelFijar({ activas, tipos, proveedores, fijar, setFijar, guardarFijar
               <span style={{ fontSize: '12px', color: GRIS }}>Precio</span>
               <CampoNumero maxDec={6} value={g.precio} placeholder="ej. 4.09"
                 onChange={v => setFijar(x => ({ ...x, grupos: x.grupos.map((gg, i) => i === gi ? { ...gg, precio: v } : gg) }))} style={{ ...inp, width: '100px', textAlign: 'right' }} />
-              <span style={{ fontSize: '11px', color: GRIS, marginLeft: '4px' }}>rápido:</span>
-              <button onClick={() => setGrupo(gi, activas.map(f => f.id))} style={chipQuick}>Todas</button>
+              <button onClick={() => setGrupo(gi, activas.map(f => f.id))} style={{ ...chipQuick, marginLeft: '4px' }}>Todas</button>
               {zonas.map(z => <button key={z} onClick={() => setGrupo(gi, activas.filter(f => f.zona === z).map(f => f.id))} style={chipQuick}>{zonaLabel(z)}</button>)}
               <button onClick={() => setGrupo(gi, [])} style={{ ...chipQuick, color: GRIS }}>Ninguna</button>
               {fijar.grupos.length > 1 && <button onClick={() => setFijar(x => ({ ...x, grupos: x.grupos.filter((_, i) => i !== gi) }))} style={{ ...btnLink, color: ROJO, marginLeft: 'auto' }}>Quitar grupo</button>}
