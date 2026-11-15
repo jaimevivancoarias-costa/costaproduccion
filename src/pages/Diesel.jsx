@@ -64,7 +64,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [pedidos, setPedidos] = useState([])
   const [consumos, setConsumos] = useState([])
   const [solis, setSolis] = useState([])
-  const [precios, setPrecios] = useState({})
+  const [precios, setPrecios] = useState({})            // precio "sin proveedor" (catálogo anterior) por tipo
+  const [provsBase, setProvsBase] = useState([])        // diesel_proveedor activos
+  const [preciosProv, setPreciosProv] = useState({})    // `${provId|'SIN'}|${tipoId}` -> { precio, desde } (de esta finca)
   const [userId, setUserId] = useState(null)
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
@@ -94,13 +96,13 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
   const cargar = useCallback(async () => {
     setCargando(true); setAviso(null)
-    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }, { data: usuarios }] = await Promise.all([
+    const [{ data: u }, { data: tp }, { data: sal }, { data: mv }, { data: pe }, { data: co }, { data: sc }, { data: pr }, { count }, { data: peAll }, { data: prh }, { data: usuarios }, { data: prv }] = await Promise.all([
       supabase.auth.getUser(),
       supabase.schema('produccion').from('diesel_tipo').select('id, nombre, codigo').eq('activo', true).order('nombre'),
       supabase.schema('produccion').rpc('fn_saldo_diesel', { p_finca: finca.id, p_hasta: hastaSaldo }),
       supabase.schema('produccion').rpc('fn_movimiento_diesel', { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').from('diesel_pedido')
-        .select('id, tipo_id, galones, fecha, estado, solicitado_por, solicitado_en, numero_guia, proveedor, precio_galon').eq('finca_id', finca.id)
+        .select('id, tipo_id, galones, fecha, estado, solicitado_por, solicitado_en, numero_guia, proveedor, proveedor_id, precio_galon').eq('finca_id', finca.id)
         .gte('fecha', desde).lte('fecha', hasta).order('fecha', { ascending: false }),
       supabase.schema('produccion').from('diesel_consumo')
         .select('id, tipo_id, galones, fecha').eq('finca_id', finca.id)
@@ -109,7 +111,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         .select('id, tabla, registro_id, valor_propuesto').eq('finca_id', finca.id)
         .in('tabla', ['diesel_pedido', 'diesel_consumo']).eq('estado', 'pendiente'),
       supabase.schema('produccion').from('diesel_precio')
-        .select('tipo_id, finca_id, precio_galon, vigente_desde').is('vigente_hasta', null)
+        .select('proveedor_id, tipo_id, finca_id, precio_galon, vigente_desde').is('vigente_hasta', null)
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`),
       supabase.schema('produccion').from('diesel_conteo')
         .select('id', { count: 'exact', head: true }).eq('finca_id', finca.id),
@@ -120,6 +122,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         .select('id, tipo_id, finca_id, precio_galon, vigente_desde, vigente_hasta')
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`).order('vigente_desde', { ascending: true }),
       supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
+      supabase.schema('produccion').from('diesel_proveedor').select('id, nombre').eq('activo', true).order('nombre'),
     ])
     const nu = {}; (usuarios || []).forEach(x => { nu[x.id] = x.nombre }); setNombresU(nu)
     setUserId(u?.user?.id || null)
@@ -130,12 +133,25 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     setConsumos(co || [])
     setSolis(sc || [])
     setPrimeraVez((count || 0) === 0)
-    const pm = {}
+    setProvsBase(prv || [])
+    // Dos mapas desde diesel_precio (vigente): el "sin proveedor" por tipo (pm,
+    // catálogo anterior) y el de proveedor por tipo para ESTA finca (pp). En los
+    // dos, la fila de la finca gana a la general.
+    const pm = {}, pmFinca = {}
+    const pp = {}, ppFinca = {}
     ;(pr || []).forEach(r => {
       const esFinca = !!r.finca_id
-      if (pm[r.tipo_id] == null || esFinca) pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
+      if (r.proveedor_id == null) {
+        if (pmFinca[r.tipo_id] == null && (esFinca || pm[r.tipo_id] == null)) pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
+        if (esFinca) { pm[r.tipo_id] = { precio: Number(r.precio_galon), desde: r.vigente_desde }; pmFinca[r.tipo_id] = true }
+      } else {
+        const k = `${r.proveedor_id}|${r.tipo_id}`
+        if (ppFinca[k] == null && (esFinca || pp[k] == null)) pp[k] = { precio: Number(r.precio_galon), desde: r.vigente_desde }
+        if (esFinca) { pp[k] = { precio: Number(r.precio_galon), desde: r.vigente_desde }; ppFinca[k] = true }
+      }
     })
     setPrecios(pm)
+    setPreciosProv(pp)
 
     // Bajas (robo/merma/daño): ajustes NEGATIVOS que guardaron un precio FIFO.
     const { data: bj } = await supabase.schema('produccion').from('ajuste_diesel')
@@ -220,6 +236,25 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   useEffect(() => { cargar() }, [cargar])
 
   const nombreTipo = id => tipos.find(t => t.id === id)?.nombre || '—'
+  // --- Proveedores (diesel viene de varios; "Sin proveedor" = uno más) ---
+  const proveedoresUI = [{ id: 'SIN', nombre: 'Sin proveedor' }, ...provsBase]
+  const nombreProv = id => (id ? (provsBase.find(p => p.id === id)?.nombre || '—') : 'Sin proveedor')
+  const nombreProvRow = row => row.proveedor_id ? nombreProv(row.proveedor_id) : (row.proveedor || '—')
+  // Proveedores con precio para ESTA finca (+ "Sin proveedor" siempre), para el dropdown.
+  const provsConPrecio = [...new Set(Object.keys(preciosProv).map(k => k.split('|')[0]))]
+  const provsIngreso = proveedoresUI.filter(p => p.id === 'SIN' || provsConPrecio.includes(p.id))
+  // Tipos que un proveedor vende en esta finca (según el catálogo); SIN = todos.
+  const tiposDeProvIngreso = provId => {
+    if (provId === 'SIN') return tipos
+    const ids = Object.keys(preciosProv).filter(k => k.split('|')[0] === provId).map(k => k.split('|')[1])
+    const lista = tipos.filter(t => ids.includes(t.id))
+    return lista.length ? lista : tipos
+  }
+  const precioProvTipo = (provId, tipoId) => {
+    if (!provId || !tipoId) return null
+    if (provId === 'SIN') { const p = precios[tipoId]; return p ? p.precio : null }
+    const p = preciosProv[`${provId}|${tipoId}`]; return p ? p.precio : null
+  }
   const movDe = id => movs.find(m => m.tipo_id === id)
   const solDe = (tabla, id) => solis.find(x => x.tabla === tabla && x.registro_id === id)
   // Valor por FIFO: cada lote (ingreso/inicial) al precio que regía en SU fecha,
@@ -284,19 +319,19 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     if (!form.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
     const fecha = form.fecha || hoyISO()
     if (form.modo === 'ingreso') {
+      if (!form.proveedorId) { setAviso({ tipo: 'error', texto: 'Elige el proveedor.' }); return }
       const guia = (form.guia || '').trim() || null
-      const proveedor = (form.proveedor || '').trim() || null
-      // El jefe verifica/actualiza el precio del catálogo con un pop-up.
-      // El bodeguero no ve ni pone precio: se registra directo.
-      if (esJefe) {
-        const p = precios[form.tipoId]
-        setRevPrecio({ tipoId: form.tipoId, galones: gal, fecha, guia, proveedor,
-                       precioActual: p ? p.precio : null, precio: p ? String(p.precio) : '' })
-        return
-      }
-      const pB = precios[form.tipoId]   // precio sugerido del catálogo, se congela en la compra
+      const provId = form.proveedorId === 'SIN' ? null : form.proveedorId
+      // Precio: el del catálogo del proveedor para esta finca. El jefe lo puede
+      // ajustar en el formulario; se CONGELA en la compra (precio_galon).
+      const pCat = precioProvTipo(form.proveedorId, form.tipoId)
+      const editado = esJefe && form.precio !== '' && form.precio != null ? numDec(form.precio) : null
+      const precioGal = editado != null ? editado : pCat
       const { error } = await supabase.schema('produccion').from('diesel_pedido')
-        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha, estado: 'aprobado', numero_guia: guia, proveedor, precio_galon: pB ? pB.precio : null })
+        .insert({ finca_id: finca.id, tipo_id: form.tipoId, galones: gal, fecha, estado: 'aprobado',
+                  aprobado_por: userId, aprobado_en: new Date().toISOString(),
+                  numero_guia: guia, proveedor_id: provId, proveedor: provId ? nombreProv(provId) : null,
+                  precio_galon: precioGal != null && precioGal > 0 ? precioGal : null })
       if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
       setAviso({ tipo: 'ok', texto: 'Ingreso registrado.' })
       setForm(null); await refrescar(); return
@@ -306,6 +341,25 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     if (error) { setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + error.message }); return }
     setAviso({ tipo: 'ok', texto: 'Consumo registrado.' })
     setForm(null); await refrescar()
+  }
+
+  // Abrir el form de ingreso con el primer proveedor y su precio ya puestos.
+  function formIngresoInicial() {
+    const pv = provsIngreso[0]?.id || 'SIN'
+    const tp = tiposDeProvIngreso(pv); const tipoId = tp[0]?.id || ''
+    const pc = precioProvTipo(pv, tipoId)
+    return { modo: 'ingreso', proveedorId: pv, tipoId, galones: '', fecha: hoyISO(), guia: '', precio: pc != null ? String(pc) : '' }
+  }
+  function cambiarProvForm(provId) {
+    setForm(f => {
+      const tp = tiposDeProvIngreso(provId)
+      const tipoId = tp.some(t => t.id === f.tipoId) ? f.tipoId : (tp[0]?.id || '')
+      const pc = precioProvTipo(provId, tipoId)
+      return { ...f, proveedorId: provId, tipoId, precio: pc != null ? String(pc) : '' }
+    })
+  }
+  function cambiarTipoForm(tipoId) {
+    setForm(f => { const pc = precioProvTipo(f.proveedorId, tipoId); return { ...f, tipoId, precio: pc != null ? String(pc) : '' } })
   }
 
   async function guardarIngreso() {
@@ -343,8 +397,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       fecha: row.fecha,
       galones: String(Number(row.galones)),
       guia: row.numero_guia || '',
-      proveedor: row.proveedor || '',
-      orig: { tipo_id: row.tipo_id, fecha: row.fecha, galones: Number(row.galones), numero_guia: row.numero_guia || null, proveedor: row.proveedor || null },
+      proveedorId: row.proveedor_id || 'SIN',
+      orig: { tipo_id: row.tipo_id, fecha: row.fecha, galones: Number(row.galones), numero_guia: row.numero_guia || null, proveedor_id: row.proveedor_id || null },
     })
   }
   function jefeEditar(tabla, row) { abrirEditar(tabla, row, false) }
@@ -355,8 +409,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     if (!(gal > 0)) { setAviso({ tipo: 'error', texto: 'Pon los galones.' }); return }
     if (!r.tipoId) { setAviso({ tipo: 'error', texto: 'Elige el tipo de diesel.' }); return }
     if (!r.fecha) { setAviso({ tipo: 'error', texto: 'Pon la fecha.' }); return }
+    const provIdEd = r.proveedorId === 'SIN' ? null : r.proveedorId
     const campos = r.tabla === 'diesel_pedido'
-      ? { tipo_id: r.tipoId, fecha: r.fecha, galones: gal, numero_guia: (r.guia || '').trim() || null, proveedor: (r.proveedor || '').trim() || null }
+      ? { tipo_id: r.tipoId, fecha: r.fecha, galones: gal, numero_guia: (r.guia || '').trim() || null, proveedor_id: provIdEd, proveedor: provIdEd ? nombreProv(provIdEd) : null }
       : { tipo_id: r.tipoId, fecha: r.fecha, galones: gal }
     if (r.pedir) {
       // Bodeguero: no edita directo, manda la solicitud al jefe.
@@ -403,6 +458,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       if (vp.galones != null) campos.galones = Number(vp.galones)
       if (sol.tabla === 'diesel_pedido') {
         if ('numero_guia' in vp) campos.numero_guia = vp.numero_guia
+        if ('proveedor_id' in vp) campos.proveedor_id = vp.proveedor_id
         if ('proveedor' in vp) campos.proveedor = vp.proveedor
       }
       if (Object.keys(campos).length) {
@@ -672,8 +728,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     <input value={editRow.guia} onChange={e => setEditRow(x => ({ ...x, guia: e.target.value }))} style={{ ...inp, width: '100%' }} />
                   </div>
                   <div style={{ flex: 1, minWidth: '120px' }}>
-                    <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Proveedor (opcional)</div>
-                    <input value={editRow.proveedor} onChange={e => setEditRow(x => ({ ...x, proveedor: e.target.value }))} style={{ ...inp, width: '100%' }} />
+                    <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Proveedor</div>
+                    <select value={editRow.proveedorId} onChange={e => setEditRow(x => ({ ...x, proveedorId: e.target.value }))} style={{ ...inp, width: '100%' }}>
+                      {proveedoresUI.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
                   </div>
                 </div>
               )}
@@ -745,7 +803,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               </div>
               {!form ? (
                 <div style={{ display: 'flex', gap: '9px', flexWrap: 'wrap' }}>
-                  <Btn primario onClick={() => setForm({ modo: 'ingreso', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO(), guia: '', proveedor: '' })}>+ Registrar ingreso</Btn>
+                  <Btn primario onClick={() => setForm(formIngresoInicial())}>+ Registrar ingreso</Btn>
                   <Btn onClick={() => setForm({ modo: 'consumo', tipoId: tipos[0]?.id || '', galones: '', fecha: hoyISO() })}>Registrar consumo</Btn>
                 </div>
               ) : (
@@ -754,26 +812,49 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     {form.modo === 'ingreso' ? 'Nuevo ingreso de diesel' : 'Registrar consumo'}
                   </div>
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                    <Campo label="Tipo">
-                      <select value={form.tipoId} onChange={e => setForm(f => ({ ...f, tipoId: e.target.value }))} style={{ ...inp, width: '170px' }}>
-                        {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-                      </select>
-                    </Campo>
+                    {form.modo === 'ingreso' && (() => {
+                      const tiposProv = tiposDeProvIngreso(form.proveedorId)
+                      return (
+                        <>
+                          <Campo label="Proveedor">
+                            <select value={form.proveedorId} onChange={e => cambiarProvForm(e.target.value)} style={{ ...inp, width: '190px' }}>
+                              {provsIngreso.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                            </select>
+                          </Campo>
+                          <Campo label="Tipo">
+                            {tiposProv.length === 1 ? (
+                              <div style={{ ...inp, width: '150px', display: 'flex', alignItems: 'center', color: NAVY, background: '#f6f9fb' }}>{tiposProv[0].nombre}</div>
+                            ) : (
+                              <select value={form.tipoId} onChange={e => cambiarTipoForm(e.target.value)} style={{ ...inp, width: '150px' }}>
+                                {tiposProv.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                              </select>
+                            )}
+                          </Campo>
+                        </>
+                      )
+                    })()}
+                    {form.modo === 'consumo' && (
+                      <Campo label="Tipo">
+                        <select value={form.tipoId} onChange={e => setForm(f => ({ ...f, tipoId: e.target.value }))} style={{ ...inp, width: '170px' }}>
+                          {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+                        </select>
+                      </Campo>
+                    )}
                     <Campo label="Galones">
                       <CampoNumero value={form.galones} placeholder="ej. 200" onChange={v => setForm(f => ({ ...f, galones: v }))} style={{ ...inp, width: '110px', textAlign: 'right' }} />
                     </Campo>
+                    {form.modo === 'ingreso' && esJefe && (
+                      <Campo label="Precio $/gal">
+                        <CampoNumero maxDec={6} value={form.precio || ''} placeholder="auto" onChange={v => setForm(f => ({ ...f, precio: v }))} style={{ ...inp, width: '120px', textAlign: 'right' }} />
+                      </Campo>
+                    )}
                     <Campo label="Fecha">
                       <input type="date" value={form.fecha} max={hoyISO()} onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} style={{ ...inp, width: '160px' }} />
                     </Campo>
                     {form.modo === 'ingreso' && (
-                      <>
-                        <Campo label="Número de guía">
-                          <input type="text" value={form.guia || ''} placeholder="ej. 001-234567" onChange={e => setForm(f => ({ ...f, guia: e.target.value }))} style={{ ...inp, width: '150px' }} />
-                        </Campo>
-                        <Campo label="Proveedor">
-                          <input type="text" value={form.proveedor || ''} placeholder="ej. Primax" onChange={e => setForm(f => ({ ...f, proveedor: e.target.value }))} style={{ ...inp, width: '180px' }} />
-                        </Campo>
-                      </>
+                      <Campo label="Número de guía">
+                        <input type="text" value={form.guia || ''} placeholder="ej. 001-234567" onChange={e => setForm(f => ({ ...f, guia: e.target.value }))} style={{ ...inp, width: '150px' }} />
+                      </Campo>
                     )}
                   </div>
                   <div style={{ display: 'flex', gap: '9px', marginTop: '14px' }}>
@@ -781,7 +862,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                     <Btn onClick={() => setForm(null)}>Cancelar</Btn>
                   </div>
                   {form.modo === 'ingreso' && esJefe && (
-                    <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '10px' }}>Al guardar verás el pop-up para confirmar/actualizar el precio del catálogo.</div>
+                    <div style={{ fontSize: '11.5px', color: GRIS, marginTop: '10px' }}>El precio sale del catálogo del proveedor; lo podés ajustar aquí y se congela en esta compra. Para cambiarlo a futuro, edítalo en el catálogo.</div>
                   )}
                 </div>
               )}
@@ -901,7 +982,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                       {ab && (
                         <div style={{ background: '#f8fafc', padding: '10px 16px 12px 33px', fontSize: '12.5px', color: GRIS, lineHeight: 1.6 }}>
                           <div>Ingresó: <b style={{ color: NAVY, fontWeight: 600 }}>{quien || 'No registrado'}</b>{p.solicitado_en ? ` · el ${corta(p.solicitado_en.slice(0, 10))}` : ''}</div>
-                          <div>Guía: <b style={{ color: NAVY, fontWeight: 600 }}>{p.numero_guia || '—'}</b> · Proveedor: <b style={{ color: NAVY, fontWeight: 600 }}>{p.proveedor || '—'}</b></div>
+                          <div>Guía: <b style={{ color: NAVY, fontWeight: 600 }}>{p.numero_guia || '—'}</b> · Proveedor: <b style={{ color: NAVY, fontWeight: 600 }}>{nombreProvRow(p)}</b></div>
                         </div>
                       )}
                     </div>
