@@ -897,6 +897,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const valorBodega = useMemo(
     () => saldos.reduce((t, s) => t + Number(valorFifo[s.insumo_id] || 0), 0),
     [saldos, valorFifo])
+  // Valor al CIERRE del rango (para el total al pie de "Qué se movió"): usa el valor
+  // a la fecha de cierre (hasta), no al día de hoy, así no "varía" con lo de hoy.
+  const valorBodegaCierre = useMemo(
+    () => saldos.reduce((t, s) => t + Number(valorFifoCierre[s.insumo_id] ?? valorFifo[s.insumo_id] ?? 0), 0),
+    [saldos, valorFifoCierre, valorFifo])
   // Consumo $ del rango (= suma de consumo_dolares de "Qué se movió"), para el total al pie.
   const consumoRango = useMemo(
     () => (movs || []).reduce((t, m) => t + Number(m.consumo_dolares || 0), 0),
@@ -2362,7 +2367,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '30px', flexWrap: 'wrap',
                           marginTop: '10px', paddingTop: '11px', borderTop: '1px solid ' + BORDE, fontVariantNumeric: 'tabular-nums' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>Consumo del rango <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(consumoRango)}</b></span>
-              <span style={{ fontSize: '13px', color: GRIS }}>Valor de la bodega <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(valorBodega)}</b></span>
+              <span style={{ fontSize: '13px', color: GRIS }}>Valor de la bodega <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(valorBodegaCierre)}</b></span>
             </div>
           )}
 

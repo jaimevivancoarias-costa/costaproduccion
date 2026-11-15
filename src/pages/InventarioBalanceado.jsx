@@ -558,6 +558,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
   const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifo[s.producto_id] || 0), 0), [saldos, valorFifo])
+  // Valor al CIERRE del rango (para el total al pie de "Qué se movió"): usa el valor
+  // a la fecha de cierre (hasta), no al día de hoy, así no "varía" con lo de hoy.
+  const valorBodegaCierre = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifoCierre[s.producto_id] ?? valorFifo[s.producto_id] ?? 0), 0), [saldos, valorFifoCierre, valorFifo])
   // Consumo $ del rango (= suma de consumo_dolares de "Qué se movió"), igual que el PDF.
   const consumoRango = useMemo(() => (movs || []).reduce((t, m) => t + Number(m.consumo_dolares || 0), 0), [movs])
   // Precio FIFO real por producto (valor del saldo ÷ saldo) para costear faltantes.
@@ -1982,7 +1985,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '30px', flexWrap: 'wrap',
                           marginTop: '10px', paddingTop: '11px', borderTop: '1px solid ' + BORDE, fontVariantNumeric: 'tabular-nums' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>Consumo del rango <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(consumoRango)}</b></span>
-              <span style={{ fontSize: '13px', color: GRIS }}>Valor de la bodega <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(valorBodega)}</b></span>
+              <span style={{ fontSize: '13px', color: GRIS }}>Valor de la bodega <b style={{ color: NAVY, fontWeight: 700, fontSize: '15px', marginLeft: '7px' }}>{dinero(valorBodegaCierre)}</b></span>
             </div>
           )}
 
