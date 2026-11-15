@@ -85,6 +85,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [lotes, setLotes] = useState({})                // tipo_id -> [{fecha, galones, queda, precio, rowId, inicial}]
   const [expandido, setExpandido] = useState(null)      // tipo_id del detalle por lote abierto
   const [resExp, setResExp] = useState(null)            // tipo_id del desglose FIFO del consumo (Resumen)
+  const [resIngExp, setResIngExp] = useState(null)      // tipo_id del desglose de ingresos (Resumen)
   const [movAbierto, setMovAbierto] = useState({})      // `${tipo_id}|e` / `|c` -> desglose fecha por fecha abierto
   const [corrLote, setCorrLote] = useState(null)        // pop-up corregir precio de un lote
   const [editRow, setEditRow] = useState(null)          // jefe edita un ingreso/consumo (fecha, tipo, galones, guía…)
@@ -117,7 +118,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
         .select('id', { count: 'exact', head: true }).eq('finca_id', finca.id),
       // Todos los ingresos (para los lotes FIFO) y el historial de precios.
       supabase.schema('produccion').from('diesel_pedido')
-        .select('id, tipo_id, galones, fecha, precio_galon').eq('finca_id', finca.id).eq('estado', 'aprobado').lte('fecha', hastaSaldo),
+        .select('id, tipo_id, galones, fecha, precio_galon, proveedor_id, proveedor').eq('finca_id', finca.id).eq('estado', 'aprobado').lte('fecha', hastaSaldo),
       supabase.schema('produccion').from('diesel_precio')
         .select('id, tipo_id, finca_id, precio_galon, vigente_desde, vigente_hasta')
         .or(`finca_id.is.null,finca_id.eq.${finca.id}`).order('vigente_desde', { ascending: true }),
@@ -184,13 +185,15 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const saldoDe = {}; (sal || []).forEach(r => { saldoDe[r.tipo_id] = Number(r.saldo) })
     // Saldo inicial del período por tipo (de fn_movimiento, = la fila de arriba).
     const movIniDe = {}; (mv || []).forEach(r => { movIniDe[r.tipo_id] = Number(r.saldo_inicial) || 0 })
+    const provNombre = {}; (prv || []).forEach(x => { provNombre[x.id] = x.nombre })
+    const nombreProvLote = p => p.proveedor_id ? (provNombre[p.proveedor_id] || p.proveedor || null) : (p.proveedor || null)
     const porTipo = {}
     ;(tp || []).forEach(t => {
       const arr = []
       // Cada lote guarda SU precio (congelado): el inicial en diesel_conteo_linea,
       // la compra en diesel_pedido. Corregirlo cambia solo ese lote.
-      if (iniFecha && iniGal[t.id] > 0) { arr.push({ fecha: iniFecha, galones: iniGal[t.id], precio: iniPrecio[t.id] != null ? iniPrecio[t.id] : null, inicial: true, conteoId: iniId, pedidoId: null }) }
-      ;(peAll || []).filter(p => p.tipo_id === t.id).forEach(p => arr.push({ fecha: p.fecha, galones: Number(p.galones), precio: p.precio_galon != null ? Number(p.precio_galon) : null, pedidoId: p.id }))
+      if (iniFecha && iniGal[t.id] > 0) { arr.push({ fecha: iniFecha, galones: iniGal[t.id], precio: iniPrecio[t.id] != null ? iniPrecio[t.id] : null, inicial: true, conteoId: iniId, pedidoId: null, prov: null }) }
+      ;(peAll || []).filter(p => p.tipo_id === t.id).forEach(p => arr.push({ fecha: p.fecha, galones: Number(p.galones), precio: p.precio_galon != null ? Number(p.precio_galon) : null, pedidoId: p.id, prov: nombreProvLote(p) }))
       arr.sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)
       const entrado = arr.reduce((s, l) => s + l.galones, 0)
       let consumo = entrado - (saldoDe[t.id] ?? entrado)      // = inicial + ingresos − saldo (acumulado hasta hoy)
@@ -896,7 +899,10 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             const valCon = valConsumidoDe(t.id)
             const lotCon = (lotes[t.id] || []).filter(l => Number(l.consumioP) > 0.0001)
               .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
+            const lotIng = (lotes[t.id] || []).filter(l => Number(l.entroP) > 0.0001)
+              .sort((a, b) => (a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0))
             const abiertoR = resExp === t.id
+            const abiertoI = resIngExp === t.id
             return (
               <Fragment key={t.id}>
               <Fila cebra={i % 2 === 1} gtc={esJefe ? GRES_J : GRES} der={esJefe ? [false, true, true, true, true] : [false, true, true]} cols={[
@@ -905,8 +911,9 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 <span style={{ color: con ? ROJO : '#c3d0db' }}>{con ? '−' + miles(con) : '—'}</span>,
                 ...(esJefe ? [
                   ing ? (
-                    <span>{dineroLimpio(valIng)}
-                      {p && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{precio6(p.precio)}/gal{p.desde ? ` · ${corta(p.desde).slice(0, 5)}` : ''}</span>}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {lotIng.length > 0 && <button onClick={() => setResIngExp(abiertoI ? null : t.id)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#9fb0bf', fontSize: '11px', padding: 0 }}>{abiertoI ? '▾' : '▸'}</button>}
+                      {dineroLimpio(valIng)}
                     </span>
                   ) : <span>—</span>,
                   con ? (
@@ -917,6 +924,23 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                   ) : <span>—</span>,
                 ] : []),
               ]} />
+              {esJefe && abiertoI && lotIng.length > 0 && (
+                <div style={{ padding: '2px 16px 12px 42px', background: '#fafcfe', borderBottom: '0.5px solid #f1f6f9' }}>
+                  <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 0 7px' }}>{lotIng.length} {lotIng.length === 1 ? 'ingreso' : 'ingresos'} del período · cada uno a su precio</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: '5px 14px', fontSize: '12.5px', alignItems: 'center', maxWidth: '620px' }}>
+                    {lotIng.flatMap((l, k) => [
+                      <span key={k + 'f'} style={{ color: GRIS }}>{corta(l.fecha)}</span>,
+                      <span key={k + 'r'} style={{ color: GRIS }}>{l.prov || 'Sin proveedor'}</span>,
+                      <span key={k + 'g'} style={{ textAlign: 'right', color: GRIS }}>{miles(l.entroP)} gal · {l.precio == null ? 's/p' : precio6(l.precio)}</span>,
+                      <span key={k + 'v'} style={{ textAlign: 'right', fontWeight: 600, color: NAVY }}>{dineroLimpio(Number(l.entroP) * Number(l.precio || 0))}</span>,
+                    ])}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', maxWidth: '620px', marginTop: '7px', paddingTop: '7px', borderTop: '0.5px solid ' + BORDE, fontSize: '11.5px', color: '#9fb0bf' }}>
+                    <span>{miles(ing)} gal en total</span>
+                    <span style={{ fontWeight: 600, color: GRIS }}>{dineroLimpio(valIng)}</span>
+                  </div>
+                </div>
+              )}
               {esJefe && abiertoR && lotCon.length > 0 && (
                 <div style={{ padding: '2px 16px 12px 42px', background: '#fafcfe', borderBottom: '0.5px solid #f1f6f9' }}>
                   <div style={{ fontSize: '11px', color: '#9fb0bf', margin: '9px 0 7px' }}>{lotCon.length} {lotCon.length === 1 ? 'lote' : 'lotes'} · FIFO (lo más viejo se consume primero)</div>
@@ -1050,7 +1074,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '9px', flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 650, fontSize: '13.5px', fontVariantNumeric: 'tabular-nums' }}>{miles(L.queda)} gal</span>
                   <span style={{ fontSize: '11.5px', color: L.precio == null ? AMBAR : GRIS }}>
-                    {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del conteo físico' : 'compra ' + corta(L.fecha)}
+                    {L.precio == null ? 'sin precio' : precio6(L.precio)} · {L.inicial ? 'del conteo físico' : 'compra ' + corta(L.fecha)}{L.prov ? ' · ' + L.prov : ''}
                   </span>
                   {li === 0 && <span style={{ fontSize: '10px', fontWeight: 600, padding: '1px 8px', borderRadius: '20px', background: '#eaf6f0', color: '#0f6e56' }}>se gasta primero</span>}
                   {esJefe && (
@@ -1138,6 +1162,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
               <Fragment key={li}>
                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                   <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
+                  {L.prov && <div style={{ color: GRIS, fontSize: '11px' }}>{L.prov}</div>}
                   <div style={{ color: GRIS, fontSize: '11.5px' }}>{L.precio == null ? 'sin precio' : precio6(L.precio) + ' /gal'}</div>
                   {!hayAnterior && li === primerQuedaPer && L.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
                   {esJefe && (

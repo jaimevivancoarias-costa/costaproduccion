@@ -181,7 +181,7 @@ export default function CatalogoDiesel({ fincas }) {
     setEditProv(null); setAviso({ tipo: 'ok', texto: 'Proveedor actualizado.' }); await cargar()
   }
   async function desactivarProv(id, nombre) {
-    if (!window.confirm(`¿Quitar el proveedor "${nombre}"? Sus precios dejan de verse, pero los ingresos viejos no se tocan.`)) return
+    if (!window.confirm(`¿Eliminar el proveedor "${nombre}"? Sus precios dejan de verse, pero los ingresos viejos no se tocan.`)) return
     setGuardando(true)
     const { error } = await supabase.schema('produccion').from('diesel_proveedor').update({ activo: false }).eq('id', id)
     setGuardando(false)
@@ -404,7 +404,7 @@ function VistaProveedores({ activas, tipos, proveedores, precioDe, fincasDeProv,
                 <span style={{ display: 'flex', gap: '12px', alignItems: 'center', marginLeft: 'auto' }}>
                   {renom ? (<>
                     <button onClick={guardarEditProv} disabled={guardando} style={btnLink}>Guardar</button>
-                    <button onClick={() => desactivarProv(prov.id, prov.nombre)} style={{ ...btnLink, color: ROJO }}>Quitar</button>
+                    <button onClick={() => desactivarProv(prov.id, prov.nombre)} style={{ ...btnLink, color: ROJO }}>Eliminar</button>
                     <button onClick={() => setEditProv(null)} style={{ ...btnLink, color: GRIS }}>Cancelar</button>
                   </>) : (<>
                     <span style={{ fontSize: '12px', color: GRIS }}>{sus.length} {sus.length === 1 ? 'finca' : 'fincas'}</span>
