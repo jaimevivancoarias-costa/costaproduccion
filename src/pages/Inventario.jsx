@@ -836,20 +836,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Auto-actualizar al volver a la pestaña/ventana: si varios editan a la vez,
-  // la pantalla queda con datos viejos. Al volver (y si no estás contando ni
-  // recién cargaste hace unos segundos), recarga solo. No molesta mientras contás.
-  useEffect(() => {
-    const alVolver = () => {
-      if (document.visibilityState === 'hidden') return
-      if (contando) return
-      if (Date.now() - ultimaCarga.current < 15000) return
-      cargar()
-    }
-    document.addEventListener('visibilitychange', alVolver)
-    window.addEventListener('focus', alVolver)
-    return () => { document.removeEventListener('visibilitychange', alVolver); window.removeEventListener('focus', alVolver) }
-  }, [contando, cargar])
+  // (Se quitó el auto-actualizar al volver a la pestaña/ventana: molestaba porque
+  // recargaba sola y los números cambiaban al volver. Para datos frescos a
+  // propósito está el botón 🔄 de la barra superior.)
 
   const primeraVez = conteos.length === 0
 

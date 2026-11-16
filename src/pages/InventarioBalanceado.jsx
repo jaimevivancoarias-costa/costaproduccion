@@ -277,19 +277,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
 
   useEffect(() => { cargar() }, [cargar])
 
-  // Auto-actualizar al volver a la pestaña/ventana (si no estás contando ni
-  // recién cargaste), para no quedar con datos viejos cuando varios editan.
-  useEffect(() => {
-    const alVolver = () => {
-      if (document.visibilityState === 'hidden') return
-      if (contando) return
-      if (Date.now() - ultimaCarga.current < 15000) return
-      cargar()
-    }
-    document.addEventListener('visibilitychange', alVolver)
-    window.addEventListener('focus', alVolver)
-    return () => { document.removeEventListener('visibilitychange', alVolver); window.removeEventListener('focus', alVolver) }
-  }, [contando, cargar])
+  // (Se quitó el auto-actualizar al volver a la pestaña/ventana: molestaba porque
+  // recargaba sola. Para datos frescos a propósito está el botón 🔄 de la barra.)
 
   const primeraVez = tomas.length === 0
 
