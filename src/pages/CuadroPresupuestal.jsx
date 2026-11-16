@@ -21,6 +21,8 @@ const GRUPOS = [
 const NO_REAL = new Set(['BALANCEADO_LARVA', 'ACTIVOS', 'MEJORAS'])
 const diasDelMes = (y, m) => new Date(y, m, 0).getDate()  // m = 1..12
 const num2 = n => (Number(n) || 0).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+// color con opacidad a partir de un hex (#RGB o #RRGGBB) — para tintar celdas por intensidad
+const hexA = (hex, a) => { const n = String(hex).replace('#', ''); const b = parseInt(n.length === 3 ? n.split('').map(c => c + c).join('') : n, 16); return `rgba(${(b >> 16) & 255},${(b >> 8) & 255},${b & 255},${a.toFixed(3)})` }
 // Parser tolerante: "319.210,80" | "319210.8" | "1,234" -> número.
 function parseNum(s) {
   if (s == null || s === '') return 0
@@ -582,10 +584,14 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
         const Rd = 54, Cc = 2 * Math.PI * Rd
         let acc = 0
         const arcos = segs.map(s => { const len = tot ? (s.v / tot) * Cc : 0; const el = { ...s, len, off: acc, pct: tot ? s.v / tot : 0 }; acc += len; return el })
-        // barras de un grupo por mes
-        const bvals = sel.map(m => grpTot(m, grupoBar))
-        const bmax = Math.max(1, ...bvals)
+        // desglose: subgrupos del grupo elegido × mes
+        const subItems = grpItems(grupoBar).filter(r => sel.some(m => vOf(m, r.id) > 0.005))
         const bcol = (GRP.find(g => g[0] === grupoBar) || [, , '#0D6CB0'])[2]
+        const celdas = subItems.flatMap(r => sel.map(m => vOf(m, r.id))).filter(v => v > 0.005)
+        const cmin = celdas.length ? Math.min(...celdas) : 0, cmax = celdas.length ? Math.max(...celdas) : 1
+        const maxCol = sel.map(m => Math.max(0, ...subItems.map(r => vOf(m, r.id))))
+        const totCol = sel.map(m => grpTot(m, grupoBar))
+        const tint = v => { const t = cmax > cmin ? (v - cmin) / (cmax - cmin) : 0; return { bg: hexA(bcol, 0.12 + t * 0.78), fg: t > 0.52 ? 'white' : '#4a5a67', fuerte: t > 0.52 } }
         return (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
             {/* dona */}
@@ -618,29 +624,46 @@ function TablaComparativa({ finca, anio, cargando, cmp, rubrosVis, abierto, setA
                 </div>
               )}
             </div>
-            {/* barras de un grupo por mes */}
-            <div style={cardP}>
+            {/* desglose de un grupo por mes (subgrupo × mes) */}
+            <div style={{ ...cardP, overflowX: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
-                <span style={tit}>Grupo por mes</span>
+                <span style={tit}>Grupo por mes · desglose</span>
                 <select value={grupoBar} onChange={e => setGrupoBar(e.target.value)} style={{ ...inp, padding: '4px 8px', fontSize: '11.5px' }}>
                   {GRUPOS.map(([g, l]) => <option key={g} value={g}>{l}</option>)}
                 </select>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '7px' }}>
-                {sel.map((m, i) => {
-                  const v = bvals[i], prev = i > 0 ? bvals[i - 1] : null
-                  return (
-                    <div key={m} style={{ display: 'flex', alignItems: 'center', gap: '9px', fontSize: '11.5px' }}>
-                      <span style={{ width: '30px', color: GRIS }}>{MESES[m - 1].slice(0, 3)}</span>
-                      <span style={{ flex: 1, background: '#eef3f7', borderRadius: '4px', height: '13px', position: 'relative', minWidth: '30px' }}>
-                        <span style={{ position: 'absolute', left: 0, top: 0, height: '13px', borderRadius: '4px', background: bcol, width: Math.max(2, 100 * v / bmax) + '%' }} />
-                      </span>
-                      <span style={{ width: '74px', textAlign: 'right', fontWeight: 500 }}>{dinero(v)}</span>
-                      <span style={{ width: '42px', textAlign: 'right' }}>{i > 0 ? deltaTxt(v, prev) : null}</span>
-                    </div>
-                  )
-                })}
-              </div>
+              {subItems.length === 0 ? (
+                <div style={{ fontSize: '12px', color: GRIS, padding: '8px 0' }}>Sin desglose en el periodo.</div>
+              ) : (<>
+                <table style={{ borderCollapse: 'collapse', fontSize: '11.5px', width: '100%', minWidth: (120 + sel.length * 70) + 'px' }}>
+                  <thead>
+                    <tr style={{ color: '#9fb0bf' }}>
+                      <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, position: 'sticky', left: 0, background: 'white' }}>Subgrupo</th>
+                      {sel.map(m => <th key={m} style={{ padding: '4px 8px', fontWeight: 500, textAlign: 'right' }}>{MESES[m - 1].slice(0, 3)}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subItems.map(r => (
+                      <tr key={r.id}>
+                        <td style={{ padding: '3px 8px', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'white', color: '#51606c' }}>{r.nombre}</td>
+                        {sel.map((m, ci) => {
+                          const v = vOf(m, r.id)
+                          if (!(v > 0.005)) return <td key={m} style={{ padding: '7px 8px', textAlign: 'right', color: '#cdd9e5', border: '2px solid #fff' }}>—</td>
+                          const c = tint(v); const top = Math.abs(v - maxCol[ci]) < 1e-9
+                          return <td key={m} title={dinero(v)} style={{ padding: '7px 8px', textAlign: 'right', background: c.bg, color: c.fg, border: '2px solid #fff', borderRadius: '4px', fontWeight: c.fuerte ? 500 : 400, whiteSpace: 'nowrap' }}>{top ? '● ' : ''}{dinero(v)}</td>
+                        })}
+                      </tr>
+                    ))}
+                    <tr>
+                      <td style={{ padding: '7px 8px', fontWeight: 500, position: 'sticky', left: 0, background: '#f3f7fb', borderTop: '0.5px solid #e6eef5', color: NAVY }}>Total {(GRP.find(g => g[0] === grupoBar) || [, 'grupo'])[1].toLowerCase()}</td>
+                      {totCol.map((tv, ci) => (
+                        <td key={ci} style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 500, background: '#f3f7fb', borderTop: '0.5px solid #e6eef5', whiteSpace: 'nowrap', color: NAVY }}>{dinero(tv)}{ci > 0 ? deltaTxt(tv, totCol[ci - 1]) : null}</td>
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+                <div style={{ fontSize: '10px', color: '#9fb0bf', marginTop: '8px' }}>Color = cuánto se gastó (más oscuro, más). ● = lo más gastado del mes. Flecha del total = vs mes anterior.</div>
+              </>)}
             </div>
           </div>
         )
@@ -935,7 +958,8 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const [hover, setHover] = useState(null)   // índice de mes resaltado
   const wrapRef = useRef(null)
   const [cw, setCw] = useState(680)          // ancho real del gráfico (alto fijo)
-  const [base, setBase] = useState('hadia')  // 'hadia' (por ha·día) | 'total' ($ del mes, como el Cuadro)
+  const [base, setBase] = useState('hadia')  // 'hadia' (÷ ha ÷ días) | 'hectarea' (÷ ha) | 'total' ($ del mes)
+  const [subSel, setSubSel] = useState(null)  // subgrupo elegido dentro de un grupo (null = todo el grupo)
 
   // mide el ancho del contenedor para que el SVG tenga alto fijo (no gigante)
   useEffect(() => {
@@ -959,7 +983,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
       if (ids.length) {
         for (let from = 0; ; from += 1000) {
           const r = await supabase.schema('produccion').from('cuadro_valor')
-            .select('cuadro_mes_id, valor, rubro:rubro_id(grupo)').in('cuadro_mes_id', ids)
+            .select('cuadro_mes_id, valor, rubro:rubro_id(grupo, nombre)').in('cuadro_mes_id', ids)
             .range(from, from + 999)
           const chunk = r.data || []
           vs = vs.concat(chunk)
@@ -972,12 +996,15 @@ function ComparaFincas({ visibles, idsSel, anio }) {
       ;(cms || []).forEach(c => {
         (porFinca[c.finca_id] = porFinca[c.finca_id] || {})[c.mes] = {
           ht: Number(c.hadia_total) || 0, hr: Number(c.hadia_real) || 0,
-          div: (Number(c.hectareas) || 0) * (Number(c.dias) || 0), grupos: {},
+          ha: Number(c.hectareas) || 0, dias: Number(c.dias) || 0,
+          div: (Number(c.hectareas) || 0) * (Number(c.dias) || 0), grupos: {}, sub: {},
         }
       })
       vs.forEach(v => {
         const c = byId[v.cuadro_mes_id]; const g = v.rubro?.grupo; if (!c || !g) return
-        const node = porFinca[c.finca_id]?.[c.mes]; if (node) node.grupos[g] = (node.grupos[g] || 0) + Number(v.valor || 0)
+        const node = porFinca[c.finca_id]?.[c.mes]; if (!node) return
+        node.grupos[g] = (node.grupos[g] || 0) + Number(v.valor || 0)
+        const sn = v.rubro?.nombre; if (sn) (node.sub[g] = node.sub[g] || {})[sn] = (node.sub[g][sn] || 0) + Number(v.valor || 0)
       })
       const meses = [...new Set((cms || []).map(c => c.mes))].sort((a, b) => a - b)
       setData({ porFinca, meses }); setMesesSel(meses); setCargando(false)
@@ -991,15 +1018,24 @@ function ComparaFincas({ visibles, idsSel, anio }) {
   const sel = (mesesSel.length ? mesesSel : mesesAll).slice().sort((a, b) => a - b)
   const toggleMes = m => setMesesSel(cur => { const b = cur.length ? cur : mesesAll; const n = b.includes(m) ? b.filter(x => x !== m) : [...b, m]; return n.length ? n : b })
   const esGrupo = metrica.startsWith('g:')
-  const totalM = base === 'total'   // $ del mes (como el Cuadro) vs por ha·día
+  const grpSel = esGrupo ? metrica.slice(2) : null
+  // subgrupos disponibles para el grupo elegido (en las fincas y meses visibles), de mayor a menor gasto
+  const subStats = {}
+  if (grpSel) idsSel.forEach(fid => sel.forEach(m => { const o = data.porFinca[fid]?.[m]?.sub?.[grpSel]; if (o) Object.entries(o).forEach(([k, v]) => { if (v > 0.005) subStats[k] = (subStats[k] || 0) + v }) }))
+  const subsDeGrupo = Object.entries(subStats).sort((a, b) => b[1] - a[1]).map(e => e[0])
+  const subActivo = subSel && subsDeGrupo.includes(subSel) ? subSel : null
+  const totalM = base === 'total'   // $ del mes (como el Cuadro)
+  const porHa = base === 'hectarea' // $/ha del mes
   const fmtV = v => totalM ? dinero(v) : '$' + num2(v)
   const hcell = v => totalM ? (v >= 1000 ? Math.round(v / 1000) + 'k' : String(Math.round(v))) : String(Math.round(v))  // compacto para celdas
+  // normaliza un monto ($ del mes) según la base elegida
+  const norm = (raw, n) => totalM ? raw : porHa ? (n.ha ? raw / n.ha : null) : (n.div ? raw / n.div : null)
   const valOf = (fid, m) => {
     const n = data.porFinca[fid]?.[m]; if (!n) return null
-    if (metrica === 'hadia_total') return totalM ? n.ht * n.div : n.ht
-    if (metrica === 'hadia_real') return totalM ? n.hr * n.div : n.hr
-    const g = metrica.slice(2); const tot = n.grupos[g] || 0
-    return totalM ? tot : (n.div ? tot / n.div : null)
+    if (metrica === 'hadia_total') return totalM ? n.ht * n.div : porHa ? n.ht * n.dias : n.ht
+    if (metrica === 'hadia_real') return totalM ? n.hr * n.div : porHa ? n.hr * n.dias : n.hr
+    const raw = subActivo ? (n.sub?.[grpSel]?.[subActivo] || 0) : (n.grupos[grpSel] || 0)
+    return norm(raw, n)
   }
   const series = idsSel.map((fid, i) => {
     const f = visibles.find(x => x.id === fid)
@@ -1021,7 +1057,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
     for (let i = 0; i < n; i++) { const d = Math.abs(px(i) - x); if (d < bd) { bd = d; best = i } }
     setHover(best)
   }
-  const metLabel = (METRICAS.find(m => m[0] === metrica) || [])[1] || ''
+  const metLabel = ((METRICAS.find(m => m[0] === metrica) || [])[1] || '') + (subActivo ? ' · ' + subActivo : '')
   // ranking (promedio del periodo, más barata primero) y variación del periodo (último vs primero)
   const ranking = series.map(s => {
     const def = s.pts.filter(v => v != null)
@@ -1044,17 +1080,27 @@ function ComparaFincas({ visibles, idsSel, anio }) {
         {METRICAS.map(([k, l]) => {
           const on = metrica === k
           // al elegir métrica, ajusta la base: grupos → $ del mes (miles); ha·día/real → por ha·día
-          return <button key={k} onClick={() => { setMetrica(k); setBase(k.startsWith('g:') ? 'total' : 'hadia') }} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
+          return <button key={k} onClick={() => { setMetrica(k); setSubSel(null); setBase(k.startsWith('g:') ? 'total' : 'hadia') }} style={{ padding: '4px 10px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '8px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
         })}
         <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ display: 'inline-flex', border: '0.5px solid ' + BORDE, borderRadius: '8px', overflow: 'hidden', fontSize: '11px' }}>
-            {[['hadia', 'Por ha·día'], ['total', '$ del mes']].map(([k, l]) => (
+            {[['hadia', 'Por ha·día'], ['hectarea', 'Por hectárea'], ['total', '$ del mes']].map(([k, l]) => (
               <button key={k} onClick={() => setBase(k)} style={{ padding: '3px 9px', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: base === k ? 500 : 400, background: base === k ? AZUL : 'white', color: base === k ? 'white' : GRIS }}>{l}</button>
             ))}
           </span>
           <span style={{ fontSize: '10.5px', color: '#9fb0bf' }}>{anio}</span>
         </span>
       </div>
+      {/* subgrupo (solo cuando la métrica es un grupo) */}
+      {esGrupo && subsDeGrupo.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '12px', padding: '8px 10px', background: '#f6f9fb', borderRadius: '9px' }}>
+          <span style={{ fontSize: '10.5px', color: '#9fb0bf', textTransform: 'uppercase', letterSpacing: '.03em', marginRight: '2px' }}>Subgrupo</span>
+          {[[null, 'Todos'], ...subsDeGrupo.map(s => [s, s])].map(([v, l]) => {
+            const on = subActivo === v || (v === null && !subActivo)
+            return <button key={l} onClick={() => setSubSel(v)} style={{ padding: '3px 9px', fontSize: '11.5px', fontFamily: 'inherit', borderRadius: '7px', cursor: 'pointer', border: '0.5px solid ' + (on ? AZUL : BORDE), background: on ? '#eaf2fb' : 'white', color: on ? '#185FA5' : GRIS, fontWeight: on ? 500 : 400 }}>{l}</button>
+          })}
+        </div>
+      )}
       {/* meses */}
       <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap', marginBottom: '12px' }}>
         <span style={{ fontSize: '11px', color: GRIS, alignSelf: 'center', marginRight: '2px' }}>Meses:</span>
@@ -1107,7 +1153,7 @@ function ComparaFincas({ visibles, idsSel, anio }) {
           </span>
         ))}
       </div>
-      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>Pasa el cursor para ver el valor de cada finca. {totalM ? '“$ del mes” son los montos tal cual el Cuadro.' : 'Por ha·día (÷ hectáreas ÷ días) para comparar fincas de distinto tamaño; usa “$ del mes” para cuadrar con el Cuadro.'}</div>
+      <div style={{ fontSize: '10.5px', color: '#9fb0bf', marginTop: '10px' }}>Pasa el cursor para ver el valor de cada finca. {totalM ? '“$ del mes” son los montos tal cual el Cuadro.' : porHa ? 'Por hectárea (÷ hectáreas) = gasto por ha del mes, comparable entre fincas de distinto tamaño.' : 'Por ha·día (÷ hectáreas ÷ días) para comparar fincas de distinto tamaño; usa “$ del mes” para cuadrar con el Cuadro.'}</div>
     </div>
 
     {/* RANKING */}
@@ -1169,6 +1215,52 @@ function ComparaFincas({ visibles, idsSel, anio }) {
         </div>
       </div>
     )}
+
+    {/* DESGLOSE finca × subgrupo (cuando la métrica es un grupo) */}
+    {esGrupo && subsDeGrupo.length > 0 && series.length > 0 && (() => {
+      const subVal = (fid, s) => {
+        const vals = sel.map(m => { const n = data.porFinca[fid]?.[m]; if (!n) return null; const raw = n.sub?.[grpSel]?.[s] || 0; return norm(raw, n) }).filter(v => v != null)
+        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null
+      }
+      const filas = series.map(s => ({ fid: s.fid, nombre: s.nombre, vals: subsDeGrupo.map(sg => subVal(s.fid, sg)) }))
+      const todosC = filas.flatMap(f => f.vals).filter(v => v != null)
+      const dmin = todosC.length ? Math.min(...todosC) : 0, dmax = todosC.length ? Math.max(...todosC) : 1
+      const gl = (GRP.find(g => g[0] === grpSel) || [, 'grupo'])[1].toLowerCase()
+      const baseLbl = totalM ? '$ del mes' : porHa ? 'por hectárea' : 'por ha·día'
+      return (
+        <div style={card}>
+          <div style={tit}>Desglose · {gl} · {baseLbl} · finca × subgrupo{data.nMeses || sel.length > 1 ? ' · promedio del periodo' : ''}</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', fontSize: '11.5px', width: '100%', minWidth: (120 + subsDeGrupo.length * 72) + 'px' }}>
+              <thead>
+                <tr style={{ color: '#9fb0bf' }}>
+                  <th style={{ textAlign: 'left', padding: '4px 8px', fontWeight: 500, position: 'sticky', left: 0, background: 'white' }}>Finca</th>
+                  {subsDeGrupo.map(sg => <th key={sg} style={{ padding: '4px 8px', fontWeight: 500, textAlign: 'right', whiteSpace: 'nowrap' }}>{sg}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map(f => (
+                  <tr key={f.fid}>
+                    <td style={{ padding: '3px 8px', whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'white' }}>{f.nombre}</td>
+                    {f.vals.map((v, i) => {
+                      if (v == null) return <td key={i} style={{ padding: '7px 8px', textAlign: 'center', color: '#cdd9e5', border: '2px solid #fff' }}>—</td>
+                      const c = heatColor(v, dmin, dmax)
+                      return <td key={i} title={fmtV(v)} style={{ padding: '7px 8px', textAlign: 'right', background: c[0], color: c[1], border: '2px solid #fff', borderRadius: '4px', fontWeight: 500, whiteSpace: 'nowrap' }}>{hcell(v)}</td>
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '10.5px', color: '#7d8fa0' }}>
+            <span>Más barato</span>
+            {HEAT.map((c, i) => <span key={i} style={{ width: '18px', height: '12px', background: c[0], borderRadius: '2px' }} />)}
+            <span>Más caro</span>
+            <span style={{ marginLeft: '8px' }}>Clic en un subgrupo arriba para verlo en la línea y el ranking.</span>
+          </div>
+        </div>
+      )
+    })()}
    </div>
   )
 }
