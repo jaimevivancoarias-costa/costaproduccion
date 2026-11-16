@@ -706,6 +706,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         supabase.schema('produccion').rpc('fn_valor_bodega_fifo', { p_finca: finca.id, p_hasta: hasta }),
       ])
       if (eS) throw eS
+      // Carrera: si arrancó una carga más nueva mientras esperábamos estas
+      // consultas, esta ya es vieja. Salir ANTES de escribir nada en pantalla,
+      // para no dejar valores en dólares (valorFifo, lotes, precio) de un rango
+      // viejo pegados sobre saldos/movs nuevos. (El mismo filtro daba números
+      // distintos según cuál carga terminaba última.)
+      if (myId !== cargaSeq.current) return
 
       // El factor convierte el precio (por unidad de consumo) a precio
       // por unidad de compra. Se resuelve por finca (override o catálogo).
@@ -779,7 +785,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
       // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
-      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó: descartar esta
       // iniRango se limpia aquí y se llena abajo (la apertura se dibuja con el
       // saldo_inicial mientras tanto, no con un valor viejo).
       setSaldos(s || []); setPrecios(pr); setConteos(t || []); setMovs(m || []); setIniRango({})
@@ -795,6 +800,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
+      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó mientras esperábamos: descartar
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}, dm = {}, iniR = {}
       ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
@@ -811,6 +817,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         .select('id, fecha, insumo_id, cantidad, motivo, precio_unitario, creado_por, creado_en')
         .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
         .order('fecha', { ascending: false }).limit(100)
+      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó: descartar
       setBajas((bj || []).map(b => ({ ...b, autor: nombreU[b.creado_por] || null })))
       if (bj && bj.length) {
         const desdeB = bj.reduce((mn, x) => x.fecha < mn ? x.fecha : mn, bj[0].fecha)

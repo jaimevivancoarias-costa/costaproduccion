@@ -243,6 +243,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           .order('fecha', { ascending: true }),
         supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
       ])
+      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó mientras esperábamos: descartar
       const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
       const cq = {}, dm = {}, iniR = {}
       ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
@@ -260,6 +261,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         .select('id, fecha, producto_id, cantidad, motivo, precio_unitario, creado_por, creado_en')
         .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
         .order('fecha', { ascending: false }).limit(100)
+      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó: descartar
       setBajas((bj || []).map(b => ({ ...b, autor: nombreU[b.creado_por] || null })))
       if (bj && bj.length) {
         const desdeB = bj.reduce((mn, x) => x.fecha < mn ? x.fecha : mn, bj[0].fecha)
