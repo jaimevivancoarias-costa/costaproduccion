@@ -1022,7 +1022,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const factorN = fac?.factor || 1
       const convR = fac && fac.uApp && !esUnidadGenerica(fac.uApp) && uApp !== uPres
       const precio = precios[id] || 0
-      const pdesde = precioInfo[id]?.desde
       // Valor del stock a la fecha de CIERRE del rango (no de hoy), con la función
       // oficial FIFO. Si el rango termina hoy es el mismo valor.
       const valor = Number(valorFifoCierre[id] ?? 0)
@@ -1050,6 +1049,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           lotesLinea = 'Lotes: ' + lts.map(L => `${limpio(L.cantidad)} a ${L.costo == null ? 's/p' : dineroU(L.costo)}`).join(' · ')
         }
       }
+      // Precio de la columna = precio(s) REAL(es) del stock (lotes FIFO), NO el de
+      // catálogo. Igual que la pantalla: un solo precio si todo está al mismo costo;
+      // varios, separados por ' · ', cuando hay lotes a distinto precio. Así nunca
+      // queda un precio de catálogo que no cuadra con el Valor (Saldo × $catálogo ≠ Valor).
+      const costosRep = [...new Set(lts.filter(L => L.costo != null).map(L => Number(L.costo).toFixed(6)))].map(Number).sort((a, b) => a - b)
+      const hayLoteSP = lts.some(L => L.costo == null)
+      let precioCol
+      if (costosRep.length === 0) precioCol = (teorico > 0.0001 && valor > 0) ? dineroU(valor / teorico) : (precio ? dineroU(precio) : '—')
+      else precioCol = costosRep.map(c => dineroU(c)).join(' · ') + (hayLoteSP ? ' · s/p' : '')
       const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       // Consumo del día congelado del conteo: valor + desglose "contó F + C = H había".
       const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
@@ -1079,7 +1087,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         consumo: menos(m?.consumo), consumoUsd: dinero(nd(m?.consumo_dolares)),
         saldoHoy: `${limpio(saldoCierre)} ${uPres.toLowerCase()}`,
         saldoEquiv: convR ? `= ${limpio(saldoCierre * factorN)} ${uApp.toLowerCase()}` : '',
-        precio: precio ? dineroU(precio) : '—', precioDesde: pdesde ? corta(pdesde) : '',
+        precio: precioCol, precioDesde: '',
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
@@ -1102,7 +1110,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       { titulo: 'Ajuste conteo', der: true, campo: 'ajuste', sub: 'ajusteUsd' },
       { titulo: 'Saldo', der: true, campo: 'saldoHoy', sub: 'saldoEquiv', destacar: true },
       { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
-      { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
+      { titulo: 'Precio', der: true, campo: 'precio' },
       { titulo: 'Valor', der: true, campo: 'valor' },
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },

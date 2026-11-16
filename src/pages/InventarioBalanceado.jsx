@@ -657,7 +657,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       if (sinInv && !filaTieneMov(m) && !verSinInv) return
 
       const precio = precios[id] || 0
-      const desde = precioInfo[id]?.aplicado?.desde
       // Valor del stock a la fecha de CIERRE del rango (no de hoy), con la función
       // oficial FIFO. Si el rango termina hoy es el mismo valor.
       const valor = Number(valorFifoCierre[id] ?? 0)
@@ -700,6 +699,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       totCon += numDec(m?.consumo); totConUsd += numDec(m?.consumo_dolares); totAlaFecha += saldoCierre; totValor += valor
       totAjuste += ajuste; if (hayAjuste) { totDesc += ajusteUsd; nDesc++ }
 
+      // Precio de la columna = precio(s) REAL(es) del stock (lotes FIFO), NO el de
+      // catálogo. Un solo precio si todo está al mismo costo; varios separados por
+      // ' · ' cuando hay lotes a distinto precio. Igual que la pantalla y que insumos.
+      const costosRep = [...new Set(lts.filter(L => L.costo != null).map(L => Number(L.costo).toFixed(6)))].map(Number).sort((a, b) => a - b)
+      const hayLoteSP = lts.some(L => L.costo == null)
+      let precioCol
+      if (costosRep.length === 0) precioCol = (teorico > 0.0001 && valor > 0) ? dineroExacto(valor / teorico) : (precio ? dineroExacto(precio) : '—')
+      else precioCol = costosRep.map(c => dineroExacto(c)).join(' · ') + (hayLoteSP ? ' · s/p' : '')
       const contadoInfo = (!iniEsConteo && cq?.fecha) ? corta(cq.fecha) + (cq.autor ? ' · ' + cq.autor : '') + (cq.esInicial ? ' (inicial)' : '') : ''
       const cd = cq && cq.consDia != null && cq.consDia > 0.0001 ? cq.consDia : null
       const consDia = cd != null ? `${limpio(cd)} sacos · congelado` : ''
@@ -709,7 +716,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         inicial: limpio(iniVal || 0), ingresos: mas(m?.ingresos), devuelto: menos(m?.devuelto),
         consumo: menos(m?.consumo), consumoUsd: dinero(numDec(m?.consumo_dolares)),
         saldoHoy: `${limpio(saldoCierre)} sacos`, saldoEquiv: `= ${limpio(saldoCierre * (lps || LIBRAS_POR_SACO))} lb`,
-        precio: precio ? dineroExacto(precio) : '—', precioDesde: desde ? corta(desde) : '',
+        precio: precioCol, precioDesde: '',
         valor: dinero(valor),
         contado: conteo != null ? limpio(conteo) : '', contadoInfo,
         consDia, consDiaCalc,
@@ -733,7 +740,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       { titulo: 'Ajuste conteo', der: true, campo: 'ajuste', sub: 'ajusteUsd' },
       { titulo: 'Saldo', der: true, campo: 'saldoHoy', sub: 'saldoEquiv', destacar: true },
       { titulo: 'Consumo $', der: true, campo: 'consumoUsd' },
-      { titulo: 'Precio · desde', der: true, campo: 'precio', sub: 'precioDesde' },
+      { titulo: 'Precio', der: true, campo: 'precio' },
       { titulo: 'Valor', der: true, campo: 'valor' },
       ...(hayConteo ? [
         { titulo: 'Contado', der: true, campo: 'contado', sub: 'contadoInfo' },
