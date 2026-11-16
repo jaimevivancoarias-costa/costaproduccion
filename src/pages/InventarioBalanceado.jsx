@@ -227,36 +227,39 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       // reporte de Consumo. Fallback a lo que trae fn_movimiento_balanceado.
       const cuMap = {}; (cuR || []).forEach(x => { cuMap[x.producto_id] = Number(x.consumo_usd) })
       const movFifo = (m || []).map(x => cuMap[x.producto_id] != null ? { ...x, consumo_dolares: cuMap[x.producto_id] } : x)
-      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó: descartar esta
-      // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
-      // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
-      setSaldos(s || []); setValorFifo(vfm); setValorFifoCierre(vfmCierre); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo); setIniRango({})
-      setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
 
-      // Autoría del conteo por producto (quién y cuándo) para la columna Conteo.
-      // En su propio try: si falla (ej. vw_usuario), la tabla ya se mostró arriba.
+      // Autoría del conteo + inventario inicial del rango. Se trae ANTES de pintar
+      // para aplicar saldos, movimientos Y la apertura TODO JUNTO en un solo render.
+      // Antes se pintaba en dos tiempos (saldos primero, apertura después) y el
+      // usuario veía los números "cambiar" al terminar de cargar. Va en su try.
+      let cq = {}, dm = {}, iniR = {}, nombreU = {}
       try {
-      const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
-        supabase.schema('produccion').from('toma_balanceado')
-          .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
-          .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
-          .order('fecha', { ascending: true }),
-        supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
-      ])
-      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó mientras esperábamos: descartar
-      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
-      const cq = {}, dm = {}, iniR = {}
-      ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
-        cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
-          consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
-        // El último motivo del rango con descuadre (las tomas vienen en orden ascendente).
-        if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
-        // El inventario inicial del rango (el más antiguo) = la apertura.
-        if (tt.es_inicial && !iniR[l.producto_id]) iniR[l.producto_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
-      }))
+        const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
+          supabase.schema('produccion').from('toma_balanceado')
+            .select('fecha, creado_por, es_inicial, toma_balanceado_linea(producto_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
+            .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+            .order('fecha', { ascending: true }),
+          supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
+        ])
+        ;(usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
+        ;(tomasP || []).forEach(tt => (tt.toma_balanceado_linea || []).forEach(l => {
+          cq[l.producto_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
+            consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
+          if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.producto_id] = l.motivo_descuadre
+          if (tt.es_inicial && !iniR[l.producto_id]) iniR[l.producto_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
+        }))
+      } catch { /* la autoría es opcional: si falla, se pinta sin ella */ }
+
+      // Otra carga más nueva arrancó mientras esperábamos: descartar sin pintar.
+      if (myId !== cargaSeq.current) return
+      // TODO EN UN SOLO RENDER: React 18 agrupa estos setState (sin await en medio),
+      // así que la pantalla pasa al estado nuevo-COMPLETO de una, sin parpadeo.
+      setSaldos(s || []); setValorFifo(vfm); setValorFifoCierre(vfmCierre); setPrecios(pr); setTomas(t || []); setDesglose(dgm); setLotes(ltm); setPrecioInfo(pinfo); setMovs(movFifo)
+      setLps(Number(par?.libras_por_saco) > 0 ? Number(par.libras_por_saco) : LIBRAS_POR_SACO)
       setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
 
-      // Bajas (robo/merma/daño): ajustes NEGATIVOS que guardaron un precio FIFO.
+      // Bajas (robo/merma/daño): ajustes NEGATIVOS, van después (no afectan la tabla).
+      try {
       const { data: bj } = await supabase.schema('produccion').from('ajuste_balanceado')
         .select('id, fecha, producto_id, cantidad, motivo, precio_unitario, creado_por, creado_en')
         .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)

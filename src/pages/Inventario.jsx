@@ -724,7 +724,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ;(ins || []).forEach(x => { facMap[x.id] = { factor: Number(x.factor) || 1, uApp: x.unidad } })
       ;(ovFactor || []).forEach(x => { facMap[x.insumo_id] = { factor: Number(x.factor) || 1, uApp: x.unidad || facMap[x.insumo_id]?.uApp,
         contenido: Number(x.contenido) || null, uCont: x.unidad_contenido || null } })
-      setFactores(facMap)
 
       // Mínimo por insumo (en unidad de aplicación). Guardamos el min en
       // unidad de aplicación, el factor y la unidad para comparar y mostrar.
@@ -732,7 +731,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       ;(ovFactor || []).forEach(x => {
         if (x.stock_minimo != null) minMap[x.insumo_id] = { min: Number(x.stock_minimo), factor: Number(x.factor) || 1, unidad: x.unidad }
       })
-      setMinimos(minMap)
 
       // Plazo que rige por insumo (el de la finca gana al general). Es el
       // mismo que muestra el catálogo, para que el precio coincida.
@@ -764,55 +762,57 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           pr[x.insumo_id] = prRespaldo[x.insumo_id]; pinfo[x.insumo_id] = pinfoResp[x.insumo_id]
         }
       })
-      setPrecioInfo(pinfo)
 
       const vfMap = {}
       ;(vf || []).forEach(x => { vfMap[x.insumo_id] = Number(x.valor) })
-      setValorFifo(vfMap)
       // Valor del stock a la fecha de CIERRE del rango (para el reporte), siempre
       // a la fecha hasta (vfc). Nunca se mezcla con el valor de hoy.
       const vfMapCierre = {}
       ;(vfc || []).forEach(x => { vfMapCierre[x.insumo_id] = Number(x.valor) })
-      setValorFifoCierre(vfMapCierre)
 
       const ltm = {}
       ;(lt || []).forEach(x => { (ltm[x.insumo_id] = ltm[x.insumo_id] || []).push({ fecha: x.fecha, cantidad: Number(x.cantidad), costo: x.costo_unitario == null ? null : Number(x.costo_unitario), valor: Number(x.valor), plazo: x.plazo == null ? null : Number(x.plazo) }) })
-      setLotes(ltm)
 
       const dgm = {}
       ;(dpz || []).forEach(x => { (dgm[x.insumo_id] = dgm[x.insumo_id] || []).push({ plazo: Number(x.plazo), cantidad: Number(x.cantidad), valor: Number(x.valor) }) })
-      setDesglose(dgm)
 
-      // movs y saldos se cargan YA (no dependen de la consulta de tomas/usuarios
-      // de abajo): si esa falla, la tabla "Qué se movió" igual se muestra.
-      // iniRango se limpia aquí y se llena abajo (la apertura se dibuja con el
-      // saldo_inicial mientras tanto, no con un valor viejo).
-      setSaldos(s || []); setPrecios(pr); setConteos(t || []); setMovs(m || []); setIniRango({})
-
-      // Autoría del conteo por insumo (quién y cuándo), para mostrarlo en la
-      // columna Conteo / Inicial de "Qué se movió". Va en su propio try: si falla
-      // (ej. vw_usuario), la tabla ya se mostró arriba y solo se pierde la autoría.
+      // Autoría del conteo + inventario inicial del rango. Se trae ANTES de pintar
+      // para poder aplicar saldos, movimientos Y la apertura TODO JUNTO, en un solo
+      // render. Antes se pintaba en dos tiempos (primero saldos, después la
+      // apertura), y el usuario veía los números "cambiar" al terminar de cargar.
+      // Va en su try: si falla (ej. vw_usuario), se pinta igual sin la autoría.
+      let cq = {}, dm = {}, iniR = {}, nombreU = {}
       try {
-      const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
-        supabase.schema('produccion').from('toma_inventario')
-          .select('fecha, creado_por, es_inicial, toma_inventario_linea(insumo_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
-          .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
-          .order('fecha', { ascending: true }),
-        supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
-      ])
-      if (myId !== cargaSeq.current) return   // otra carga más nueva arrancó mientras esperábamos: descartar
-      const nombreU = {}; (usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
-      const cq = {}, dm = {}, iniR = {}
-      ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
-        cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
-          consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
-        if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.insumo_id] = l.motivo_descuadre
-        // El inventario inicial del rango (el más antiguo; tomasP viene ascendente) = la apertura.
-        if (tt.es_inicial && !iniR[l.insumo_id]) iniR[l.insumo_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
-      }))
+        const [{ data: tomasP }, { data: usuarios }] = await Promise.all([
+          supabase.schema('produccion').from('toma_inventario')
+            .select('fecha, creado_por, es_inicial, toma_inventario_linea(insumo_id, consumo_dia, cantidad_contada, motivo_descuadre, diferencia)')
+            .eq('finca_id', finca.id).gte('fecha', desde).lte('fecha', hasta)
+            .order('fecha', { ascending: true }),
+          supabase.schema('produccion').from('vw_usuario').select('id, nombre'),
+        ])
+        ;(usuarios || []).forEach(u => { nombreU[u.id] = u.nombre })
+        ;(tomasP || []).forEach(tt => (tt.toma_inventario_linea || []).forEach(l => {
+          cq[l.insumo_id] = { fecha: tt.fecha, autor: nombreU[tt.creado_por] || null, esInicial: !!tt.es_inicial,
+            consDia: l.consumo_dia != null ? Number(l.consumo_dia) : null, habia: Number(l.cantidad_contada) }
+          if (l.motivo_descuadre && Math.abs(Number(l.diferencia) || 0) > 0.001) dm[l.insumo_id] = l.motivo_descuadre
+          // El inventario inicial del rango (el más antiguo; tomasP viene ascendente) = la apertura.
+          if (tt.es_inicial && !iniR[l.insumo_id]) iniR[l.insumo_id] = { fecha: tt.fecha, valor: Number(l.cantidad_contada) }
+        }))
+      } catch { /* la autoría es opcional: si falla, se pinta sin ella */ }
+
+      // Otra carga más nueva arrancó mientras esperábamos: descartar sin pintar.
+      if (myId !== cargaSeq.current) return
+      // TODO EN UN SOLO RENDER: React 18 agrupa estos setState (no hay await en
+      // medio), así que la pantalla pasa del estado viejo al nuevo-COMPLETO de una,
+      // sin estados intermedios (saldos sin apertura) que parpadeen.
+      setFactores(facMap); setMinimos(minMap); setPrecioInfo(pinfo)
+      setValorFifo(vfMap); setValorFifoCierre(vfMapCierre); setLotes(ltm); setDesglose(dgm)
+      setSaldos(s || []); setPrecios(pr); setConteos(t || []); setMovs(m || [])
       setConteoQuien(cq); setDescMotivo(dm); setNombresU(nombreU); setIniRango(iniR)
 
       // Bajas (robo/merma/daño): ajustes NEGATIVOS que guardaron un precio FIFO.
+      // Van después (no afectan los números de la tabla, solo el reporte de bajas).
+      try {
       const { data: bj } = await supabase.schema('produccion').from('ajuste_insumo')
         .select('id, fecha, insumo_id, cantidad, motivo, precio_unitario, creado_por, creado_en')
         .eq('finca_id', finca.id).lt('cantidad', 0).not('precio_unitario', 'is', null)
