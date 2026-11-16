@@ -1119,14 +1119,51 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     const antCon = anteriores.filter(l => (l.saldoIniP || 0) > 0.0001 || (l.consumioP || 0) > 0.0001 || l.queda > 0.0001)
     const antLote = antCon.find(l => l.inicial) || antCon[0]
     const antPreciosDistintos = new Set(antCon.map(l => l.precio == null ? 's/p' : Number(l.precio).toFixed(6))).size
+    // Lo que QUEDA en bodega (por lote, a su precio real) — como en insumos/balanceado.
+    const quedaLotes = ls.filter(l => l.queda > 0.0001)
+    const tQuedaGal = quedaLotes.reduce((a, l) => a + l.queda, 0)
+    const tQuedaVal = quedaLotes.reduce((a, l) => a + l.queda * (l.precio || 0), 0)
+    const gtcQueda = esJefe ? '1.6fr 1fr 1fr 1fr' : '1.6fr 1fr'
     return (
       <div style={{ background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', padding: '13px 16px 16px' }}>
         <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
-        <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Movimiento del período · se consume del más viejo primero · en galones</div>
-        {!hayAnterior && periodo.length === 0 ? (
-          <div style={{ fontSize: '13px', color: GRIS }}>Sin movimiento en el período.</div>
+        <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Lo que queda en bodega, por lote y a su precio real · en galones</div>
+        {quedaLotes.length === 0 ? (
+          <div style={{ fontSize: '13px', color: GRIS }}>Sin saldo.</div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: gtcQueda, gap: '13px 18px', alignItems: 'baseline' }}>
+            <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+            <div style={cab}>Cantidad</div>
+            {esJefe && <div style={cab}>Precio</div>}
+            {esJefe && <div style={cab}>Valor</div>}
+            {quedaLotes.map((L, li) => (
+              <Fragment key={'q' + li}>
+                <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                  <div style={{ fontWeight: 600 }}>{L.inicial ? 'Inventario inicial' : 'Compra ' + corta(L.fecha)}</div>
+                  {L.prov && <div style={{ color: GRIS, fontSize: '11px' }}>{L.prov}</div>}
+                  {esJefe && (
+                    <button onClick={() => setCorrLote({ tipoId, inicial: !!L.inicial, pedidoId: L.pedidoId, conteoId: L.conteoId, precioActual: L.precio, precio: L.precio != null ? String(L.precio) : "" })}
+                      style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                      {L.inicial && L.precio == null ? 'Poner precio' : 'Corregir precio'}
+                    </button>
+                  )}
+                </div>
+                <div style={{ ...cel, fontWeight: 600 }}>{miles(L.queda)}</div>
+                {esJefe && <div style={cel}>{L.precio == null ? '—' : precio6(L.precio)}</div>}
+                {esJefe && <div style={cel}>{dinero(Number(L.queda) * Number(L.precio || 0))}</div>}
+              </Fragment>
+            ))}
+            <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+            <div style={tot}>{miles(tQuedaGal)}</div>
+            {esJefe && <div style={tot} />}
+            {esJefe && <div style={tot}>{dinero(tQuedaVal)}</div>}
+          </div>
+        )}
+        {(hayAnterior || periodo.length > 0) && (
+          <div style={{ marginTop: '14px', borderTop: '1px dashed ' + BORDE, paddingTop: '12px' }}>
+            <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Entró en el rango · a qué precio</div>
+            <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '12px' }}>Movimiento del período · se consume del más viejo primero · en galones</div>
+            <div style={{ display: 'grid', gridTemplateColumns: G_LOTE, gap: '13px 18px', alignItems: 'baseline' }}>
             <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
             <div style={cab}>Saldo inicio</div>
             <div style={cab}>Entró</div>
@@ -1185,6 +1222,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
             <div style={tot}>{tCons ? '−' + miles(tCons) : '—'}</div>
             <div style={tot}>{miles(tQueda)}</div>
             <div style={tot}>{dinero(tCosto)}</div>
+            </div>
           </div>
         )}
       </div>
