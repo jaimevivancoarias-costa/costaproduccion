@@ -245,9 +245,11 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const nombreProvRow = row => row.proveedor_id ? nombreProv(row.proveedor_id) : (row.proveedor || '—')
   // Proveedores que venden un TIPO en esta finca (según el catálogo) + "Sin
   // proveedor" siempre. Para el dropdown del ingreso (que filtra por tipo).
+  // Para el INGRESO: solo proveedores reales que venden ese tipo en la finca.
+  // Ya no se permite "Sin proveedor" al registrar (los viejos se quedan así).
   const provsDeTipoFinca = tipoId => {
     const ids = Object.keys(preciosProv).filter(k => k.split('|')[1] === tipoId).map(k => k.split('|')[0])
-    return [{ id: 'SIN', nombre: 'Sin proveedor' }, ...provsBase.filter(p => ids.includes(p.id))]
+    return provsBase.filter(p => ids.includes(p.id))
   }
   const precioProvTipo = (provId, tipoId) => {
     if (!provId || !tipoId) return null
@@ -361,14 +363,14 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   // Abrir el form de ingreso: primero el tipo, luego su primer proveedor y precio.
   function formIngresoInicial() {
     const tipoId = tipos[0]?.id || ''
-    const provs = provsDeTipoFinca(tipoId); const pv = provs[0]?.id || 'SIN'
+    const provs = provsDeTipoFinca(tipoId); const pv = provs[0]?.id || ''
     const pc = precioProvTipo(pv, tipoId)
     return { modo: 'ingreso', tipoId, proveedorId: pv, galones: '', fecha: hoyISO(), guia: '', precio: pc != null ? String(pc) : '', nuevoNombre: '' }
   }
   function cambiarTipoForm(tipoId) {
     setForm(f => {
       const provs = provsDeTipoFinca(tipoId)
-      const pv = provs.some(p => p.id === f.proveedorId) ? f.proveedorId : (provs[0]?.id || 'SIN')
+      const pv = provs.some(p => p.id === f.proveedorId) ? f.proveedorId : (provs[0]?.id || '')
       const pc = precioProvTipo(pv, tipoId)
       return { ...f, tipoId, proveedorId: pv, precio: pc != null ? String(pc) : '' }
     })
@@ -839,6 +841,7 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
                           </Campo>
                           <Campo label="Proveedor">
                             <select value={form.proveedorId} onChange={e => cambiarProvForm(e.target.value)} style={{ ...inp, width: '190px' }}>
+                              <option value="">Elegir…</option>
                               {provs.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                               <option value="__nuevo">+ Agregar proveedor</option>
                             </select>
