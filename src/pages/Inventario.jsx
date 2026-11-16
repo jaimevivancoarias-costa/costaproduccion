@@ -136,14 +136,25 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [hasta, setHasta] = useState(hoyISO())
   const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
-  // Borrador de las fechas "Por fechas": los inputs escriben acá y recién al tocar
-  // "Ver" se copian a desde/hasta (que es lo que dispara la carga). Así elegir las
-  // dos fechas a mano NO dispara una carga por cada una (rango a medio armar).
+  // Borrador de las fechas: los inputs escriben acá y recién al tocar "Aplicar"
+  // se copian a desde/hasta/alDia (que es lo que dispara la carga). Así elegir las
+  // fechas a mano NO dispara una carga por cada cambio (rango a medio armar).
   const [fDesde, setFDesde] = useState(primeroDelMes(hoyISO()))
   const [fHasta, setFHasta] = useState(hoyISO())
-  // Si desde/hasta cambian desde afuera (presets, Por conteo, "al" de Cuánto hay),
-  // el borrador se sincroniza para que los inputs reflejen el rango vigente.
+  const [fAlDia, setFAlDia] = useState(hoyISO())   // borrador de la fecha "al" de Cuánto hay
+  // "aplicando" = la carga la pediste vos (Aplicar / preset). Solo entonces se
+  // muestra el "Actualizando…" y se apaga la tabla. Las cargas automáticas (cambio
+  // de pantalla, de finca, al abrir) cargan calladas, sin molestar.
+  const [aplicando, setAplicando] = useState(false)
+  // Si desde/hasta/alDia cambian desde afuera (presets, Por conteo, etc.), el
+  // borrador se sincroniza para que los inputs reflejen el valor vigente.
   useEffect(() => { setFDesde(desde); setFHasta(hasta) }, [desde, hasta])
+  useEffect(() => { setFAlDia(alDia) }, [alDia])
+  // Seguridad: si pediste una carga (aplicando) pero no arrancó ninguna (el rango
+  // no cambió), suelta el indicador a los 1.5s para que no quede pegado.
+  useEffect(() => {
+    if (aplicando && !cargando) { const t = setTimeout(() => setAplicando(false), 1500); return () => clearTimeout(t) }
+  }, [aplicando, cargando])
   // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
   useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
   // En "Cuánto hay", el PDF/Excel se ancla a la fecha "al": usa el mes de esa fecha
@@ -838,6 +849,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
     } finally {
       setCargando(false)
+      setAplicando(false)
       ultimaCarga.current = Date.now()
     }
   }, [finca.id, alDia, desde, hasta, esJefe])
@@ -1681,10 +1693,12 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           {vista === 'saldo' ? (
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '13px', color: GRIS }}>al</span>
-              <input type="date" value={alDia} max={hoyISO()}
-                     onChange={e => { const v = e.target.value; setAlDia(v); if (v) { setDesde(primeroDelMes(v)); setHasta(v) } }} style={entrada} />
+              <input type="date" value={fAlDia} max={hoyISO()}
+                     onChange={e => setFAlDia(e.target.value)} style={entrada} />
+              <Btn primario={fAlDia !== alDia}
+                   onClick={() => { if (fAlDia) { setAplicando(true); setAlDia(fAlDia) } }}>Aplicar</Btn>
               {alDia !== hoyISO() && (
-                <button onClick={() => { const v = hoyISO(); setAlDia(v); setDesde(primeroDelMes(v)); setHasta(v) }}
+                <button onClick={() => { setAplicando(true); setAlDia(hoyISO()) }}
                         style={{ background: 'none', border: 'none', cursor: 'pointer',
                                  fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>
                   volver a hoy
@@ -1692,7 +1706,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               )}
             </label>
           ) : null}
-          {cargando && saldos.length > 0 && (
+          {aplicando && saldos.length > 0 && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '5px 12px',
                            background: '#E6F1FB', color: AZUL, borderRadius: '999px', fontSize: '12.5px', fontWeight: 500 }}>
               <span className="cp-spin" style={{ width: '12px', height: '12px', border: '2px solid ' + AZUL,
@@ -1705,7 +1719,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
 
       {/* Mientras recarga (con datos ya en pantalla), se apaga el contenido para
           que se note que está trayendo lo nuevo y no parezca pegado. */}
-      <div style={{ opacity: (cargando && saldos.length > 0) ? 0.45 : 1, transition: 'opacity .15s' }}>
+      <div style={{ opacity: (aplicando && saldos.length > 0) ? 0.45 : 1, transition: 'opacity .15s' }}>
       {!contando && vista === 'saldo' && saldos.length > 0 && (
         <>
           {/* Resumen */}
@@ -1965,19 +1979,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '9px', flexWrap: 'wrap' }}>
               <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
-                onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+                onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
               <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
-                onClick={() => { setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
+                onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
               <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
               {modoMov === 'conteo' ? (
                 periodos.length ? (
                   <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    <button onClick={() => setPeriodoSel(i => Math.min(i + 1, periodos.length - 1))} disabled={periodoSel >= periodos.length - 1}
+                    <button onClick={() => { setAplicando(true); setPeriodoSel(i => Math.min(i + 1, periodos.length - 1)) }} disabled={periodoSel >= periodos.length - 1}
                       style={{ ...navBtn, opacity: periodoSel >= periodos.length - 1 ? 0.4 : 1 }}>‹</button>
-                    <select value={periodoSel} onChange={e => setPeriodoSel(Number(e.target.value))} style={{ ...selChip, minWidth: '240px' }}>
+                    <select value={periodoSel} onChange={e => { setAplicando(true); setPeriodoSel(Number(e.target.value)) }} style={{ ...selChip, minWidth: '240px' }}>
                       {periodos.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
                     </select>
-                    <button onClick={() => setPeriodoSel(i => Math.max(i - 1, 0))} disabled={periodoSel <= 0}
+                    <button onClick={() => { setAplicando(true); setPeriodoSel(i => Math.max(i - 1, 0)) }} disabled={periodoSel <= 0}
                       style={{ ...navBtn, opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
                   </span>
                 ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
@@ -1989,11 +2003,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   <span style={{ fontSize: '13px', color: GRIS }}>al</span>
                   <input type="date" value={fHasta} min={fDesde} max={hoyISO()}
                          onChange={e => setFHasta(e.target.value)} style={entrada} />
-                  {/* Carga recién al tocar Ver: así poner las dos fechas a mano no
+                  {/* Carga recién al tocar Aplicar: así poner las dos fechas a mano no
                       dispara una carga por cada una. Se resalta si hay cambios sin aplicar. */}
                   <Btn primario={fDesde !== desde || fHasta !== hasta}
-                       onClick={() => { if (fDesde && fHasta) { setDesde(fDesde); setHasta(fHasta) } }}>Ver</Btn>
-                  <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
+                       onClick={() => { if (fDesde && fHasta) { setAplicando(true); setDesde(fDesde); setHasta(fHasta) } }}>Aplicar</Btn>
+                  <GhostBtn onClick={() => { setAplicando(true); setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
                 </label>
               )}
             </div>

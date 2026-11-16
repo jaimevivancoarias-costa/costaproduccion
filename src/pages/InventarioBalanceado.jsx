@@ -46,12 +46,18 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
-  // Borrador de "Por fechas": los inputs escriben acá y recién al tocar "Ver" se
-  // copian a desde/hasta (que dispara la carga). Así poner las dos fechas a mano
-  // NO dispara una carga por cada una.
+  // Borrador de fechas: los inputs escriben acá y recién al tocar "Aplicar" se
+  // copian a desde/hasta/alDia (que dispara la carga). Así poner las fechas a mano
+  // NO dispara una carga por cada cambio.
   const [fDesde, setFDesde] = useState(primeroDelMes(hoyISO()))
   const [fHasta, setFHasta] = useState(hoyISO())
+  const [fAlDia, setFAlDia] = useState(hoyISO())
+  // "aplicando" = la carga la pediste vos (Aplicar / preset). Solo entonces se
+  // muestra el "Actualizando…" y se apaga la tabla. Las cargas automáticas cargan
+  // calladas, sin molestar al cambiar de pantalla o de finca.
+  const [aplicando, setAplicando] = useState(false)
   useEffect(() => { setFDesde(desde); setFHasta(hasta) }, [desde, hasta])
+  useEffect(() => { setFAlDia(alDia) }, [alDia])
   // En "Cuánto hay", el PDF/Excel se ancla a la fecha "al": usa el mes de esa fecha
   // (01 → al), para que bodega y consumo del reporte cuadren con lo de pantalla.
   useEffect(() => { if (vista === 'saldo' && alDia) { setDesde(primeroDelMes(alDia)); setHasta(alDia) } }, [vista, alDia])
@@ -69,6 +75,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [tomas, setTomas] = useState([])
   const [cargando, setCargando] = useState(true)
   const [aviso, setAviso] = useState(null)
+  // Seguridad: si pediste carga (aplicando) pero no arrancó ninguna (el rango no
+  // cambió), suelta el indicador a los 1.5s para que no quede pegado.
+  useEffect(() => {
+    if (aplicando && !cargando) { const t = setTimeout(() => setAplicando(false), 1500); return () => clearTimeout(t) }
+  }, [aplicando, cargando])
 
   const [contando, setContando] = useState(false)
   const [editToma, setEditToma] = useState(null)
@@ -281,7 +292,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       } catch { /* la autoría es opcional: si falla, la tabla igual se muestra */ }
     } catch (err) {
       setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') })
-    } finally { setCargando(false); ultimaCarga.current = Date.now() }
+    } finally { setCargando(false); setAplicando(false); ultimaCarga.current = Date.now() }
   }, [finca.id, alDia, desde, hasta, esJefe])
 
   // Debounce: agrupa cambios rápidos (modo → fecha "del" → fecha "al", o al entrar
@@ -1332,24 +1343,30 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               placeholder="Buscar balanceado…" />
             {vista === 'saldo' ? (
               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
-                al <input type="date" value={alDia} max={hoyISO()} onChange={e => { const v = e.target.value; setAlDia(v); if (v) { setDesde(primeroDelMes(v)); setHasta(v) } }} style={inp} />
+                al <input type="date" value={fAlDia} max={hoyISO()} onChange={e => setFAlDia(e.target.value)} style={inp} />
+                <button onClick={() => { if (fAlDia) { setAplicando(true); setAlDia(fAlDia) } }}
+                  style={(fAlDia !== alDia) ? { ...btn, background: AZUL, color: 'white', borderColor: AZUL } : btn}>Aplicar</button>
+                {alDia !== hoyISO() && (
+                  <button onClick={() => { setAplicando(true); setAlDia(hoyISO()) }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>volver a hoy</button>
+                )}
               </label>
             ) : (
               <>
                 <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
-                  onClick={() => { setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
+                  onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
                 <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
-                  onClick={() => { setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
+                  onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
                 <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
                 {modoMov === 'conteo' ? (
                   periodos.length ? (
                     <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      <button onClick={() => setPeriodoSel(i => Math.min(i + 1, periodos.length - 1))} disabled={periodoSel >= periodos.length - 1}
+                      <button onClick={() => { setAplicando(true); setPeriodoSel(i => Math.min(i + 1, periodos.length - 1)) }} disabled={periodoSel >= periodos.length - 1}
                         style={{ ...btn, padding: '7px 10px', opacity: periodoSel >= periodos.length - 1 ? 0.4 : 1 }}>‹</button>
-                      <select value={periodoSel} onChange={e => setPeriodoSel(Number(e.target.value))} style={{ ...selChip, minWidth: '250px' }}>
+                      <select value={periodoSel} onChange={e => { setAplicando(true); setPeriodoSel(Number(e.target.value)) }} style={{ ...selChip, minWidth: '250px' }}>
                         {periodos.map((p, i) => <option key={i} value={i}>{p.label}</option>)}
                       </select>
-                      <button onClick={() => setPeriodoSel(i => Math.max(i - 1, 0))} disabled={periodoSel <= 0}
+                      <button onClick={() => { setAplicando(true); setPeriodoSel(i => Math.max(i - 1, 0)) }} disabled={periodoSel <= 0}
                         style={{ ...btn, padding: '7px 10px', opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
                     </span>
                   ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
@@ -1357,15 +1374,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
                     del <input type="date" value={fDesde} max={fHasta} onChange={e => setFDesde(e.target.value)} style={inp} />
                     al <input type="date" value={fHasta} min={fDesde} max={hoyISO()} onChange={e => setFHasta(e.target.value)} style={inp} />
-                    <button onClick={() => { if (fDesde && fHasta) { setDesde(fDesde); setHasta(fHasta) } }}
+                    <button onClick={() => { if (fDesde && fHasta) { setAplicando(true); setDesde(fDesde); setHasta(fHasta) } }}
                       style={(fDesde !== desde || fHasta !== hasta)
                         ? { ...btn, background: AZUL, color: 'white', borderColor: AZUL }
-                        : btn}>Ver</button>
+                        : btn}>Aplicar</button>
                   </label>
                 )}
               </>
             )}
-            {cargando && saldos.length > 0 && (
+            {aplicando && saldos.length > 0 && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '5px 12px',
                              background: '#E6F1FB', color: AZUL, borderRadius: '999px', fontSize: '12.5px', fontWeight: 500 }}>
                 <span className="cp-spin" style={{ width: '12px', height: '12px', border: '2px solid ' + AZUL,
@@ -1376,7 +1393,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
           </div>
 
           {/* Mientras recarga (con datos en pantalla), se apaga el contenido. */}
-          <div style={{ opacity: (cargando && saldos.length > 0) ? 0.45 : 1, transition: 'opacity .15s' }}>
+          <div style={{ opacity: (aplicando && saldos.length > 0) ? 0.45 : 1, transition: 'opacity .15s' }}>
           {vista === 'saldo' ? (
             <>
               {esJefe && (
