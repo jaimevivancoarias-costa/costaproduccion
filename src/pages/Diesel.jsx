@@ -74,7 +74,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
   const [bajas, setBajas] = useState([])                // bajas registradas (ajustes negativos con precio FIFO)
   const [bajasLotes, setBajasLotes] = useState({})      // baja_id -> [{fecha, precio, qty}] desglose FIFO por lote
   const [form, setForm] = useState(null)
-  const [revPrecio, setRevPrecio] = useState(null)
 
   // Bodega / conteo
   const [primeraVez, setPrimeraVez] = useState(false)
@@ -380,30 +379,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     setForm(f => { const pc = precioProvTipo(provId, f.tipoId); return { ...f, proveedorId: provId, precio: pc != null ? String(pc) : '' } })
   }
 
-  async function guardarIngreso() {
-    const r = revPrecio
-    const nuevo = numDec(r.precio)
-    if (!(nuevo > 0)) { setAviso({ tipo: 'error', texto: 'Pon el precio del galón.' }); return }
-    const cambio = r.precioActual == null || Math.abs(nuevo - r.precioActual) > 1e-9
-    if (cambio) {
-      await supabase.schema('produccion').from('diesel_precio')
-        .delete().eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).gte('vigente_desde', r.fecha)
-      await supabase.schema('produccion').from('diesel_precio')
-        .update({ vigente_hasta: sumarDias(r.fecha, -1) })
-        .eq('tipo_id', r.tipoId).eq('finca_id', finca.id).is('vigente_hasta', null).lt('vigente_desde', r.fecha)
-      const { error: ep } = await supabase.schema('produccion').from('diesel_precio')
-        .insert({ tipo_id: r.tipoId, finca_id: finca.id, precio_galon: nuevo, vigente_desde: r.fecha })
-      if (ep) { setAviso({ tipo: 'error', texto: 'No se pudo actualizar el precio. ' + ep.message }); return }
-    }
-    const { error } = await supabase.schema('produccion').from('diesel_pedido')
-      .insert({ finca_id: finca.id, tipo_id: r.tipoId, galones: r.galones, fecha: r.fecha,
-                estado: 'aprobado', aprobado_por: userId, aprobado_en: new Date().toISOString(),
-                numero_guia: r.guia || null, proveedor: r.proveedor || null, precio_galon: nuevo })
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo registrar. ' + error.message }); return }
-    setAviso({ tipo: 'ok', texto: cambio ? 'Ingreso registrado y precio actualizado en el catálogo.' : 'Ingreso registrado.' })
-    setRevPrecio(null); setForm(null); await refrescar()
-  }
-
   // --- Jefe edita/borra directo; bodeguero pide permiso ---
   // Mismo diálogo para los dos: el jefe guarda directo, el bodeguero manda una
   // solicitud (pedir:true) que el jefe aprueba. Se edita TODO (tipo, fecha,
@@ -620,9 +595,36 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       { k: 'Consumo del rango', v: gal(totCon) },
       hayConteo ? { k: 'Con descuadre', v: '' + nDesc, alerta: nDesc > 0 } : { k: 'Saldo hoy (gal)', v: gal(totSaldo) },
     ]
+    // Segunda tabla: cada ingreso del rango con su proveedor.
+    const ingresos = (pedidos || []).filter(p => p.estado === 'aprobado')
+      .slice().sort((a, b) => a.fecha < b.fecha ? -1 : a.fecha > b.fecha ? 1 : 0)
+    const ingFilas = ingresos.map(p => {
+      const g = Number(p.galones) || 0; const pr = p.precio_galon != null ? Number(p.precio_galon) : null
+      return {
+        fecha: corta(p.fecha), tipo: nombreTipo(p.tipo_id), proveedor: nombreProvRow(p),
+        galones: mas(g), guia: p.numero_guia || '',
+        precio: esJefe ? (pr != null ? precio6(pr) : '—') : '',
+        valor: esJefe ? (pr != null ? dinero(g * pr) : '—') : '',
+      }
+    })
+    const ingTotGal = ingresos.reduce((s, p) => s + (Number(p.galones) || 0), 0)
+    const ingTotVal = ingresos.reduce((s, p) => s + (p.precio_galon != null ? Number(p.galones) * Number(p.precio_galon) : 0), 0)
+    const ingCols = [
+      { titulo: 'Fecha', campo: 'fecha' },
+      { titulo: 'Diesel', campo: 'tipo' },
+      { titulo: 'Proveedor', campo: 'proveedor' },
+      { titulo: 'Guía', campo: 'guia' },
+      { titulo: 'Galones', der: true, campo: 'galones' },
+      ...(esJefe ? [{ titulo: 'Precio', der: true, campo: 'precio' }, { titulo: 'Valor', der: true, campo: 'valor' }] : []),
+    ]
+    const ingTotal = { fecha: 'Total', tipo: '', proveedor: '', guia: '', galones: '+' + gal(ingTotGal), precio: '', valor: esJefe ? dinero(ingTotVal) : '' }
+    const bloques = [
+      { titulo: 'Resumen por tipo', columnas, filas: filasRep, total },
+      ...(ingFilas.length ? [{ titulo: 'Ingresos del rango · por proveedor', columnas: ingCols, filas: ingFilas, total: ingTotal }] : []),
+    ]
     return { titulo: 'Reporte de Bodega — Diesel', finca: finca.nombre, categoria: 'Diesel',
       meta: [{ k: 'Rango', v: `${corta(desde)} – ${corta(hasta)}` }, { k: 'Impreso', v: corta(hoyISO()) }],
-      cards, columnas, filas: filasRep, total }
+      cards, bloques }
   }
   function exportarExcel() { reporteBodegaExcel(construirReporte()) }
   function exportarPDF() { if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' }) }
@@ -656,37 +658,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1080px' }}>
-      {revPrecio && (() => {
-        const nuevo = numDec(revPrecio.precio)
-        const cambio = revPrecio.precioActual != null && Math.abs(nuevo - revPrecio.precioActual) > 1e-9
-        return (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
-          <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '440px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>
-            <div style={{ fontWeight: 600, fontSize: '16px', marginBottom: '3px' }}>Verifica el precio del diesel</div>
-            <div style={{ fontSize: '12.5px', color: GRIS, marginBottom: '16px', lineHeight: 1.5 }}>
-              {nombreTipo(revPrecio.tipoId)} · {miles(revPrecio.galones)} gal. El precio del catálogo cambia cada mes — confírmalo o actualízalo.
-            </div>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Precio por galón</div>
-                <CampoNumero maxDec={6} autoFocus value={revPrecio.precio} onChange={v => setRevPrecio(x => ({ ...x, precio: v }))} style={{ ...inp, width: '150px', textAlign: 'right' }} />
-              </div>
-              <div style={{ fontSize: '12px', color: GRIS, paddingBottom: '9px' }}>
-                {revPrecio.precioActual != null ? <>catálogo {precio6(revPrecio.precioActual)}</> : 'sin precio en catálogo'}
-              </div>
-            </div>
-            <div style={{ fontSize: '11.5px', color: cambio ? AMBAR : GRIS, margin: '10px 0 14px', lineHeight: 1.5 }}>
-              {cambio ? `Cambiaste el precio → se actualizará en el catálogo y regirá desde ${corta(revPrecio.fecha)}.` : 'Si el precio sigue igual, solo confirma.'}
-            </div>
-            <div style={{ display: 'flex', gap: '9px' }}>
-              <Btn primario onClick={guardarIngreso}>Guardar ingreso</Btn>
-              <Btn onClick={() => setRevPrecio(null)}>Volver</Btn>
-            </div>
-          </div>
-        </div>
-        )
-      })()}
-
       {corrLote && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(2,40,71,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem', zIndex: 60 }}>
           <div style={{ background: 'white', borderRadius: '14px', padding: '22px 24px', width: '100%', maxWidth: '420px', boxShadow: '0 12px 40px rgba(2,40,71,.18)' }}>

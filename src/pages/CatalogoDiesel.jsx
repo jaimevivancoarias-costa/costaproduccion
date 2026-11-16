@@ -114,18 +114,33 @@ export default function CatalogoDiesel({ fincas }) {
 
   // ---- Editar un precio puntual (Fincas) ----
   function abrirEdit(proveedorId, fincaId, tipoId, precioActual) {
-    setHist(null); setFijar(null); setEdit({ proveedorId, fincaId, tipoId, precio: precioActual != null ? String(precioActual) : '', desde: hoyISO() })
+    const p = precioDe(proveedorId, fincaId, tipoId)
+    setHist(null); setFijar(null)
+    setEdit({ proveedorId, fincaId, tipoId, precio: precioActual != null ? String(precioActual) : '', desde: hoyISO(), desdeVigente: p?.desde || null, modo: 'cambio' })
   }
   async function guardarEdit() {
     if (guardando) return
     const raw = numDec(edit.precio || '')
     if (!(raw > 0)) { setAviso({ tipo: 'error', texto: 'Pon un precio.' }); return }
-    const desde = edit.desde || hoyISO(); const prov = idReal(edit.proveedorId)
+    const prov = idReal(edit.proveedorId)
+    const corregir = edit.modo === 'corregir'
     setGuardando(true)
-    try { await aplicarPrecio(prov, edit.fincaId, edit.tipoId, raw, desde) }
-    catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e.message }); return }
-    const items = await detectarRecosteo(prov, [{ fincaId: edit.fincaId, tipoId: edit.tipoId, precio: raw }], desde)
-    setGuardando(false); setEdit(null); setAviso({ tipo: 'ok', texto: 'Precio guardado.' }); await cargar()
+    try {
+      if (corregir) {
+        // Sobrescribe el precio vigente EN SU LUGAR (no crea tramo nuevo).
+        let q = supabase.schema('produccion').from('diesel_precio').update({ precio_galon: raw })
+          .eq('tipo_id', edit.tipoId).eq('finca_id', edit.fincaId).is('vigente_hasta', null)
+        q = prov == null ? q.is('proveedor_id', null) : q.eq('proveedor_id', prov)
+        const { error } = await q
+        if (error) throw error
+      } else {
+        await aplicarPrecio(prov, edit.fincaId, edit.tipoId, raw, edit.desde || hoyISO())
+      }
+    } catch (e) { setGuardando(false); setAviso({ tipo: 'error', texto: 'No se pudo guardar. ' + e.message }); return }
+    // Recosteo: para corregir desde el inicio del vigente; para cambio, desde la fecha nueva.
+    const desdeRec = corregir ? (edit.desdeVigente || hoyISO()) : (edit.desde || hoyISO())
+    const items = await detectarRecosteo(prov, [{ fincaId: edit.fincaId, tipoId: edit.tipoId, precio: raw }], desdeRec)
+    setGuardando(false); setEdit(null); setAviso({ tipo: 'ok', texto: corregir ? 'Precio corregido.' : 'Precio guardado.' }); await cargar()
     if (items.length) setRecostear({ items })
   }
 
@@ -328,12 +343,26 @@ function VistaFincas({ activas, tipos, proveedores, precios, fincaSel, edit, set
         </div>
         {enEdit && (
           <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f6f9fb', borderRadius: '8px' }}>
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '10px' }}>
+              {[['cambio', 'Cambio de precio'], ['corregir', 'Corregir (estaba mal)']].map(([k, l]) => (
+                <button key={k} onClick={() => setEdit(x => ({ ...x, modo: k }))}
+                  style={{ fontSize: '12px', padding: '5px 11px', borderRadius: '7px', fontFamily: 'inherit', cursor: 'pointer',
+                    border: '0.5px solid ' + (edit.modo === k ? AZUL : BORDE), background: edit.modo === k ? '#E6F1FB' : 'white', color: edit.modo === k ? '#0C447C' : GRIS }}>{l}</button>
+              ))}
+            </div>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div><label style={lbl}>Precio nuevo</label>
-                <CampoNumero maxDec={6} value={edit.precio} placeholder="ej. 1.80" onChange={v => setEdit(x => ({ ...x, precio: v }))} style={{ ...inp, width: '100px', textAlign: 'right' }} /></div>
-              <div><label style={lbl}>Rige desde</label>
-                <input type="date" value={edit.desde} max={hoyISO()} onChange={e => setEdit(x => ({ ...x, desde: e.target.value }))} style={inp} /></div>
-              <button onClick={guardarEdit} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : 'Guardar'}</button>
+              <div><label style={lbl}>{edit.modo === 'corregir' ? 'Precio correcto' : 'Precio nuevo'}</label>
+                <CampoNumero maxDec={6} value={edit.precio} placeholder="ej. 1.80" onChange={v => setEdit(x => ({ ...x, precio: v }))} style={{ ...inp, width: '110px', textAlign: 'right' }} /></div>
+              {edit.modo !== 'corregir' && (
+                <div><label style={lbl}>Rige desde</label>
+                  <input type="date" value={edit.desde} max={hoyISO()} onChange={e => setEdit(x => ({ ...x, desde: e.target.value }))} style={inp} /></div>
+              )}
+              <button onClick={guardarEdit} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Guardando…' : (edit.modo === 'corregir' ? 'Corregir' : 'Guardar')}</button>
+            </div>
+            <div style={{ fontSize: '11px', color: GRIS, marginTop: '8px', lineHeight: 1.4 }}>
+              {edit.modo === 'corregir'
+                ? 'Sobrescribe el precio actual sin crear historial (como si nunca hubiera estado el malo). Te preguntamos si recostear las compras que lo usaron.'
+                : 'Crea un precio nuevo que rige desde la fecha; el anterior queda en el historial.'}
             </div>
           </div>
         )}
