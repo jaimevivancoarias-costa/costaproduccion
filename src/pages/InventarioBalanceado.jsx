@@ -278,7 +278,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     } finally { setCargando(false); ultimaCarga.current = Date.now() }
   }, [finca.id, alDia, desde, hasta, esJefe])
 
-  useEffect(() => { cargar() }, [cargar])
+  // Debounce: agrupa cambios rápidos (modo → fecha "del" → fecha "al", o al entrar
+  // a "Qué se movió") en UNA sola carga con el estado final, en vez de una carga
+  // por cada cambio (que dejaba ver números de un rango a medio armar).
+  useEffect(() => {
+    const t = setTimeout(cargar, 300)
+    return () => clearTimeout(t)
+  }, [cargar])
 
   // (Se quitó el auto-actualizar al volver a la pestaña/ventana: molestaba porque
   // recargaba sola. Para datos frescos a propósito está el botón 🔄 de la barra.)

@@ -834,7 +834,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     }
   }, [finca.id, alDia, desde, hasta, esJefe])
 
-  useEffect(() => { cargar() }, [cargar])
+  // Debounce: si cambian varias cosas seguidas (modo → fecha "del" → fecha "al",
+  // o al entrar a "Qué se movió"), espera un toque y carga UNA sola vez con el
+  // estado final, en vez de disparar una carga por cada cambio (que dejaba ver
+  // números intermedios de un rango a medio armar).
+  useEffect(() => {
+    const t = setTimeout(cargar, 300)
+    return () => clearTimeout(t)
+  }, [cargar])
 
   // (Se quitó el auto-actualizar al volver a la pestaña/ventana: molestaba porque
   // recargaba sola y los números cambiaban al volver. Para datos frescos a
