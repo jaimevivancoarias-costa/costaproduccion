@@ -46,6 +46,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
+  // Borrador de "Por fechas": los inputs escriben acá y recién al tocar "Ver" se
+  // copian a desde/hasta (que dispara la carga). Así poner las dos fechas a mano
+  // NO dispara una carga por cada una.
+  const [fDesde, setFDesde] = useState(primeroDelMes(hoyISO()))
+  const [fHasta, setFHasta] = useState(hoyISO())
+  useEffect(() => { setFDesde(desde); setFHasta(hasta) }, [desde, hasta])
   // En "Cuánto hay", el PDF/Excel se ancla a la fecha "al": usa el mes de esa fecha
   // (01 → al), para que bodega y consumo del reporte cuadren con lo de pantalla.
   useEffect(() => { if (vista === 'saldo' && alDia) { setDesde(primeroDelMes(alDia)); setHasta(alDia) } }, [vista, alDia])
@@ -1349,8 +1355,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
                 ) : (
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
-                    del <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
-                    al <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+                    del <input type="date" value={fDesde} max={fHasta} onChange={e => setFDesde(e.target.value)} style={inp} />
+                    al <input type="date" value={fHasta} min={fDesde} max={hoyISO()} onChange={e => setFHasta(e.target.value)} style={inp} />
+                    <button onClick={() => { if (fDesde && fHasta) { setDesde(fDesde); setHasta(fHasta) } }}
+                      style={(fDesde !== desde || fHasta !== hasta)
+                        ? { ...btn, background: AZUL, color: 'white', borderColor: AZUL }
+                        : btn}>Ver</button>
                   </label>
                 )}
               </>

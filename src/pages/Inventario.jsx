@@ -136,6 +136,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [hasta, setHasta] = useState(hoyISO())
   const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
+  // Borrador de las fechas "Por fechas": los inputs escriben acá y recién al tocar
+  // "Ver" se copian a desde/hasta (que es lo que dispara la carga). Así elegir las
+  // dos fechas a mano NO dispara una carga por cada una (rango a medio armar).
+  const [fDesde, setFDesde] = useState(primeroDelMes(hoyISO()))
+  const [fHasta, setFHasta] = useState(hoyISO())
+  // Si desde/hasta cambian desde afuera (presets, Por conteo, "al" de Cuánto hay),
+  // el borrador se sincroniza para que los inputs reflejen el rango vigente.
+  useEffect(() => { setFDesde(desde); setFHasta(hasta) }, [desde, hasta])
   // Al entrar a "Qué se movió" siempre arranca Por conteo, en el último conteo.
   useEffect(() => { if (vista === 'movimientos') { setModoMov('conteo'); setPeriodoSel(0) } }, [vista])
   // En "Cuánto hay", el PDF/Excel se ancla a la fecha "al": usa el mes de esa fecha
@@ -1976,11 +1984,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               ) : (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ fontSize: '13px', color: GRIS }}>del</span>
-                  <input type="date" value={desde} max={hasta}
-                         onChange={e => setDesde(e.target.value)} style={entrada} />
+                  <input type="date" value={fDesde} max={fHasta}
+                         onChange={e => setFDesde(e.target.value)} style={entrada} />
                   <span style={{ fontSize: '13px', color: GRIS }}>al</span>
-                  <input type="date" value={hasta} min={desde} max={hoyISO()}
-                         onChange={e => setHasta(e.target.value)} style={entrada} />
+                  <input type="date" value={fHasta} min={fDesde} max={hoyISO()}
+                         onChange={e => setFHasta(e.target.value)} style={entrada} />
+                  {/* Carga recién al tocar Ver: así poner las dos fechas a mano no
+                      dispara una carga por cada una. Se resalta si hay cambios sin aplicar. */}
+                  <Btn primario={fDesde !== desde || fHasta !== hasta}
+                       onClick={() => { if (fDesde && fHasta) { setDesde(fDesde); setHasta(fHasta) } }}>Ver</Btn>
                   <GhostBtn onClick={() => { setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
                 </label>
               )}
