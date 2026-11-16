@@ -1688,10 +1688,21 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               )}
             </label>
           ) : null}
+          {cargando && saldos.length > 0 && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', padding: '5px 12px',
+                           background: '#E6F1FB', color: AZUL, borderRadius: '999px', fontSize: '12.5px', fontWeight: 500 }}>
+              <span className="cp-spin" style={{ width: '12px', height: '12px', border: '2px solid ' + AZUL,
+                                                 borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block' }} />
+              Actualizando…
+            </span>
+          )}
         </div>
       )}
 
-      {!contando && !cargando && vista === 'saldo' && (
+      {/* Mientras recarga (con datos ya en pantalla), se apaga el contenido para
+          que se note que está trayendo lo nuevo y no parezca pegado. */}
+      <div style={{ opacity: (cargando && saldos.length > 0) ? 0.45 : 1, transition: 'opacity .15s' }}>
+      {!contando && vista === 'saldo' && saldos.length > 0 && (
         <>
           {/* Resumen */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
@@ -2650,6 +2661,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
           {renderConteosAnteriores()}
         </>
       )}
+      </div>
       </>
       )}
     </div>

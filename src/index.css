@@ -23,3 +23,7 @@ input:disabled, select:disabled {
   background: #f7fafc;
   color: #7d8fa0;
 }
+
+/* Indicador "Actualizando…": pastilla con spinner mientras recarga datos. */
+@keyframes cp-spin { to { transform: rotate(360deg); } }
+.cp-spin { animation: cp-spin .7s linear infinite; }
