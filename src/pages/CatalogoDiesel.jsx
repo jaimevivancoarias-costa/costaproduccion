@@ -207,19 +207,23 @@ export default function CatalogoDiesel({ fincas }) {
   // ---- Fijar precios por grupos (global o desde un proveedor) ----
   function abrirFijar({ proveedorId = '', tipoId = '', provFijo = false, tipoFijo = false, lugar }) {
     setEdit(null); setAlta(null)
-    setFijar({ proveedorId, tipoId, provFijo, tipoFijo, grupos: [{ precio: '', fincaIds: [] }], desde: hoyISO(), lugar })
+    setFijar({ proveedorId, tipoId, provFijo, tipoFijo, grupos: [{ precios: {}, fincaIds: [] }], desde: hoyISO(), lugar })
   }
   async function guardarFijar() {
     if (guardando) return
     if (!fijar.proveedorId) { setAviso({ tipo: 'error', texto: 'Elegí el proveedor.' }); return }
     const esNuevo = fijar.proveedorId === '__nuevo'
     if (esNuevo && !(fijar.nuevoNombre || '').trim()) { setAviso({ tipo: 'error', texto: 'Pon el nombre del proveedor nuevo.' }); return }
-    if (!fijar.tipoId) { setAviso({ tipo: 'error', texto: 'Elegí el tipo.' }); return }
+    // Tipos a fijar: uno solo si viene fijo (botón "Cambiar precio X"), si no, los dos.
+    const tiposFijar = fijar.tipoFijo ? tipos.filter(t => t.id === fijar.tipoId) : tipos
     const combos = []
     for (const g of fijar.grupos) {
-      const raw = numDec(g.precio || '')
-      if (!(raw > 0) || !g.fincaIds.length) continue
-      for (const fincaId of g.fincaIds) combos.push({ fincaId, tipoId: fijar.tipoId, precio: raw })
+      if (!g.fincaIds.length) continue
+      for (const t of tiposFijar) {
+        const raw = numDec((g.precios || {})[t.id] || '')
+        if (!(raw > 0)) continue
+        for (const fincaId of g.fincaIds) combos.push({ fincaId, tipoId: t.id, precio: raw })
+      }
     }
     if (!combos.length) { setAviso({ tipo: 'error', texto: 'Pon un precio y marca al menos una finca.' }); return }
     const desde = fijar.desde || hoyISO()
@@ -474,6 +478,10 @@ function VistaProveedores({ activas, tipos, proveedores, precioDe, fincasDeProv,
 function PanelAlta({ activas, tipos, alta, setAlta, guardarAlta, guardando }) {
   const toggleFinca = fId => setAlta(x => { const fincas = { ...x.fincas }; if (fincas[fId]) delete fincas[fId]; else fincas[fId] = {}; return { ...x, fincas } })
   const setPrecio = (fId, tId, v) => setAlta(x => ({ ...x, fincas: { ...x.fincas, [fId]: { ...x.fincas[fId], [tId]: v } } }))
+  // Marca un grupo de fincas de una vez (conserva los precios de las que siguen marcadas).
+  const setMarcadas = ids => setAlta(x => { const fincas = {}; ids.forEach(id => { fincas[id] = x.fincas[id] || {} }); return { ...x, fincas } })
+  const zonas = [...new Set(activas.map(f => f.zona).filter(Boolean))]
+  const zonaLabel = z => z === 'jambeli' ? 'Jambelí' : z === 'puna' ? 'Puná' : z
   return (
     <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
       <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '12px' }}>Agregar proveedor</div>
@@ -482,6 +490,11 @@ function PanelAlta({ activas, tipos, alta, setAlta, guardarAlta, guardando }) {
         <input value={alta.nombre} placeholder="ej. ALPATRANS" onChange={e => setAlta(x => ({ ...x, nombre: e.target.value }))} style={{ ...inp, width: '100%' }} />
       </div>
       <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.03em', color: GRIS, marginBottom: '8px' }}>¿A qué fincas vende? · marca y pon su precio</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+        <button onClick={() => setMarcadas(activas.map(f => f.id))} style={chipQuick}>Todas</button>
+        {zonas.map(z => <button key={z} onClick={() => setMarcadas(activas.filter(f => f.zona === z).map(f => f.id))} style={chipQuick}>{zonaLabel(z)}</button>)}
+        <button onClick={() => setMarcadas([])} style={{ ...chipQuick, color: GRIS }}>Ninguna</button>
+      </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '14px' }}>
         {activas.map(f => {
           const marcada = !!alta.fincas[f.id]
@@ -519,8 +532,11 @@ function PanelFijar({ activas, tipos, proveedores, fijar, setFijar, guardarFijar
     return { ...x, grupos }
   })
   const setGrupo = (gi, ids) => setFijar(x => ({ ...x, grupos: x.grupos.map((g, i) => i === gi ? { ...g, fincaIds: ids } : { ...g, fincaIds: g.fincaIds.filter(id => !ids.includes(id)) }) }))
+  const setPrecioGrupo = (gi, tId, v) => setFijar(x => ({ ...x, grupos: x.grupos.map((g, i) => i === gi ? { ...g, precios: { ...g.precios, [tId]: v } } : g) }))
   const zonas = [...new Set(activas.map(f => f.zona).filter(Boolean))]
   const zonaLabel = z => z === 'jambeli' ? 'Jambelí' : z === 'puna' ? 'Puná' : z
+  // Un precio por cada tipo (B / Premium). Si el tipo viene fijo (botón "Cambiar precio X"), solo ese.
+  const tiposMostrar = fijar.tipoFijo ? tipos.filter(t => t.id === fijar.tipoId) : tipos
   return (
     <div style={{ background: '#f6f9fb', border: '0.5px solid ' + BORDE, borderRadius: '12px', padding: '14px 16px', marginBottom: '14px' }}>
       <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '12px' }}>Fijar precios</div>
@@ -539,26 +555,33 @@ function PanelFijar({ activas, tipos, proveedores, fijar, setFijar, guardarFijar
             <input value={fijar.nuevoNombre || ''} placeholder="ej. Primax" onChange={e => setFijar(x => ({ ...x, nuevoNombre: e.target.value }))} style={inp} autoFocus />
           </div>
         )}
-        <div>
-          <label style={lbl}>Tipo</label>
-          <select value={fijar.tipoId} disabled={fijar.tipoFijo} onChange={e => setFijar(x => ({ ...x, tipoId: e.target.value }))} style={{ ...inp, opacity: fijar.tipoFijo ? 0.7 : 1 }}>
-            <option value="">Elegir…</option>
-            {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-          </select>
-        </div>
+        {fijar.tipoFijo && (
+          <div>
+            <label style={lbl}>Tipo</label>
+            <select value={fijar.tipoId} disabled style={{ ...inp, opacity: 0.7 }}>
+              {tipos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
+            </select>
+          </div>
+        )}
       </div>
       <div style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.03em', color: GRIS, marginBottom: '8px' }}>¿A qué fincas y a qué precio?</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {fijar.grupos.map((g, gi) => (
           <div key={gi} style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '8px', padding: '10px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '14px', marginBottom: '10px', flexWrap: 'wrap' }}>
+              {tiposMostrar.map(t => (
+                <div key={t.id}>
+                  <label style={lbl}>{t.nombre}</label>
+                  <CampoNumero maxDec={6} value={(g.precios || {})[t.id] || ''} placeholder="ej. 4.09"
+                    onChange={v => setPrecioGrupo(gi, t.id, v)} style={{ ...inp, width: '110px', textAlign: 'right' }} />
+                </div>
+              ))}
+              {fijar.grupos.length > 1 && <button onClick={() => setFijar(x => ({ ...x, grupos: x.grupos.filter((_, i) => i !== gi) }))} style={{ ...btnLink, color: ROJO, marginLeft: 'auto' }}>Quitar grupo</button>}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '12px', color: GRIS }}>Precio</span>
-              <CampoNumero maxDec={6} value={g.precio} placeholder="ej. 4.09"
-                onChange={v => setFijar(x => ({ ...x, grupos: x.grupos.map((gg, i) => i === gi ? { ...gg, precio: v } : gg) }))} style={{ ...inp, width: '100px', textAlign: 'right' }} />
-              <button onClick={() => setGrupo(gi, activas.map(f => f.id))} style={{ ...chipQuick, marginLeft: '4px' }}>Todas</button>
+              <button onClick={() => setGrupo(gi, activas.map(f => f.id))} style={chipQuick}>Todas</button>
               {zonas.map(z => <button key={z} onClick={() => setGrupo(gi, activas.filter(f => f.zona === z).map(f => f.id))} style={chipQuick}>{zonaLabel(z)}</button>)}
               <button onClick={() => setGrupo(gi, [])} style={{ ...chipQuick, color: GRIS }}>Ninguna</button>
-              {fijar.grupos.length > 1 && <button onClick={() => setFijar(x => ({ ...x, grupos: x.grupos.filter((_, i) => i !== gi) }))} style={{ ...btnLink, color: ROJO, marginLeft: 'auto' }}>Quitar grupo</button>}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {activas.map(f => {
@@ -575,7 +598,7 @@ function PanelFijar({ activas, tipos, proveedores, fijar, setFijar, guardarFijar
         ))}
       </div>
       <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end', marginTop: '12px', flexWrap: 'wrap' }}>
-        <button onClick={() => setFijar(x => ({ ...x, grupos: [...x.grupos, { precio: '', fincaIds: [] }] }))} style={btnLink}>+ Otro precio</button>
+        <button onClick={() => setFijar(x => ({ ...x, grupos: [...x.grupos, { precios: {}, fincaIds: [] }] }))} style={btnLink}>+ Otro precio</button>
         <div style={{ marginLeft: 'auto' }}><label style={lbl}>Rige desde</label>
           <input type="date" value={fijar.desde} max={hoyISO()} onChange={e => setFijar(x => ({ ...x, desde: e.target.value }))} style={inp} /></div>
         <button onClick={guardarFijar} disabled={guardando} style={{ ...boton, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardando ? 0.6 : 1 }}>{guardando ? 'Aplicando…' : 'Guardar precios'}</button>
