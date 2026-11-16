@@ -906,11 +906,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const valorBodega = useMemo(
     () => saldos.reduce((t, s) => t + Number(valorFifo[s.insumo_id] || 0), 0),
     [saldos, valorFifo])
-  // Valor al CIERRE del rango (para el total al pie de "Qué se movió"): usa el valor
-  // a la fecha de cierre (hasta), no al día de hoy, así no "varía" con lo de hoy.
+  // Valor al CIERRE del rango (total al pie de "Qué se movió"): suma SOLO los
+  // valores al cierre (hasta), tal cual los devuelve fn_valor_bodega_fifo(hasta).
+  // Antes recorría `saldos` (el stock de HOY) y, si a un insumo le faltaba el
+  // valor al cierre, caía a `valorFifo` (valor de hoy). Eso metía lo de hoy en
+  // un total de septiembre: el total bailaba cada vez que cambiaba el stock de
+  // hoy (consumos del día), con el mismo rango. Ahora depende solo del cierre.
   const valorBodegaCierre = useMemo(
-    () => saldos.reduce((t, s) => t + Number(valorFifoCierre[s.insumo_id] ?? valorFifo[s.insumo_id] ?? 0), 0),
-    [saldos, valorFifoCierre, valorFifo])
+    () => Object.values(valorFifoCierre).reduce((t, v) => t + (Number(v) || 0), 0),
+    [valorFifoCierre])
   // Consumo $ del rango (= suma de consumo_dolares de "Qué se movió"), para el total al pie.
   const consumoRango = useMemo(
     () => (movs || []).reduce((t, m) => t + Number(m.consumo_dolares || 0), 0),
@@ -1021,7 +1025,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const pdesde = precioInfo[id]?.desde
       // Valor del stock a la fecha de CIERRE del rango (no de hoy), con la función
       // oficial FIFO. Si el rango termina hoy es el mismo valor.
-      const valor = Number(valorFifoCierre[id] ?? valorFifo[id] ?? 0)
+      const valor = Number(valorFifoCierre[id] ?? 0)
       // Si el período arranca en el inventario inicial (o en un conteo), ese
       // valor contado ES el Saldo Ini. — igual que en pantalla.
       const iniEsConteo = anclaInicio(m)

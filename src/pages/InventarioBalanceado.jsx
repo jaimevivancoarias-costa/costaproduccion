@@ -562,9 +562,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // cada lote). Es la plata parada de verdad, no el precio de catálogo. Así
   // el valor cuadra con el desglose "cuánto queda a cada precio" de abajo.
   const valorBodega = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifo[s.producto_id] || 0), 0), [saldos, valorFifo])
-  // Valor al CIERRE del rango (para el total al pie de "Qué se movió"): usa el valor
-  // a la fecha de cierre (hasta), no al día de hoy, así no "varía" con lo de hoy.
-  const valorBodegaCierre = useMemo(() => saldos.reduce((t, s) => t + Number(valorFifoCierre[s.producto_id] ?? valorFifo[s.producto_id] ?? 0), 0), [saldos, valorFifoCierre, valorFifo])
+  // Valor al CIERRE del rango (total al pie de "Qué se movió"): suma SOLO los
+  // valores al cierre (hasta), tal cual fn_valor_bodega_fifo(hasta). Antes
+  // recorría `saldos` (stock de HOY) y caía a valorFifo (hoy) si faltaba, así
+  // que el total bailaba con los movimientos del día en el mismo rango.
+  const valorBodegaCierre = useMemo(() => Object.values(valorFifoCierre).reduce((t, v) => t + (Number(v) || 0), 0), [valorFifoCierre])
   // Consumo $ del rango (= suma de consumo_dolares de "Qué se movió"), igual que el PDF.
   const consumoRango = useMemo(() => (movs || []).reduce((t, m) => t + Number(m.consumo_dolares || 0), 0), [movs])
   // Precio FIFO real por producto (valor del saldo ÷ saldo) para costear faltantes.
@@ -658,7 +660,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const desde = precioInfo[id]?.aplicado?.desde
       // Valor del stock a la fecha de CIERRE del rango (no de hoy), con la función
       // oficial FIFO. Si el rango termina hoy es el mismo valor.
-      const valor = Number(valorFifoCierre[id] ?? valorFifo[id] ?? 0)
+      const valor = Number(valorFifoCierre[id] ?? 0)
       // Si el período arranca en el inventario inicial (o en un conteo), ese
       // valor contado ES el Saldo Ini. — igual que en pantalla.
       const iniEsConteo = anclaInicio(m)
