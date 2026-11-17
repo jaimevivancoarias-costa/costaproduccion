@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { hoyISO, corta, miles, dinero, LIBRAS_POR_SACO, lunesDe, sumarDias } from '../lib/fechas'
 import { Seg } from '../components/controles'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import BotonDescargar from '../components/BotonDescargar'
 
 // Reportes · modulo Produccion
 //
@@ -605,8 +606,9 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
         </div>
       )}
 
-      {/* Filtros (valorización y estado son "ahora", no usan rango de fechas) */}
-      {kind !== 'valorizacion' && kind !== 'estado' && (
+      {/* Filtros (valorización y estado son "ahora", no usan rango de fechas).
+          Pérdidas trae su PROPIO filtro con Aplicar, así que acá se esconde. */}
+      {kind !== 'valorizacion' && kind !== 'estado' && kind !== 'perdidas' && (
       <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px',
                     padding: '14px 16px', marginBottom: '16px', display: 'flex',
                     gap: '18px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -1750,11 +1752,21 @@ function ReporteDescuadres({ descs, tipo, onTipo, todasFincas }) {
 const COL_MOTIVO = { Robo: '#B3261E', Merma: '#854F0B', Rotura: '#0D6CB0', 'Daño': '#3f8fce', Otro: '#7d8fa0' }
 const colMotivo = m => COL_MOTIVO[m] || '#9fb0bf'
 
-function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
+function ReportePerdidas({ fincas, fincaSel, onFinca, desde: desdeIni, hasta: hastaIni }) {
   const [filas, setFilas] = useState([])
   const [det, setDet] = useState({})        // baja_id -> [{fecha, precio, qty}] (desglose FIFO por lote)
   const [abierto, setAbierto] = useState({})
   const [cargando, setCargando] = useState(true)
+  // Rango APLICADO (el que carga) y el borrador de los inputs. La carga arranca
+  // recién al tocar "Aplicar", igual que en Inventario.
+  const [rDesde, setRDesde] = useState(desdeIni)
+  const [rHasta, setRHasta] = useState(hastaIni)
+  const [fD, setFD] = useState(desdeIni)
+  const [fH, setFH] = useState(hastaIni)
+  const desde = rDesde, hasta = rHasta
+  const hayCambio = fD !== rDesde || fH !== rHasta
+  const aplicar = () => { if (fD && fH) { setRDesde(fD); setRHasta(fH) } }
+  const preset = (d, h) => { setFD(d); setFH(h); setRDesde(d); setRHasta(h) }
   const esTodas = fincaSel === 'todas'
 
   useEffect(() => {
@@ -1862,6 +1874,16 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
   const porMotivo = agrupar('motivo')
   const porModulo = agrupar('modulo')
   const porFinca = esTodas ? agrupar('finca') : []
+  // Por insumo/producto: los que más se pierden (top 8).
+  const porItem = useMemo(() => agrupar('item').slice(0, 8), [agrupar])
+  // Por mes: evolución (orden cronológico, no por monto).
+  const MES3 = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+  const porMes = useMemo(() => {
+    const m = {}
+    filas.forEach(f => { const k = (f.fecha || '').slice(0, 7); if (k) m[k] = (m[k] || 0) + f.valor })
+    return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([k, v]) => ({ label: MES3[Number(k.slice(5, 7)) - 1] + ' ' + k.slice(2, 4), valor: v }))
+  }, [filas])
   const nConteo = filas.filter(f => f.origen === 'Conteo').length
 
   const GRID = esTodas
@@ -1869,17 +1891,73 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
     : '84px 80px 92px 1.2fr 95px 92px 115px'
   const colOrigen = o => o === 'Conteo' ? '#854F0B' : '#0D6CB0'
 
+  // Reporte para PDF/Excel (misma estructura que el reporte de bodega).
+  function construirReporte() {
+    const nf = esTodas ? 'Todas las fincas' : (fincas?.find(f => f.id === fincaSel)?.nombre || '')
+    const columnas = [
+      { titulo: 'Fecha', campo: 'fecha' },
+      ...(esTodas ? [{ titulo: 'Finca', campo: 'finca' }] : []),
+      { titulo: 'Origen', campo: 'origen' },
+      { titulo: 'Módulo', campo: 'modulo' },
+      { titulo: 'Ítem', campo: 'item' },
+      { titulo: 'Cantidad', der: true, campo: 'cantTxt' },
+      { titulo: 'Motivo', campo: 'motivo' },
+      { titulo: 'Perdido', der: true, campo: 'perdidoTxt', destacar: true },
+    ]
+    const filasRep = filas.map(f => ({
+      fecha: corta(f.fecha), finca: f.finca, origen: f.origen, modulo: f.modulo,
+      item: f.item, cantTxt: `${miles(f.cant)} ${f.unidad}`, motivo: f.motivo, perdidoTxt: dinero(f.valor),
+    }))
+    const totalRow = { fecha: 'Total', finca: '', origen: '', modulo: '', item: '', cantTxt: '', motivo: '', perdidoTxt: dinero(total) }
+    const cards = [
+      { k: 'Total perdido', v: dinero(total), alerta: total > 0 },
+      { k: 'Pérdidas', v: String(filas.length) },
+      { k: 'Motivos', v: String(porMotivo.length) },
+    ]
+    return {
+      titulo: 'Reporte de Pérdidas', finca: nf, categoria: 'Pérdidas',
+      meta: [{ k: 'Rango', v: `${corta(rDesde)} – ${corta(rHasta)}` }, { k: 'Impreso', v: corta(hoyISO()) }],
+      cards, columnas, filas: filasRep, total: totalRow,
+    }
+  }
+  const exportarPDF = () => reporteBodegaPDF(construirReporte())
+  const exportarExcel = () => reporteBodegaExcel(construirReporte())
+
   return (
     <>
-      {fincas && fincas.length > 1 && (
-        <div style={{ marginBottom: '14px' }}>
-          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
-          <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '220px' }}>
-            <option value="todas">Todas las fincas</option>
-            {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
-          </select>
+      {/* Filtro propio: finca + rango con botón Aplicar (carga recién al tocar
+          Aplicar, igual que Inventario) + descarga PDF/Excel. */}
+      <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: '16px' }}>
+        {fincas && fincas.length > 1 && (
+          <div>
+            <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Finca</div>
+            <select value={fincaSel} onChange={e => onFinca(e.target.value)} style={{ ...entrada, minWidth: '200px' }}>
+              <option value="todas">Todas las fincas</option>
+              {fincas.map(f => <option key={f.id} value={f.id}>{f.nombre}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Del</div>
+          <input type="date" value={fD} max={fH} onChange={e => setFD(e.target.value)} style={entrada} />
         </div>
-      )}
+        <div>
+          <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Al</div>
+          <input type="date" value={fH} min={fD} max={hoyISO()} onChange={e => setFH(e.target.value)} style={entrada} />
+        </div>
+        <button onClick={aplicar}
+          style={{ padding: '9px 16px', fontSize: '13px', fontFamily: 'inherit', fontWeight: 500, borderRadius: '9px', cursor: 'pointer',
+                   border: '0.5px solid ' + (hayCambio ? AZUL : BORDE), background: hayCambio ? AZUL : 'white', color: hayCambio ? 'white' : NAVY }}>Aplicar</button>
+        <button onClick={() => preset(primeroDelMes(hoyISO()), hoyISO())}
+          style={{ padding: '8px 13px', fontSize: '12.5px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '20px', background: 'white', color: NAVY, cursor: 'pointer' }}>Este mes</button>
+        <button onClick={() => { const fin = sumarDias(primeroDelMes(hoyISO()), -1); preset(primeroDelMes(fin), fin) }}
+          style={{ padding: '8px 13px', fontSize: '12.5px', fontFamily: 'inherit', border: '0.5px solid ' + BORDE, borderRadius: '20px', background: 'white', color: NAVY, cursor: 'pointer' }}>Mes pasado</button>
+        {filas.length > 0 && (
+          <div style={{ marginLeft: 'auto' }}>
+            <BotonDescargar cargando={cargando} onPDF={exportarPDF} onExcel={exportarExcel} />
+          </div>
+        )}
+      </div>
 
       {cargando ? (
         <Caja><Centro>Cargando…</Centro></Caja>
@@ -1930,6 +2008,16 @@ function ReportePerdidas({ fincas, fincaSel, onFinca, desde, hasta }) {
           </CajaGrafica>
           <CajaGrafica titulo={esTodas ? 'Por finca' : 'Por módulo'}>
             <BarrasH items={esTodas ? porFinca : porModulo} money />
+          </CajaGrafica>
+        </div>
+
+        {/* Nuevas: qué ítems se pierden más y cómo evoluciona mes a mes. */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '14px' }}>
+          <CajaGrafica titulo="Por insumo / producto">
+            {porItem.length ? <BarrasH items={porItem} money /> : <div style={{ fontSize: '12.5px', color: GRIS }}>Sin datos.</div>}
+          </CajaGrafica>
+          <CajaGrafica titulo="Por mes">
+            {porMes.length ? <BarrasH items={porMes} money /> : <div style={{ fontSize: '12.5px', color: GRIS }}>Sin datos.</div>}
           </CajaGrafica>
         </div>
 
