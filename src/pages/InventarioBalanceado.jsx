@@ -1068,28 +1068,46 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   }
 
   async function iniciarCorreccion(productoId, lote) {
-    // Un conteo se valora con el precio del plazo que REGÍA EN SU FECHA (no hoy).
-    // Lo buscamos en plazo_producto para precargar el plazo correcto; si usáramos
-    // lote.plazo (Contado) o el plazo de hoy, se corregiría un plazo que el conteo
-    // no usa y el precio no cambiaría.
-    let plazo = lote.plazo
-    if (lote.es_conteo) {
-      const { data } = await supabase.schema('produccion').from('plazo_producto')
-        .select('plazo, finca_id, vigente_desde')
-        .eq('producto_id', productoId)
-        .lte('vigente_desde', lote.fecha)
-        .or(`vigente_hasta.is.null,vigente_hasta.gte.${lote.fecha}`)
-        .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
-      if (data?.length) {
-        const pick = [...data].sort((a, b) =>
-          (!!a.finca_id !== !!b.finca_id) ? (a.finca_id ? -1 : 1)
-          : (a.vigente_desde < b.vigente_desde ? 1 : -1))[0]
-        if (pick?.plazo != null) plazo = Number(pick.plazo)
+    // Carga las GUÍAS (compras) que corresponden a este lote. Si hay VARIAS se
+    // elige cuál corregir (cada guía su precio, no se mezclan); si es una sola,
+    // va directo. Si no hay guías (base de conteo/inicial sin compras), se corrige
+    // el catálogo (comportamiento viejo).
+    let q = supabase.schema('produccion').from('ingreso_balanceado_linea')
+      .select('id, cantidad, costo_unitario, plazo, ingreso_balanceado!inner(id, fecha, numero_guia, proveedor, finca_id)')
+      .eq('producto_id', productoId).eq('ingreso_balanceado.finca_id', finca.id)
+    if (lote.es_conteo) q = q.lte('ingreso_balanceado.fecha', lote.fecha)
+    else q = q.eq('ingreso_balanceado.fecha', lote.fecha)
+    const { data } = await q
+    const guias = (data || []).map(r => ({
+      lineaId: r.id, cantidad: Number(r.cantidad),
+      costo: r.costo_unitario == null ? null : Number(r.costo_unitario),
+      plazo: r.plazo == null ? 0 : Number(r.plazo),
+      fecha: r.ingreso_balanceado.fecha, numero_guia: r.ingreso_balanceado.numero_guia, proveedor: r.ingreso_balanceado.proveedor,
+    })).sort((a, b) => a.fecha < b.fecha ? 1 : (a.fecha > b.fecha ? -1 : 0)).slice(0, 25)
+
+    if (guias.length === 0) {
+      // Sin guías: corrección de catálogo (conteo/inicial), como antes.
+      let plazo = lote.plazo
+      if (lote.es_conteo) {
+        const { data: pz } = await supabase.schema('produccion').from('plazo_producto')
+          .select('plazo, finca_id, vigente_desde').eq('producto_id', productoId)
+          .lte('vigente_desde', lote.fecha).or(`vigente_hasta.is.null,vigente_hasta.gte.${lote.fecha}`)
+          .or(`finca_id.is.null,finca_id.eq.${finca.id}`)
+        if (pz?.length) { const pick = [...pz].sort((a, b) => (!!a.finca_id !== !!b.finca_id) ? (a.finca_id ? -1 : 1) : (a.vigente_desde < b.vigente_desde ? 1 : -1))[0]; if (pick?.plazo != null) plazo = Number(pick.plazo) }
       }
+      setCorrige({ productoId, esConteo: lote.es_conteo, catalogo: true, guias: [], sel: null, fecha: lote.fecha, plazo, actual: lote.costo_unitario })
+      setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
+      setCorrAdelante(false); return
     }
-    setCorrige({ productoId, fecha: lote.fecha, plazo, actual: lote.costo_unitario, esConteo: lote.es_conteo })
-    setCorrPrecio(lote.costo_unitario != null ? String(lote.costo_unitario) : '')
+    const sel = guias.length === 1 ? guias[0] : null
+    setCorrige({ productoId, esConteo: lote.es_conteo, catalogo: false, guias, sel, plazo: sel ? sel.plazo : 0 })
+    setCorrPrecio(sel && sel.costo != null ? String(sel.costo) : '')
     setCorrAdelante(false)
+  }
+  // Elegir una guía del selector de corrección.
+  function elegirGuiaCorr(g) {
+    setCorrige(c => ({ ...c, sel: g, plazo: g.plazo }))
+    setCorrPrecio(g.costo != null ? String(g.costo) : '')
   }
 
   // Corregir el precio de un lote: arregla el catálogo del período (o de ahí
@@ -1101,12 +1119,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const pid = corrige.productoId
     setGuardandoCorr(true)
     setAviso({ tipo: 'ok', texto: 'Corrigiendo y recalculando consumos… puede tardar unos segundos.' })
-    const { error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_bal', {
-      p_finca: finca.id, p_producto: pid, p_fecha: corrige.fecha,
-      p_plazo: corrige.plazo, p_nuevo: v, p_adelante: corrAdelante,
-    })
+    let error
+    if (corrige.catalogo) {
+      // Sin guía (conteo/inicial): catálogo + recosteo, como antes.
+      ;({ error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_bal', {
+        p_finca: finca.id, p_producto: pid, p_fecha: corrige.fecha,
+        p_plazo: corrige.plazo, p_nuevo: v, p_adelante: corrAdelante,
+      }))
+    } else {
+      if (!corrige.sel) { setGuardandoCorr(false); return }
+      // Corrige SOLO esa guía (no mezcla con otras del mismo día) + recostea.
+      ;({ error } = await supabase.schema('produccion').rpc('fn_corregir_precio_guia_bal', {
+        p_linea_id: corrige.sel.lineaId, p_nuevo: v, p_plazo: corrige.plazo,
+      }))
+    }
     if (error) { setGuardandoCorr(false); setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
-    setCorrige(null)
+    setCorrige(null); setCompDet({})
     await cargar()
     // Refrescar el detalle por lote en pantalla (sin recargar la página).
     const { data } = await supabase.schema('produccion')
@@ -1967,33 +1995,71 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           </div>
                           {esJefe && corrige && corrige.productoId === m.producto_id && (
                             <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
-                              <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.esConteo ? 'Conteo' : 'Compra'} {corta(corrige.fecha)}</div>
-                              <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
-                                Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /saco · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este balanceado.
-                              </div>
-                              <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
-                                  <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
-                                  <Seg valor={corrige.plazo}
-                                       onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))}
-                                       opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
-                                  <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
-                                </div>
-                              </div>
-                              <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
-                                {corrAdelante ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.' : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
-                              </div>
-                              <div style={{ display: 'flex', gap: '9px' }}>
-                                <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
-                                <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
-                              </div>
+                              {corrige.catalogo ? (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.esConteo ? 'Conteo' : 'Compra'} {corta(corrige.fecha)}</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
+                                    Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /saco · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este balanceado.
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
+                                      <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                      <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                      <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
+                                    {corrAdelante ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.' : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '9px' }}>
+                                    <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
+                                    <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                  </div>
+                                </>
+                              ) : !corrige.sel ? (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · elegí la guía</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>Hay varias guías. Elegí cuál corregir — se cambia solo esa (no se mezclan) y se recalculan sus consumos.</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', marginBottom: '12px' }}>
+                                    {corrige.guias.map(g => (
+                                      <button key={g.lineaId} onClick={() => elegirGuiaCorr(g)}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '9px 12px', background: '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                                        <span style={{ flex: 1, fontSize: '13px' }}>{corta(g.fecha)} · {g.numero_guia ? ('Guía ' + g.numero_guia) : 'Sin guía'}{g.proveedor ? (' · ' + g.proveedor) : ''}</span>
+                                        <span style={{ fontSize: '13px', color: GRIS }}>{limpio(g.cantidad)} sacos</span>
+                                        <span style={{ fontSize: '13px', fontWeight: 500, minWidth: '82px', textAlign: 'right' }}>{g.costo != null ? dineroExacto(g.costo) : 's/p'} /saco</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.sel.numero_guia ? ('Guía ' + corrige.sel.numero_guia) : 'Compra'} {corta(corrige.sel.fecha)}</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>{limpio(corrige.sel.cantidad)} sacos · actual {corrige.sel.costo != null ? dineroExacto(corrige.sel.costo) : 's/p'} /saco. Se cambia solo esta guía y se recalculan sus consumos.</div>
+                                  <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
+                                      <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                      <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                    </div>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '9px', marginTop: '12px', alignItems: 'center' }}>
+                                    <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
+                                    <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                    {corrige.guias.length > 1 && <button onClick={() => { setCorrige(c => ({ ...c, sel: null })); setCorrPrecio('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>← Elegir otra guía</button>}
+                                  </div>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
