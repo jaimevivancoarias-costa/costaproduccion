@@ -1132,6 +1132,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       ;({ error } = await supabase.schema('produccion').rpc('fn_corregir_precio_guia_bal', {
         p_linea_id: corrige.sel.lineaId, p_nuevo: v, p_plazo: corrige.plazo,
       }))
+      // "De ahí en adelante": además deja el catálogo en este precio para las
+      // compras NUEVAS desde esta fecha (no toca otras guías ya cargadas).
+      if (!error && corrAdelante) {
+        ;({ error } = await supabase.schema('produccion').rpc('fn_corregir_precio_lote_bal', {
+          p_finca: finca.id, p_producto: pid, p_fecha: corrige.sel.fecha,
+          p_plazo: corrige.plazo, p_nuevo: v, p_adelante: true,
+        }))
+      }
     }
     if (error) { setGuardandoCorr(false); setAviso({ tipo: 'error', texto: 'No se pudo corregir. ' + error.message }); return }
     setCorrige(null); setCompDet({})
@@ -2052,6 +2060,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                       <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
                                       <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
                                     </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                      <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo esta guía'], ['adelante', 'De ahí en adelante']]} />
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 0', lineHeight: 1.5 }}>
+                                    {corrAdelante ? 'Corrige esta guía Y deja el catálogo en este precio para las compras NUEVAS desde esta fecha. No toca otras guías ya cargadas.' : 'Corrige solo esta guía.'}
                                   </div>
                                   <div style={{ display: 'flex', gap: '9px', marginTop: '12px', alignItems: 'center' }}>
                                     <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
