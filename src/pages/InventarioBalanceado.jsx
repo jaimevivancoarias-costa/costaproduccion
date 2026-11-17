@@ -1913,14 +1913,26 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                 ))}
                               </Fragment>
                             )}
-                            {rows.map((r, i) => (
+                            {rows.map((r, i) => {
+                              const ck = m.producto_id + '|' + r.fecha
+                              const cd = r.es_conteo ? compDet[ck] : null
+                              // El conteo puede tener VARIOS precios reales (ej. dos guías del
+                              // mismo día): el renglón muestra un precio "resumen", pero abajo
+                              // se despliega la composición real (cada lote a su precio).
+                              const variosPrecios = cd?.lotes && cd.lotes.length > 1
+                              return (
                               <Fragment key={i}>
                                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                                   <div style={{ fontWeight: 600 }}>{r.es_conteo ? 'Conteo' : 'Compra'} {r.fecha ? corta(r.fecha) : '—'}</div>
-                                  {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /saco</div>}
+                                  {esJefe && r.costo_unitario != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.costo_unitario)} /saco{variosPrecios ? ' (varios)' : ''}</div>}
                                   {i === primerQueda && Number(r.queda) > 0 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                  {esJefe && r.es_conteo && (
+                                    <button onClick={() => toggleComp(m.producto_id, r.fecha)} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: GRIS }}>
+                                      {cd?.open ? '▾ ' : '▸ '}Ver composición
+                                    </button>
+                                  )}
                                   {esJefe && (
-                                    <button onClick={() => iniciarCorreccion(m.producto_id, r)} style={{ marginTop: '3px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                    <button onClick={() => iniciarCorreccion(m.producto_id, r)} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                       Corregir precio
                                     </button>
                                   )}
@@ -1929,8 +1941,24 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                 <div style={{ ...cel, color: Number(r.consumio) ? ROJO : '#c3d0db' }}>{Number(r.consumio) ? limpio(r.consumio) : '—'}</div>
                                 <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
                                 {esJefe && <div style={cel}>{dinero(Number(r.consumio) * Number(r.costo_unitario || 0))}</div>}
+                                {esJefe && r.es_conteo && cd?.open && (
+                                  <div style={{ gridColumn: '1 / -1', background: '#f6f9fb', borderRadius: '8px', padding: '8px 12px', margin: '2px 0 6px' }}>
+                                    <div style={{ fontSize: '10.5px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', marginBottom: '5px' }}>Lo que había, a su precio real</div>
+                                    {cd.lotes == null ? (
+                                      <div style={{ fontSize: '12px', color: GRIS }}>Cargando…</div>
+                                    ) : cd.lotes.length === 0 ? (
+                                      <div style={{ fontSize: '12px', color: GRIS }}>Sin lotes.</div>
+                                    ) : cd.lotes.map((L, j) => (
+                                      <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', padding: '2px 0' }}>
+                                        <span>{limpio(L.cantidad)} sacos</span>
+                                        <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>{dineroExacto(L.costo_unitario)} /saco</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                               </Fragment>
-                            ))}
+                              )
+                            })}
                             <div style={{ ...tot, textAlign: 'left' }}>Total</div>
                             <div style={tot}>{limpio(totEntro)}</div>
                             <div style={tot}>{limpio(totCons)}</div>
