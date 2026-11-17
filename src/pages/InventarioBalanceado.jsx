@@ -1967,7 +1967,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                       {cd?.open ? '▾ ' : '▸ '}Ver composición
                                     </button>
                                   )}
-                                  {esJefe && (
+                                  {esJefe && !r.es_conteo && (
                                     <button onClick={() => iniciarCorreccion(m.producto_id, r)} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
                                       Corregir precio
                                     </button>
