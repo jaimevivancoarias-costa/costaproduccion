@@ -1007,14 +1007,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     setMovDet(productoId)
     if (!lotesMov[productoId]) {
       const { data, error } = await supabase.schema('produccion')
-        .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta })
+        .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta, p_desde: desde })
       const lotes = error ? [] : (data || [])
       setLotesMov(m => ({ ...m, [productoId]: lotes }))
       // Tramo pre-conteo: si el último conteo del rango cae DESPUÉS de 'desde',
       // trae los lotes consumidos ANTES de ese conteo (FIFO real por lote), para
       // que el detalle muestre esos lotes con su precio real y el Total cuadre
       // con el consumo del renglón.
-      const cRow = lotes.find(r => r.es_conteo)
+      const cRow = lotes.find(r => r.es_conteo && !r.informativo)
       const sinConteoEnRango = !cRow || !cRow.fecha || !desde || cRow.fecha < desde
       if (sinConteoEnRango) {
         // No hubo conteo dentro del rango. Armamos el flujo completo por precio, que
@@ -1146,7 +1146,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     await cargar()
     // Refrescar el detalle por lote en pantalla (sin recargar la página).
     const { data } = await supabase.schema('produccion')
-      .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: pid, p_hasta: hasta })
+      .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: pid, p_hasta: hasta, p_desde: desde })
     const lotes = data || []
     setLotesMov(m => ({ ...m, [pid]: lotes }))
     const cRow = lotes.find(r => r.es_conteo)
@@ -1891,9 +1891,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     ) : (() => {
                       // Si estamos en "Por fechas" y no hay conteo dentro del rango, el
                       // detalle correcto es el flujo (arriba); si aún no cargó, esperamos.
-                      const _cRango = lotesMov[m.producto_id].find(r => r.es_conteo && r.fecha && (!desde || r.fecha >= desde))
+                      const _cRango = lotesMov[m.producto_id].find(r => r.es_conteo && !r.informativo && r.fecha && (!desde || r.fecha >= desde))
                       if (!_cRango && desde) return <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
-                      const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                      const rows = lotesMov[m.producto_id].filter(r => !r.informativo).sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                       const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
@@ -1911,7 +1911,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       // conteo del rango (fn_reporte_consumo_lotes), cada uno a su
                       // precio. Así el Total cuadra con el consumo del renglón.
                       const conteoRow = rows.find(r => r.es_conteo)
-                      const pre = lotesPre[m.producto_id] || []
+                      // Tramo pre-conteo ITEMIZADO por compra: se reparte el consumo
+                      // pre-conteo (preConsTotal, por precio y ya cuadrado con el renglón)
+                      // FIFO entre el Inicial y cada compra anterior al conteo (filas
+                      // informativo de fn_lotes_movimiento_bal). Si no hay audit, cae al
+                      // viejo desglose por precio (fallback).
+                      const preByPrice = lotesPre[m.producto_id] || []
+                      const preConsTotal = preByPrice.reduce((s, x) => s + Number(x.sacos || 0), 0)
+                      const audit = (lotesMov[m.producto_id] || []).filter(r => r.informativo)
+                        .sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : ((a.fecha || '0') > (b.fecha || '0') ? 1 : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                      const preAudit = audit.filter(r => !conteoRow || !conteoRow.fecha || !r.fecha || r.fecha < conteoRow.fecha)
+                      let _preRem = preConsTotal
+                      const pre = preAudit.length > 0
+                        ? preAudit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_preRem, ent)); _preRem -= c; return { fecha: r.es_conteo ? null : r.fecha, precio: r.costo_unitario, sacos: c } }).filter(x => x.sacos > 0.0001)
+                        : preByPrice.map(x => ({ fecha: x.fecha || null, precio: x.precio, sacos: Number(x.sacos || 0) }))
                       const preSacos = pre.reduce((s, x) => s + Number(x.sacos || 0), 0)
                       const preCosto = pre.reduce((s, x) => s + Number(x.sacos || 0) * Number(x.precio || 0), 0)
                       const hayPre = pre.length > 0 && preSacos > 0.01
@@ -1948,6 +1961,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                   </Fragment>
                                 ))}
                               </Fragment>
+                            )}
+                            {hayPre && conteoRow && (
+                              <div style={{ gridColumn: '1 / -1', fontSize: '10px', fontWeight: 600, color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginTop: '6px' }}>
+                                Desde el conteo {conteoRow.fecha ? corta(conteoRow.fecha) : ''} · reinicia el FIFO
+                              </div>
                             )}
                             {rows.map((r, i) => {
                               const ck = m.producto_id + '|' + r.fecha
