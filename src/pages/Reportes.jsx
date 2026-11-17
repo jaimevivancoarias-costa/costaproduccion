@@ -559,10 +559,11 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       { titulo: 'Costo', der: true, campo: 'costo', sub: 'costoUnit', destacar: true },
     ]
     const total = { nombre: 'Total', detalle: '', cantidad: '', equivale: '', costo: dinero(totalCosto), costoUnit: '' }
-    const per = esJefe ? Number(perdidasR || 0) : 0   // las bajas cuentan como parte del gasto
+    const per = esJefe ? Number(perdidasR || 0) : 0   // las bajas se muestran aparte y en el "Gasto total"
     const cards = [
-      { k: 'Gasto del rango', v: dinero(totalCosto + per + (verTodoR ? dslR.total : 0)) },
+      { k: 'Gasto del rango', v: dinero(totalCosto + (verTodoR ? dslR.total : 0)) },
       ...(per > 0 ? [{ k: 'Pérdidas (bajas)', v: dinero(per) }] : []),
+      ...(per > 0 ? [{ k: 'Gasto total', v: dinero(totalCosto + per + (verTodoR ? dslR.total : 0)) }] : []),
       { k: cabItem + 's', v: '' + grupos.length },
       { k: 'Días', v: '' + dias(desde, hasta) },
     ]
@@ -715,9 +716,13 @@ export default function Reportes({ finca, fincas, esJefe, enfoqueInsumos }) {
       {!cargando && (
         <div style={{ display: 'flex', border: '0.5px solid ' + BORDE, borderRadius: '12px', overflow: 'hidden',
                       marginBottom: '16px', boxShadow: '0 1px 4px rgba(2,40,71,.07)', flexWrap: 'wrap' }}>
-          {esJefe && <KCel hl k={verTodoR ? 'Gasto del rango (con diesel)' : 'Gasto del rango'}
-                           v={dinero(totalCosto + perdidasR + (verTodoR ? dslR.total : 0))} />}
+          {/* Gasto SIN pérdidas (= consumo, cuadra con el Presupuesto) · Pérdidas ·
+              Gasto total (consumo + pérdidas). Diesel y Días quedan aparte. */}
+          {esJefe && <KCel hl={perdidasR <= 0} k={'Gasto del rango' + (verTodoR ? ' (con diesel)' : '')}
+                           v={dinero(totalCosto + (verTodoR ? dslR.total : 0))} />}
           {esJefe && perdidasR > 0 && <KCel k="Pérdidas (bajas)" v={dinero(perdidasR)} />}
+          {esJefe && perdidasR > 0 && <KCel hl k={'Gasto total' + (verTodoR ? ' (con diesel)' : '')}
+                           v={dinero(totalCosto + perdidasR + (verTodoR ? dslR.total : 0))} />}
           {esJefe && !todasFincas && <KCel k="Diesel del rango" v={dinero(dslR.total)} />}
           <KCel k={agrupar === 'item' ? 'Productos' : agrupar === 'piscina' ? 'Piscinas' : 'Fincas'} v={String(grupos.length)} />
           <KCel k="Días" v={String(dias(desde, hasta))} />
