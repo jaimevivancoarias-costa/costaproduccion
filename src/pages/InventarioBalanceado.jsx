@@ -154,7 +154,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     let vivo = true
     ;(async () => {
       const { data: lins } = await supabase.schema('produccion').from('toma_balanceado_linea')
-        .select('toma_id, producto_id, cantidad_contada').in('toma_id', ts.map(t => t.id))
+        .select('toma_id, producto_id, cantidad_contada, cantidad_sistema, diferencia').in('toma_id', ts.map(t => t.id))
       const antesPorFecha = {}
       await Promise.all(ts.map(t =>
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(t.fecha, -1) })
@@ -164,8 +164,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const porProd = {}
       ts.forEach(t => (lins || []).filter(l => l.toma_id === t.id).forEach(l => {
         const conto = Number(l.cantidad_contada)
-        const antes = antesPorFecha[t.fecha]?.[l.producto_id]
-        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes, esInicial: !!t.es_inicial })
+        // Sistema y diferencia GUARDADOS del conteo (lo que el sistema decía ESE día),
+        // no un recálculo en vivo con fn_saldo_balanceado (que difiere por movimientos
+        // posteriores y mostraba falsos "Sobró/Faltó" en conteos que habían cuadrado).
+        const antes = l.cantidad_sistema == null ? null : Number(l.cantidad_sistema)
+        const dif = l.diferencia != null ? Number(l.diferencia) : (antes == null ? null : conto - antes)
+        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes, dif, esInicial: !!t.es_inicial })
       }))
       setConteosRango(porProd)
       setSaldoAntes(antesPorFecha[ts[ts.length - 1].fecha] || {})
@@ -1822,39 +1826,78 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       return (
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
-                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
-                            {usarItems ? 'Inicial y cada compra: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos' : 'Por cada precio: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos'}
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
-                            <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
-                            <div style={cab}>Entró</div>
-                            <div style={cab}>Consumió</div>
-                            <div style={cab}>Queda</div>
-                            {esJefe && <div style={cab}>Costo consumido</div>}
-                            {lista.map((r, i) => (
-                              <Fragment key={'fl' + i}>
-                                <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                  <div style={{ fontWeight: 600 }}>{r.etiqueta}</div>
-                                  {esJefe && usarItems && r.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.precio)} /saco</div>}
-                                  {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                                  {esJefe && r.esCompra && (
-                                    <button onClick={() => iniciarCorreccion(m.producto_id, { fecha: r.fecha, costo_unitario: r.precio, es_conteo: false })} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
-                                      Corregir precio
-                                    </button>
-                                  )}
-                                </div>
-                                <div style={cel}>{limpio(r.entro)}</div>
-                                <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
-                                <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
-                                {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
-                              </Fragment>
-                            ))}
-                            <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-                            <div style={tot}>{limpio(tEntro)}</div>
-                            <div style={tot}>{limpio(tCons)}</div>
-                            <div style={tot}>{limpio(tQueda)}</div>
-                            {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
-                          </div>
+                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '13px' }}>Se consume del más viejo primero · en sacos</div>
+                          {usarItems ? (<>
+                            <div style={{ fontSize: '11.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Lo que queda en bodega · al {corta(hasta)}</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr 1fr 1fr 1.1fr' : '2.3fr 1fr', gap: '12px 18px', alignItems: 'baseline', marginBottom: '20px' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                              <div style={cab}>Queda</div>
+                              {esJefe && <div style={cab}>Precio</div>}
+                              {esJefe && <div style={cab}>Valor</div>}
+                              {items.filter(r => r.queda > 0.0001).map((r, i) => (
+                                <Fragment key={'q' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', fontWeight: 600 }}>{r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : ''))}</div>
+                                  <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
+                                  {esJefe && <div style={cel}>{dineroExacto(r.precio)}</div>}
+                                  {esJefe && <div style={cel}>{dinero(r.queda * Number(r.precio || 0))}</div>}
+                                </Fragment>
+                              ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total en bodega</div>
+                              <div style={tot}>{limpio(tQueda)}</div>
+                              {esJefe && <div />}
+                              {esJefe && <div style={tot}>{dinero(items.reduce((s, r) => s + r.queda * Number(r.precio || 0), 0))}</div>}
+                            </div>
+                            <div style={{ fontSize: '11.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Entró en el rango · a qué precio</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr .9fr 1fr 1.1fr' : '2.3fr 1fr 1fr', gap: '13px 18px', alignItems: 'baseline' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Origen</div>
+                              <div style={cab}>Entró</div>
+                              <div style={cab}>Consumió</div>
+                              {esJefe && <div style={cab}>Costo consumido</div>}
+                              {items.map((r, i) => (
+                                <Fragment key={'e' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                    <div style={{ fontWeight: 600 }}>{r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : ''))}</div>
+                                    {esJefe && r.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.precio)} /saco</div>}
+                                    {esJefe && !r.esIni && (
+                                      <button onClick={() => iniciarCorreccion(m.producto_id, { fecha: r.fecha, costo_unitario: r.precio, es_conteo: false })} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>Corregir precio</button>
+                                    )}
+                                  </div>
+                                  <div style={cel}>{limpio(r.entro)}</div>
+                                  <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
+                                  {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
+                                </Fragment>
+                              ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                              <div style={tot}>{limpio(tEntro)}</div>
+                              <div style={tot}>{limpio(tCons)}</div>
+                              {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                            </div>
+                          </>) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                              <div style={cab}>Entró</div>
+                              <div style={cab}>Consumió</div>
+                              <div style={cab}>Queda</div>
+                              {esJefe && <div style={cab}>Costo consumido</div>}
+                              {filas.map((r, i) => (
+                                <Fragment key={'fl' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                    <div style={{ fontWeight: 600 }}>{r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco'}</div>
+                                    {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                  </div>
+                                  <div style={cel}>{limpio(r.entro)}</div>
+                                  <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
+                                  <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
+                                  {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
+                                </Fragment>
+                              ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                              <div style={tot}>{limpio(tEntro)}</div>
+                              <div style={tot}>{limpio(tCons)}</div>
+                              <div style={tot}>{limpio(tQueda)}</div>
+                              {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                            </div>
+                          )}
                           {esJefe && corrige && corrige.productoId === m.producto_id && (
                             <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                               {corrige.catalogo ? (
