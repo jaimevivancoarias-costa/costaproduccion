@@ -1802,16 +1802,28 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const tCons = filas.reduce((s, r) => s + r.cons, 0)
                       const tQueda = filas.reduce((s, r) => s + r.queda, 0)
                       const tCosto = filas.reduce((s, r) => s + r.cons * Number(r.precio || 0), 0)
+                      // Itemizado por compra: reparte el consumo total (tCons, que ya cuadra con
+                      // el renglón) FIFO entre el Inicial y cada compra (filas "informativo" de
+                      // fn_lotes_movimiento_bal). Si no hay audit o no coincide el entró, cae al
+                      // desglose por precio (fallback, nunca se rompe).
+                      const audit = (lotesMov[m.producto_id] || []).filter(r => r.informativo)
+                        .sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : ((a.fecha || '0') > (b.fecha || '0') ? 1 : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                      let _rem = tCons
+                      const items = audit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_rem, ent)); _rem -= c; return { fecha: r.fecha, precio: r.costo_unitario, esIni: !!r.es_conteo, entro: ent, cons: c, queda: ent - c } }).filter(r => r.entro > 0.0001)
+                      const usarItems = items.length > 0 && Math.abs(items.reduce((s, r) => s + r.entro, 0) - tEntro) < 1
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
                       const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
-                      const primerQueda = filas.findIndex(r => r.queda > 0.0001)
+                      const lista = usarItems
+                        ? items.map(r => ({ etiqueta: r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : '')), precio: r.precio, entro: r.entro, cons: r.cons, queda: r.queda, esCompra: !r.esIni, fecha: r.fecha }))
+                        : filas.map(r => ({ etiqueta: r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco', precio: r.precio, entro: r.entro, cons: r.cons, queda: r.queda, esCompra: false, fecha: null }))
+                      const primerQueda = lista.findIndex(r => r.queda > 0.0001)
                       return (
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
                           <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
-                            Por cada precio: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos
+                            {usarItems ? 'Inicial y cada compra: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos' : 'Por cada precio: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos'}
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
                             <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
@@ -1819,11 +1831,17 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             <div style={cab}>Consumió</div>
                             <div style={cab}>Queda</div>
                             {esJefe && <div style={cab}>Costo consumido</div>}
-                            {filas.map((r, i) => (
+                            {lista.map((r, i) => (
                               <Fragment key={'fl' + i}>
                                 <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                  <div style={{ fontWeight: 600 }}>{r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco'}</div>
+                                  <div style={{ fontWeight: 600 }}>{r.etiqueta}</div>
+                                  {esJefe && usarItems && r.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.precio)} /saco</div>}
                                   {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                  {esJefe && r.esCompra && (
+                                    <button onClick={() => iniciarCorreccion(m.producto_id, { fecha: r.fecha, costo_unitario: r.precio, es_conteo: false })} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>
+                                      Corregir precio
+                                    </button>
+                                  )}
                                 </div>
                                 <div style={cel}>{limpio(r.entro)}</div>
                                 <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
@@ -1837,6 +1855,82 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                             <div style={tot}>{limpio(tQueda)}</div>
                             {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
                           </div>
+                          {esJefe && corrige && corrige.productoId === m.producto_id && (
+                            <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
+                              {corrige.catalogo ? (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.esConteo ? 'Conteo' : 'Compra'} {corta(corrige.fecha)}</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
+                                    Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /saco · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este balanceado.
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
+                                      <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                      <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                      <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
+                                    {corrAdelante ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.' : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '9px' }}>
+                                    <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
+                                    <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                  </div>
+                                </>
+                              ) : !corrige.sel ? (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · elegí la guía</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>Hay varias guías. Elegí cuál corregir — se cambia solo esa (no se mezclan) y se recalculan sus consumos.</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', marginBottom: '12px' }}>
+                                    {corrige.guias.map(g => (
+                                      <button key={g.lineaId} onClick={() => elegirGuiaCorr(g)}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '9px 12px', background: '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                                        <span style={{ flex: 1, fontSize: '13px' }}>{corta(g.fecha)} · {g.numero_guia ? ('Guía ' + g.numero_guia) : 'Sin guía'}{g.proveedor ? (' · ' + g.proveedor) : ''}</span>
+                                        <span style={{ fontSize: '13px', color: GRIS }}>{limpio(g.cantidad)} sacos</span>
+                                        <span style={{ fontSize: '13px', fontWeight: 500, minWidth: '82px', textAlign: 'right' }}>{g.costo != null ? dineroExacto(g.costo) : 's/p'} /saco</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.sel.numero_guia ? ('Guía ' + corrige.sel.numero_guia) : 'Compra'} {corta(corrige.sel.fecha)}</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>{limpio(corrige.sel.cantidad)} sacos · actual {corrige.sel.costo != null ? dineroExacto(corrige.sel.costo) : 's/p'} /saco. Se cambia solo esta guía y se recalculan sus consumos.</div>
+                                  <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
+                                      <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                      <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                      <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo esta guía'], ['adelante', 'De ahí en adelante']]} />
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 0', lineHeight: 1.5 }}>
+                                    {corrAdelante ? 'Corrige esta guía Y deja el catálogo en este precio para las compras NUEVAS desde esta fecha. No toca otras guías ya cargadas.' : 'Corrige solo esta guía.'}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '9px', marginTop: '12px', alignItems: 'center' }}>
+                                    <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
+                                    <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                    {corrige.guias.length > 1 && <button onClick={() => { setCorrige(c => ({ ...c, sel: null })); setCorrPrecio('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>← Elegir otra guía</button>}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })() : (Array.isArray(lotesRange[m.producto_id]) && lotesRange[m.producto_id].length > 0) ? (() => {
