@@ -1010,44 +1010,30 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta, p_desde: desde })
       const lotes = error ? [] : (data || [])
       setLotesMov(m => ({ ...m, [productoId]: lotes }))
-      // Tramo pre-conteo: si el último conteo del rango cae DESPUÉS de 'desde',
-      // trae los lotes consumidos ANTES de ese conteo (FIFO real por lote), para
-      // que el detalle muestre esos lotes con su precio real y el Total cuadre
-      // con el consumo del renglón.
-      const cRow = lotes.find(r => r.es_conteo && !r.informativo)
-      const sinConteoEnRango = !cRow || !cRow.fecha || !desde || cRow.fecha < desde
-      if (sinConteoEnRango) {
-        // No hubo conteo dentro del rango. Armamos el flujo completo por precio, que
-        // CUADRA con el renglón por construcción: Consumió = consumo del rango por
-        // lote (fn_reporte_consumo_lotes, cuadra con el renglón) y Queda = stock al
-        // cierre por lote (fn_lotes_balanceado(hasta), cuadra con el saldo). De ahí
-        // Entró = Consumió + Queda, así el Total da Inicial+Ingresos / Consumo / Saldo.
-        if (desde) {
-          const [cpR, qdR] = await Promise.all([
-            supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta }),
-            supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: hasta }),
-          ])
-          const consumo = (cpR.data || []).map(x => ({ precio: x.precio == null ? null : Number(x.precio), sacos: Number(x.sacos || 0) }))
-          const queda = (qdR.data || [])
-            .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
-            .map(x => ({ precio: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
-          setFlujoRango(m => ({ ...m, [productoId]: { consumo, queda } }))
-          setLotesRange(m => ({ ...m, [productoId]: null }))
-        } else {
-          const { data: rg } = await supabase.schema('produccion')
-            .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
-          setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
-        }
-        setLotesPre(m => ({ ...m, [productoId]: [] }))
-      } else if (cRow && cRow.fecha && desde && cRow.fecha > desde) {
-        const { data: pre } = await supabase.schema('produccion')
-          .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: sumarDias(cRow.fecha, -1) })
-        setLotesPre(m => ({ ...m, [productoId]: pre || [] }))
+      // Flujo por precio del rango, SIEMPRE (haya o no conteo en el rango). Tras
+      // arreglar el costeo del inicial, fn_reporte_consumo_lotes ya da el consumo real
+      // y cuadra con el renglón, así que no hace falta el viejo desglose "antes/después
+      // del conteo" (que confundía). Consumió = consumo del rango por lote; Queda =
+      // stock al cierre por lote (fn_lotes_balanceado); Entró = Consumió + Queda, así el
+      // Total da Inicial+Ingresos / Consumo / Saldo. Los conteos van aparte, en
+      // "Conteos en el rango".
+      if (desde) {
+        const [cpR, qdR] = await Promise.all([
+          supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta }),
+          supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: hasta }),
+        ])
+        const consumo = (cpR.data || []).map(x => ({ precio: x.precio == null ? null : Number(x.precio), sacos: Number(x.sacos || 0) }))
+        const queda = (qdR.data || [])
+          .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
+          .map(x => ({ precio: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
+        setFlujoRango(m => ({ ...m, [productoId]: { consumo, queda } }))
         setLotesRange(m => ({ ...m, [productoId]: null }))
       } else {
-        setLotesPre(m => ({ ...m, [productoId]: [] }))
-        setLotesRange(m => ({ ...m, [productoId]: null }))
+        const { data: rg } = await supabase.schema('produccion')
+          .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
+        setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
       }
+      setLotesPre(m => ({ ...m, [productoId]: [] }))
     }
   }
 
