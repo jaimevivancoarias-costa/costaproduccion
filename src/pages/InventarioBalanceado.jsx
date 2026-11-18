@@ -62,7 +62,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // (01 → al), para que bodega y consumo del reporte cuadren con lo de pantalla.
   useEffect(() => { if (vista === 'saldo' && alDia) { setDesde(primeroDelMes(alDia)); setHasta(alDia) } }, [vista, alDia])
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
-  useEffect(() => { setLotesMov({}); setLotesPre({}); setLotesRange({}); setMovDet(null) }, [hasta, finca.id])
+  useEffect(() => { setLotesMov({}); setLotesPre({}); setLotesRange({}); setFlujoRango({}); setMovDet(null) }, [desde, hasta, finca.id])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
