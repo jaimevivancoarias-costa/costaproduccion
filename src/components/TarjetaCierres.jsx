@@ -25,7 +25,7 @@ function explicar(f) {
   }
   if (Math.abs(v) < 1) return { centavos: true }
   if (Math.abs(qr) >= 0.01) return { txt: `Sin conteo en el mes. Diferencia real ${signo(qr)}${num(qr)}: hay una guía o un consumo cargado después con fecha anterior.`, revisar: true }
-  return { txt: 'Ningún conteo ni baja lo explica. Hay que revisarlo.', revisar: true }
+  return { txt: 'La cantidad cuadra: es diferencia de precio del saldo (se corrigió el precio de un ingreso o del inventario inicial).' }
 }
 
 function DesgloseAjuste({ filas, total, mes }) {
