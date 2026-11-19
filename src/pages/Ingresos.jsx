@@ -141,6 +141,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
     // Ingresos: una fila por insumo de cada guía; los datos de la guía salen
     // una sola vez (las filas de continuación los dejan en blanco).
     const filasIng = []
+    let totalIng = 0
     let nItems = 0
     const provs = new Set()
     ;[...ingresosF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach(g => {
@@ -155,8 +156,11 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           insumo: nombreInsumo(l.insumo_id),
           cantidad: `${miles(numDec(l.cantidad))} ${unidadInsumo(l.insumo_id)}`,
           plazo: l.plazo != null ? (PLAZO_LBL[l.plazo] || '') : '',
+          precio: l.costo_unitario != null ? dinero(Number(l.costo_unitario)) : 'sin precio',
+          total: l.costo_unitario != null ? dinero(numDec(l.cantidad) * Number(l.costo_unitario)) : '',
           registro: i === 0 ? quien(g.creado_por) : '',
         })
+        totalIng += numDec(l.cantidad) * (Number(l.costo_unitario) || 0)
       })
     })
     const filasDev = [...devolucionesF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map(d => ({
@@ -175,10 +179,11 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           { titulo: 'Insumo', campo: 'insumo' },
           { titulo: 'Cantidad', der: true, campo: 'cantidad' },
           { titulo: 'Plazo', campo: 'plazo' },
+          ...(esJefe ? [{ titulo: 'Precio', der: true, campo: 'precio' }, { titulo: 'Total $', der: true, campo: 'total' }] : []),
           { titulo: 'Registró', campo: 'registro' },
         ],
         filas: filasIng,
-        total: { fecha: '', guia: '', proveedor: '', insumo: 'Total ingresos', cantidad: `${nItems} ítems`, plazo: '', registro: '' },
+        total: { fecha: '', guia: '', proveedor: '', insumo: 'Total ingresos', cantidad: `${nItems} ítems`, plazo: '', precio: '', total: esJefe ? dinero(totalIng) : '', registro: '' },
       },
       {
         titulo: 'Devoluciones',
@@ -198,6 +203,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
       { k: 'Ítems ingresados', v: '' + nItems },
       { k: 'Devoluciones', v: '' + devolucionesF.length },
       { k: 'Proveedores', v: '' + provs.size },
+      ...(esJefe ? [{ k: 'Valor ingresado', v: dinero(totalIng) }] : []),
     ]
     return {
       titulo: 'Ingresos y Devoluciones — Insumos', finca: finca.nombre, subtitulo: '',

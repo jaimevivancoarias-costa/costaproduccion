@@ -2659,7 +2659,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
   // Reporte de Ingresos + Devoluciones de balanceado (mismo formato que insumos).
   function construirReporte() {
     const quien = id => (id ? usuarios[id] : '') || ''
-    const filasIng = []; let nItems = 0; const provs = new Set()
+    const filasIng = []; let nItems = 0; let totalIng = 0; const provs = new Set()
     ;[...listaF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).forEach(g => {
       if (g.proveedor) provs.add(g.proveedor)
       ;(g.ingreso_balanceado_linea || []).forEach((l, i) => {
@@ -2668,7 +2668,10 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
           fecha: i === 0 ? corta(g.fecha) : '', guia: i === 0 ? (g.numero_guia || 'Sin guía') : '',
           proveedor: i === 0 ? (g.proveedor || '') : '', producto: nombre(l.producto_id),
           cantidad: `${miles(numDec(l.cantidad))} sacos`, registro: i === 0 ? quien(g.creado_por) : '',
+          precio: l.costo_unitario != null ? dinero(Number(l.costo_unitario)) : 'sin precio',
+          total: l.costo_unitario != null ? dinero(numDec(l.cantidad) * Number(l.costo_unitario)) : '',
         })
+        totalIng += numDec(l.cantidad) * (Number(l.costo_unitario) || 0)
       })
     })
     const filasDev = [...devolucionesF].sort((a, b) => (a.fecha < b.fecha ? -1 : 1)).map(d => ({
@@ -2678,9 +2681,11 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     const bloques = [
       { titulo: 'Ingresos a bodega',
         columnas: [{ titulo: 'Fecha', campo: 'fecha' }, { titulo: 'Guía', campo: 'guia' }, { titulo: 'Proveedor', campo: 'proveedor' },
-          { titulo: 'Balanceado', campo: 'producto' }, { titulo: 'Cantidad', der: true, campo: 'cantidad' }, { titulo: 'Registró', campo: 'registro' }],
+          { titulo: 'Balanceado', campo: 'producto' }, { titulo: 'Cantidad', der: true, campo: 'cantidad' },
+          ...(esJefe ? [{ titulo: 'Precio saco', der: true, campo: 'precio' }, { titulo: 'Total $', der: true, campo: 'total' }] : []),
+          { titulo: 'Registró', campo: 'registro' }],
         filas: filasIng,
-        total: { fecha: '', guia: '', proveedor: '', producto: 'Total ingresos', cantidad: `${nItems} ítems`, registro: '' } },
+        total: { fecha: '', guia: '', proveedor: '', producto: 'Total ingresos', cantidad: `${nItems} ítems`, precio: '', total: esJefe ? dinero(totalIng) : '', registro: '' } },
       { titulo: 'Devoluciones',
         columnas: [{ titulo: 'Fecha', campo: 'fecha' }, { titulo: 'Balanceado', campo: 'producto' },
           { titulo: 'Cantidad', der: true, campo: 'cantidad' }, { titulo: 'Motivo', campo: 'motivo' }, { titulo: 'Registró', campo: 'registro' }],
@@ -2690,6 +2695,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
     const cards = [
       { k: 'Ingresos (guías)', v: '' + listaF.length }, { k: 'Ítems ingresados', v: '' + nItems },
       { k: 'Devoluciones', v: '' + devolucionesF.length }, { k: 'Proveedores', v: '' + provs.size },
+      ...(esJefe ? [{ k: 'Valor ingresado', v: dinero(totalIng) }] : []),
     ]
     return {
       titulo: 'Ingresos y Devoluciones — Balanceado', finca: finca.nombre, subtitulo: '',
