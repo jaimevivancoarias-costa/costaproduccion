@@ -1813,8 +1813,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const audit = (lotesMov[m.producto_id] || []).filter(r => r.informativo)
                         .sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : ((a.fecha || '0') > (b.fecha || '0') ? 1 : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       let _rem = tCons
-                      const items = audit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_rem, ent)); _rem -= c; return { fecha: r.fecha, precio: r.costo_unitario, esIni: !!r.es_conteo, entro: ent, cons: c, queda: ent - c } }).filter(r => r.entro > 0.0001)
+                      const items = audit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_rem, ent)); _rem -= c; return { fecha: r.fecha, precio: r.costo_unitario, esIni: !!r.es_conteo, entro: ent, cons: c, queda: ent - c, guia: r.numero_guia || null } }).filter(r => r.entro > 0.0001)
                       const usarItems = items.length > 0 && Math.abs(items.reduce((s, r) => s + r.entro, 0) - tEntro) < 1
+                      // Etiqueta de cada fila: "Inicial" o "Compra <fecha> · Guía <n>" (la guía
+                      // diferencia dos compras del mismo día a distinto precio).
+                      const etq = r => r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : '') + (r.guia ? ' · Guía ' + r.guia : ''))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
@@ -1836,7 +1839,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               {esJefe && <div style={cab}>Valor</div>}
                               {items.filter(r => r.queda > 0.0001).map((r, i) => (
                                 <Fragment key={'q' + i}>
-                                  <div style={{ fontSize: '12.5px', textAlign: 'left', fontWeight: 600 }}>{r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : ''))}</div>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', fontWeight: 600 }}>{etq(r)}</div>
                                   <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
                                   {esJefe && <div style={cel}>{dineroExacto(r.precio)}</div>}
                                   {esJefe && <div style={cel}>{dinero(r.queda * Number(r.precio || 0))}</div>}
@@ -1856,7 +1859,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                               {items.map((r, i) => (
                                 <Fragment key={'e' + i}>
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                    <div style={{ fontWeight: 600 }}>{r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : ''))}</div>
+                                    <div style={{ fontWeight: 600 }}>{etq(r)}</div>
                                     {esJefe && r.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.precio)} /saco</div>}
                                     {esJefe && !r.esIni && (
                                       <button onClick={() => iniciarCorreccion(m.producto_id, { fecha: r.fecha, costo_unitario: r.precio, es_conteo: false })} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>Corregir precio</button>
