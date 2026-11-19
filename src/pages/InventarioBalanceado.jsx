@@ -467,7 +467,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     ;(async () => {
       const ids = tomas.map(t => t.id)
       const { data: lins } = await supabase.schema('produccion').from('toma_balanceado_linea')
-        .select('toma_id, producto_id, cantidad_sistema, cantidad_contada, consumo_dia, diferencia, motivo_descuadre').in('toma_id', ids)
+        .select('toma_id, producto_id, cantidad_sistema, cantidad_contada, consumo_dia, diferencia, motivo_descuadre, contada_original').in('toma_id', ids)
       if (!vivo) return
       const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
       setLineasToma(byToma)
@@ -514,6 +514,27 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // el parámetro por compatibilidad de llamadas.
   const sisCorte = (l) => Number(l.cantidad_sistema)
   const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
+  // Conteo, opción B1 (Melany 19-nov, igual que insumos): cada cantidad también en libras
+  // (sacos × libras por saco de la finca). Cantidades chicas con 3 decimales.
+  const cantC = n => { const v = Math.abs(Number(n)); return v > 0.0005 && v < 0.1 ? Number(n).toFixed(3).replace(/\.?0+$/, '') : limpio(n) }
+  const lbTxt = q => (q == null || !isFinite(Number(q))) ? '' : `${(Math.round(Math.abs(Number(q)) * (lps || LIBRAS_POR_SACO) * 10) / 10).toLocaleString('es-EC', { maximumFractionDigits: 1 })} lb`
+  const redondeoTxt = l => { const d = Number(l.contada_original) - Number(l.cantidad_sistema); return `Redondeado (${d >= 0 ? '+' : '−'}${lbTxt(d)})` }
+  // "Redondear": diferencia chica (menos de $1 o menos de 0,01 saco) → cuadrada; lo
+  // contado de verdad queda en contada_original para poder deshacer.
+  const esChica = (l, dif) => Math.abs(dif) > 0.001 && (Math.abs(dif) < 0.01 || Math.abs(dif) * precioFifoDe(l.producto_id) < 1)
+  async function redondearB(t, l) {
+    const upd = { cantidad_contada: Number(l.cantidad_sistema), diferencia: 0, contada_original: Number(l.cantidad_contada), motivo_descuadre: 'Redondeo' }
+    const { error } = await supabase.schema('produccion').from('toma_balanceado_linea').update(upd).eq('toma_id', t.id).eq('producto_id', l.producto_id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo redondear. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [t.id]: (m[t.id] || []).map(x => x.producto_id === l.producto_id ? { ...x, ...upd } : x) }))
+  }
+  async function deshacerRedondeoB(t, l) {
+    const orig = Number(l.contada_original)
+    const upd = { cantidad_contada: orig, diferencia: orig - Number(l.cantidad_sistema), contada_original: null, motivo_descuadre: null }
+    const { error } = await supabase.schema('produccion').from('toma_balanceado_linea').update(upd).eq('toma_id', t.id).eq('producto_id', l.producto_id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo deshacer. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [t.id]: (m[t.id] || []).map(x => x.producto_id === l.producto_id ? { ...x, ...upd } : x) }))
+  }
 
   function abrirMotivo(tomaId, productoId, actual) {
     setMotivoEdit({ tomaId, productoId })
@@ -567,10 +588,10 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     const hayConsDia = lins.some(l => l.consumo_dia != null && Number(l.consumo_dia) > 0.0001)
     const columnas = [
       { titulo: 'Balanceado', campo: 'nombre' },
-      { titulo: 'Sistema', der: true, campo: 'sistema' },
-      { titulo: 'Contó', der: true, campo: 'conto' },
+      { titulo: 'Sistema', der: true, campo: 'sistema', sub: 'sistemaLb' },
+      { titulo: 'Contó', der: true, campo: 'conto', sub: 'contoLb' },
       ...(hayConsDia ? [{ titulo: 'Consumo del día', der: true, campo: 'consDia' }] : []),
-      { titulo: 'Diferencia', der: true, campo: 'dif' },
+      { titulo: 'Diferencia', der: true, campo: 'dif', sub: 'difLb' },
       { titulo: 'Motivo', campo: 'motivo' },
       ...(esJefe ? [{ titulo: 'Consumo $', der: true, campo: 'consumo' }] : []),
     ]
@@ -579,10 +600,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const cd = l.consumo_dia != null ? Number(l.consumo_dia) : null
       return {
         nombre: nombreProducto(l.producto_id),
-        sistema: t.es_inicial ? '—' : limpio(sisCorte(l, cons)),
-        conto: limpio(l.cantidad_contada),
+        sistema: t.es_inicial ? '—' : cantC(sisCorte(l, cons)),
+        sistemaLb: t.es_inicial ? '' : lbTxt(sisCorte(l, cons)),
+        conto: cantC(l.cantidad_contada),
+        contoLb: l.contada_original != null ? `Contó ${cantC(l.contada_original)} · ${lbTxt(l.contada_original)}` : lbTxt(l.cantidad_contada),
         consDia: cd != null && cd > 0.0001 ? limpio(cd) : '—',
-        dif: t.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(dif)),
+        dif: t.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + cantC(Math.abs(dif)),
+        difLb: l.contada_original != null ? redondeoTxt(l) : (t.es_inicial || Math.abs(dif) < 0.001 ? '' : lbTxt(dif)),
         motivo: l.motivo_descuadre || (t.es_inicial || Math.abs(dif) < 0.001 ? '—' : 'sin motivo'),
         consumo: cons ? dinero(cons.porProd[l.producto_id] || 0) : '—',
       }
@@ -2466,8 +2490,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {t.es_inicial ? <span style={vacia}>—</span> : <>
                               {cdLine > 0.0001
-                                ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
-                                : limpio(sisCorte(l, cons))}
+                                ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{cantC(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
+                                : cantC(sisCorte(l, cons))}
+                              <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{lbTxt(sisCorte(l, cons))}</span>
                               <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
                             </>}
                           </span>
@@ -2492,16 +2517,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                 )
                               }
                               return <>
-                                {limpio(l.cantidad_contada)}
+                                {cantC(l.cantidad_contada)}
                                 {esJefe && !t.es_inicial && <button onClick={() => abrirContB(t, l)} title="Corregir lo contado" style={{ border: 'none', background: 'none', padding: 0, marginLeft: '6px', cursor: 'pointer', verticalAlign: 'middle', lineHeight: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={AZUL} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19 3 20l1-4Z"/></svg></button>}
+                                <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{l.contada_original != null ? `Contó ${cantC(l.contada_original)} · ${lbTxt(l.contada_original)}` : lbTxt(l.cantidad_contada)}</span>
                               </>
                             })()}
                           </span>
                           <span style={{ textAlign: 'right', color: t.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
-                            {t.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
-                            {esJefe && !t.es_inicial && (falto || sobro) && (
-                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: falto ? ROJO : AMBAR }}>
-                                {falto ? '−' : '+'}{dinero(Math.abs(dif) * precioFifoDe(l.producto_id))}
+                            {t.es_inicial ? 'Inicial' : falto ? 'Faltó ' + cantC(Math.abs(dif)) : sobro ? 'Sobró ' + cantC(dif) : 'Cuadró'}
+                            {l.contada_original != null && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{redondeoTxt(l)}</span>}
+                            {!t.es_inicial && (falto || sobro) && (
+                              <span style={{ display: 'block', fontSize: '11px', fontWeight: 400, color: GRIS }}>
+                                {lbTxt(dif)}{esJefe ? ' · ' : ''}
+                                {esJefe && <span style={{ color: falto ? ROJO : AMBAR }}>{falto ? '−' : '+'}{dinero(Math.abs(dif) * precioFifoDe(l.producto_id))}</span>}
                               </span>
                             )}
                           </span>
@@ -2520,10 +2548,16 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                     )}
                                     <button onClick={() => guardarMotivo(t.id, l.producto_id)} style={{ ...btnLink, fontSize: '11.5px' }}>Guardar</button>
                                   </span>
+                                : l.contada_original != null
+                                  ? <span style={{ color: GRIS }}>Redondeo{esJefe && <button onClick={() => deshacerRedondeoB(t, l)} style={{ ...btnLink, fontSize: '10.5px', display: 'block', marginLeft: 'auto' }}>Deshacer</button>}</span>
                                 : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}{esJefe && (falto || sobro) && <button onClick={() => abrirMotivo(t.id, l.producto_id, l.motivo_descuadre)} style={{ ...btnLink, fontSize: '10.5px', marginLeft: '6px' }}>cambiar</button>}</span>
                                 : (falto || sobro)
                                   ? (esJefe
-                                    ? <button onClick={() => abrirMotivo(t.id, l.producto_id, null)} style={{ ...btnLink, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                    ? <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                                        {esChica(l, dif) && <button onClick={() => redondearB(t, l)} title="Diferencia chica: dejarla cuadrada"
+                                          style={{ border: '0.5px solid ' + AZUL, background: '#fff', color: AZUL, borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}>Redondear</button>}
+                                        <button onClick={() => abrirMotivo(t.id, l.producto_id, null)} style={{ ...btnLink, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                      </span>
                                     : <span style={vacia}>—</span>)
                                   : <span style={vacia}>—</span>}
                           </span>
