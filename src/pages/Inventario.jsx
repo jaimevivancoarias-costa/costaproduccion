@@ -8,6 +8,7 @@ import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 import TarjetaBajas from '../components/TarjetaBajas'
+import TarjetaCierres from '../components/TarjetaCierres'
 
 // Inventario de insumos · modulo Produccion
 //
@@ -474,6 +475,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     return (
       <>
             {renderBajas()}
+            <TarjetaCierres fincaId={finca.id} fn="fn_cierres_mes_insumo" esJefe={esJefe} />
             <div style={{ marginTop: '20px' }}>
               <h3 style={{ fontSize: '15px', fontWeight: 500, margin: '0 0 12px' }}>Conteos anteriores</h3>
               {conteos.map((c, idx) => {

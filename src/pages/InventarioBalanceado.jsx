@@ -7,6 +7,7 @@ import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 import TarjetaBajas from '../components/TarjetaBajas'
+import TarjetaCierres from '../components/TarjetaCierres'
 
 // Inventario de balanceado · igual que el de insumos, pero en sacos.
 //
@@ -2363,6 +2364,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               motivo: b.motivo || 'Otro', autor: b.autor, lotes,
               perdido, quedaTxt: s ? `${miles(s.saldo)} sacos` : '—' }
           })} />
+
+          <TarjetaCierres fincaId={finca.id} fn="fn_cierres_mes_bal" esJefe={esJefe} />
 
           {tomas.length > 0 && (
             <div style={{ marginTop: '20px' }}>
