@@ -374,6 +374,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const sisCorte = (l) => Number(l.cantidad_sistema)
   const difCorte = (l, cons) => Number(l.cantidad_contada) - sisCorte(l, cons)
   const unidadIns = id => { const u = (saldos.find(s => s.insumo_id === id)?.unidad) || ''; return (UNIDAD[u] || u || '').toLowerCase() }
+  // Conteo, opción B1 (Melany 19-nov, pedido Marexport): cada cantidad también en la
+  // unidad en que se APLICA (PEGALASA faltó 0,14 poma = 2,8 L; OXITET 0,004 tambor = 100 g).
+  // Cantidades chicas con 3 decimales: antes OXITET decía "Faltó 0".
+  const cantC = n => { const v = Math.abs(Number(n)); return v > 0.0005 && v < 0.1 ? Number(n).toFixed(3).replace(/\.?0+$/, '') : limpio(n) }
+  const aplicaTxt = (id, q) => {
+    const fac = factores[id]
+    if (!fac || esUnidadGenerica(fac.uApp) || q == null || !isFinite(Number(q))) return ''
+    let x = Math.abs(Number(q)) * (fac.factor || 1), u = abrevU(fac.uApp)
+    if (['sacos', 'tambores', 'botellas', 'u'].includes(String(u).toLowerCase())) return ''
+    if (u === 'g' && x >= 1000) { x /= 1000; u = 'kg' } else if (u === 'kg' && x > 0 && x < 1) { x *= 1000; u = 'g' }
+    if (u === 'mL' && x >= 1000) { x /= 1000; u = 'L' } else if (u === 'L' && x > 0 && x < 1) { x *= 1000; u = 'mL' }
+    return `${(Math.round(x * 100) / 100).toLocaleString('es-EC', { maximumFractionDigits: 2 })} ${u}`
+  }
 
   function abrirMotivoC(tomaId, insumoId, actual) {
     setMotivoEdit({ tomaId, insumoId })
@@ -433,11 +446,14 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       return {
         insumo: nombreInsumo(l.insumo_id),
         unidad: cap1(unidadIns(l.insumo_id)),
-        sistema: c.es_inicial ? '—' : limpio(sisCorte(l, cons)),
-        contado: limpio(l.cantidad_contada),
+        sistema: c.es_inicial ? '—' : cantC(sisCorte(l, cons)),
+        sistemaApl: c.es_inicial ? '' : aplicaTxt(l.insumo_id, sisCorte(l, cons)),
+        contado: cantC(l.cantidad_contada),
+        contadoApl: aplicaTxt(l.insumo_id, l.cantidad_contada),
         // "Contó" = lo que había al inicio del día (incluye lo de ese día).
         consDia: cd != null && cd > 0.0001 ? `${limpio(cd)}` : '—',
-        diferencia: c.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + limpio(Math.abs(dif)),
+        diferencia: c.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + cantC(Math.abs(dif)),
+        difApl: c.es_inicial || Math.abs(dif) < 0.001 ? '' : aplicaTxt(l.insumo_id, dif),
         motivo: l.motivo_descuadre || (c.es_inicial || Math.abs(dif) < 0.001 ? '' : 'sin motivo'),
         consumo: cons ? dinero(cons.porProd[l.insumo_id] || 0) : '',
       }
@@ -456,10 +472,10 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       columnas: [
         { titulo: 'Insumo', campo: 'insumo' },
         { titulo: 'Unidad', campo: 'unidad' },
-        { titulo: 'Sistema', campo: 'sistema', der: true },
-        { titulo: 'Contó', campo: 'contado', der: true },
+        { titulo: 'Sistema', campo: 'sistema', der: true, sub: 'sistemaApl' },
+        { titulo: 'Contó', campo: 'contado', der: true, sub: 'contadoApl' },
         ...(hayConsDia ? [{ titulo: 'Consumo del día', campo: 'consDia', der: true }] : []),
-        { titulo: 'Diferencia', campo: 'diferencia', der: true },
+        { titulo: 'Diferencia', campo: 'diferencia', der: true, sub: 'difApl' },
         { titulo: 'Motivo', campo: 'motivo' },
         ...(esJefe ? [{ titulo: 'Consumo $', campo: 'consumo', der: true }] : []),
       ],
@@ -579,8 +595,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                           <span style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                             {c.es_inicial ? <span style={vacia}>—</span> : <>
                               {cdLine > 0.0001
-                                ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{limpio(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
-                                : limpio(sisCorte(l, cons))}
+                                ? <button onClick={() => setSisDet(x => x === skey ? null : skey)} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: NAVY, fontVariantNumeric: 'tabular-nums' }}>{cantC(sisCorte(l, cons))} <span style={{ color: AZUL, fontSize: '9px' }}>{sisDet === skey ? '▾' : '▸'}</span></button>
+                                : cantC(sisCorte(l, cons))}
+                              {aplicaTxt(l.insumo_id, sisCorte(l, cons)) && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{aplicaTxt(l.insumo_id, sisCorte(l, cons))}</span>}
                               <span style={{ display: 'block', fontSize: '10px', color: '#9fb0bf' }}>al {alSis}</span>
                             </>}
                           </span>
@@ -605,16 +622,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                 )
                               }
                               return <>
-                                {limpio(l.cantidad_contada)}
+                                {cantC(l.cantidad_contada)}
                                 {esJefe && !c.es_inicial && <button onClick={() => abrirContC(c, l)} title="Corregir lo contado" style={{ border: 'none', background: 'none', padding: 0, marginLeft: '6px', cursor: 'pointer', verticalAlign: 'middle', lineHeight: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={AZUL} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19 3 20l1-4Z"/></svg></button>}
+                                {aplicaTxt(l.insumo_id, l.cantidad_contada) && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{aplicaTxt(l.insumo_id, l.cantidad_contada)}</span>}
                               </>
                             })()}
                           </span>
                           <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
-                            {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + limpio(Math.abs(dif)) : sobro ? 'Sobró ' + limpio(dif) : 'Cuadró'}
-                            {esJefe && !c.es_inicial && (falto || sobro) && (
-                              <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: falto ? ROJO : AMBAR }}>
-                                {falto ? '−' : '+'}{dinero(Math.abs(dif) * precioFifoDe(l.insumo_id))}
+                            {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + cantC(Math.abs(dif)) : sobro ? 'Sobró ' + cantC(dif) : 'Cuadró'}
+                            {!c.es_inicial && (falto || sobro) && (aplicaTxt(l.insumo_id, dif) || esJefe) && (
+                              <span style={{ display: 'block', fontSize: '11px', fontWeight: 400, color: GRIS }}>
+                                {aplicaTxt(l.insumo_id, dif)}
+                                {aplicaTxt(l.insumo_id, dif) && esJefe ? ' · ' : ''}
+                                {esJefe && <span style={{ color: falto ? ROJO : AMBAR }}>{falto ? '−' : '+'}{dinero(Math.abs(dif) * precioFifoDe(l.insumo_id))}</span>}
                               </span>
                             )}
                           </span>
