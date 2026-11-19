@@ -311,7 +311,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     ;(async () => {
       const ids = conteos.map(c => c.id)
       const { data: lins } = await supabase.schema('produccion').from('toma_inventario_linea')
-        .select('toma_id, insumo_id, cantidad_sistema, cantidad_contada, consumo_dia, diferencia, motivo_descuadre').in('toma_id', ids)
+        .select('toma_id, insumo_id, cantidad_sistema, cantidad_contada, consumo_dia, diferencia, motivo_descuadre, contada_original').in('toma_id', ids)
       if (!vivo) return
       const byToma = {}; (lins || []).forEach(l => { (byToma[l.toma_id] = byToma[l.toma_id] || []).push(l) })
       setLineasToma(byToma)
@@ -378,6 +378,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // unidad en que se APLICA (PEGALASA faltó 0,14 poma = 2,8 L; OXITET 0,004 tambor = 100 g).
   // Cantidades chicas con 3 decimales: antes OXITET decía "Faltó 0".
   const cantC = n => { const v = Math.abs(Number(n)); return v > 0.0005 && v < 0.1 ? Number(n).toFixed(3).replace(/\.?0+$/, '') : limpio(n) }
+  const redondeoTxt = l => { const d = Number(l.contada_original) - Number(l.cantidad_sistema); const a = aplicaTxt(l.insumo_id, d); return `Redondeado (${d >= 0 ? '+' : '−'}${a || cantC(Math.abs(d))})` }
   const aplicaTxt = (id, q) => {
     const fac = factores[id]
     if (!fac || esUnidadGenerica(fac.uApp) || q == null || !isFinite(Number(q))) return ''
@@ -432,6 +433,25 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     setAviso({ tipo: 'ok', texto: `${nombreInsumo(l.insumo_id)}: corregido a ${limpio(fisico)} contado.` })
   }
 
+  // "Redondear" (Melany 19-nov): diferencias chicas que salen de la conversión (0,002 funda
+  // = 20 g) se dejan cuadradas sin pedir motivo. Lo contado de verdad queda en
+  // contada_original para poder deshacer. Chica = menos de $1 o menos del 1 % de la unidad.
+  const esChica = (l, dif) => Math.abs(dif) > 0.001 && (Math.abs(dif) < 0.01 || Math.abs(dif) * precioFifoDe(l.insumo_id) < 1)
+  async function redondearC(c, l) {
+    const sistema = Number(l.cantidad_sistema)
+    const upd = { cantidad_contada: sistema, diferencia: 0, contada_original: Number(l.cantidad_contada), motivo_descuadre: 'Redondeo' }
+    const { error } = await supabase.schema('produccion').from('toma_inventario_linea').update(upd).eq('toma_id', c.id).eq('insumo_id', l.insumo_id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo redondear. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [c.id]: (m[c.id] || []).map(x => x.insumo_id === l.insumo_id ? { ...x, ...upd } : x) }))
+  }
+  async function deshacerRedondeoC(c, l) {
+    const orig = Number(l.contada_original)
+    const upd = { cantidad_contada: orig, diferencia: orig - Number(l.cantidad_sistema), contada_original: null, motivo_descuadre: null }
+    const { error } = await supabase.schema('produccion').from('toma_inventario_linea').update(upd).eq('toma_id', c.id).eq('insumo_id', l.insumo_id)
+    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo deshacer. ' + error.message }); return }
+    setLineasToma(m => ({ ...m, [c.id]: (m[c.id] || []).map(x => x.insumo_id === l.insumo_id ? { ...x, ...upd } : x) }))
+  }
+
   // Acta de un corte para imprimir (PDF), con Sistema en vivo.
   function imprimirCorte(c, idx, lins, cons) {
     const autor = nombresU[c.creado_por]
@@ -449,11 +469,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         sistema: c.es_inicial ? '—' : cantC(sisCorte(l, cons)),
         sistemaApl: c.es_inicial ? '' : aplicaTxt(l.insumo_id, sisCorte(l, cons)),
         contado: cantC(l.cantidad_contada),
-        contadoApl: aplicaTxt(l.insumo_id, l.cantidad_contada),
+        contadoApl: l.contada_original != null
+          ? `Contó ${cantC(l.contada_original)}${aplicaTxt(l.insumo_id, l.contada_original) ? ' · ' + aplicaTxt(l.insumo_id, l.contada_original) : ''}`
+          : aplicaTxt(l.insumo_id, l.cantidad_contada),
         // "Contó" = lo que había al inicio del día (incluye lo de ese día).
         consDia: cd != null && cd > 0.0001 ? `${limpio(cd)}` : '—',
         diferencia: c.es_inicial ? 'Inicial' : Math.abs(dif) < 0.001 ? 'Cuadró' : (dif < 0 ? 'Faltó ' : 'Sobró ') + cantC(Math.abs(dif)),
-        difApl: c.es_inicial || Math.abs(dif) < 0.001 ? '' : aplicaTxt(l.insumo_id, dif),
+        difApl: l.contada_original != null ? redondeoTxt(l) : (c.es_inicial || Math.abs(dif) < 0.001 ? '' : aplicaTxt(l.insumo_id, dif)),
         motivo: l.motivo_descuadre || (c.es_inicial || Math.abs(dif) < 0.001 ? '' : 'sin motivo'),
         consumo: cons ? dinero(cons.porProd[l.insumo_id] || 0) : '',
       }
@@ -624,12 +646,15 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                               return <>
                                 {cantC(l.cantidad_contada)}
                                 {esJefe && !c.es_inicial && <button onClick={() => abrirContC(c, l)} title="Corregir lo contado" style={{ border: 'none', background: 'none', padding: 0, marginLeft: '6px', cursor: 'pointer', verticalAlign: 'middle', lineHeight: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={AZUL} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19 3 20l1-4Z"/></svg></button>}
-                                {aplicaTxt(l.insumo_id, l.cantidad_contada) && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{aplicaTxt(l.insumo_id, l.cantidad_contada)}</span>}
+                                {l.contada_original != null
+                                  ? <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>Contó {cantC(l.contada_original)}{aplicaTxt(l.insumo_id, l.contada_original) ? ' · ' + aplicaTxt(l.insumo_id, l.contada_original) : ''}</span>
+                                  : aplicaTxt(l.insumo_id, l.cantidad_contada) && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{aplicaTxt(l.insumo_id, l.cantidad_contada)}</span>}
                               </>
                             })()}
                           </span>
                           <span style={{ textAlign: 'right', color: c.es_inicial ? VERDE : falto ? ROJO : sobro ? AMBAR : VERDE }}>
                             {c.es_inicial ? 'Inicial' : falto ? 'Faltó ' + cantC(Math.abs(dif)) : sobro ? 'Sobró ' + cantC(dif) : 'Cuadró'}
+                            {l.contada_original != null && <span style={{ display: 'block', fontSize: '11px', color: GRIS }}>{redondeoTxt(l)}</span>}
                             {!c.es_inicial && (falto || sobro) && (aplicaTxt(l.insumo_id, dif) || esJefe) && (
                               <span style={{ display: 'block', fontSize: '11px', fontWeight: 400, color: GRIS }}>
                                 {aplicaTxt(l.insumo_id, dif)}
@@ -653,10 +678,16 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                                     )}
                                     <button onClick={() => guardarMotivoC(c.id, l.insumo_id)} style={{ ...link, fontSize: '11.5px' }}>Guardar</button>
                                   </span>
+                                : l.contada_original != null
+                                  ? <span style={{ color: GRIS }}>Redondeo{esJefe && <button onClick={() => deshacerRedondeoC(c, l)} style={{ ...link, fontSize: '10.5px', display: 'block', marginLeft: 'auto' }}>Deshacer</button>}</span>
                                 : l.motivo_descuadre ? <span style={{ color: AMBAR }}>{l.motivo_descuadre}{esJefe && (falto || sobro) && <button onClick={() => abrirMotivoC(c.id, l.insumo_id, l.motivo_descuadre)} style={{ ...link, fontSize: '10.5px', marginLeft: '6px' }}>cambiar</button>}</span>
                                 : (falto || sobro)
                                   ? (esJefe
-                                    ? <button onClick={() => abrirMotivoC(c.id, l.insumo_id, null)} style={{ ...link, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                    ? <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                                        {esChica(l, dif) && <button onClick={() => redondearC(c, l)} title="Diferencia chica por conversión: dejarla cuadrada"
+                                          style={{ border: '0.5px solid ' + AZUL, background: '#fff', color: AZUL, borderRadius: '6px', padding: '2px 8px', fontSize: '11px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}>Redondear</button>}
+                                        <button onClick={() => abrirMotivoC(c.id, l.insumo_id, null)} style={{ ...link, fontSize: '11.5px' }}>Poner motivo ›</button>
+                                      </span>
                                     : <span style={vacia}>—</span>)
                                   : <span style={vacia}>—</span>}
                           </span>
