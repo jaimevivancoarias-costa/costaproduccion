@@ -86,18 +86,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [precioInfo, setPrecioInfo] = useState({})  // insumoId -> { plazo, desde } del que rige
   const [valorFifo, setValorFifo] = useState({})   // insumoId -> valor FIFO (hoy)
   const [valorFifoCierre, setValorFifoCierre] = useState({})  // valor del stock a la fecha de cierre del rango (para el reporte)
-  // Hoja final del reporte: "Cierre del mes" (solo si el filtro es un mes completo y es jefe).
-  // Se carga aparte, en segundo plano, para no frenar la pantalla.
-  const [anexoMes, setAnexoMes] = useState(null)
-  useEffect(() => {
-    setAnexoMes(null)
-    if (!esJefe || !finca?.id || !desde || !hasta || tipoDeRango(desde, hasta) !== 'mes') return
-    let vivo = true
-    const t = setTimeout(() => {
-      cargarAnexoCierre({ fincaId: finca.id, fn: 'fn_cierres_mes_insumo', desde }).then(a => { if (vivo) setAnexoMes(a) }).catch(() => {})
-    }, 2000)
-    return () => { vivo = false; clearTimeout(t) }
-  }, [esJefe, finca?.id, desde, hasta])
   const [lotes, setLotes] = useState({})           // insumoId -> [{fecha, cantidad, costo, valor}] (FIFO, solo jefe)
   const [iniForm, setIniForm] = useState(null)     // { insumoId, cantidad, fecha } al cargar inventario inicial de un insumo
   const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
@@ -148,6 +136,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [alDia, setAlDia] = useState(hoyISO())
   const [desde, setDesde] = useState(primeroDelMes(hoyISO()))
   const [hasta, setHasta] = useState(hoyISO())
+  // Hoja final del reporte: "Cierre del mes" (solo si el filtro es un mes completo y es jefe).
+  // Se carga aparte, en segundo plano, para no frenar la pantalla.
+  const [anexoMes, setAnexoMes] = useState(null)
+  useEffect(() => {
+    setAnexoMes(null)
+    if (!esJefe || !finca?.id || !desde || !hasta || tipoDeRango(desde, hasta) !== 'mes') return
+    let vivo = true
+    const t = setTimeout(() => {
+      cargarAnexoCierre({ fincaId: finca.id, fn: 'fn_cierres_mes_insumo', desde }).then(a => { if (vivo) setAnexoMes(a) }).catch(() => {})
+    }, 2000)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [esJefe, finca?.id, desde, hasta])
   const [modoMov, setModoMov] = useState('conteo')  // 'conteo' | 'fechas' — cómo elegir el período en "Qué se movió"
   const [periodoSel, setPeriodoSel] = useState(0)   // índice del período entre conteos
   // Borrador de las fechas: los inputs escriben acá y recién al tocar "Aplicar"
