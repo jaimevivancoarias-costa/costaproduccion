@@ -62,7 +62,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // (01 → al), para que bodega y consumo del reporte cuadren con lo de pantalla.
   useEffect(() => { if (vista === 'saldo' && alDia) { setDesde(primeroDelMes(alDia)); setHasta(alDia) } }, [vista, alDia])
   // El detalle por lote depende de "hasta" y la finca; si cambian, limpiar caché.
-  useEffect(() => { setLotesMov({}); setLotesPre({}); setLotesRange({}); setMovDet(null) }, [hasta, finca.id])
+  useEffect(() => { setLotesMov({}); setLotesPre({}); setLotesRange({}); setFlujoRango({}); setMovDet(null) }, [desde, hasta, finca.id])
 
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
@@ -154,7 +154,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     let vivo = true
     ;(async () => {
       const { data: lins } = await supabase.schema('produccion').from('toma_balanceado_linea')
-        .select('toma_id, producto_id, cantidad_contada').in('toma_id', ts.map(t => t.id))
+        .select('toma_id, producto_id, cantidad_contada, cantidad_sistema, diferencia').in('toma_id', ts.map(t => t.id))
       const antesPorFecha = {}
       await Promise.all(ts.map(t =>
         supabase.schema('produccion').rpc('fn_saldo_balanceado', { p_finca: finca.id, p_hasta: sumarDias(t.fecha, -1) })
@@ -164,8 +164,12 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       const porProd = {}
       ts.forEach(t => (lins || []).filter(l => l.toma_id === t.id).forEach(l => {
         const conto = Number(l.cantidad_contada)
-        const antes = antesPorFecha[t.fecha]?.[l.producto_id]
-        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes, esInicial: !!t.es_inicial })
+        // Sistema y diferencia GUARDADOS del conteo (lo que el sistema decía ESE día),
+        // no un recálculo en vivo con fn_saldo_balanceado (que difiere por movimientos
+        // posteriores y mostraba falsos "Sobró/Faltó" en conteos que habían cuadrado).
+        const antes = l.cantidad_sistema == null ? null : Number(l.cantidad_sistema)
+        const dif = l.diferencia != null ? Number(l.diferencia) : (antes == null ? null : conto - antes)
+        ;(porProd[l.producto_id] = porProd[l.producto_id] || []).push({ fecha: t.fecha, conto, antes, dif, esInicial: !!t.es_inicial })
       }))
       setConteosRango(porProd)
       setSaldoAntes(antesPorFecha[ts[ts.length - 1].fecha] || {})
@@ -1007,47 +1011,33 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     setMovDet(productoId)
     if (!lotesMov[productoId]) {
       const { data, error } = await supabase.schema('produccion')
-        .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta })
+        .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: productoId, p_hasta: hasta, p_desde: desde })
       const lotes = error ? [] : (data || [])
       setLotesMov(m => ({ ...m, [productoId]: lotes }))
-      // Tramo pre-conteo: si el último conteo del rango cae DESPUÉS de 'desde',
-      // trae los lotes consumidos ANTES de ese conteo (FIFO real por lote), para
-      // que el detalle muestre esos lotes con su precio real y el Total cuadre
-      // con el consumo del renglón.
-      const cRow = lotes.find(r => r.es_conteo)
-      const sinConteoEnRango = !cRow || !cRow.fecha || !desde || cRow.fecha < desde
-      if (sinConteoEnRango) {
-        // No hubo conteo dentro del rango. Armamos el flujo completo por precio, que
-        // CUADRA con el renglón por construcción: Consumió = consumo del rango por
-        // lote (fn_reporte_consumo_lotes, cuadra con el renglón) y Queda = stock al
-        // cierre por lote (fn_lotes_balanceado(hasta), cuadra con el saldo). De ahí
-        // Entró = Consumió + Queda, así el Total da Inicial+Ingresos / Consumo / Saldo.
-        if (desde) {
-          const [cpR, qdR] = await Promise.all([
-            supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta }),
-            supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: hasta }),
-          ])
-          const consumo = (cpR.data || []).map(x => ({ precio: x.precio == null ? null : Number(x.precio), sacos: Number(x.sacos || 0) }))
-          const queda = (qdR.data || [])
-            .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
-            .map(x => ({ precio: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
-          setFlujoRango(m => ({ ...m, [productoId]: { consumo, queda } }))
-          setLotesRange(m => ({ ...m, [productoId]: null }))
-        } else {
-          const { data: rg } = await supabase.schema('produccion')
-            .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
-          setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
-        }
-        setLotesPre(m => ({ ...m, [productoId]: [] }))
-      } else if (cRow && cRow.fecha && desde && cRow.fecha > desde) {
-        const { data: pre } = await supabase.schema('produccion')
-          .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: sumarDias(cRow.fecha, -1) })
-        setLotesPre(m => ({ ...m, [productoId]: pre || [] }))
+      // Flujo por precio del rango, SIEMPRE (haya o no conteo en el rango). Tras
+      // arreglar el costeo del inicial, fn_reporte_consumo_lotes ya da el consumo real
+      // y cuadra con el renglón, así que no hace falta el viejo desglose "antes/después
+      // del conteo" (que confundía). Consumió = consumo del rango por lote; Queda =
+      // stock al cierre por lote (fn_lotes_balanceado); Entró = Consumió + Queda, así el
+      // Total da Inicial+Ingresos / Consumo / Saldo. Los conteos van aparte, en
+      // "Conteos en el rango".
+      if (desde) {
+        const [cpR, qdR] = await Promise.all([
+          supabase.schema('produccion').rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta }),
+          supabase.schema('produccion').rpc('fn_lotes_balanceado', { p_finca: finca.id, p_hasta: hasta }),
+        ])
+        const consumo = (cpR.data || []).map(x => ({ precio: x.precio == null ? null : Number(x.precio), sacos: Number(x.sacos || 0) }))
+        const queda = (qdR.data || [])
+          .filter(x => x.producto_id === productoId && Number(x.cantidad) > 0.0001)
+          .map(x => ({ precio: x.costo_unitario == null ? null : Number(x.costo_unitario), cant: Number(x.cantidad) }))
+        setFlujoRango(m => ({ ...m, [productoId]: { consumo, queda } }))
         setLotesRange(m => ({ ...m, [productoId]: null }))
       } else {
-        setLotesPre(m => ({ ...m, [productoId]: [] }))
-        setLotesRange(m => ({ ...m, [productoId]: null }))
+        const { data: rg } = await supabase.schema('produccion')
+          .rpc('fn_reporte_consumo_lotes', { p_finca: finca.id, p_producto: productoId, p_desde: desde, p_hasta: hasta })
+        setLotesRange(m => ({ ...m, [productoId]: rg || [] }))
       }
+      setLotesPre(m => ({ ...m, [productoId]: [] }))
     }
   }
 
@@ -1146,7 +1136,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
     await cargar()
     // Refrescar el detalle por lote en pantalla (sin recargar la página).
     const { data } = await supabase.schema('produccion')
-      .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: pid, p_hasta: hasta })
+      .rpc('fn_lotes_movimiento_bal', { p_finca: finca.id, p_producto: pid, p_hasta: hasta, p_desde: desde })
     const lotes = data || []
     setLotesMov(m => ({ ...m, [pid]: lotes }))
     const cRow = lotes.find(r => r.es_conteo)
@@ -1796,7 +1786,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {movDet === m.producto_id && (
                   <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
                     <div style={{ flex: 1, minWidth: '340px' }}>
-                    {!lotesMov[m.producto_id] ? (
+                    {(!lotesMov[m.producto_id] || (desde && !flujoRango[m.producto_id])) ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
                     ) : flujoRango[m.producto_id] ? (() => {
                       // No hubo conteo dentro del rango: flujo por precio. Consumió =
@@ -1816,41 +1806,186 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const tCons = filas.reduce((s, r) => s + r.cons, 0)
                       const tQueda = filas.reduce((s, r) => s + r.queda, 0)
                       const tCosto = filas.reduce((s, r) => s + r.cons * Number(r.precio || 0), 0)
+                      // Itemizado por compra: reparte el consumo total (tCons, ya cuadra con el
+                      // renglón) FIFO entre el Inicial y cada compra (filas "informativo" de
+                      // fn_lotes_movimiento_bal), y agrega una fila "Ajuste de conteos" que absorbe
+                      // la diferencia cuando un conteo tuvo sobró/faltó. Así SIEMPRE itemiza en dos
+                      // bloques y el Total cuadra. Fallback a por-precio solo si no hay audit.
+                      const valorTotal = filas.reduce((s, r) => s + r.queda * Number(r.precio || 0), 0)
+                      const audit = (lotesMov[m.producto_id] || []).filter(r => r.informativo)
+                        .sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : ((a.fecha || '0') > (b.fecha || '0') ? 1 : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                      let _rem = tCons
+                      const items = audit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_rem, ent)); _rem -= c; const pr = Number(r.costo_unitario || 0); return { fecha: r.fecha, precio: r.costo_unitario, esIni: !!r.es_conteo, esAjuste: false, entro: ent, cons: c, queda: ent - c, costo: c * pr, valor: (ent - c) * pr, guia: r.numero_guia || null } }).filter(r => r.entro > 0.0001)
+                      // Fila de ajuste = diferencia entre el total real (flujoRango) y lo itemizado;
+                      // aparece cuando un conteo cambió la cantidad (sobró/faltó).
+                      const ajE = tEntro - items.reduce((s, r) => s + r.entro, 0)
+                      const ajC = tCons - items.reduce((s, r) => s + r.cons, 0)
+                      const ajQ = tQueda - items.reduce((s, r) => s + r.queda, 0)
+                      const ajCo = tCosto - items.reduce((s, r) => s + r.costo, 0)
+                      const ajV = valorTotal - items.reduce((s, r) => s + r.valor, 0)
+                      if (Math.abs(ajE) > 0.01 || Math.abs(ajC) > 0.01 || Math.abs(ajQ) > 0.01) {
+                        items.push({ fecha: null, precio: null, esIni: false, esAjuste: true, entro: ajE, cons: ajC, queda: ajQ, costo: ajCo, valor: ajV, guia: null })
+                      }
+                      const usarItems = items.length > 0
+                      // Etiqueta: "Inicial", "Ajuste de conteos", o "Compra <fecha> · Guía <n>".
+                      const etq = r => r.esAjuste ? 'Ajuste de conteos' : (r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : '') + (r.guia ? ' · Guía ' + r.guia : '')))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
                       const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
-                      const primerQueda = filas.findIndex(r => r.queda > 0.0001)
+                      const lista = filas.map(r => ({ etiqueta: r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco', precio: r.precio, entro: r.entro, cons: r.cons, queda: r.queda, esCompra: false, fecha: null }))
+                      const primerQueda = lista.findIndex(r => r.queda > 0.0001)
                       return (
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
                           <div style={{ fontSize: '12.5px', fontWeight: 600, color: NAVY }}>Detalle por lote</div>
-                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '11px' }}>
-                            Por cada precio: lo que entró, lo que se consumió (lo más viejo primero) y lo que queda · en sacos
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
-                            <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
-                            <div style={cab}>Entró</div>
-                            <div style={cab}>Consumió</div>
-                            <div style={cab}>Queda</div>
-                            {esJefe && <div style={cab}>Costo consumido</div>}
-                            {filas.map((r, i) => (
-                              <Fragment key={'fl' + i}>
-                                <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
-                                  <div style={{ fontWeight: 600 }}>{r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco'}</div>
-                                  {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
-                                </div>
-                                <div style={cel}>{limpio(r.entro)}</div>
-                                <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
-                                <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
-                                {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
-                              </Fragment>
-                            ))}
-                            <div style={{ ...tot, textAlign: 'left' }}>Total</div>
-                            <div style={tot}>{limpio(tEntro)}</div>
-                            <div style={tot}>{limpio(tCons)}</div>
-                            <div style={tot}>{limpio(tQueda)}</div>
-                            {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
-                          </div>
+                          <div style={{ fontSize: '10.5px', color: GRIS, marginBottom: '13px' }}>Se consume del más viejo primero · en sacos</div>
+                          {usarItems ? (<>
+                            <div style={{ fontSize: '11.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Lo que queda en bodega · al {corta(hasta)}</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr 1fr 1fr 1.1fr' : '2.3fr 1fr', gap: '12px 18px', alignItems: 'baseline', marginBottom: '20px' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                              <div style={cab}>Queda</div>
+                              {esJefe && <div style={cab}>Precio</div>}
+                              {esJefe && <div style={cab}>Valor</div>}
+                              {items.filter(r => r.queda > 0.0001).map((r, i) => (
+                                <Fragment key={'q' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', fontWeight: 600 }}>{etq(r)}</div>
+                                  <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
+                                  {esJefe && <div style={cel}>{r.precio == null ? '—' : dineroExacto(r.precio)}</div>}
+                                  {esJefe && <div style={cel}>{dinero(r.valor)}</div>}
+                                </Fragment>
+                              ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total en bodega</div>
+                              <div style={tot}>{limpio(tQueda)}</div>
+                              {esJefe && <div />}
+                              {esJefe && <div style={tot}>{dinero(valorTotal)}</div>}
+                            </div>
+                            <div style={{ fontSize: '11.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Entró en el rango · a qué precio</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr .9fr 1fr 1.1fr' : '2.3fr 1fr 1fr', gap: '13px 18px', alignItems: 'baseline' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Origen</div>
+                              <div style={cab}>Entró</div>
+                              <div style={cab}>Consumió</div>
+                              {esJefe && <div style={cab}>Costo consumido</div>}
+                              {items.map((r, i) => (
+                                <Fragment key={'e' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                    <div style={{ fontWeight: 600 }}>{etq(r)}</div>
+                                    {esJefe && r.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.precio)} /saco</div>}
+                                    {esJefe && !r.esIni && !r.esAjuste && (
+                                      <button onClick={() => iniciarCorreccion(m.producto_id, { fecha: r.fecha, costo_unitario: r.precio, es_conteo: false })} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>Corregir precio</button>
+                                    )}
+                                  </div>
+                                  <div style={cel}>{limpio(r.entro)}</div>
+                                  <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
+                                  {esJefe && <div style={cel}>{dinero(r.costo)}</div>}
+                                </Fragment>
+                              ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                              <div style={tot}>{limpio(tEntro)}</div>
+                              <div style={tot}>{limpio(tCons)}</div>
+                              {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                            </div>
+                          </>) : (
+                            <div style={{ display: 'grid', gridTemplateColumns: gtc, gap: '15px 18px', alignItems: 'baseline' }}>
+                              <div style={{ ...cab, textAlign: 'left' }}>Lote</div>
+                              <div style={cab}>Entró</div>
+                              <div style={cab}>Consumió</div>
+                              <div style={cab}>Queda</div>
+                              {esJefe && <div style={cab}>Costo consumido</div>}
+                              {filas.map((r, i) => (
+                                <Fragment key={'fl' + i}>
+                                  <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
+                                    <div style={{ fontWeight: 600 }}>{r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco'}</div>
+                                    {i === primerQueda && r.queda > 0.0001 && <div style={{ fontSize: '10px', color: GRIS }}>se gasta primero</div>}
+                                  </div>
+                                  <div style={cel}>{limpio(r.entro)}</div>
+                                  <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
+                                  <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
+                                  {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
+                                </Fragment>
+                              ))}
+                              <div style={{ ...tot, textAlign: 'left' }}>Total</div>
+                              <div style={tot}>{limpio(tEntro)}</div>
+                              <div style={tot}>{limpio(tCons)}</div>
+                              <div style={tot}>{limpio(tQueda)}</div>
+                              {esJefe && <div style={tot}>{dinero(tCosto)}</div>}
+                            </div>
+                          )}
+                          {esJefe && corrige && corrige.productoId === m.producto_id && (
+                            <div style={{ marginTop: '14px', maxWidth: '720px', background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
+                              {corrige.catalogo ? (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.esConteo ? 'Conteo' : 'Compra'} {corta(corrige.fecha)}</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>
+                                    Actual {corrige.actual != null ? dineroExacto(corrige.actual) : 's/p'} /saco · {PLAZO_LBL[corrige.plazo] || 'contado'}. Se recalculan solo los consumos de este balanceado.
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
+                                      <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                      <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                      <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo este período'], ['adelante', 'De ahí en adelante']]} />
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 12px', lineHeight: 1.5 }}>
+                                    {corrAdelante ? 'Cambia el precio del catálogo desde esta fecha en adelante (este plazo). Afecta las compras desde aquí.' : 'Corrige el precio del catálogo del período de esta compra, sin mover fechas. Solo afecta las compras de ese período.'}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '9px' }}>
+                                    <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
+                                    <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                  </div>
+                                </>
+                              ) : !corrige.sel ? (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · elegí la guía</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>Hay varias guías. Elegí cuál corregir — se cambia solo esa (no se mezclan) y se recalculan sus consumos.</div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '7px', marginBottom: '12px' }}>
+                                    {corrige.guias.map(g => (
+                                      <button key={g.lineaId} onClick={() => elegirGuiaCorr(g)}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '10px', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '9px 12px', background: '#fff', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}>
+                                        <span style={{ flex: 1, fontSize: '13px' }}>{corta(g.fecha)} · {g.numero_guia ? ('Guía ' + g.numero_guia) : 'Sin guía'}{g.proveedor ? (' · ' + g.proveedor) : ''}</span>
+                                        <span style={{ fontSize: '13px', color: GRIS }}>{limpio(g.cantidad)} sacos</span>
+                                        <span style={{ fontSize: '13px', fontWeight: 500, minWidth: '82px', textAlign: 'right' }}>{g.costo != null ? dineroExacto(g.costo) : 's/p'} /saco</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                  <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                </>
+                              ) : (
+                                <>
+                                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '2px' }}>Corregir precio · {corrige.sel.numero_guia ? ('Guía ' + corrige.sel.numero_guia) : 'Compra'} {corta(corrige.sel.fecha)}</div>
+                                  <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px' }}>{limpio(corrige.sel.cantidad)} sacos · actual {corrige.sel.costo != null ? dineroExacto(corrige.sel.costo) : 's/p'} /saco. Se cambia solo esta guía y se recalculan sus consumos.</div>
+                                  <div style={{ display: 'flex', gap: '14px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Nuevo precio /saco</div>
+                                      <CampoNumero maxDec={6} autoFocus value={corrPrecio} onChange={v => setCorrPrecio(v)} style={{ ...inp, width: '130px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', borderColor: '#9cc4e8' }} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Plazo</div>
+                                      <Seg valor={corrige.plazo} onCambio={pz => setCorrige(c => ({ ...c, plazo: pz }))} opciones={[0, 30, 60, 90, 120].map(p => [p, PLAZO_LBL[p]])} />
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '11px', color: GRIS, marginBottom: '4px' }}>Aplicar</div>
+                                      <Seg valor={corrAdelante ? 'adelante' : 'solo'} onCambio={v => setCorrAdelante(v === 'adelante')} opciones={[['solo', 'Solo esta guía'], ['adelante', 'De ahí en adelante']]} />
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '11.5px', color: GRIS, margin: '10px 0 0', lineHeight: 1.5 }}>
+                                    {corrAdelante ? 'Corrige esta guía Y deja el catálogo en este precio para las compras NUEVAS desde esta fecha. No toca otras guías ya cargadas.' : 'Corrige solo esta guía.'}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '9px', marginTop: '12px', alignItems: 'center' }}>
+                                    <button onClick={guardarCorreccionPrecio} disabled={guardandoCorr} style={{ ...btn, background: AZUL, color: 'white', borderColor: AZUL, opacity: guardandoCorr ? 0.5 : 1 }}>{guardandoCorr ? 'Guardando...' : 'Guardar corrección'}</button>
+                                    <button onClick={() => setCorrige(null)} style={btn}>Cancelar</button>
+                                    {corrige.guias.length > 1 && <button onClick={() => { setCorrige(c => ({ ...c, sel: null })); setCorrPrecio('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: '12px', color: AZUL }}>← Elegir otra guía</button>}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })() : (Array.isArray(lotesRange[m.producto_id]) && lotesRange[m.producto_id].length > 0) ? (() => {
@@ -1891,9 +2026,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     ) : (() => {
                       // Si estamos en "Por fechas" y no hay conteo dentro del rango, el
                       // detalle correcto es el flujo (arriba); si aún no cargó, esperamos.
-                      const _cRango = lotesMov[m.producto_id].find(r => r.es_conteo && r.fecha && (!desde || r.fecha >= desde))
+                      const _cRango = lotesMov[m.producto_id].find(r => r.es_conteo && !r.informativo && r.fecha && (!desde || r.fecha >= desde))
                       if (!_cRango && desde) return <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
-                      const rows = [...lotesMov[m.producto_id]].sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                      const rows = lotesMov[m.producto_id].filter(r => !r.informativo).sort((a, b) => ((a.fecha || '0') !== (b.fecha || '0') ? ((a.fecha || '0') < (b.fecha || '0') ? -1 : 1) : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const tEntro = rows.reduce((s, r) => s + Number(r.entro || 0), 0)
                       const tCons = rows.reduce((s, r) => s + Number(r.consumio || 0), 0)
@@ -1911,7 +2046,20 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       // conteo del rango (fn_reporte_consumo_lotes), cada uno a su
                       // precio. Así el Total cuadra con el consumo del renglón.
                       const conteoRow = rows.find(r => r.es_conteo)
-                      const pre = lotesPre[m.producto_id] || []
+                      // Tramo pre-conteo ITEMIZADO por compra: se reparte el consumo
+                      // pre-conteo (preConsTotal, por precio y ya cuadrado con el renglón)
+                      // FIFO entre el Inicial y cada compra anterior al conteo (filas
+                      // informativo de fn_lotes_movimiento_bal). Si no hay audit, cae al
+                      // viejo desglose por precio (fallback).
+                      const preByPrice = lotesPre[m.producto_id] || []
+                      const preConsTotal = preByPrice.reduce((s, x) => s + Number(x.sacos || 0), 0)
+                      const audit = (lotesMov[m.producto_id] || []).filter(r => r.informativo)
+                        .sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : ((a.fecha || '0') > (b.fecha || '0') ? 1 : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
+                      const preAudit = audit.filter(r => !conteoRow || !conteoRow.fecha || !r.fecha || r.fecha < conteoRow.fecha)
+                      let _preRem = preConsTotal
+                      const pre = preAudit.length > 0
+                        ? preAudit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_preRem, ent)); _preRem -= c; return { fecha: r.es_conteo ? null : r.fecha, precio: r.costo_unitario, sacos: c } }).filter(x => x.sacos > 0.0001)
+                        : preByPrice.map(x => ({ fecha: x.fecha || null, precio: x.precio, sacos: Number(x.sacos || 0) }))
                       const preSacos = pre.reduce((s, x) => s + Number(x.sacos || 0), 0)
                       const preCosto = pre.reduce((s, x) => s + Number(x.sacos || 0) * Number(x.precio || 0), 0)
                       const hayPre = pre.length > 0 && preSacos > 0.01
@@ -1948,6 +2096,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                   </Fragment>
                                 ))}
                               </Fragment>
+                            )}
+                            {hayPre && conteoRow && (
+                              <div style={{ gridColumn: '1 / -1', fontSize: '10px', fontWeight: 600, color: GRIS, textTransform: 'uppercase', letterSpacing: '.03em', marginTop: '6px' }}>
+                                Desde el conteo {conteoRow.fecha ? corta(conteoRow.fecha) : ''} · reinicia el FIFO
+                              </div>
                             )}
                             {rows.map((r, i) => {
                               const ck = m.producto_id + '|' + r.fecha
