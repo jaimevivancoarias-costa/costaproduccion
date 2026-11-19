@@ -6,6 +6,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
+import FlechasPeriodo from '../components/FlechasPeriodo'
 import TarjetaBajas from '../components/TarjetaBajas'
 import TarjetaCierres from '../components/TarjetaCierres'
 
@@ -1406,6 +1407,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                   ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
                 ) : (
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
+                    <FlechasPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setAplicando(true); setDesde(d); setHasta(h) }} />
                     del <input type="date" value={fDesde} max={fHasta} onChange={e => setFDesde(e.target.value)} style={inp} />
                     al <input type="date" value={fHasta} min={fDesde} max={hoyISO()} onChange={e => setFHasta(e.target.value)} style={inp} />
                     <button onClick={() => { if (fDesde && fHasta) { setAplicando(true); setDesde(fDesde); setHasta(fHasta) } }}
@@ -2849,6 +2851,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
         <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
         <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
         <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
+        <FlechasPeriodo desde={desde} hasta={hasta} conEtiqueta={false} onCambiar={(d, h) => { setDesde(d); setHasta(h) }} />
         <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
         <GhostBtn on={desde === primeroDelMes(hoyISO()) && hasta === hoyISO()} onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
         <GhostBtn on={desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)} onClick={() => { setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>

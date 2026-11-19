@@ -7,6 +7,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
+import FlechasPeriodo from '../components/FlechasPeriodo'
 import TarjetaBajas from '../components/TarjetaBajas'
 import TarjetaCierres from '../components/TarjetaCierres'
 
@@ -1996,6 +1997,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                 ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
               ) : (
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FlechasPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setAplicando(true); setDesde(d); setHasta(h) }} />
                   <span style={{ fontSize: '13px', color: GRIS }}>del</span>
                   <input type="date" value={fDesde} max={fHasta}
                          onChange={e => setFDesde(e.target.value)} style={entrada} />

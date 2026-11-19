@@ -5,6 +5,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { Seg } from '../components/controles'
+import FlechasPeriodo from '../components/FlechasPeriodo'
 import TarjetaBajas from '../components/TarjetaBajas'
 
 // Diesel unificado · dos subsecciones:
@@ -742,6 +743,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
           <input type="date" value={desde} max={hasta} onChange={e => setPer({ tipo: 'custom', desde: e.target.value, hasta })} style={inp} />
           <span style={{ fontSize: '13px', color: GRIS }}>a</span>
           <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setPer({ tipo: 'custom', desde, hasta: e.target.value })} style={inp} />
+          <FlechasPeriodo desde={desde} hasta={hasta} conEtiqueta={false}
+            onCambiar={(d, h, t) => setPer(t === 'mes' || t === 'semana' ? { tipo: t, ancla: d } : { tipo: 'custom', desde: d, hasta: h })} />
           {chips.map(([id, txt]) => {
             const on = chipActivo === id
             return (

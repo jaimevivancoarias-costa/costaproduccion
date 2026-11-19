@@ -5,6 +5,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { Seg, GhostBtn } from '../components/controles'
+import FlechasPeriodo from '../components/FlechasPeriodo'
 
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
@@ -235,6 +236,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
         <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
         <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
+        <FlechasPeriodo desde={desde} hasta={hasta} conEtiqueta={false} onCambiar={(d, h) => { setDesde(d); setHasta(h) }} />
         <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
         <GhostBtn on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</GhostBtn>
         <GhostBtn on={desde === primerMesPasado() && hasta === finMesPasado()} onClick={() => { setDesde(primerMesPasado()); setHasta(finMesPasado()) }}>Mes pasado</GhostBtn>
