@@ -12,7 +12,62 @@ const NAVY = '#022847', GRIS = '#7d8fa0', BORDE = '#dce6ef', AZUL = '#0D6CB0'
 const ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#854F0B'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
-const finDeMes = iso => { const [y, m] = iso.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }
+const num = v => (Math.round(Math.abs(v) * 100) / 100).toLocaleString('es-EC', { maximumFractionDigits: 2 })
+const signo = v => (v > 0 ? '+' : v < 0 ? '−' : '')
+
+// Explica en palabras de dónde sale el $ de cada producto.
+function explicar(f) {
+  const q = Number(f.cantidad) || 0, qr = Number(f.cant_real) || 0, v = Number(f.valor) || 0
+  if (f.detalle) {
+    if (Math.abs(qr - q) < 0.01) return { txt: f.detalle }
+    return { txt: f.detalle, nota: `En el saldo real la diferencia quedó en ${signo(qr)}${num(qr)}: la alimentación de ese día se corrigió después de contar.` }
+  }
+  if (Math.abs(v) < 1) return { centavos: true }
+  if (Math.abs(qr) >= 0.01) return { txt: `Diferencia de ${signo(qr)}${num(qr)} sin conteo: se corrigió la alimentación después del conteo.` }
+  return { txt: 'Ningún conteo ni baja lo explica. Hay que revisarlo.', revisar: true }
+}
+
+function DesgloseAjuste({ filas, total, mes }) {
+  const caja = { margin: '0 16px 12px', background: '#f8fafc', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 14px' }
+  if (!filas) return <div style={{ ...caja, fontSize: '12.5px', color: GRIS }}>Cargando de dónde sale…</div>
+  if (filas.error) return <div style={{ ...caja, fontSize: '12.5px', color: ROJO }}>No se pudo cargar el detalle. {filas.error}</div>
+  const lineas = filas.map(f => ({ ...f, ...explicar(f) }))
+  const normales = lineas.filter(l => !l.centavos)
+  const cent = lineas.filter(l => l.centavos)
+  const sumCent = cent.reduce((s, l) => s + Number(l.valor), 0)
+  const colorV = v => (v < 0 ? ROJO : v > 0 ? AMBAR : GRIS)
+  const fila = { display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 2fr) 110px', gap: '12px', padding: '6px 0', alignItems: 'baseline', fontSize: '12.5px' }
+  return (
+    <div style={caja}>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '4px' }}>
+        Ajuste de {mes}: lo que los conteos encontraron de más o de menos, y las bajas, valorizado al costo real.
+      </div>
+      {normales.map(l => (
+        <div key={l.producto_id} style={{ ...fila, borderTop: '0.5px solid #eef2f6' }}>
+          <span style={{ color: NAVY, fontWeight: 600 }}>{l.producto}</span>
+          <span style={{ color: l.revisar ? AMBAR : '#3d5266' }}>
+            {l.txt}
+            {l.nota && <span style={{ display: 'block', color: GRIS, fontSize: '11.5px' }}>{l.nota}</span>}
+          </span>
+          <span style={{ textAlign: 'right', color: colorV(Number(l.valor)), fontVariantNumeric: 'tabular-nums' }}>{signo(Number(l.valor))}{dinero(Math.abs(Number(l.valor)))}</span>
+        </div>
+      ))}
+      {cent.length > 0 && Math.abs(sumCent) >= 0.005 && (
+        <div style={{ ...fila, borderTop: '0.5px solid #eef2f6' }}>
+          <span style={{ color: GRIS }}>Otros ({cent.length})</span>
+          <span style={{ color: GRIS }}>Centavos de redondeo del precio</span>
+          <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{signo(sumCent)}{dinero(Math.abs(sumCent))}</span>
+        </div>
+      )}
+      <div style={{ ...fila, borderTop: '0.5px solid ' + BORDE, fontWeight: 700 }}>
+        <span style={{ color: NAVY }}>Total</span><span />
+        <span style={{ textAlign: 'right', color: colorV(total), fontVariantNumeric: 'tabular-nums' }}>{signo(total)}{dinero(Math.abs(total))}</span>
+      </div>
+    </div>
+  )
+}
+
+const finDeMes =iso => { const [y, m] = iso.split('-').map(Number); return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) }
 
 export default function TarjetaCierres({ fincaId, fn, esJefe }) {
   const [abierto, setAbierto] = useState(false)
@@ -31,6 +86,20 @@ export default function TarjetaCierres({ fincaId, fn, esJefe }) {
     })
     return () => { vivo = false }
   }, [abierto, filas, error, fincaId, fn])
+
+  // Flechita en "Ajustes": desglose por producto (de qué conteo/baja sale cada $).
+  // fn_cierres_mes_bal → fn_cierre_ajuste_detalle_bal; fn_cierres_mes_insumo → ..._insumo.
+  const [abiertoAj, setAbiertoAj] = useState(null)   // r.desde del mes abierto
+  const [detalles, setDetalles] = useState({})      // desde → filas | {error}
+  useEffect(() => { setAbiertoAj(null); setDetalles({}) }, [fincaId, fn])
+  const verAjuste = r => {
+    if (abiertoAj === r.desde) { setAbiertoAj(null); return }
+    setAbiertoAj(r.desde)
+    if (detalles[r.desde]) return
+    supabase.schema('produccion').rpc(fn.replace('fn_cierres_mes_', 'fn_cierre_ajuste_detalle_'),
+      { p_finca: fincaId, p_desde: r.desde, p_hasta: r.hasta })
+      .then(({ data, error: e }) => setDetalles(d => ({ ...d, [r.desde]: e ? { error: e.message } : (data || []) })))
+  }
 
   if (!esJefe) return null
   const hayDev = (filas || []).some(r => Math.abs(Number(r.devoluciones) || 0) > 0.005)
@@ -89,12 +158,20 @@ export default function TarjetaCierres({ fincaId, fn, esJefe }) {
                       {hayDev && <span style={{ ...cel, color: ROJO }}>{Math.abs(Number(r.devoluciones)) > 0.005 ? '−' + dinero(Number(r.devoluciones)) : '—'}</span>}
                       <span style={{ ...cel, color: ROJO }}>{Number(r.consumo) ? '−' + dinero(Number(r.consumo)) : '—'}</span>
                       <span style={{ ...cel, color: Math.abs(aj) < 0.005 ? '#c3d0db' : (aj < 0 ? ROJO : AMBAR) }}>
-                        {Math.abs(aj) < 0.005 ? '—' : (aj > 0 ? '+' : '−') + dinero(Math.abs(aj))}
+                        {Math.abs(aj) < 0.005 ? '—' : (
+                          <button onClick={() => verAjuste(r)} title="Ver de dónde sale"
+                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit',
+                                     fontSize: '13px', color: 'inherit', fontVariantNumeric: 'tabular-nums' }}>
+                            {(aj > 0 ? '+' : '−') + dinero(Math.abs(aj))}
+                            <span style={{ color: GRIS, fontSize: '11px', marginLeft: '4px' }}>{abiertoAj === r.desde ? '▾' : '▸'}</span>
+                          </button>
+                        )}
                       </span>
                       <span style={{ ...cel, fontWeight: 700, color: NAVY }}>
                         <span style={i < filas.length - 1 ? enlace : undefined}>{dinero(Number(r.termina))}</span>
                       </span>
                     </div>
+                    {abiertoAj === r.desde && <DesgloseAjuste filas={detalles[r.desde]} total={aj} mes={`${MESES[m].toLowerCase()}`} />}
                   </Fragment>
                 )
               })}
