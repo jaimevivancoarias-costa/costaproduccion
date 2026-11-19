@@ -201,7 +201,8 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // uno (Diseño A, Por fechas), para que el ▸ y "Antes del conteo" salgan ya.
   useEffect(() => {
     if (modoMov !== 'fechas') { setConteosRango({}); setSaldoAntes({}); return }
-    const cs = conteos.filter(c => c.fecha > desde && c.fecha <= hasta).sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    // Incluye el conteo del PRIMER día del rango: su sobró/faltó es de este período.
+    const cs = conteos.filter(c => c.fecha >= desde && c.fecha <= hasta).sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
     if (!cs.length) { setConteosRango({}); setSaldoAntes({}); return }
     let vivo = true
     ;(async () => {
@@ -253,7 +254,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const anclaInicio = m => {
     if (m.conteo === null || m.conteo === undefined) return false
     const c = conteoQuien[m.insumo_id]
-    if (c && c.fecha === desde) return true
+    // Por fechas: el Saldo Ini. es SIEMPRE el cierre del día anterior (como terminó el
+    // mes anterior empieza el siguiente) y un conteo el primer día va en "Ajuste conteo"
+    // de ESTE mes (decisión Melany, caso Marexport 01/10). Solo se ancla al inventario
+    // INICIAL (antes no había nada). Por conteo: el período arranca en el conteo → se ancla.
+    if (modoMov !== 'fechas' && c && c.fecha === desde) return true
     if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
     return false
   }

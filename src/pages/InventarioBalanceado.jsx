@@ -149,7 +149,8 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // saldo la víspera de cada uno, para que el ▸ salga al instante.
   useEffect(() => {
     if (modoMov !== 'fechas') { setConteosRango({}); setSaldoAntes({}); return }
-    const ts = tomas.filter(t => t.fecha > desde && t.fecha <= hasta).sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
+    // Incluye el conteo del PRIMER día del rango: su sobró/faltó es de este período.
+    const ts = tomas.filter(t => t.fecha >= desde && t.fecha <= hasta).sort((a, b) => (a.fecha < b.fecha ? -1 : 1))
     if (!ts.length) { setConteosRango({}); setSaldoAntes({}); return }
     let vivo = true
     ;(async () => {
@@ -374,7 +375,11 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const anclaInicio = m => {
     if (m.conteo === null) return false
     const c = conteoQuien[m.producto_id]
-    if (c && c.fecha === desde) return true
+    // Por fechas: el Saldo Ini. es SIEMPRE el cierre del día anterior (como terminó el
+    // mes anterior empieza el siguiente) y un conteo el primer día va en "Ajuste conteo"
+    // de ESTE mes (decisión Melany, caso Marexport 01/10). Solo se ancla al inventario
+    // INICIAL (antes no había nada). Por conteo: el período arranca en el conteo → se ancla.
+    if (modoMov !== 'fechas' && c && c.fecha === desde) return true
     if (c?.esInicial && Math.abs(Number(m.saldo_inicial)) < 0.0001) return true
     return false
   }
