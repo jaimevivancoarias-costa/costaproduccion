@@ -2121,13 +2121,19 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   const csP = conteosRango[m.insumo_id] || []
                   const ultC = csP[csP.length - 1]
                   const dif = (hayCont && ultC && !ultC.esInicial && ultC.dif != null) ? Number(ultC.dif) : null
-                  const hayAj = Math.abs(sAjuste) >= 0.0001
+                  // Ajuste conteo = lo que faltó/sobró en los conteos (y bajas) SIN la devolución
+                  // al proveedor, que se muestra aparte ("Devuelto") en la misma celda.
+                  const dev = Number(m.devuelto) || 0
+                  const ajC = sAjuste + dev
+                  const hayAj = Math.abs(ajC) >= 0.0001
+                  const hayDev = dev >= 0.0001
                   return (
                     <>
-                      <Celda derecha color={hayAj ? (sAjuste < 0 ? ROJO : AMBAR) : '#c3d0db'}>
-                        {!hayAj ? '—' : <>
-                          <div>{(sAjuste > 0 ? '+' : '−') + val(Math.abs(sAjuste))}</div>
-                          {esJefe && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>{dinero(sAjuste * precioFifoDe(m.insumo_id))}</span>}
+                      <Celda derecha color={hayAj ? (ajC < 0 ? ROJO : AMBAR) : '#c3d0db'}>
+                        {!hayAj && !hayDev ? '—' : <>
+                          <div>{hayAj ? (ajC > 0 ? '+' : '−') + val(Math.abs(ajC)) : '—'}</div>
+                          {esJefe && hayAj && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>{dinero(ajC * precioFifoDe(m.insumo_id))}</span>}
+                          {hayDev && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: ROJO }}>Devuelto {val(dev)}</span>}
                         </>}
                       </Celda>
                       <Celda derecha fuerte={hayCont} color={hayCont ? AZUL : '#c3d0db'}>

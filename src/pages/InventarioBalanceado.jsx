@@ -1715,13 +1715,19 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     const csP = conteosRango[m.producto_id] || []
                     const ultC = csP[csP.length - 1]
                     const dif = (hayCont && ultC && !ultC.esInicial && ultC.dif != null) ? Number(ultC.dif) : null
-                    const hayAj = Math.abs(sAjuste) >= 0.001
+                    // Ajuste conteo = lo que faltó/sobró en los conteos (y bajas) SIN la devolución
+                    // al proveedor, que se muestra aparte ("Devuelto") en la misma celda.
+                    const dev = Number(m.devuelto) || 0
+                    const ajC = sAjuste + dev
+                    const hayAj = Math.abs(ajC) >= 0.001
+                    const hayDev = dev >= 0.001
                     return (
                       <>
-                        <Cel der color={hayAj ? (sAjuste < 0 ? ROJO : AMBAR) : '#c3d0db'}>
-                          {!hayAj ? '—' : <>
-                            <div>{(sAjuste > 0 ? '+' : '−') + limpio(Math.abs(sAjuste))}</div>
-                            {esJefe && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>{dinero(sAjuste * precioFifoDe(m.producto_id))}</span>}
+                        <Cel der color={hayAj ? (ajC < 0 ? ROJO : AMBAR) : '#c3d0db'}>
+                          {!hayAj && !hayDev ? '—' : <>
+                            <div>{hayAj ? (ajC > 0 ? '+' : '−') + limpio(Math.abs(ajC)) : '—'}</div>
+                            {esJefe && hayAj && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>{dinero(ajC * precioFifoDe(m.producto_id))}</span>}
+                            {hayDev && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: ROJO }}>Devuelto {limpio(dev)}</span>}
                           </>}
                         </Cel>
                         <Cel der fuerte={hayCont} color={hayCont ? AZUL : '#c3d0db'}>
@@ -2333,11 +2339,6 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
             </div>
           )}
 
-          {!contando && modoMov === 'fechas' && movs.length > 0 && (
-            <div style={{ fontSize: '12px', color: GRIS, marginTop: '10px', lineHeight: 1.55 }}>
-              <b style={{ fontWeight: 600, color: NAVY }}>{colFinal}</b> es el saldo al <b style={{ fontWeight: 600 }}>final del rango</b> que elegiste (no el de hoy): cambia según las fechas. Cuadra con <i>Saldo ini + Ingresos − Consumo</i>; si dentro del rango hubo un conteo con descuadre (por ejemplo un robo), el saldo refleja ese conteo físico.
-            </div>
-          )}
 
           {negativos > 0 && (
             <Nota color={ROJO} bg="#FBEAEA">
