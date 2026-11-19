@@ -87,8 +87,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const [verSinInv, setVerSinInv] = useState(false)  // mostrar también los insumos sin inventario
   const [unidadMov, setUnidadMov] = useState('compra')  // 'compra' | 'aplica' — en qué unidad ver "Qué se movió"
   const [unidadSaldo, setUnidadSaldo] = useState('compra')  // 'compra' | 'aplica' — en qué unidad ver "Cuánto hay"
-  const [recosForm, setRecosForm] = useState(null)   // insumo_id con la confirmación de recosteo abierta
-  const [recosteando, setRecosteando] = useState(false)
   const [desglose, setDesglose] = useState({})     // insumoId -> [{plazo, cantidad, valor}]
   const [abierto, setAbierto] = useState(null)     // insumoId con desglose expandido
   const [movDet, setMovDet] = useState(null)       // insumoId con el detalle por lote abierto en "Qué se movió"
@@ -1206,19 +1204,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       if (e2) throw e2
       setIniForm(null); setAviso({ tipo: 'ok', texto: 'Inventario inicial cargado como conteo inicial.' }); await cargar()
     } catch (err) { setAviso({ tipo: 'error', texto: 'No se pudo cargar. ' + (err.message || '') }) }
-  }
-
-  // Recostear un insumo: sus lotes y su consumo pasan al precio que rige
-  // (los lotes conservan su fecha de compra; cambia precio y plazo). Manual.
-  async function recostear(f) {
-    setRecosteando(true)
-    const { error } = await supabase.schema('produccion')
-      .rpc('fn_recostear_producto_finca_insumo', { p_finca: finca.id, p_insumo: f.insumo_id })
-    setRecosteando(false)
-    if (error) { setAviso({ tipo: 'error', texto: 'No se pudo recostear. ' + error.message }); return }
-    setRecosForm(null)
-    setAviso({ tipo: 'ok', texto: `${f.insumo} recosteado al precio que rige.` })
-    await cargar()
   }
 
   // Detalle por lote en "Qué se movió": entró / consumió / queda por lote,
@@ -2625,23 +2610,6 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                   </div>
                   )
                 })()}
-
-                {recosForm === f.insumo_id && (
-                  <div style={{ background: '#f6f9fb', padding: '13px 16px', borderBottom: '0.5px solid #f1f6f9' }}>
-                    <div style={{ fontSize: '13px', color: NAVY, marginBottom: '6px' }}>
-                      Recostear <b>{f.insumo}</b> al precio que rige: <b>{dineroU(ruling)}</b> /{cap1(UNIDAD[f.unidad] || f.unidad)}.
-                    </div>
-                    <div style={{ fontSize: '12px', color: GRIS, marginBottom: '11px', lineHeight: 1.5 }}>
-                      Los lotes a otro precio (o sin precio) pasan a {dineroU(ruling)} (mantienen su fecha de compra; cambia precio y plazo) y se recostea el consumo de este insumo. Es re-ejecutable, pero no se deshace solo.
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <Btn primario onClick={() => recostear(f)} disabled={recosteando}>
-                        {recosteando ? 'Recosteando...' : `Recostear a ${dineroU(ruling)}`}
-                      </Btn>
-                      <Btn onClick={() => setRecosForm(null)}>Mantener</Btn>
-                    </div>
-                  </div>
-                )}
 
                 {iniForm?.insumoId === f.insumo_id && (
                   <div style={{ background: '#f6f9fb', padding: '12px 16px', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
