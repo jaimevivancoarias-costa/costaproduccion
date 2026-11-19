@@ -54,12 +54,8 @@ function DesgloseAjuste({ filas, total, mes }) {
   const fila = { display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 2fr) 110px', gap: '12px', padding: '6px 0', alignItems: 'baseline', fontSize: '12.5px' }
   return (
     <div style={caja}>
-      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '4px' }}>
-        Ajuste de {mes}: la diferencia entre lo que el sistema tenía y lo que se contó en la bodega (más las bajas), en $ al costo real.
-      </div>
-      <div style={{ fontSize: '12px', marginBottom: '6px' }}>
-        <span style={{ color: ROJO, fontWeight: 600 }}>−</span><span style={{ color: GRIS }}> faltó: había menos de lo que decía el sistema · </span>
-        <span style={{ color: AMBAR, fontWeight: 600 }}>+</span><span style={{ color: GRIS }}> sobró: había más de lo que decía el sistema</span>
+      <div style={{ fontSize: '12px', color: GRIS, marginBottom: '6px' }}>
+        Ajuste de {mes}: lo que <span style={{ color: ROJO, fontWeight: 600 }}>faltó (−)</span> o <span style={{ color: AMBAR, fontWeight: 600 }}>sobró (+)</span> al contar la bodega, y las bajas.
       </div>
       {normales.map(l => (
         <div key={l.producto_id} style={{ ...fila, borderTop: '0.5px solid #eef2f6' }}>
