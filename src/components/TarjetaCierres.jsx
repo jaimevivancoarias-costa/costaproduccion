@@ -18,8 +18,10 @@ const signo = v => (v > 0 ? '+' : v < 0 ? '−' : '')
 // Explica en palabras de dónde sale el $ de cada producto.
 function explicar(f) {
   const q = Number(f.cantidad) || 0, qr = Number(f.cant_real) || 0, v = Number(f.valor) || 0
-  // Menos de 10 centavos: no se lista (Melany); se suma en la línea de centavos.
+  // Menos de 10 centavos, o la cantidad cuadró y solo es diferencia de precio de
+  // menos de $1: no se lista (Melany: "si cuadró no debería salir"). Va a la línea gris.
   if (Math.abs(v) < 0.10) return { centavos: true }
+  if (Math.abs(qr) < 0.005 && Math.abs(v) < 1 && !/Baja/.test(f.detalle || '')) return { centavos: true }
   if (f.detalle) {
     // Bajas (robo/merma) solas: se muestran tal cual, son explícitas.
     const soloBaja = !/Conteo/.test(f.detalle)
@@ -72,7 +74,7 @@ function DesgloseAjuste({ filas, total, mes }) {
       {cent.length > 0 && Math.abs(sumCent) >= 0.005 && (
         <div style={{ ...fila, borderTop: '0.5px solid #eef2f6' }}>
           <span style={{ color: GRIS }}>Centavos</span>
-          <span style={{ color: GRIS }}>Diferencias menores a 10 centavos ({cent.length} {cent.length === 1 ? 'producto' : 'productos'})</span>
+          <span style={{ color: GRIS }}>Redondeo de precio, la cantidad cuadró ({cent.length} {cent.length === 1 ? 'producto' : 'productos'})</span>
           <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{signo(sumCent)}{dinero(Math.abs(sumCent))}</span>
         </div>
       )}
@@ -94,28 +96,39 @@ export default function TarjetaCierres({ fincaId, fn, esJefe }) {
   // Al cambiar de finca se descarta lo cargado (se vuelve a pedir al abrir).
   useEffect(() => { setFilas(null); setError(null) }, [fincaId, fn])
 
+  // Se precarga en segundo plano apenas entra la pantalla (1,5 s después, para no
+  // competir con la carga principal). Así al abrir la tarjeta ya está lista.
   useEffect(() => {
-    if (!abierto || filas || error) return
+    if (!esJefe || filas || error) return
     let vivo = true
-    supabase.schema('produccion').rpc(fn, { p_finca: fincaId }).then(({ data, error: e }) => {
-      if (!vivo) return
-      if (e) setError(e.message); else setFilas(data || [])
-    })
-    return () => { vivo = false }
-  }, [abierto, filas, error, fincaId, fn])
+    const t = setTimeout(() => {
+      supabase.schema('produccion').rpc(fn, { p_finca: fincaId }).then(({ data, error: e }) => {
+        if (!vivo) return
+        if (e) setError(e.message); else setFilas(data || [])
+      })
+    }, abierto ? 0 : 1500)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [abierto, esJefe, filas, error, fincaId, fn])
 
   // Flechita en "Ajustes": desglose por producto (de qué conteo/baja sale cada $).
   // fn_cierres_mes_bal → fn_cierre_ajuste_detalle_bal; fn_cierres_mes_insumo → ..._insumo.
   const [abiertoAj, setAbiertoAj] = useState(null)   // r.desde del mes abierto
   const [detalles, setDetalles] = useState({})      // desde → filas | {error}
   useEffect(() => { setAbiertoAj(null); setDetalles({}) }, [fincaId, fn])
+  const pedirDetalle = r => supabase.schema('produccion').rpc(fn.replace('fn_cierres_mes_', 'fn_cierre_ajuste_detalle_'),
+      { p_finca: fincaId, p_desde: r.desde, p_hasta: r.hasta })
+      .then(({ data, error: e }) => setDetalles(d => ({ ...d, [r.desde]: e ? { error: e.message } : (data || []) })))
+  // Al abrir la tarjeta se precargan los desgloses de todos los meses (de a uno).
+  useEffect(() => {
+    if (!abierto || !filas) return
+    let vivo = true
+    ;(async () => { for (const r of filas) { if (!vivo) return; if (Math.abs(Number(r.ajuste)) >= 0.005 && !detalles[r.desde]) await pedirDetalle(r) } })()
+    return () => { vivo = false }
+  }, [abierto, filas])  // eslint-disable-line react-hooks/exhaustive-deps
   const verAjuste = r => {
     if (abiertoAj === r.desde) { setAbiertoAj(null); return }
     setAbiertoAj(r.desde)
-    if (detalles[r.desde]) return
-    supabase.schema('produccion').rpc(fn.replace('fn_cierres_mes_', 'fn_cierre_ajuste_detalle_'),
-      { p_finca: fincaId, p_desde: r.desde, p_hasta: r.hasta })
-      .then(({ data, error: e }) => setDetalles(d => ({ ...d, [r.desde]: e ? { error: e.message } : (data || []) })))
+    if (!detalles[r.desde]) pedirDetalle(r)
   }
 
   if (!esJefe) return null
