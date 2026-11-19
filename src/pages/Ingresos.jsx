@@ -129,6 +129,16 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
     const i = insumos.find(x => x.id === id)
     return i ? (UNIDAD[i.unidad_compra] || cap1(i.unidad_compra)) : ''
   }
+  // Cómo se APLICA (unidad del catálogo: g, mL, L…) y cuántas trae cada unidad de compra.
+  const aplicaInsumo = id => {
+    const i = insumos.find(x => x.id === id)
+    if (!i) return null
+    const f = Number(i.factor) || 1
+    const uA = i.unidad || i.unidad_compra
+    if (uA === i.unidad_compra && f === 1) return null
+    return { f, u: UNIDAD[uA] || cap1(uA) }
+  }
+  const precioFino = n => '$' + Number(n).toLocaleString('es-EC', { minimumFractionDigits: 2, maximumFractionDigits: Math.abs(n) >= 1 ? 2 : 5 })
 
   // Filtro por insumo (por nombre). Afecta la lista y el reporte.
   const ingresosF = ingresos.filter(g => !filtroIns || (g.ingreso_insumo_linea || []).some(l => nombreInsumo(l.insumo_id) === filtroIns))
@@ -155,6 +165,8 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           proveedor: i === 0 ? (g.proveedor || '') : '',
           insumo: nombreInsumo(l.insumo_id),
           cantidad: `${miles(numDec(l.cantidad))} ${unidadInsumo(l.insumo_id)}`,
+          aplica: (a => a ? `${miles(numDec(l.cantidad) * a.f)} ${a.u}` : '')(aplicaInsumo(l.insumo_id)),
+          precioAplica: (a => a && l.costo_unitario != null ? `${precioFino(Number(l.costo_unitario) / a.f)} / ${a.u.replace(/(es|s)$/, '')}` : '')(aplicaInsumo(l.insumo_id)),
           plazo: l.plazo != null ? (PLAZO_LBL[l.plazo] || '') : '',
           precio: l.costo_unitario != null ? dinero(Number(l.costo_unitario)) : 'sin precio',
           total: l.costo_unitario != null ? dinero(numDec(l.cantidad) * Number(l.costo_unitario)) : '',
@@ -177,13 +189,14 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
           { titulo: 'Guía', campo: 'guia' },
           { titulo: 'Proveedor', campo: 'proveedor' },
           { titulo: 'Insumo', campo: 'insumo' },
-          { titulo: 'Cantidad', der: true, campo: 'cantidad' },
+          { titulo: 'Llega', der: true, campo: 'cantidad' },
+          { titulo: 'Se aplica', der: true, campo: 'aplica' },
           { titulo: 'Plazo', campo: 'plazo' },
-          ...(esJefe ? [{ titulo: 'Precio', der: true, campo: 'precio' }, { titulo: 'Total $', der: true, campo: 'total' }] : []),
+          ...(esJefe ? [{ titulo: 'Precio compra', der: true, campo: 'precio' }, { titulo: 'Precio aplicado', der: true, campo: 'precioAplica' }, { titulo: 'Total $', der: true, campo: 'total' }] : []),
           { titulo: 'Registró', campo: 'registro' },
         ],
         filas: filasIng,
-        total: { fecha: '', guia: '', proveedor: '', insumo: 'Total ingresos', cantidad: `${nItems} ítems`, plazo: '', precio: '', total: esJefe ? dinero(totalIng) : '', registro: '' },
+        total: { fecha: '', guia: '', proveedor: '', insumo: 'Total ingresos', cantidad: `${nItems} ítems`, aplica: '', plazo: '', precio: '', precioAplica: '', total: esJefe ? dinero(totalIng) : '', registro: '' },
       },
       {
         titulo: 'Devoluciones',
@@ -212,7 +225,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
         { k: 'Impreso', v: corta(hoyISO()) },
       ],
       cards, bloques,
-      pie: 'Los ingresos se listan una fila por insumo de cada guía. Las cantidades están en unidad de compra (Funda, Envase, Saco).',
+      pie: 'Los ingresos se listan una fila por insumo de cada guía. «Llega» es la unidad de compra (funda, tambor, saco) y «Se aplica» la misma cantidad en la unidad con que se consume (g, mL, L). «Precio aplicado» = precio de compra ÷ contenido de cada unidad (ej. funda 1 kg a $36,98 → $0,03698 / gramo).',
     }
   }
   function exportarExcel() { reporteBodegaExcel(construirReporte()) }
