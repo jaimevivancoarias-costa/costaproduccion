@@ -18,6 +18,8 @@ const signo = v => (v > 0 ? '+' : v < 0 ? '−' : '')
 // Explica en palabras de dónde sale el $ de cada producto.
 function explicar(f) {
   const q = Number(f.cantidad) || 0, qr = Number(f.cant_real) || 0, v = Number(f.valor) || 0
+  // Menos de 10 centavos: no se lista (Melany); se suma en la línea de centavos.
+  if (Math.abs(v) < 0.10) return { centavos: true }
   if (f.detalle) {
     // Bajas (robo/merma) solas: se muestran tal cual, son explícitas.
     const soloBaja = !/Conteo/.test(f.detalle)
@@ -69,8 +71,8 @@ function DesgloseAjuste({ filas, total, mes }) {
       ))}
       {cent.length > 0 && Math.abs(sumCent) >= 0.005 && (
         <div style={{ ...fila, borderTop: '0.5px solid #eef2f6' }}>
-          <span style={{ color: GRIS }}>Otros ({cent.length})</span>
-          <span style={{ color: GRIS }}>Centavos de redondeo del precio</span>
+          <span style={{ color: GRIS }}>Centavos</span>
+          <span style={{ color: GRIS }}>Diferencias menores a 10 centavos ({cent.length} {cent.length === 1 ? 'producto' : 'productos'})</span>
           <span style={{ textAlign: 'right', color: GRIS, fontVariantNumeric: 'tabular-nums' }}>{signo(sumCent)}{dinero(Math.abs(sumCent))}</span>
         </div>
       )}
