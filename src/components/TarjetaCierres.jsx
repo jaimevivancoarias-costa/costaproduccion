@@ -18,12 +18,13 @@ const signo = v => (v > 0 ? '+' : v < 0 ? '−' : '')
 // Explica en palabras de dónde sale el $ de cada producto.
 function explicar(f) {
   const q = Number(f.cantidad) || 0, qr = Number(f.cant_real) || 0, v = Number(f.valor) || 0
+  const descuadre = `Pero la diferencia real es ${signo(qr)}${num(qr)}. No coincide con el conteo porque hay una guía o un consumo del mismo día del conteo, o cargado después con fecha anterior.`
   if (f.detalle) {
-    if (Math.abs(qr - q) < 0.01) return { txt: f.detalle }
-    return { txt: f.detalle, nota: `En el saldo real la diferencia quedó en ${signo(qr)}${num(qr)}: la alimentación de ese día se corrigió después de contar.` }
+    if (Math.abs(qr - q) < 0.01 || Math.abs(v) < 1) return { txt: f.detalle }
+    return { txt: f.detalle, nota: descuadre, revisar: true }
   }
   if (Math.abs(v) < 1) return { centavos: true }
-  if (Math.abs(qr) >= 0.01) return { txt: `Diferencia de ${signo(qr)}${num(qr)} sin conteo: se corrigió la alimentación después del conteo.` }
+  if (Math.abs(qr) >= 0.01) return { txt: `Sin conteo en el mes. Diferencia real ${signo(qr)}${num(qr)}: hay una guía o un consumo cargado después con fecha anterior.`, revisar: true }
   return { txt: 'Ningún conteo ni baja lo explica. Hay que revisarlo.', revisar: true }
 }
 
@@ -40,7 +41,11 @@ function DesgloseAjuste({ filas, total, mes }) {
   return (
     <div style={caja}>
       <div style={{ fontSize: '12px', color: GRIS, marginBottom: '4px' }}>
-        Ajuste de {mes}: lo que los conteos encontraron de más o de menos, y las bajas, valorizado al costo real.
+        Ajuste de {mes}: la diferencia entre lo que el sistema tenía y lo que se contó en la bodega (más las bajas), en $ al costo real.
+      </div>
+      <div style={{ fontSize: '12px', marginBottom: '6px' }}>
+        <span style={{ color: ROJO, fontWeight: 600 }}>−</span><span style={{ color: GRIS }}> faltó: había menos de lo que decía el sistema · </span>
+        <span style={{ color: AMBAR, fontWeight: 600 }}>+</span><span style={{ color: GRIS }}> sobró: había más de lo que decía el sistema</span>
       </div>
       {normales.map(l => (
         <div key={l.producto_id} style={{ ...fila, borderTop: '0.5px solid #eef2f6' }}>
