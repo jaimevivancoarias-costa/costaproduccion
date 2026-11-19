@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
+import { procesarRecosteos } from '../lib/recosteoPendiente'
 import { supabase } from '../lib/supabase'
 import { confirmarAntesDeConteo } from '../lib/avisoConteo'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias, LIBRAS_POR_SACO } from '../lib/fechas'
@@ -1230,7 +1231,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
       )}
 
       {seccion === 'ingresos' ? (
-        <IngresosBalanceado finca={finca} esJefe={esJefe} onCambio={cargar} onCorreccion={onCorreccion} />
+        <IngresosBalanceado finca={finca} esJefe={esJefe} onCambio={() => { cargar(); procesarRecosteos(cargar) }} onCorreccion={onCorreccion} />
       ) : contando ? (
         <Caja>
           {editToma && (

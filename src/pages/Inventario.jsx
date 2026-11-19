@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
+import { procesarRecosteos } from '../lib/recosteoPendiente'
 import { supabase } from '../lib/supabase'
 import { hoyISO, corta, dinero, dineroU, numDec, sumarDias } from '../lib/fechas'
 import Ingresos from './Ingresos'
@@ -1650,7 +1651,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       </div>
 
       {seccion === 'movimiento' ? (
-        <Ingresos finca={finca} esJefe={esJefe} onCorreccion={onCorreccion} onCambio={cargar} />
+        <Ingresos finca={finca} esJefe={esJefe} onCorreccion={onCorreccion} onCambio={() => { cargar(); procesarRecosteos(cargar) }} />
       ) : (
       <>
       {/* --- seccion bodega --- */}

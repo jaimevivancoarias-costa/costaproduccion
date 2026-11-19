@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { procesarRecosteos } from './lib/recosteoPendiente'
 import { useAuth } from './context/AuthContext'
 import { supabase } from './lib/supabase'
 import { hoyISO, lunesDe, sumarDias, cortita, semanaISO } from './lib/fechas'
@@ -148,6 +149,9 @@ export default function App() {
       if (elegida.zona) setZona(elegida.zona)
     }
   }, [fincas, fincaId])
+
+  // Recosteos pendientes por guías cargadas con fecha anterior (ver lib/recosteoPendiente).
+  useEffect(() => { if (fincas.length) procesarRecosteos() }, [fincas.length])
 
   // Recordar la última finca elegida, para volver a ella al recargar.
   useEffect(() => {
