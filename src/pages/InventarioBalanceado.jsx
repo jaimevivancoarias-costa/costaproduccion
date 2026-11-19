@@ -5,7 +5,7 @@ import { confirmarAntesDeConteo } from '../lib/avisoConteo'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias, LIBRAS_POR_SACO } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
-import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import { reporteBodegaPDF, reporteBodegaPDFEsperando, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 import { FiltroPeriodo, tipoDeRango } from '../components/FlechasPeriodo'
@@ -675,7 +675,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   // Reporte de bodega: junta "Cuánto hay" y "Qué se movió" en un solo documento.
   // Cruza saldos (al día) con movimientos (del rango), lotes, precio·vigencia y
   // el conteo con su motivo. Un mismo botón para Excel y PDF.
-  function construirReporte() {
+  function construirReporte(anexoDatos = anexoMes) {
     const mas = n => { const x = numDec(n); return x > 0.001 ? '+' + limpio(x) : '—' }
     const menos = n => { const x = numDec(n); return x > 0.001 ? '−' + limpio(x) : '—' }
     const conSigno = n => { const x = numDec(n); if (Math.abs(x) < 0.001) return '0'; return (x > 0 ? '+' : '−') + limpio(Math.abs(x)) }
@@ -812,12 +812,18 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         { k: 'Impreso', v: corta(hoyISO()) },
       ],
       cards, columnas, filas: filasRep, total,
-      anexo: anexoMes && anexoMes.desde === desde ? anexoCierre({ ...anexoMes, categoria: 'Balanceado' }) : null,
+      anexo: anexoDatos && anexoDatos.desde === desde ? anexoCierre({ ...anexoDatos, categoria: 'Balanceado' }) : null,
     }
   }
-  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
+  // Datos de la hoja final (cierre del mes): si todavía no llegaron, se esperan al descargar.
+  async function datosAnexo() {
+    if (!esJefe || tipoDeRango(desde, hasta) !== 'mes') return null
+    if (anexoMes && anexoMes.desde === desde) return anexoMes
+    try { const a = await cargarAnexoCierre({ fincaId: finca.id, fn: 'fn_cierres_mes_bal', desde }); setAnexoMes(a); return a } catch { return null }
+  }
+  async function exportarExcel() { reporteBodegaExcel(construirReporte(await datosAnexo())) }
   function exportarPDF() {
-    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+    if (!reporteBodegaPDFEsperando(datosAnexo().then(a => construirReporte(a)))) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
   }
 
   const filaNueva = () => ({ nombre: '', marca: '' })

@@ -223,11 +223,23 @@ ${anexoX}
 }
 
 // Abre la ventana de impresión con el reporte. false si el navegador la bloquea.
-export function reporteBodegaPDF(opts) {
-  const w = window.open('', '_blank')
+export function reporteBodegaPDF(opts, ventana) {
+  const w = ventana || window.open('', '_blank')
   if (!w) return false
+  if (ventana) w.document.open()
   w.document.write(reporteBodegaHTML(opts, false))
   w.document.close()
+  return true
+}
+
+// Abre la ventana YA (si no, el navegador la bloquea) con "Preparando…" y escribe el
+// reporte cuando terminan de llegar los datos (ej. la hoja final del cierre del mes).
+export function reporteBodegaPDFEsperando(promesaOpts) {
+  const w = window.open('', '_blank')
+  if (!w) return false
+  w.document.write('<p style="font-family:Arial,sans-serif;padding:32px;color:#022847">Preparando el reporte…</p>')
+  Promise.resolve(promesaOpts).then(opts => reporteBodegaPDF(opts, w))
+    .catch(e => { w.document.open(); w.document.write('<p style="font-family:Arial;padding:32px;color:#a32d2d">No se pudo armar el reporte. ' + String(e && e.message || e) + '</p>'); w.document.close() })
   return true
 }
 

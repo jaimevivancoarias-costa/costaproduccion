@@ -5,7 +5,7 @@ import { hoyISO, corta, dinero, dineroU, numDec, sumarDias } from '../lib/fechas
 import Ingresos from './Ingresos'
 import PreciosInsumos from './PreciosInsumos'
 import CampoNumero from '../components/CampoNumero'
-import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
+import { reporteBodegaPDF, reporteBodegaPDFEsperando, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
 import { FiltroPeriodo, tipoDeRango } from '../components/FlechasPeriodo'
@@ -1036,7 +1036,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   // Reporte de bodega: junta "Cuánto hay" y "Qué se movió" en un solo documento.
   // Cruza saldos (al día) con movimientos (del rango), lotes, precio·vigencia y
   // el conteo con su motivo. Un mismo botón para Excel y PDF.
-  function construirReporte() {
+  function construirReporte(anexoDatos = anexoMes) {
     const nd = v => Number(v) || 0
     const mas = v => { const x = nd(v); return x > 0.001 ? '+' + limpio(x) : '—' }
     const menos = v => { const x = nd(v); return x > 0.001 ? '−' + limpio(x) : '—' }
@@ -1182,12 +1182,18 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
         { k: 'Impreso', v: corta(hoyISO()) },
       ],
       cards, columnas, filas: filasRep, total,
-      anexo: anexoMes && anexoMes.desde === desde ? anexoCierre({ ...anexoMes, categoria: 'Insumos' }) : null,
+      anexo: anexoDatos && anexoDatos.desde === desde ? anexoCierre({ ...anexoDatos, categoria: 'Insumos' }) : null,
     }
   }
-  function exportarExcel() { reporteBodegaExcel(construirReporte()) }
+  // Datos de la hoja final (cierre del mes): si todavía no llegaron, se esperan al descargar.
+  async function datosAnexo() {
+    if (!esJefe || tipoDeRango(desde, hasta) !== 'mes') return null
+    if (anexoMes && anexoMes.desde === desde) return anexoMes
+    try { const a = await cargarAnexoCierre({ fincaId: finca.id, fn: 'fn_cierres_mes_insumo', desde }); setAnexoMes(a); return a } catch { return null }
+  }
+  async function exportarExcel() { reporteBodegaExcel(construirReporte(await datosAnexo())) }
   function exportarPDF() {
-    if (!reporteBodegaPDF(construirReporte())) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
+    if (!reporteBodegaPDFEsperando(datosAnexo().then(a => construirReporte(a)))) setAviso({ tipo: 'error', texto: 'El navegador bloqueó la ventana. Permite las ventanas emergentes para exportar a PDF.' })
   }
 
   // ¿Bajo mínimo? El saldo está en unidad de compra; el mínimo en unidad de
