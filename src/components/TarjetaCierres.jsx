@@ -35,12 +35,12 @@ export default function TarjetaCierres({ fincaId, fn, esJefe }) {
   if (!esJefe) return null
   const hayDev = (filas || []).some(r => Math.abs(Number(r.devoluciones) || 0) > 0.005)
   const GRID = `1.3fr repeat(${hayDev ? 6 : 5}, minmax(0, 1fr))`
-  const cab = { fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
-  const cel = { textAlign: 'right', fontSize: '13px', fontVariantNumeric: 'tabular-nums' }
+  const cab = { fontSize: '11px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'center' }
+  const cel = { textAlign: 'center', fontSize: '13px', fontVariantNumeric: 'tabular-nums' }
   const enlace = { background: '#eaf2fb', color: AZUL, borderRadius: '6px', padding: '2px 8px', fontWeight: 600 }
 
   return (
-    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', marginBottom: '16px', overflow: 'hidden' }}>
+    <div style={{ background: 'white', border: '0.5px solid ' + BORDE, borderRadius: '12px', marginTop: '28px', marginBottom: '16px', overflow: 'hidden' }}>
       <button onClick={() => setAbierto(a => !a)}
         style={{ width: '100%', display: 'flex', alignItems: 'baseline', gap: '8px', background: 'none', border: 'none',
                  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', padding: '13px 16px' }}>
