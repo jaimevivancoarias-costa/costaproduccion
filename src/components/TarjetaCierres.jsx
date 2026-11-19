@@ -21,6 +21,12 @@ function explicar(f) {
   // Menos de 10 centavos, o la cantidad cuadró y solo es diferencia de precio de
   // menos de $1: no se lista (Melany: "si cuadró no debería salir"). Va a la línea gris.
   if (Math.abs(v) < 0.10) return { centavos: true }
+  // Saldo negativo al cierre: se registró más consumo del que había (caso BIOBAC-M
+  // Marexport nov). No es un sobrante: el $ sale porque lo aplicado de más no tenía costo.
+  const sf = Number(f.saldo_fin) || 0
+  if (sf < -0.005) return {
+    txt: `Se aplicó ${num(sf)} más de lo que había en bodega (el saldo quedó en −${num(sf)}).`,
+    nota: 'Revisar: un consumo registrado de más, o una guía que falta cargar.', revisar: true }
   if (Math.abs(qr) < 0.005 && Math.abs(v) < 1 && !/Baja/.test(f.detalle || '')) return { centavos: true }
   if (f.detalle) {
     // Bajas (robo/merma) solas: se muestran tal cual, son explícitas.
