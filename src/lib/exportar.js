@@ -135,6 +135,15 @@ function reporteBodegaHTML(opts, paraExcel) {
         + filasX.map(f => '<tr>' + cols.map(c => `<td>${esc(celX(c, f))}</td>`).join('') + '</tr>').join('')
         + `<tr><td colspan="${cols.length}" style="border:none">&nbsp;</td></tr>`
     }).join('')
+    const ax = opts.anexo
+    const anexoX = !ax ? '' : `<tr><td colspan="${ancho}" style="border:none">&nbsp;</td></tr>`
+      + `<tr><td colspan="${ancho}" style="border:none;font-size:14px;font-weight:bold">${esc(ax.titulo)} · ${esc(ax.sub)}</td></tr>`
+      + ax.cards.map(c => `<tr><td colspan="2" style="border:none;font-weight:bold">${esc(c.k)}: ${esc(c.v)}</td></tr>`).join('')
+      + `<tr><td colspan="${ancho}" style="border:none">&nbsp;</td></tr>`
+      + (ax.bloque ? (() => { const b = ax.bloque, cols = b.columnas
+          return `<tr><td colspan="${cols.length}" style="border:none;font-weight:bold;font-size:12px">${esc(b.titulo)}</td></tr>`
+            + `<tr>${cols.map(c => `<th>${esc(c.titulo)}</th>`).join('')}</tr>`
+            + [...b.filas, ...(b.total ? [b.total] : [])].map(f => '<tr>' + cols.map(c => `<td>${esc(celX(c, f))}</td>`).join('') + '</tr>').join('') })() : '')
     return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">
 <style>td,th{border:0.5px solid #cccccc;padding:4px 6px;font-family:Arial;font-size:11px;mso-number-format:"\\@"}th{background:#e6edf3;font-weight:bold}</style></head><body>
 <table>
@@ -144,6 +153,7 @@ ${(opts.meta || []).map(m => `<tr><td colspan="${ancho}" style="border:none;colo
 ${(opts.cards || []).map(c => `<tr><td colspan="2" style="border:none;font-weight:bold">${esc(c.k)}: ${esc(c.v)}</td></tr>`).join('')}
 <tr><td colspan="${ancho}" style="border:none">&nbsp;</td></tr>
 ${secciones}
+${anexoX}
 </table></body></html>`
   }
 
@@ -158,6 +168,14 @@ ${secciones}
     return (b.titulo ? `<h2>${esc(b.titulo)}</h2>` : '') +
       `<table><thead><tr>${th}</tr></thead><tbody>${cuerpo}${total}</tbody></table>`
   }
+
+  // Hoja final opcional (Cierre del mes): página nueva, después de todo lo demás.
+  const ax = opts.anexo
+  const anexoHTML = !ax ? '' : `<div class="anexo">
+    <div class="cab"><div><h1>${esc(ax.titulo)}</h1><div class="sub">Finca ${esc(opts.finca)} · ${esc(ax.sub)}</div></div><div class="meta">${meta}</div></div>
+    <div class="resumen" style="grid-template-columns:repeat(${ax.cards.length},1fr)">${ax.cards.map(c => `<div class="rcard${c.alerta ? ' alerta' : ''}"><div class="k">${esc(c.k)}</div><div class="v">${esc(c.v)}</div></div>`).join('')}</div>
+    ${ax.bloque ? tabla(ax.bloque) : ''}
+  </div>`
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${esc(opts.titulo)}</title>
 <style>
@@ -189,6 +207,7 @@ ${secciones}
   tr.total td.destacar { background:#dfeaf6 !important; }
   h2 { font-size:13px; font-weight:bold; margin:22px 0 8px; padding-left:8px; border-left:3px solid #1f7a8c; }
   .pie { font-size:10px; color:#7d8fa0; margin-top:18px; border-top:1px solid #e2e9f0; padding-top:10px; }
+  .anexo { page-break-before: always; break-before: page; padding-top: 4px; }
   @media print { body { margin:0; } }
 </style></head>
 <body onload="setTimeout(function(){window.print()},350)">
@@ -199,6 +218,7 @@ ${secciones}
   ${cards ? `<div class="resumen">${cards}</div>` : ''}
   ${bloques.map(tabla).join('')}
   ${pie ? `<div class="pie">${pie}</div>` : ''}
+  ${anexoHTML}
 </body></html>`
 }
 

@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { corta, dinero } from '../lib/fechas'
+import { MESES_C, signo, lineasAjuste, cargarUnidadesCierre } from '../lib/cierres'
 
 // Tarjeta "Cierres por mes": la cadena de la bodega en $, un mes por fila.
 // Cada mes Inicia con lo que Terminó el anterior (decisión Melany, caso Marexport:
@@ -10,52 +11,13 @@ import { corta, dinero } from '../lib/fechas'
 // carga al abrir. Solo jefes/contadoras (muestra precios).
 const NAVY = '#022847', GRIS = '#7d8fa0', BORDE = '#dce6ef', AZUL = '#0D6CB0'
 const ROJO = '#8A2F2E', VERDE = '#0F6E56', AMBAR = '#854F0B'
-const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+const MESES = MESES_C
 
-const num = v => (Math.round(Math.abs(v) * 100) / 100).toLocaleString('es-EC', { maximumFractionDigits: 2 })
-const signo = v => (v > 0 ? '+' : v < 0 ? '−' : '')
-
-// Explica en palabras de dónde sale el $ de cada producto.
-function explicar(f) {
-  const q = Number(f.cantidad) || 0, qr = Number(f.cant_real) || 0, v = Number(f.valor) || 0
-  // Menos de 10 centavos, o la cantidad cuadró y solo es diferencia de precio de
-  // menos de $1: no se lista (Melany: "si cuadró no debería salir"). Va a la línea gris.
-  if (Math.abs(v) < 0.10) return { centavos: true }
-  // Saldo negativo al cierre: se registró más consumo del que había (caso BIOBAC-M
-  // Marexport nov). No es un sobrante: el $ sale porque lo aplicado de más no tenía costo.
-  const sf = Number(f.saldo_fin) || 0
-  if (sf < -0.005) return {
-    txt: `Se aplicó ${num(sf)} más de lo que había en bodega (el saldo quedó en −${num(sf)}).`,
-    nota: 'Revisar: un consumo registrado de más, o una guía que falta cargar.', revisar: true }
-  if (Math.abs(qr) < 0.005 && Math.abs(v) < 1 && !/Baja/.test(f.detalle || '')) return { centavos: true }
-  if (f.detalle) {
-    // Bajas (robo/merma) solas: se muestran tal cual, son explícitas.
-    const soloBaja = !/Conteo/.test(f.detalle)
-    if (soloBaja) return { txt: f.detalle }
-    // Conteos (y bajas junto con conteos): se dice UNA cifra, la real (la misma
-    // que da el $ y la que sale en "Qué se movió"), y de dónde sale.
-    const cuando = [
-      ...(f.detalle.match(/Conteo \d\d\/\d\d/g) || []).map(s => s.replace('Conteo', 'conteo')),
-      ...(f.detalle.match(/Baja\/ajuste \d\d\/\d\d: [^·]+/g) || []).map(s => s.replace('Baja/ajuste', 'baja').trim()),
-    ].join(', ')
-    if (Math.abs(qr) < 0.005) return { txt: `Cuadró · ${cuando}` }
-    const txt = `${qr < 0 ? 'Faltó' : 'Sobró'} ${num(qr)} · ${cuando}`
-    if (Math.abs(qr - q) < 0.1) return { txt }
-    return { txt, nota: `En el acta del conteo figura ${Math.abs(q) < 0.005 ? 'que cuadró' : (q < 0 ? 'faltó ' : 'sobró ') + num(q)} (se calculó distinto ese día); lo que vale es la foto del conteo.` }
-  }
-  if (Math.abs(v) < 1) return { centavos: true }
-  if (Math.abs(qr) >= 0.01) return { txt: `Sin conteo en el mes. Diferencia real ${signo(qr)}${num(qr)}: hay una guía o un consumo cargado después con fecha anterior.`, revisar: true }
-  return { txt: 'La cantidad cuadra: es diferencia de precio del saldo (se corrigió el precio de un ingreso o del inventario inicial).' }
-}
-
-function DesgloseAjuste({ filas, total, mes }) {
+function DesgloseAjuste({ filas, total, mes, unidades }) {
   const caja = { margin: '0 16px 12px', background: '#f8fafc', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '10px 14px' }
   if (!filas) return <div style={{ ...caja, fontSize: '12.5px', color: GRIS }}>Cargando de dónde sale…</div>
   if (filas.error) return <div style={{ ...caja, fontSize: '12.5px', color: ROJO }}>No se pudo cargar el detalle. {filas.error}</div>
-  const lineas = filas.map(f => ({ ...f, ...explicar(f) }))
-  const normales = lineas.filter(l => !l.centavos)
-  const cent = lineas.filter(l => l.centavos)
-  const sumCent = cent.reduce((s, l) => s + Number(l.valor), 0)
+  const { normales, cent, sumCent } = lineasAjuste(filas, unidades)
   const colorV = v => (v < 0 ? ROJO : v > 0 ? AMBAR : GRIS)
   const fila = { display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 2fr) 110px', gap: '12px', padding: '6px 0', alignItems: 'baseline', fontSize: '12.5px' }
   return (
@@ -116,7 +78,14 @@ export default function TarjetaCierres({ fincaId, fn, esJefe }) {
   // fn_cierres_mes_bal → fn_cierre_ajuste_detalle_bal; fn_cierres_mes_insumo → ..._insumo.
   const [abiertoAj, setAbiertoAj] = useState(null)   // r.desde del mes abierto
   const [detalles, setDetalles] = useState({})      // desde → filas | {error}
-  useEffect(() => { setAbiertoAj(null); setDetalles({}) }, [fincaId, fn])
+  const [unidades, setUnidades] = useState(null)    // unidad de aplicación (diferencias chicas: "faltó 100 g")
+  useEffect(() => { setAbiertoAj(null); setDetalles({}); setUnidades(null) }, [fincaId, fn])
+  useEffect(() => {
+    if (!abierto || unidades || !fincaId) return
+    let vivo = true
+    cargarUnidadesCierre(fincaId, fn.endsWith('_bal') ? 'bal' : 'ins').then(u => { if (vivo) setUnidades(u) }).catch(() => {})
+    return () => { vivo = false }
+  }, [abierto, unidades, fincaId, fn])
   const pedirDetalle = r => supabase.schema('produccion').rpc(fn.replace('fn_cierres_mes_', 'fn_cierre_ajuste_detalle_'),
       { p_finca: fincaId, p_desde: r.desde, p_hasta: r.hasta })
       .then(({ data, error: e }) => setDetalles(d => ({ ...d, [r.desde]: e ? { error: e.message } : (data || []) })))
@@ -203,7 +172,7 @@ export default function TarjetaCierres({ fincaId, fn, esJefe }) {
                         <span style={i < filas.length - 1 ? enlace : undefined}>{dinero(Number(r.termina))}</span>
                       </span>
                     </div>
-                    {abiertoAj === r.desde && <DesgloseAjuste filas={detalles[r.desde]} total={aj} mes={`${MESES[m].toLowerCase()}`} />}
+                    {abiertoAj === r.desde && <DesgloseAjuste filas={detalles[r.desde]} unidades={unidades} total={aj} mes={`${MESES[m].toLowerCase()}`} />}
                   </Fragment>
                 )
               })}

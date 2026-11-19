@@ -8,7 +8,8 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
-import { FiltroPeriodo } from '../components/FlechasPeriodo'
+import { FiltroPeriodo, tipoDeRango } from '../components/FlechasPeriodo'
+import { cargarAnexoCierre, anexoCierre } from '../lib/cierres'
 import TarjetaBajas from '../components/TarjetaBajas'
 import TarjetaCierres from '../components/TarjetaCierres'
 
@@ -71,6 +72,18 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const [saldos, setSaldos] = useState([])
   const [valorFifo, setValorFifo] = useState({})
   const [valorFifoCierre, setValorFifoCierre] = useState({})  // valor del stock a la fecha de cierre del rango (para el reporte)
+  // Hoja final del reporte: "Cierre del mes" (solo si el filtro es un mes completo y es jefe).
+  // Se carga aparte, en segundo plano, para no frenar la pantalla.
+  const [anexoMes, setAnexoMes] = useState(null)
+  useEffect(() => {
+    setAnexoMes(null)
+    if (!esJefe || !finca?.id || !desde || !hasta || tipoDeRango(desde, hasta) !== 'mes') return
+    let vivo = true
+    const t = setTimeout(() => {
+      cargarAnexoCierre({ fincaId: finca.id, fn: 'fn_cierres_mes_bal', desde }).then(a => { if (vivo) setAnexoMes(a) }).catch(() => {})
+    }, 2000)
+    return () => { vivo = false; clearTimeout(t) }
+  }, [esJefe, finca?.id, desde, hasta])
   const [desglose, setDesglose] = useState({})
   const [abierto, setAbierto] = useState(null)
   const [movs, setMovs] = useState([])
@@ -799,6 +812,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
         { k: 'Impreso', v: corta(hoyISO()) },
       ],
       cards, columnas, filas: filasRep, total,
+      anexo: anexoMes && anexoMes.desde === desde ? anexoCierre({ ...anexoMes, categoria: 'Balanceado' }) : null,
     }
   }
   function exportarExcel() { reporteBodegaExcel(construirReporte()) }
