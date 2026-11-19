@@ -1786,7 +1786,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                 {movDet === m.producto_id && (
                   <div style={{ padding: '14px 20px 16px 42px', background: '#f8fafc', borderBottom: '0.5px solid #f1f6f9', display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
                     <div style={{ flex: 1, minWidth: '340px' }}>
-                    {!lotesMov[m.producto_id] ? (
+                    {(!lotesMov[m.producto_id] || (desde && !flujoRango[m.producto_id])) ? (
                       <div style={{ fontSize: '12px', color: GRIS }}>Cargando lotes...</div>
                     ) : flujoRango[m.producto_id] ? (() => {
                       // No hubo conteo dentro del rango: flujo por precio. Consumió =
@@ -1806,25 +1806,34 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                       const tCons = filas.reduce((s, r) => s + r.cons, 0)
                       const tQueda = filas.reduce((s, r) => s + r.queda, 0)
                       const tCosto = filas.reduce((s, r) => s + r.cons * Number(r.precio || 0), 0)
-                      // Itemizado por compra: reparte el consumo total (tCons, que ya cuadra con
-                      // el renglón) FIFO entre el Inicial y cada compra (filas "informativo" de
-                      // fn_lotes_movimiento_bal). Si no hay audit o no coincide el entró, cae al
-                      // desglose por precio (fallback, nunca se rompe).
+                      // Itemizado por compra: reparte el consumo total (tCons, ya cuadra con el
+                      // renglón) FIFO entre el Inicial y cada compra (filas "informativo" de
+                      // fn_lotes_movimiento_bal), y agrega una fila "Ajuste de conteos" que absorbe
+                      // la diferencia cuando un conteo tuvo sobró/faltó. Así SIEMPRE itemiza en dos
+                      // bloques y el Total cuadra. Fallback a por-precio solo si no hay audit.
+                      const valorTotal = filas.reduce((s, r) => s + r.queda * Number(r.precio || 0), 0)
                       const audit = (lotesMov[m.producto_id] || []).filter(r => r.informativo)
                         .sort((a, b) => (a.fecha || '0') < (b.fecha || '0') ? -1 : ((a.fecha || '0') > (b.fecha || '0') ? 1 : (a.es_conteo === b.es_conteo ? 0 : a.es_conteo ? -1 : 1)))
                       let _rem = tCons
-                      const items = audit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_rem, ent)); _rem -= c; return { fecha: r.fecha, precio: r.costo_unitario, esIni: !!r.es_conteo, entro: ent, cons: c, queda: ent - c, guia: r.numero_guia || null } }).filter(r => r.entro > 0.0001)
-                      const usarItems = items.length > 0 && Math.abs(items.reduce((s, r) => s + r.entro, 0) - tEntro) < 1
-                      // Etiqueta de cada fila: "Inicial" o "Compra <fecha> · Guía <n>" (la guía
-                      // diferencia dos compras del mismo día a distinto precio).
-                      const etq = r => r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : '') + (r.guia ? ' · Guía ' + r.guia : ''))
+                      const items = audit.map(r => { const ent = Number(r.entro || 0); const c = Math.max(0, Math.min(_rem, ent)); _rem -= c; const pr = Number(r.costo_unitario || 0); return { fecha: r.fecha, precio: r.costo_unitario, esIni: !!r.es_conteo, esAjuste: false, entro: ent, cons: c, queda: ent - c, costo: c * pr, valor: (ent - c) * pr, guia: r.numero_guia || null } }).filter(r => r.entro > 0.0001)
+                      // Fila de ajuste = diferencia entre el total real (flujoRango) y lo itemizado;
+                      // aparece cuando un conteo cambió la cantidad (sobró/faltó).
+                      const ajE = tEntro - items.reduce((s, r) => s + r.entro, 0)
+                      const ajC = tCons - items.reduce((s, r) => s + r.cons, 0)
+                      const ajQ = tQueda - items.reduce((s, r) => s + r.queda, 0)
+                      const ajCo = tCosto - items.reduce((s, r) => s + r.costo, 0)
+                      const ajV = valorTotal - items.reduce((s, r) => s + r.valor, 0)
+                      if (Math.abs(ajE) > 0.01 || Math.abs(ajC) > 0.01 || Math.abs(ajQ) > 0.01) {
+                        items.push({ fecha: null, precio: null, esIni: false, esAjuste: true, entro: ajE, cons: ajC, queda: ajQ, costo: ajCo, valor: ajV, guia: null })
+                      }
+                      const usarItems = items.length > 0
+                      // Etiqueta: "Inicial", "Ajuste de conteos", o "Compra <fecha> · Guía <n>".
+                      const etq = r => r.esAjuste ? 'Ajuste de conteos' : (r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : '') + (r.guia ? ' · Guía ' + r.guia : '')))
                       const gtc = esJefe ? '2.3fr .8fr .9fr .8fr 1.1fr' : '2.3fr 1fr 1fr 1fr'
                       const cab = { fontSize: '10px', color: GRIS, textTransform: 'uppercase', letterSpacing: '.02em', textAlign: 'right' }
                       const cel = { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: '12.5px' }
                       const tot = { ...cel, fontWeight: 700, borderTop: '1px solid ' + BORDE, paddingTop: '7px' }
-                      const lista = usarItems
-                        ? items.map(r => ({ etiqueta: r.esIni ? 'Inicial' : ('Compra ' + (r.fecha ? corta(r.fecha) : '')), precio: r.precio, entro: r.entro, cons: r.cons, queda: r.queda, esCompra: !r.esIni, fecha: r.fecha }))
-                        : filas.map(r => ({ etiqueta: r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco', precio: r.precio, entro: r.entro, cons: r.cons, queda: r.queda, esCompra: false, fecha: null }))
+                      const lista = filas.map(r => ({ etiqueta: r.precio == null ? 'Sin precio' : dineroExacto(r.precio) + ' /saco', precio: r.precio, entro: r.entro, cons: r.cons, queda: r.queda, esCompra: false, fecha: null }))
                       const primerQueda = lista.findIndex(r => r.queda > 0.0001)
                       return (
                         <div style={{ background: '#fff', border: '0.5px solid ' + BORDE, borderRadius: '10px', padding: '13px 15px' }}>
@@ -1841,14 +1850,14 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                 <Fragment key={'q' + i}>
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', fontWeight: 600 }}>{etq(r)}</div>
                                   <div style={{ ...cel, fontWeight: 600 }}>{limpio(r.queda)}</div>
-                                  {esJefe && <div style={cel}>{dineroExacto(r.precio)}</div>}
-                                  {esJefe && <div style={cel}>{dinero(r.queda * Number(r.precio || 0))}</div>}
+                                  {esJefe && <div style={cel}>{r.precio == null ? '—' : dineroExacto(r.precio)}</div>}
+                                  {esJefe && <div style={cel}>{dinero(r.valor)}</div>}
                                 </Fragment>
                               ))}
                               <div style={{ ...tot, textAlign: 'left' }}>Total en bodega</div>
                               <div style={tot}>{limpio(tQueda)}</div>
                               {esJefe && <div />}
-                              {esJefe && <div style={tot}>{dinero(items.reduce((s, r) => s + r.queda * Number(r.precio || 0), 0))}</div>}
+                              {esJefe && <div style={tot}>{dinero(valorTotal)}</div>}
                             </div>
                             <div style={{ fontSize: '11.5px', fontWeight: 600, color: NAVY, marginBottom: '8px' }}>Entró en el rango · a qué precio</div>
                             <div style={{ display: 'grid', gridTemplateColumns: esJefe ? '2.3fr .9fr 1fr 1.1fr' : '2.3fr 1fr 1fr', gap: '13px 18px', alignItems: 'baseline' }}>
@@ -1861,13 +1870,13 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                                   <div style={{ fontSize: '12.5px', textAlign: 'left', lineHeight: 1.45 }}>
                                     <div style={{ fontWeight: 600 }}>{etq(r)}</div>
                                     {esJefe && r.precio != null && <div style={{ color: GRIS, fontSize: '11.5px' }}>{dineroExacto(r.precio)} /saco</div>}
-                                    {esJefe && !r.esIni && (
+                                    {esJefe && !r.esIni && !r.esAjuste && (
                                       <button onClick={() => iniciarCorreccion(m.producto_id, { fecha: r.fecha, costo_unitario: r.precio, es_conteo: false })} style={{ marginTop: '3px', display: 'block', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '11px', color: AZUL }}>Corregir precio</button>
                                     )}
                                   </div>
                                   <div style={cel}>{limpio(r.entro)}</div>
                                   <div style={{ ...cel, color: r.cons ? ROJO : '#c3d0db' }}>{r.cons ? limpio(r.cons) : '—'}</div>
-                                  {esJefe && <div style={cel}>{dinero(r.cons * Number(r.precio || 0))}</div>}
+                                  {esJefe && <div style={cel}>{dinero(r.costo)}</div>}
                                 </Fragment>
                               ))}
                               <div style={{ ...tot, textAlign: 'left' }}>Total</div>
