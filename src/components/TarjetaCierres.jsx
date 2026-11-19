@@ -19,16 +19,19 @@ const signo = v => (v > 0 ? '+' : v < 0 ? '−' : '')
 function explicar(f) {
   const q = Number(f.cantidad) || 0, qr = Number(f.cant_real) || 0, v = Number(f.valor) || 0
   if (f.detalle) {
-    // Bajas (robo/merma): se muestran tal cual, son explícitas.
-    if (f.detalle.includes('Baja')) return { txt: f.detalle }
-    // Conteos: se dice UNA cifra, la real (la misma que da el $ y la que sale en
-    // "Qué se movió"). Si el acta del conteo guardó otra cifra (porque después se
-    // corrigió un registro de antes del conteo), va una línea gris corta.
-    const cuando = (f.detalle.match(/Conteo \d\d\/\d\d/g) || []).map(s => s.replace('Conteo', 'conteo')).join(', ')
+    // Bajas (robo/merma) solas: se muestran tal cual, son explícitas.
+    const soloBaja = !/Conteo/.test(f.detalle)
+    if (soloBaja) return { txt: f.detalle }
+    // Conteos (y bajas junto con conteos): se dice UNA cifra, la real (la misma
+    // que da el $ y la que sale en "Qué se movió"), y de dónde sale.
+    const cuando = [
+      ...(f.detalle.match(/Conteo \d\d\/\d\d/g) || []).map(s => s.replace('Conteo', 'conteo')),
+      ...(f.detalle.match(/Baja\/ajuste \d\d\/\d\d: [^·]+/g) || []).map(s => s.replace('Baja/ajuste', 'baja').trim()),
+    ].join(', ')
     if (Math.abs(qr) < 0.005) return { txt: `Cuadró · ${cuando}` }
     const txt = `${qr < 0 ? 'Faltó' : 'Sobró'} ${num(qr)} · ${cuando}`
     if (Math.abs(qr - q) < 0.1) return { txt }
-    return { txt, nota: `El acta del conteo dice ${Math.abs(q) < 0.005 ? 'que cuadró' : (q < 0 ? 'faltó ' : 'sobró ') + num(q)}: después se corrigió o cargó un registro de antes del conteo (guía, alimentación o consumo).` }
+    return { txt, nota: `En el acta del conteo figura ${Math.abs(q) < 0.005 ? 'que cuadró' : (q < 0 ? 'faltó ' : 'sobró ') + num(q)} (se calculó distinto ese día); lo que vale es la foto del conteo.` }
   }
   if (Math.abs(v) < 1) return { centavos: true }
   if (Math.abs(qr) >= 0.01) return { txt: `Sin conteo en el mes. Diferencia real ${signo(qr)}${num(qr)}: hay una guía o un consumo cargado después con fecha anterior.`, revisar: true }
