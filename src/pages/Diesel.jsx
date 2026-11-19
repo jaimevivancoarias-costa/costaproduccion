@@ -5,7 +5,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { Seg } from '../components/controles'
-import FlechasPeriodo from '../components/FlechasPeriodo'
+import { FiltroPeriodo } from '../components/FlechasPeriodo'
 import TarjetaBajas from '../components/TarjetaBajas'
 
 // Diesel unificado · dos subsecciones:
@@ -14,7 +14,7 @@ import TarjetaBajas from '../components/TarjetaBajas'
 //    (pop-up al ingresar) y nunca lo ve el bodeguero.
 //  - Bodega: cuánto hay (galones, y para el jefe precio/valor), contar la
 //    bodega y los conteos anteriores.
-// El navegador con chips (Esta semana / Este mes / Mes pasado) manda el período.
+// El filtro de período (Mes / Semana / Elegir fechas, con flechas ‹ ›) manda.
 
 const NAVY = '#022847'
 const AZUL = '#0D6CB0'
@@ -647,15 +647,6 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
     )
   }
 
-  const chips = [['semana', 'Esta semana'], ['mes', 'Este mes'], ['mespasado', 'Mes pasado']]
-  const chipActivo = (() => {
-    if (per.tipo === 'semana' && per.ancla === periodoInicial('semana').ancla) return 'semana'
-    if (per.tipo === 'mes') {
-      if (per.ancla === periodoInicial('mes').ancla) return 'mes'
-      if (per.ancla === periodoInicial('mespasado').ancla) return 'mespasado'
-    }
-    return null
-  })()
 
   return (
     <div style={{ padding: '1.4rem 1.5rem', maxWidth: '1080px' }}>
@@ -739,21 +730,8 @@ export default function Diesel({ finca, esJefe, esJefeGlobal, soloLectura, onCam
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '14px' }}>
         <h2 style={{ fontSize: '19px', fontWeight: 500, margin: 0 }}>Diesel</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginLeft: 'auto' }}>
-          <span style={{ fontSize: '13px', color: GRIS }}>Del</span>
-          <input type="date" value={desde} max={hasta} onChange={e => setPer({ tipo: 'custom', desde: e.target.value, hasta })} style={inp} />
-          <span style={{ fontSize: '13px', color: GRIS }}>a</span>
-          <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setPer({ tipo: 'custom', desde, hasta: e.target.value })} style={inp} />
-          <FlechasPeriodo desde={desde} hasta={hasta} conEtiqueta={false}
+          <FiltroPeriodo desde={desde} hasta={hasta}
             onCambiar={(d, h, t) => setPer(t === 'mes' || t === 'semana' ? { tipo: t, ancla: d } : { tipo: 'custom', desde: d, hasta: h })} />
-          {chips.map(([id, txt]) => {
-            const on = chipActivo === id
-            return (
-              <button key={id} onClick={() => setPer(periodoInicial(id))} style={{
-                fontSize: '12.5px', color: on ? AZUL : GRIS, border: '1px solid ' + (on ? '#bcd8f2' : BORDE),
-                background: on ? '#e8f1fb' : '#fff', borderRadius: '8px', padding: '6px 11px', cursor: 'pointer',
-                fontFamily: 'inherit', fontWeight: on ? 600 : 500 }}>{txt}</button>
-            )
-          })}
         </div>
       </div>
 

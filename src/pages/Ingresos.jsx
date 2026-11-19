@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { confirmarAntesDeConteo } from '../lib/avisoConteo'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias } from '../lib/fechas'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { Seg, GhostBtn } from '../components/controles'
-import FlechasPeriodo from '../components/FlechasPeriodo'
+import { FiltroPeriodo } from '../components/FlechasPeriodo'
 
 const cap1 = s => { const t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
@@ -232,14 +233,7 @@ export default function Ingresos({ finca, esJefe, onCorreccion, onCambio }) {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '16px' }}>
-        <span style={{ color: GRIS, fontSize: '13px' }}>Del</span>
-        <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
-        <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
-        <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={{ ...entrada, padding: '7px 10px' }} />
-        <FlechasPeriodo desde={desde} hasta={hasta} conEtiqueta={false} onCambiar={(d, h) => { setDesde(d); setHasta(h) }} />
-        <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
-        <GhostBtn on={desde === primerDelMes() && hasta === hoyISO()} onClick={() => { setDesde(primerDelMes()); setHasta(hoyISO()) }}>Este mes</GhostBtn>
-        <GhostBtn on={desde === primerMesPasado() && hasta === finMesPasado()} onClick={() => { setDesde(primerMesPasado()); setHasta(finMesPasado()) }}>Mes pasado</GhostBtn>
+        <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h) }} />
         <select value={filtroIns} onChange={e => setFiltroIns(e.target.value)}
                 style={{ ...entrada, marginLeft: 'auto', minWidth: '210px', padding: '9px 12px' }}>
           <option value="">Todos los insumos</option>
@@ -610,6 +604,7 @@ function Formulario({ tipo, finca, insumos, esJefe, pedidosAbiertos, pendientes,
 
   async function guardar() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Agrega al menos una línea.' }); return }
+    if (!(await confirmarAntesDeConteo({ fincaId: finca.id, tipo: 'ins', fechas: [fecha], mismoDia: true }))) return
     setGuardando(true)
     try {
       if (esIngreso) {

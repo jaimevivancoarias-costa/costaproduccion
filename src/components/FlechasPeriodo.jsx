@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { MESES, hoyISO, lunesDe, sumarDias, semanaISO, cortita } from '../lib/fechas'
+import { Seg } from './controles'
 
 // Flechas ‹ › para ir retrocediendo/avanzando el filtro de fechas
 // (pedido del cliente: "una flechita hacia atrás para ir retrocediendo por mes y semana").
@@ -58,6 +60,46 @@ export default function FlechasPeriodo({ desde, hasta, onCambiar, conEtiqueta = 
       <button type="button" title="Período anterior" onClick={() => ir(-1)} style={b(true)}>‹</button>
       {conEtiqueta && <span style={{ fontSize: '13px', color: '#022847', fontWeight: 600, minWidth: '96px', textAlign: 'center', whiteSpace: 'nowrap' }}>{etiqueta(desde, hasta)}</span>}
       <button type="button" title="Período siguiente" disabled={!puedeSig} onClick={() => puedeSig && ir(1)} style={b(puedeSig)}>›</button>
+    </span>
+  )
+}
+
+// Filtro de período unificado (decisión Melany 19-nov, mockup "propuesta"):
+//   [ Mes | Semana | Por conteo | Elegir fechas ]   ‹ Noviembre 2026 ›
+// - Mes / Semana: las flechas pasan de mes en mes / de semana en semana.
+// - Por conteo (opcional, solo inventario): el padre manda `conteo.nav` (su ‹ select ›).
+// - Elegir fechas: recién ahí aparecen del / al + Aplicar.
+// Reemplaza los chips sueltos (Este mes, Mes pasado, Este año, Por fechas).
+// onCambiar(desde, hasta, tipo) con tipo 'mes' | 'semana' | 'dias'.
+const inpF = { padding: '7px 10px', fontSize: '13px', fontFamily: 'inherit', border: '1px solid #dce6ef', borderRadius: '9px', color: '#022847', background: '#fff' }
+
+export function FiltroPeriodo({ desde, hasta, onCambiar, conteo }) {
+  const [vista, setVista] = useState(() => { const t = tipoDeRango(desde, hasta); return t === 'dias' ? 'fechas' : t })
+  const [fD, setFD] = useState(desde), [fH, setFH] = useState(hasta)
+  useEffect(() => { setFD(desde); setFH(hasta) }, [desde, hasta])
+  const actual = conteo?.activo ? 'conteo' : vista
+  const elegir = v => {
+    if (v === 'conteo') { conteo?.onActivar?.(); return }
+    setVista(v)
+    const hoy = hoyISO()
+    if (v === 'mes' && tipoDeRango(desde, hasta) !== 'mes') onCambiar(hoy.slice(0, 7) + '-01', hoy, 'mes')
+    else if (v === 'semana' && tipoDeRango(desde, hasta) !== 'semana') onCambiar(lunesDe(hoy), hoy, 'semana')
+    else if (conteo?.activo) onCambiar(desde, hasta, tipoDeRango(desde, hasta))   // salir de "Por conteo" con el mismo rango
+  }
+  const opciones = [['mes', 'Mes'], ['semana', 'Semana'], ...(conteo ? [['conteo', 'Por conteo']] : []), ['fechas', 'Elegir fechas']]
+  const cambio = fD !== desde || fH !== hasta
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+      <Seg valor={actual} onCambio={elegir} opciones={opciones} />
+      {actual === 'conteo' ? conteo.nav
+        : actual === 'fechas' ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#7d8fa0' }}>
+            del <input type="date" value={fD} max={fH} onChange={e => setFD(e.target.value)} style={inpF} />
+            al <input type="date" value={fH} min={fD} max={hoyISO()} onChange={e => setFH(e.target.value)} style={inpF} />
+            <button type="button" onClick={() => { if (fD && fH) onCambiar(fD, fH, 'dias') }}
+              style={{ ...inpF, cursor: 'pointer', fontWeight: 600, ...(cambio ? { background: '#0D6CB0', color: '#fff', borderColor: '#0D6CB0' } : {}) }}>Aplicar</button>
+          </span>
+        ) : <FlechasPeriodo desde={desde} hasta={hasta} onCambiar={onCambiar} />}
     </span>
   )
 }

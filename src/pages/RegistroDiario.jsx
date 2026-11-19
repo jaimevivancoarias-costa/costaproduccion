@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
+import { confirmarAntesDeConteo } from '../lib/avisoConteo'
 import DialogoEvento, { TIPOS, guardarEvento, eliminarEvento, mensajeError } from './DialogoEvento'
 import CampoNumero from '../components/CampoNumero'
 import {
@@ -753,7 +754,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
       // (piscina, fecha). Por cada celda TOCADA: se borran sus filas viejas
       // y se insertan las deseadas. Así nunca choca con el índice único
       // (piscina, fecha, producto) aunque se intercambien o repitan productos.
-      const insertar = [], borrar = []
+      const insertar = [], borrar = [], fechasTocadas = new Set()
       for (const p of piscinas) {
         if (!p.cicloId) continue
         for (const f of fechas) {
@@ -762,6 +763,7 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
           // no reescribe toda la semana (evita el timeout) ni toca lo ajeno.
           if (!tocadas.current.has(k)) continue
           if (!editable(f) && !(esJefe && situacionDia(f, hoy) !== 'futuro')) continue
+          fechasTocadas.add(f)
           const c = cel(p, f)
           // Las filas viejas de esta celda (capturadas al cargar) se borran,
           // aunque la celda se haya vaciado por completo.
@@ -784,6 +786,12 @@ export default function RegistroDiario({ finca, esJefe, soloLectura, lunes, setL
             }
           }
         }
+      }
+
+      // Aviso si se toca un día anterior a un conteo ya hecho (lo descuadra).
+      if ((borrar.length || insertar.length) &&
+          !(await confirmarAntesDeConteo({ fincaId: finca.id, tipo: 'bal', fechas: [...fechasTocadas] }))) {
+        return false
       }
 
       // Primero se borra TODO lo tocado, después se inserta: nunca coexisten

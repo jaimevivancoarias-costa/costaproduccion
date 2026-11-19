@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
+import { confirmarAntesDeConteo } from '../lib/avisoConteo'
 import { hoyISO, corta, num, numDec, miles, dinero, dineroExacto, sumarDias, LIBRAS_POR_SACO } from '../lib/fechas'
 import PreciosBalanceado from './PreciosBalanceado'
 import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
-import FlechasPeriodo from '../components/FlechasPeriodo'
+import { FiltroPeriodo } from '../components/FlechasPeriodo'
 import TarjetaBajas from '../components/TarjetaBajas'
 import TarjetaCierres from '../components/TarjetaCierres'
 
@@ -1388,12 +1389,9 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
               </label>
             ) : (
               <>
-                <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
-                  onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
-                <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
-                  onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
-                <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
-                {modoMov === 'conteo' ? (
+                <FiltroPeriodo desde={desde} hasta={hasta}
+                  onCambiar={(d, h) => { setAplicando(true); setModoMov('fechas'); setDesde(d); setHasta(h) }}
+                  conteo={{ activo: modoMov === 'conteo', onActivar: () => { setAplicando(true); setModoMov('conteo') }, nav: (
                   periodos.length ? (
                     <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <button onClick={() => { setAplicando(true); setPeriodoSel(i => Math.min(i + 1, periodos.length - 1)) }} disabled={periodoSel >= periodos.length - 1}
@@ -1405,17 +1403,7 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                         style={{ ...btn, padding: '7px 10px', opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
                     </span>
                   ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
-                ) : (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: GRIS }}>
-                    <FlechasPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setAplicando(true); setDesde(d); setHasta(h) }} />
-                    del <input type="date" value={fDesde} max={fHasta} onChange={e => setFDesde(e.target.value)} style={inp} />
-                    al <input type="date" value={fHasta} min={fDesde} max={hoyISO()} onChange={e => setFHasta(e.target.value)} style={inp} />
-                    <button onClick={() => { if (fDesde && fHasta) { setAplicando(true); setDesde(fDesde); setHasta(fHasta) } }}
-                      style={(fDesde !== desde || fHasta !== hasta)
-                        ? { ...btn, background: AZUL, color: 'white', borderColor: AZUL }
-                        : btn}>Aplicar</button>
-                  </label>
-                )}
+                  ) }} />
               </>
             )}
             {aplicando && saldos.length > 0 && (
@@ -2790,6 +2778,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
 
   async function guardar() {
     if (!validas.length) { setAviso({ tipo: 'error', texto: 'Agrega al menos una línea.' }); return }
+    if (nuevo === 'ingreso' && !(await confirmarAntesDeConteo({ fincaId: finca.id, tipo: 'bal', fechas: [fecha], mismoDia: true }))) return
     try {
       if (nuevo === 'ingreso') {
         const { data: g, error } = await supabase.schema('produccion').from('ingreso_balanceado')
@@ -2847,14 +2836,7 @@ function IngresosBalanceado({ finca, esJefe, onCambio, onCorreccion }) {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '14px' }}>
-        <span style={{ color: GRIS, fontSize: '13px' }}>Del</span>
-        <input type="date" value={desde} max={hasta} onChange={e => setDesde(e.target.value)} style={inp} />
-        <span style={{ color: GRIS, fontSize: '13px' }}>a</span>
-        <input type="date" value={hasta} min={desde} max={hoyISO()} onChange={e => setHasta(e.target.value)} style={inp} />
-        <FlechasPeriodo desde={desde} hasta={hasta} conEtiqueta={false} onCambiar={(d, h) => { setDesde(d); setHasta(h) }} />
-        <GhostBtn on={desde === hoyISO() && hasta === hoyISO()} onClick={() => { setDesde(hoyISO()); setHasta(hoyISO()) }}>Hoy</GhostBtn>
-        <GhostBtn on={desde === primeroDelMes(hoyISO()) && hasta === hoyISO()} onClick={() => { setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
-        <GhostBtn on={desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)} onClick={() => { setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
+        <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h) }} />
         <select value={filtroProd} onChange={e => setFiltroProd(e.target.value)}
                 style={{ ...selChip, marginLeft: 'auto', minWidth: '210px' }}>
           <option value="">Todos los balanceados</option>

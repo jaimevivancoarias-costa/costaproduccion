@@ -7,7 +7,7 @@ import CampoNumero from '../components/CampoNumero'
 import { reporteBodegaPDF, reporteBodegaExcel } from '../lib/exportar'
 import BotonDescargar from '../components/BotonDescargar'
 import { TabU, Seg, GhostBtn, selChip, BuscadorFiltro } from '../components/controles'
-import FlechasPeriodo from '../components/FlechasPeriodo'
+import { FiltroPeriodo } from '../components/FlechasPeriodo'
 import TarjetaBajas from '../components/TarjetaBajas'
 import TarjetaCierres from '../components/TarjetaCierres'
 
@@ -1978,12 +1978,9 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
               })()}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '9px', flexWrap: 'wrap' }}>
-              <GhostBtn on={modoMov === 'fechas' && desde === primeroDelMes(hoyISO()) && hasta === hoyISO()}
-                onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroDelMes(hoyISO())); setHasta(hoyISO()) }}>Este mes</GhostBtn>
-              <GhostBtn on={modoMov === 'fechas' && desde === primeroMesPasado(hoyISO()) && hasta === sumarDias(primeroDelMes(hoyISO()), -1)}
-                onClick={() => { setAplicando(true); setModoMov('fechas'); setDesde(primeroMesPasado(hoyISO())); setHasta(sumarDias(primeroDelMes(hoyISO()), -1)) }}>Mes pasado</GhostBtn>
-              <Seg valor={modoMov} onCambio={setModoMov} opciones={[['conteo', 'Por conteo'], ['fechas', 'Por fechas']]} />
-              {modoMov === 'conteo' ? (
+              <FiltroPeriodo desde={desde} hasta={hasta}
+                onCambiar={(d, h) => { setAplicando(true); setModoMov('fechas'); setDesde(d); setHasta(h) }}
+                conteo={{ activo: modoMov === 'conteo', onActivar: () => { setAplicando(true); setModoMov('conteo') }, nav: (
                 periodos.length ? (
                   <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                     <button onClick={() => { setAplicando(true); setPeriodoSel(i => Math.min(i + 1, periodos.length - 1)) }} disabled={periodoSel >= periodos.length - 1}
@@ -1995,22 +1992,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                       style={{ ...navBtn, opacity: periodoSel <= 0 ? 0.4 : 1 }}>›</button>
                   </span>
                 ) : <span style={{ fontSize: '13px', color: GRIS }}>Aún no hay conteos.</span>
-              ) : (
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FlechasPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setAplicando(true); setDesde(d); setHasta(h) }} />
-                  <span style={{ fontSize: '13px', color: GRIS }}>del</span>
-                  <input type="date" value={fDesde} max={fHasta}
-                         onChange={e => setFDesde(e.target.value)} style={entrada} />
-                  <span style={{ fontSize: '13px', color: GRIS }}>al</span>
-                  <input type="date" value={fHasta} min={fDesde} max={hoyISO()}
-                         onChange={e => setFHasta(e.target.value)} style={entrada} />
-                  {/* Carga recién al tocar Aplicar: así poner las dos fechas a mano no
-                      dispara una carga por cada una. Se resalta si hay cambios sin aplicar. */}
-                  <Btn primario={fDesde !== desde || fHasta !== hasta}
-                       onClick={() => { if (fDesde && fHasta) { setAplicando(true); setDesde(fDesde); setHasta(fHasta) } }}>Aplicar</Btn>
-                  <GhostBtn onClick={() => { setAplicando(true); setDesde(hoyISO().slice(0, 4) + '-01-01'); setHasta(hoyISO()) }}>Este año</GhostBtn>
-                </label>
-              )}
+                ) }} />
             </div>
           </div>
           <Tabla

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react'
 import { supabase } from '../lib/supabase'
+import { confirmarAntesDeConteo } from '../lib/avisoConteo'
 import {
   hoyISO, lunesDe, sumarDias, semanaDe, corta, cortita,
   nombreDia, semanaISO, situacionDia, numDec, miles, dinero, diasCultivo,
@@ -399,6 +400,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(insumoId)}: hay ${miles(Math.round(disp * 100) / 100)} ${uds(insumoId)}, quieres consumir ${miles(cant)}. Ingresa a bodega primero.` })
       return
     }
+    if (!(await confirmarAntesDeConteo({ fincaId: finca.id, tipo: 'ins', fechas: [f] }))) return
     const fila = { piscina_id: p.piscinaId, fecha: f, insumo_id: insumoId,
                    ciclo_id: p.cicloId, cantidad: cant }
     const { data, error } = await supabase.schema('produccion').from('consumo_insumo')
@@ -427,6 +429,7 @@ export default function RegistroInsumos({ finca, esJefe, soloLectura, lunes, set
       setAviso({ tipo: 'error', texto: `Sin stock suficiente de ${nombreIns(linea.insumoId)}: hay ${miles(Math.round(dispApp(linea.insumoId) * 100) / 100)} ${uds(linea.insumoId)} más disponibles.` })
       return
     }
+    if (cant && cant !== antes && !(await confirmarAntesDeConteo({ fincaId: finca.id, tipo: 'ins', fechas: [k.split('|')[1]] }))) return
     setLineas(m => ({ ...m, [k]: m[k].map(l => l.id === id ? { ...l, cantidad: valor } : l) }))
     if (!cant) return
     await supabase.schema('produccion').from('consumo_insumo')
