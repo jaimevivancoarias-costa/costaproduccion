@@ -392,13 +392,15 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
   const hayConteoSuelto = movs.some(m => m.conteo !== null && !anclaInicio(m))
   const ocultaConteo = !hayConteoSuelto
   // En "Por fechas" usamos el Diseño A: Saldo Ini · Ingresos · Consumo ·
-  // Antes del conteo · Último conteo · Saldo hoy (· Consumo $). Sin Devuelto/Ajustes.
+  // Ajuste conteo · Último conteo · Saldo hoy (· Consumo $). Sin Devuelto/Ajustes.
+  // "Ajuste conteo" = lo que hace cuadrar la fila (sobró/faltó de los conteos),
+  // igual que la columna del reporte PDF/Excel.
   const gMov = modoMov === 'fechas'
     ? (esJefe ? '1.6fr repeat(6, 1fr) 1.1fr' : '1.6fr repeat(6, 1fr)')
     : (esJefe ? (ocultaConteo ? '1.3fr repeat(7, 1fr)' : G_MOV_J) : (ocultaConteo ? '1.3fr repeat(6, 1fr)' : G_MOV_B))
   const colFinal = hasta === hoyISO() ? 'Saldo hoy' : 'Saldo al ' + corta(hasta).slice(0, 5)
   const colsMov = modoMov === 'fechas'
-    ? ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Antes del conteo', 'Último conteo', colFinal, ...(esJefe ? ['Consumo $'] : [])]
+    ? ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Ajuste conteo', 'Último conteo', colFinal, ...(esJefe ? ['Consumo $'] : [])]
     : ['Balanceado', 'Saldo Ini.', 'Ingresos', 'Consumo', 'Devuelto', 'Ajustes', ...(ocultaConteo ? [] : ['Conteo']), 'Saldo Fin.', ...(esJefe ? ['Consumo $'] : [])]
 
   // Detalle de Ingresos (Entró) y Consumo (Se aplicó) por fecha, para las
@@ -1700,13 +1702,22 @@ export default function InventarioBalanceado({ finca, esJefe, esJefeGlobal, abri
                     ? <button onClick={() => setMovAbierto(x => ({ ...x, [keyA]: !x[keyA] }))} style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: '13px', color: ROJO, fontVariantNumeric: 'tabular-nums' }}>-{limpio(m.consumo)} <span style={{ color: AZUL, fontSize: '9px' }}>{openA ? '▾' : '▸'}</span></button>
                     : '-' + limpio(m.consumo)) : '—'}</Cel>
                   {modoMov === 'fechas' ? (() => {
-                    const antes = saldoAntes[m.producto_id]
                     const hayCont = m.conteo !== null && m.conteo !== undefined
                     const cont = Number(m.conteo)
-                    const dif = (hayCont && antes != null) ? cont - antes : null
+                    // "Sobró/Faltó" del último conteo = diferencia GUARDADA del conteo (no un
+                    // recálculo en vivo, que daba falsos sobrantes).
+                    const csP = conteosRango[m.producto_id] || []
+                    const ultC = csP[csP.length - 1]
+                    const dif = (hayCont && ultC && !ultC.esInicial && ultC.dif != null) ? Number(ultC.dif) : null
+                    const hayAj = Math.abs(sAjuste) >= 0.001
                     return (
                       <>
-                        <Cel der gris>{antes == null ? '—' : limpio(antes)}</Cel>
+                        <Cel der color={hayAj ? (sAjuste < 0 ? ROJO : AMBAR) : '#c3d0db'}>
+                          {!hayAj ? '—' : <>
+                            <div>{(sAjuste > 0 ? '+' : '−') + limpio(Math.abs(sAjuste))}</div>
+                            {esJefe && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>{dinero(sAjuste * precioFifoDe(m.producto_id))}</span>}
+                          </>}
+                        </Cel>
                         <Cel der fuerte={hayCont} color={hayCont ? AZUL : '#c3d0db'}>
                           {!hayCont ? '—' : <>
                             <div>{limpio(cont)}{detalle}</div>

@@ -208,7 +208,7 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
     let vivo = true
     ;(async () => {
       const { data: lins } = await supabase.schema('produccion').from('toma_inventario_linea')
-        .select('toma_id, insumo_id, cantidad_contada').in('toma_id', cs.map(c => c.id))
+        .select('toma_id, insumo_id, cantidad_contada, cantidad_sistema, diferencia').in('toma_id', cs.map(c => c.id))
       const antesPorFecha = {}
       await Promise.all(cs.map(c =>
         supabase.schema('produccion').rpc('fn_saldo_insumo', { p_finca: finca.id, p_hasta: sumarDias(c.fecha, -1) })
@@ -218,8 +218,13 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
       const porIns = {}
       cs.forEach(c => (lins || []).filter(l => l.toma_id === c.id).forEach(l => {
         const conto = Number(l.cantidad_contada)
-        const antes = antesPorFecha[c.fecha]?.[l.insumo_id]
-        ;(porIns[l.insumo_id] = porIns[l.insumo_id] || []).push({ fecha: c.fecha, conto, antes: antes == null ? null : antes, dif: antes == null ? null : conto - antes, esInicial: c.es_inicial })
+        // Sistema y diferencia GUARDADOS del conteo (lo que el sistema decía ESE día),
+        // no un recálculo en vivo con fn_saldo_insumo (que difiere por movimientos
+        // posteriores y mostraba falsos "Sobró/Faltó"). Fallback al vivo si no hay guardado.
+        const enVivo = antesPorFecha[c.fecha]?.[l.insumo_id]
+        const antes = l.cantidad_sistema != null ? Number(l.cantidad_sistema) : (enVivo == null ? null : enVivo)
+        const dif = l.diferencia != null ? Number(l.diferencia) : (antes == null ? null : conto - antes)
+        ;(porIns[l.insumo_id] = porIns[l.insumo_id] || []).push({ fecha: c.fecha, conto, antes, dif, esInicial: c.es_inicial })
       }))
       setConteosRango(porIns)
       setSaldoAntes(antesPorFecha[cs[cs.length - 1].fecha] || {})
@@ -268,9 +273,11 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
   const hayConteoSuelto = movs.some(m => m.conteo !== null && m.conteo !== undefined && !anclaInicio(m))
   const ocultaConteo = !hayConteoSuelto
   // En "Por fechas" usamos el Diseño A: Saldo Ini. · Entró · Se aplicó ·
-  // Antes del conteo · Último conteo · Queda. Sin Devuelto/Ajuste.
+  // Ajuste conteo · Último conteo · Queda. Sin Devuelto/Ajuste.
+  // "Ajuste conteo" = lo que hace cuadrar la fila (sobró/faltó de los conteos),
+  // igual que la columna del reporte PDF/Excel.
   const colsMov = modoMov === 'fechas'
-    ? ['Insumo', 'Llega / se aplica', 'Saldo Ini.', 'Entró', 'Se aplicó', 'Antes del conteo', 'Último conteo', 'Queda']
+    ? ['Insumo', 'Llega / se aplica', 'Saldo Ini.', 'Entró', 'Se aplicó', 'Ajuste conteo', 'Último conteo', 'Queda']
     : ['Insumo', 'Llega / se aplica', ocultaConteo ? 'Saldo Ini.' : (movs.some(m => m.conteo != null) ? 'Antes del conteo' : 'Inicial'), 'Entró', 'Se aplicó', 'Devuelto', 'Ajuste', ...(ocultaConteo ? [] : ['Conteo']), 'Queda']
   const anchosMov = modoMov === 'fechas'
     ? '1.5fr 150px 105px 90px 100px 115px 115px 115px'
@@ -2115,13 +2122,22 @@ export default function Inventario({ finca, esJefe, esJefeGlobal, abrirIngresos,
                     : '−' + val(m.consumo)) : '—'}
                 </Celda>
                 {modoMov === 'fechas' ? (() => {
-                  const antes = saldoAntes[m.insumo_id]
                   const hayCont = m.conteo !== null && m.conteo !== undefined
                   const cont = Number(m.conteo)
-                  const dif = (hayCont && antes != null) ? cont - antes : null
+                  // "Sobró/Faltó" del último conteo = diferencia GUARDADA del conteo (no un
+                  // recálculo en vivo, que daba falsos sobrantes).
+                  const csP = conteosRango[m.insumo_id] || []
+                  const ultC = csP[csP.length - 1]
+                  const dif = (hayCont && ultC && !ultC.esInicial && ultC.dif != null) ? Number(ultC.dif) : null
+                  const hayAj = Math.abs(sAjuste) >= 0.0001
                   return (
                     <>
-                      <Celda derecha gris>{antes == null ? '—' : val(antes)}</Celda>
+                      <Celda derecha color={hayAj ? (sAjuste < 0 ? ROJO : AMBAR) : '#c3d0db'}>
+                        {!hayAj ? '—' : <>
+                          <div>{(sAjuste > 0 ? '+' : '−') + val(Math.abs(sAjuste))}</div>
+                          {esJefe && <span style={{ display: 'block', fontSize: '10px', fontWeight: 400, color: GRIS }}>{dinero(sAjuste * precioFifoDe(m.insumo_id))}</span>}
+                        </>}
+                      </Celda>
                       <Celda derecha fuerte={hayCont} color={hayCont ? AZUL : '#c3d0db'}>
                         {!hayCont ? '—' : <>
                           <div>{val(cont)}{porQuien}</div>
