@@ -151,7 +151,15 @@ export default function App() {
   }, [fincas, fincaId])
 
   // Recosteos pendientes por guías cargadas con fecha anterior (ver lib/recosteoPendiente).
-  useEffect(() => { if (fincas.length) procesarRecosteos() }, [fincas.length])
+  // Además cada minuto mientras la app está abierta: así también se procesan los que anotan
+  // los consumos/alimentaciones cargados fuera de orden (caso CARBONATO Agrimarine, 24-nov),
+  // sin tener que enganchar cada pantalla de registro.
+  useEffect(() => {
+    if (!fincas.length) return
+    procesarRecosteos()
+    const t = setInterval(() => { if (!document.hidden) procesarRecosteos() }, 60000)
+    return () => clearInterval(t)
+  }, [fincas.length])
 
   // Recordar la última finca elegida, para volver a ella al recargar.
   useEffect(() => {
