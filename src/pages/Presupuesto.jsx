@@ -10,6 +10,14 @@ const UNIDAD = { sacos: 'sacos', litros: 'litros', ml: 'mL', gramos: 'g',
 // Unidades de MEDIDA (peso/volumen): para estas se muestra la unidad de uso
 // (gramos, litros…). Si la unidad de compra es un paquete (sacos, funda…),
 // se muestra "como se compra" (ej. 8 sacos en vez de 240 kg).
+// Nombre del envase de compra ("Saco", "POMA", "Tambor") → "saco"; si el
+// catálogo tiene una medida (gramos, kg, litros) no es envase: null.
+const envase = u => {
+  const t = String(u || '').trim().toLowerCase()
+  if (!t || MEDIDA.has(t) || t === 'unidad' || t === 'unidades') return null
+  return /(or|on|al)es$/.test(t) ? t.slice(0, -2) : t.endsWith('s') ? t.slice(0, -1) : t
+}
+const plural = (e, q) => (Math.abs(q) <= 1 ? e : /[aeiou]$/.test(e) ? e + 's' : e + 'es')
 const MEDIDA = new Set(['gramos', 'g', 'kg', 'kilogramos', 'kilos', 'litros', 'lt', 'l', 'ml', 'libras', 'lb', 'mg', 'ton', 'toneladas'])
 
 // Presupuesto mensual de insumos · modulo Produccion
@@ -69,7 +77,7 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
       supabase.schema('produccion').rpc('fn_reporte_consumo',
         { p_finca: finca.id, p_desde: desde, p_hasta: hasta }),
       supabase.schema('produccion').from('insumo').select('id, unidad, unidad_compra, factor').eq('activo', true),
-      supabase.schema('produccion').from('insumo_finca').select('insumo_id, unidad, factor').eq('finca_id', finca.id),
+      supabase.schema('produccion').from('insumo_finca').select('insumo_id, unidad, unidad_compra, factor').eq('finca_id', finca.id),
     ])
     setMonto(p ? Number(p.monto) : null)
     setGasto(Number(g) || 0)
@@ -78,7 +86,7 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
     // Factor y unidades por insumo (catálogo), con override por finca.
     const fm = {}
     ;(insAll || []).forEach(i => { fm[i.id] = { unidad: i.unidad, unidad_compra: i.unidad_compra, factor: Number(i.factor) || 1 } })
-    ;(insOv || []).forEach(x => { if (fm[x.insumo_id]) { if (x.unidad) fm[x.insumo_id].unidad = x.unidad; if (x.factor != null) fm[x.insumo_id].factor = Number(x.factor) || 1 } })
+    ;(insOv || []).forEach(x => { if (fm[x.insumo_id]) { if (x.unidad) fm[x.insumo_id].unidad = x.unidad; if (x.unidad_compra) fm[x.insumo_id].unidad_compra = x.unidad_compra; if (x.factor != null) fm[x.insumo_id].factor = Number(x.factor) || 1 } })
     setFactores(fm)
     // Agrupar por insumo: suma de costo (para el %) y de cantidad por unidad.
     const m = {}
@@ -145,17 +153,23 @@ export default function Presupuesto({ finca, fincas, esJefe, onIrReporte }) {
   // se compra (cantidad ÷ factor en la unidad de compra).
   const cantidadTxt = c => {
     if (c.mixto) return '—'
-    const fi = factores[c.id]
+    const fi = factores[c.id] || {}
     const fmt = n => Number(n || 0).toLocaleString('es-EC', { maximumFractionDigits: 2 })
-    const uUso = (fi && fi.unidad) || c.unidad
-    const uc = fi && fi.unidad_compra
-    const hayCompra = uc && String(uc).toLowerCase() !== String(uUso).toLowerCase()
-    // "Como se compra" = cantidad ÷ factor en la unidad de compra (si la hay).
-    if (unidadVista === 'compra' && hayCompra) {
-      return `${fmt(c.cantidad / (fi.factor || 1))} ${UNIDAD[uc] || uc}`
+    // El consumo viene en la unidad de APLICACIÓN de la finca (override); la de
+    // compra es el envase (Tambor, Poma, Saco) y se obtiene ÷ factor.
+    const uUso = fi.unidad || c.unidad
+    const env = envase(fi.unidad_compra)
+    const generica = !uUso || ['unidad', 'unidades', 'u'].includes(String(uUso).toLowerCase())
+    const q = Number(c.cantidad) || 0
+    if (unidadVista === 'compra' || generica) {
+      // Si se aplica "por unidad" (factor 1), aplicar = el mismo envase.
+      const qc = generica ? q : q / (fi.factor || 1)
+      return `${fmt(qc)} ${env ? plural(env, qc) : (UNIDAD[uUso] || uUso || '')}`
     }
-    // "Como se aplica" = cantidad en la unidad de uso del catálogo.
-    return `${fmt(c.cantidad)} ${UNIDAD[uUso] || uUso || ''}`
+    let x = q, u = UNIDAD[String(uUso).toLowerCase()] || uUso
+    if (u === 'g' && x >= 1000) { x /= 1000; u = 'kg' }
+    if (u === 'mL' && x >= 1000) { x /= 1000; u = 'L' }
+    return `${fmt(x)} ${u}`
   }
 
   const pct = monto ? Math.min(100, Math.round(gasto / monto * 100)) : 0
